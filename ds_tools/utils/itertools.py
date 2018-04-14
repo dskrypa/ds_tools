@@ -7,7 +7,7 @@
 from collections.abc import Mapping
 from itertools import chain
 
-__all__ = ["itemfinder", "partitioned", "kwmerge"]
+__all__ = ["itemfinder", "chunked", "partitioned", "kwmerge", "merge", "flatten_mapping"]
 
 
 def itemfinder(iterable, func):
@@ -19,6 +19,17 @@ def itemfinder(iterable, func):
     for i in iterable:
         if func(i):
             return i
+
+
+def chunked(seq, n):
+    """Divide the given sequence into n roughly equal chunks"""
+    chunk_size, remaining = divmod(len(seq), n)
+    i = 0
+    for c in range(n):
+        j = i + chunk_size + (1 if remaining > 0 else 0)
+        remaining -= 1
+        yield seq[i:j]
+        i = j
 
 
 def partitioned(seq, n):

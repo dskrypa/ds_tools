@@ -23,6 +23,7 @@ class PrimeFinder:
         if not self.primes:
             self.primes.extend(PRIMES)
         self.non_contiguous_primes = set()
+        self.values_checked = 0
 
     def save(self, save_path):
         with gzip.open(save_path, "wb") as f:
@@ -37,6 +38,21 @@ class PrimeFinder:
                 if i > last:
                     self.primes.append(n)
                     return n
+                elif n % i == 0:
+                    break
+
+    def find_new_primes(self, count):
+        primes = self.primes[1:]            # can skip 2 because it is guaranteed to be known, and we always += 2
+        n = primes[-1]
+        c = 0
+        while c < count:
+            n += 2
+            last = int(math.sqrt(n)) + 1
+            for i in primes:
+                if i > last:
+                    self.primes.append(n)
+                    c += 1
+                    break
                 elif n % i == 0:
                     break
 
@@ -117,13 +133,16 @@ def main():
     parser.add_argument("--mode", "-m", choices=("py", "c"), help="Prime finder mode", required=True)
     mgroup = parser.add_mutually_exclusive_group()
     mgroup.add_argument("--count", "-c", type=int, help="Find the given number of prime numbers")
+    mgroup.add_argument("--find_new", "-f", type=int, help="Find the given number of prime numbers")
     mgroup.add_argument("--test", "-t", type=int, help="Test the given value to see if it is prime or not")
     mgroup.add_argument("--save", "-s", type=int, help="Number of prime numbers to find to cache to a file; if the cache file already exists, this many additional primes will be appended to it")
+
     parser.add_argument("--prime_cache", "-p", help="Path of prime number cache file to use if it exists")
     args = parser.parse_args()
 
     pfc = PrimeFinder if args.mode == "py" else PrimeFinderC
     pf = pfc(args.prime_cache)
+    print("Most recent prime: {:,d}".format(pf.primes[-1]))
 
     start = time.time()
 
@@ -132,16 +151,20 @@ def main():
         for i in range(args.count):
             next(pfi)
         finish = time.time()
+    elif args.find_new:
+        pf.find_new_primes(args.find_new)
+        finish = time.time()
+        print("Most recent prime: {:,d}".format(pf.primes[-1]))
     elif args.test:
         result = pf.is_prime(args.test)
         finish = time.time()
-        print("Is {:,d} prime? {}".format(args.test, result))
+        print("Is {:,d} prime? {} (values checked: {:,d})".format(args.test, result, pf.values_checked))
     elif args.save:
         if not args.prime_cache:
             raise ValueError("--prime_cache / -p PATH is required to save results to a file")
-        for i in range(args.save):
-            pf.next_prime()
+        pf.find_new_primes(args.save)
         finish = time.time()
+        print("Most recent prime: {:,d}".format(pf.primes[-1]))
         pf.save(args.prime_cache)
     else:
         raise ValueError("Unexpected option")

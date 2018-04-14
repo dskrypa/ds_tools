@@ -8,9 +8,22 @@ import gzip
 import os
 from array import array
 from bisect import bisect_left
+from cpython cimport array
 from libc.math cimport sqrt
 
 PRIMES = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97,101,103,107,109,113,127,131,137,139]
+
+
+def chunked_indexes(int seq_len, int n):
+    """Divide the given sequence into n roughly equal chunks"""
+    chunk_size, remaining = divmod(seq_len, n)
+    cdef int c, j
+    cdef int i = 0
+    for c in range(n):
+        j = i + chunk_size + (1 if remaining > 0 else 0)
+        remaining -= 1
+        yield i, j
+        i = j
 
 
 class PrimeFinder:
@@ -23,6 +36,7 @@ class PrimeFinder:
         if not self.primes:
             self.primes.extend(PRIMES)
         self.non_contiguous_primes = set()
+        self.values_checked = 0
 
     def save(self, save_path):
         with gzip.open(save_path, "wb") as f:
@@ -30,7 +44,7 @@ class PrimeFinder:
 
     def next_prime(self):
         cdef unsigned long long n, last, i
-        primes = self.primes[1:]
+        primes = self.primes[1:]            # can skip 2 because it is guaranteed to be known, and we always += 2
         n = primes[-1]
         while True:
             n += 2
@@ -39,6 +53,22 @@ class PrimeFinder:
                 if i > last:
                     self.primes.append(n)
                     return n
+                elif n % i == 0:
+                    break
+
+    def find_new_primes(self, int count):
+        cdef unsigned long long n, last, i
+        cdef int c = 0
+        primes = self.primes[1:]            # can skip 2 because it is guaranteed to be known, and we always += 2
+        n = primes[-1]
+        while c < count:
+            n += 2
+            last = (<unsigned long long>sqrt(n)) + 1
+            for i in primes:
+                if i > last:
+                    self.primes.append(n)
+                    c += 1
+                    break
                 elif n % i == 0:
                     break
 
@@ -56,34 +86,44 @@ class PrimeFinder:
 
     def _is_prime_via_known_sieve(self, unsigned long long n):
         cdef unsigned long long last, i
+        cdef unsigned long vals_checked = 0
         if n % 2 == 0:
+            self.values_checked = 1
             return False
         elif self._is_known_prime(n):
+            self.values_checked = 3
             return True
 
         last = (<unsigned long long>sqrt(n)) + 1
         for i in self.primes[1:]:
+            vals_checked += 1
             if i > last:
                 self.non_contiguous_primes.add(n)
+                self.values_checked += vals_checked
                 return True
             elif n % i == 0:
+                self.values_checked += vals_checked
                 return False
         raise TooFewPrimesKnown(last, n, i)
 
     def is_prime_via_sieve(self, unsigned long long n):
         """This takes too long if more primes than are known need to be computed"""
         cdef unsigned long long last, i
+        cdef unsigned long vals_checked = 0
         try:
             return self._is_prime_via_known_sieve(n)
         except TooFewPrimesKnown as e:
             last = e.last
 
         while True:
+            vals_checked += 1
             i = self.next_prime()
             if i > last:
                 self.non_contiguous_primes.add(n)
+                self.values_checked += vals_checked
                 return True
             elif n % i == 0:
+                self.values_checked += vals_checked
                 return False
 
     def is_prime_via_brute_force(self, unsigned long long n):
@@ -95,14 +135,18 @@ class PrimeFinder:
         :return bool: True if the given number is prime, False otherwise
         """
         cdef unsigned long long last, i
+        cdef unsigned long vals_checked = 0
         try:
             return self._is_prime_via_known_sieve(n)
         except TooFewPrimesKnown as e:
             last = e.last
 
         for i in range(self.primes[-1] + 2, last, 2):
+            vals_checked += 1
             if n % i == 0:
+                self.values_checked += vals_checked
                 return False
+        self.values_checked += vals_checked
         self.non_contiguous_primes.add(n)
         return True
 

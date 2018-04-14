@@ -12,6 +12,8 @@ setup(
             "cprimes",
             sources=["cprimes.pyx"],
             include_dirs=[numpy.get_include()],
+            # extra_compile_args=["/openmp"],
+            # extra_link_args=["/openmp"]
             # libraries=["m"]
         )
     ]
