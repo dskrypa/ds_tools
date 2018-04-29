@@ -12,6 +12,8 @@ Example::
     <Response [200]>
     >>> client.get_doc("test_doc_1").json()
     {'value': 12345, '_id': 'test_doc_1', 'last_modified': 1525050743, '_rev': 9}
+    >>> client.get_doc("test_doc_1", rev=2).json()
+    {'_id': 'test_doc_1', 'last_modified': 1525048183, 'value': 1, '_rev': 2}
 
 :author: Doug Skrypa
 """
