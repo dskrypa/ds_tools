@@ -65,16 +65,20 @@ class DocumentDB:
         if flask_app:
             flask_app.config["SQLALCHEMY_DATABASE_URI"] = db_uri
             self.flask_sqla = SQLAlchemy(flask_app)
+            self._init_tables(self.flask_sqla.engine)
             self.db_session = self.flask_sqla.session
         else:
-            self.engine = create_engine(db_uri, echo=echo)
-            self.meta = MetaData(self.engine)
-            try:
-                self.table = Table(Document.__tablename__, self.meta, autoload=True)
-            except NoSuchTableError as e:
-                Base.metadata.create_all(self.engine)
-                self.table = Table(Document.__tablename__, self.meta, autoload=True)
+            self._init_tables(create_engine(db_uri, echo=echo))
             self.db_session = sessionmaker(bind=self.engine)()
+
+    def _init_tables(self, engine):
+        self.engine = engine
+        self.meta = MetaData(self.engine)
+        try:
+            self.table = Table(Document.__tablename__, self.meta, autoload=True)
+        except NoSuchTableError as e:
+            Base.metadata.create_all(self.engine)
+            self.table = Table(Document.__tablename__, self.meta, autoload=True)
 
     def doc(self, doc_id):
         try:
