@@ -53,13 +53,38 @@ def requests_session(http_proxy=None, https_proxy=None):
 
 
 class GenericRestClient(ABC):
-    def __init__(self, host):
+    """
+    :param str host: Hostname to communicate with
+    :param str|int port: Port to use
+    :param str path_prefix: URL path prefix for all requests
+    :param str proto: Protocol to use (http, https, etc.)
+    """
+    def __init__(self, host, port=None, path_prefix=None, proto="http"):
         self.host = host
+        self.port = port
+        self.proto = proto
+        self.path_prefix = path_prefix
 
     @property
-    @abstractmethod
+    def path_prefix(self):
+        return self._path_prefix
+
+    @path_prefix.setter
+    def path_prefix(self, value):
+        if value:
+            value = value if not value.startswith("/") else value[1:]
+            self._path_prefix = value if value.endswith("/") else value + "/"
+        else:
+            self._path_prefix = ""
+
+    @property
     def _url_fmt(self):
         """The format string to be used by this REST client object for URLs"""
+        host_port = "{}:{}".format(self.host, self.port) if self.port else self.host
+        return "{}://{}/{}{{}}".format(self.proto, host_port, self.path_prefix)
+
+    def url_for(self, endpoint):
+        return self._url_fmt.format(endpoint if not endpoint.startswith("/") else endpoint[1:])
 
     @synchronized
     @cached(TTLCache(1, 86400))
@@ -72,8 +97,7 @@ class GenericRestClient(ABC):
         return self._get_session()
 
     def request(self, method, endpoint, *, raise_non_200=True, **kwargs):
-        endpoint = endpoint if not endpoint.startswith("/") else endpoint[1:]
-        url = self._url_fmt.format(self.host, endpoint)
+        url = self.url_for(endpoint)
         log.debug("{} -> {}".format(method, url))
         try:
             resp = self.session.request(method, url, **kwargs)
