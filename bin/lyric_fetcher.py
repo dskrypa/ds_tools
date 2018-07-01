@@ -32,10 +32,10 @@ HTML_TEMPLATE = """<html>
     <meta http-equiv="content-type" content="text/html; charset=UTF-8">
     <meta charset="UTF-8">
     <style type="text/css">
-    * {font-family: sans-serif;}
-    h1 {text-align: center;}
-    table {margin: auto;}
-    td {padding: 0px 20px 0px 20px;}
+    * {{font-family: sans-serif;}}
+    h1 {{text-align: center;}}
+    table {{margin: auto;}}
+    td {{padding: 0px 20px 0px 20px; font-size: {}pt;}}
     </style>
 </head>
 <body>
@@ -57,6 +57,7 @@ def main():
     parser.add_argument("song", help="colorcodedlyrics.com endpoint")
     parser.add_argument("--title", "-t", help="Page title to use (default: last part of song endpoint)")
     parser.add_argument("--search", "-s", action="store_true", help="Perform a search instead of a GET")
+    parser.add_argument("--size", "-z", type=int, default=12, help="Font size to use")
     parser.add_argument("--verbose", "-v", action="count", help="Print more verbose log info (may be specified multiple times to increase verbosity)")
     args = parser.parse_args()
     LogManager.create_default_logger(args.verbose, log_path=None)
@@ -65,7 +66,7 @@ def main():
     if args.search:
         lf.print_search_results(args.song)
     else:
-        lf.process_lyrics(args.song, args.title)
+        lf.process_lyrics(args.song, args.title, args.size)
 
 
 class LyricFetcher(GenericRestClient):
@@ -107,9 +108,9 @@ class LyricFetcher(GenericRestClient):
 
         return resp.text
 
-    def process_lyrics(self, song, title=None):
+    def process_lyrics(self, song, title=None, size=12):
         html = soupify(self.get(song), "lxml")
-        new_html = soupify(HTML_TEMPLATE)
+        new_html = soupify(HTML_TEMPLATE.format(size))
 
         new_header = new_html.new_tag("h1")
         new_header.string = title or html.find("h1", class_="entry-title").get_text()
@@ -127,12 +128,18 @@ class LyricFetcher(GenericRestClient):
                 log.log(5, "Fixed td:\n{}\n\n".format(fixed_td))
 
                 for p in fixed_td.find_all("p"):
-                    lines = [l for span in p.find_all("span") for l in span.get_text().replace("<br/>", "\n").splitlines() if l]
-                    if not lines:
-                        lines = [l for l in p.get_text().replace("<br/>", "\n").splitlines() if l]
-                        log.log(9, "{}: found stanza with {} plain lines".format(lang_names[i], len(lines)))
-                    else:
-                        log.log(9, "{}: found stanza with {} span lines".format(lang_names[i], len(lines)))
+                    lines = [l for l in p.get_text().replace("<br/>", "\n").splitlines() if l]
+                    for j, line in enumerate(lines):
+                        if line.startswith("<span"):
+                            lines[j] = soupify(line).find("span").get_text()
+                    log.log(9, "{}: found stanza with {} lines".format(lang_names[i], len(lines)))
+
+                    # lines = [l for span in p.find_all("span") for l in span.get_text().replace("<br/>", "\n").splitlines() if l]
+                    # if not lines:
+                    #     lines = [l for l in p.get_text().replace("<br/>", "\n").splitlines() if l]
+                    #     log.log(9, "{}: found stanza with {} plain lines".format(lang_names[i], len(lines)))
+                    # else:
+                    #     log.log(9, "{}: found stanza with {} span lines".format(lang_names[i], len(lines)))
 
                     lines.append("<br/>")
                     stanza_lines[i].extend(lines)
