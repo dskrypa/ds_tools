@@ -59,14 +59,22 @@ def main():
     parser = argparse.ArgumentParser(description="Lyric Fetcher")
     parser.add_argument("song", help="colorcodedlyrics.com endpoint")
     parser.add_argument("--title", "-t", help="Page title to use (default: last part of song endpoint)")
-    parser.add_argument("--search", "-s", action="store_true", help="Perform a search instead of a GET")
+
+    mgroup = parser.add_mutually_exclusive_group()
+    mgroup.add_argument("--search", "-s", action="store_true", help="Perform a search instead of a GET")
+    mgroup.add_argument("--index", "-i", action="store_true", help="Perform a index search instead of a GET")
+
+    idx_group = parser.add_argument_group("Index Options")
+    idx_group.add_argument("--album_filter", "-af", help="[--index/-i only] Filter for albums to be displayed")
+    idx_group.add_argument("--list", "-L", action="store_true", help="List albums instead of song links (default: %(default)s)")
+
     parser.add_argument("--size", "-z", type=int, default=12, help="Font size to use")
     parser.add_argument("--verbose", "-v", action="count", help="Print more verbose log info (may be specified multiple times to increase verbosity)")
     parser.add_argument("--site", "-S", choices=SITES, default="colorcodedlyrics", help="Site from which lyrics should be retrieved (default: %(default)s)")
     args = parser.parse_args()
     LogManager.create_default_logger(args.verbose, log_path=None)
 
-    if args.site == "ColorCodedLyricFetcher":
+    if args.site == "colorcodedlyrics":
         lf = ColorCodedLyricFetcher()
     elif args.site == "klyrics":
         lf = KlyricsLyricFetcher()
@@ -75,6 +83,8 @@ def main():
 
     if args.search:
         lf.print_search_results(args.song)
+    elif args.index:
+        lf.index(args.song, args.album_filter, args.list)
     else:
         lf.process_lyrics(args.song, args.title, args.size)
 
@@ -217,8 +227,52 @@ class KlyricsLyricFetcher(LyricFetcher):
 
 
 class ColorCodedLyricFetcher(LyricFetcher):
+    indexes = {
+        "redvelvet": "2015/03/red-velvet-lyrics-index",
+        "gidle": "2018/05/g-dle-lyrics-index",
+        "wekimeki": "2017/09/weki-meki-wikimiki-lyrics-index",
+        "blackpink": "2017/09/blackpink-beullaegpingkeu-lyrics-index",
+        "ioi": "2016/05/ioi-lyrics-index",
+        "twice": "2016/04/twice-lyrics-index",
+        "mamamoo": "2016/04/mamamoo-lyric-index",
+        "gfriend": "2016/02/gfriend-yeojachingu-lyrics-index",
+        "2ne1": "2012/02/2ne1_lyrics_index",
+        "snsd": "2012/02/snsd_lyrics_index",
+        "missa": "2011/11/miss_a_lyrics_index",
+        "apink": "2011/11/a_pink_index",
+    }
+
     def __init__(self):
         super().__init__("colorcodedlyrics.com", proto="https")
+
+    def index(self, query, album_filter=None, list=False):
+        alb_filter = re.compile(album_filter) if album_filter else None
+        endpoint = self.indexes.get(re.sub("[\[\]~!@#$%^&*(){}:;<>,.?/\\+= -]", "", query.lower()))
+        if not endpoint:
+            raise ValueError("No index is configured for {}".format(query))
+
+        soup = soupify(self.get(endpoint))
+        for td in soup.find_all("td"):
+            tbl = Table(SimpleColumn("Link", 0), SimpleColumn("Song", 0), update_width=True)
+            results = []
+            img = td.find("img")
+            title = img.get("title")
+
+            if alb_filter and (not title or not alb_filter.search(title)):
+                continue
+            if list:
+                print(title)
+                continue
+
+            for a in td.find_all("a"):
+                link = a.get("href")
+                results.append({"Song": a.text, "Link": urlsplit(link).path[1:]})
+            print("{}:".format(title))
+            try:
+                tbl.print_rows(results)
+            except Exception as e:
+                print("(none)")
+            print()
 
     def search(self, query):
         cache_file = "{}/search_{}.html".format(CACHE_DIR, query.replace(" ", "_"))
@@ -230,7 +284,7 @@ class ColorCodedLyricFetcher(LyricFetcher):
         with open(cache_file, "w", encoding="utf-8") as f:
             f.write(resp.text)
 
-        return resp
+        return resp.text
 
     def print_search_results(self, query):
         soup = soupify(self.search(query))
