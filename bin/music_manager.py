@@ -12,8 +12,11 @@ import os
 import string
 import sys
 from collections import Counter, defaultdict
+from fnmatch import fnmatch
+from itertools import chain
 
 import mutagen
+from mutagen.id3._frames import Frame
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ds_tools.logging import LogManager
@@ -22,6 +25,23 @@ from music.constants import tag_name_map
 
 log = logging.getLogger("ds_tools.{}".format(__file__))
 
+# Translate whitespace characters (such as \n, \r, etc.) to their escape sequences
+WHITESPACE_TRANS_TBL = str.maketrans({c: c.encode("unicode_escape").decode("utf-8") for c in string.whitespace})
+
+# Monkey-patch Frame's repr so APIC and similar frames don't kill terminals
+_orig_frame_repr = Frame.__repr__
+def _frame_repr(self):
+    kw = []
+    for attr in self._framespec:
+        # so repr works during __init__
+        if hasattr(self, attr.name):
+            kw.append("{}={}".format(attr.name, tag_repr(repr(getattr(self, attr.name)))))
+    for attr in self._optionalspec:
+        if hasattr(self, attr.name):
+            kw.append("{}={}".format(attr.name, tag_repr(repr(getattr(self, attr.name)))))
+    return "{}({})".format(type(self).__name__, ", ".join(kw))
+Frame.__repr__ = _frame_repr
+
 
 def main():
     parser = argparse.ArgumentParser(description="Music Manager")
@@ -29,12 +49,18 @@ def main():
 
     info_parser = sparsers.add_parser("info", help="Get song/tag information")
     info_parser.add_argument("path", nargs="+", help="One or more file/directory paths that contain music files")
-
     stat_group = info_parser.add_mutually_exclusive_group()
     stat_group.add_argument("--count", "-c", action="store_true", help="Count tag types rather than printing all info")
     stat_group.add_argument("--unique", "-u", metavar="TAGID", nargs="+", help="Count unique values of the specified tag(s)")
 
-    parser.add_argument("--verbose", "-v", action="count", help="Print more verbose log info (may be specified multiple times to increase verbosity)")
+    rm_parser = sparsers.add_parser("remove", help="Remove specified tags from the given files")
+    rm_parser.add_argument("path", nargs="+", help="One or more file/directory paths that contain music files")
+    rm_parser.add_argument("--tags", "-t", nargs="+", help="One or more tag IDs to remove from the given files")
+
+    for p in chain((parser,), sparsers.choices.values()):
+        p.add_argument("--verbose", "-v", action="count", help="Print more verbose log info (may be specified multiple times to increase verbosity)")
+        p.add_argument("--dry_run", "-D", action="store_true", help="Print the actions that would be taken instead of taking them")
+
     args = parser.parse_args()
     LogManager.create_default_logger(args.verbose, log_path=None)
 
@@ -45,6 +71,8 @@ def main():
             count_unique_vals(args.path, args.unique)
         else:
             print_song_tags(args.path)
+    elif args.action == "remove":
+        remove_tags(args.path, args.tags, args.dry_run)
 
 
 def iter_music_files(paths):
@@ -66,6 +94,52 @@ def iter_music_files(paths):
                 log.debug("Not a music file: {}".format(path))
         else:
             log.error("Invalid path: {}".format(path))
+
+
+def tag_repr(tag_val, max_len=125, sub_len=25):
+    if not isinstance(tag_val, str):
+        tag_val = str(tag_val)
+    tag_val = tag_val.translate(WHITESPACE_TRANS_TBL)
+    if len(tag_val) > max_len:
+        return "{}...{}".format(tag_val[:sub_len], tag_val[-sub_len:])
+    return tag_val
+
+
+def remove_tags(paths, tag_ids, dry_run):
+    prefix, verb = ("[DRY RUN] ", "Would remove") if dry_run else ("", "Removing")
+
+    tag_ids = sorted({tag_id.upper() for tag_id in tag_ids})
+    log.info("{}{} the following tags from all files:".format(prefix, verb))
+    for tag_id in tag_ids:
+        log.info("\t{}: {}".format(tag_id, tag_name_map.get(tag_id, "[unknown]")))
+
+    i = 0
+    for music_file in iter_music_files(paths):
+        to_remove = {}
+        for tag_id in tag_ids:
+            file_tags = list(map(tag_repr, music_file.tags.getall(tag_id)))
+            if file_tags:
+                to_remove[tag_id] = file_tags
+
+        if to_remove:
+            if i:
+                log.debug("")
+            rm_str = ", ".join("{}: {}".format(tag_id, val) for tag_id, vals in sorted(to_remove.items()) for val in vals)
+            info_str = ", ".join("{} ({})".format(tag_id, len(vals)) for tag_id, vals in sorted(to_remove.items()))
+
+            log.info("{}{}: {} tags: {}".format(prefix, music_file.filename, verb, info_str))
+            log.debug("\t{}: {}".format(music_file.filename, rm_str))
+
+            if not dry_run:
+                for tag_id in to_remove:
+                    music_file.tags.delall(tag_id)
+                music_file.tags.save(music_file.filename)
+            i += 1
+        else:
+            log.debug("{}: Did not have the tags specified for removal".format(music_file.filename))
+
+    if not i:
+        log.info("None of the provided files had the specified tags")
 
 
 def print_song_tags(paths):
@@ -99,8 +173,10 @@ def count_unique_vals(paths, tag_ids):
     for music_file in iter_music_files(paths):
         for tag, val in music_file.tags.items():
             tag = tag[:4]
-            if tag in include:
-                unique_vals[tag][str(val)] += 1
+            for pattern in include:
+                if fnmatch(tag, pattern):
+                    unique_vals[tag][str(val)] += 1
+                    break
 
     tbl = Table(
         SimpleColumn("Tag"), SimpleColumn("Tag Name"), SimpleColumn("Count", align=">", ftype=",d"),
@@ -108,15 +184,11 @@ def count_unique_vals(paths, tag_ids):
     )
     rows = []
 
-    # Translate whitespace characters (such as \n, \r, etc.) to their escape sequences
-    esc_trans = str.maketrans({c: c.encode("unicode_escape").decode("utf-8") for c in string.whitespace})
-
     for tag, val_counter in unique_vals.items():
         for val, count in val_counter.items():
-            val = val.translate(esc_trans)
-            if len(val) > 150:
-                val = "{}...{}".format(val[:25], val[-25:])
-            rows.append({"Tag": tag, "Tag Name": tag_name_map.get(tag, "[unknown]"), "Count": count, "Value": val})
+            rows.append({
+                "Tag": tag, "Tag Name": tag_name_map.get(tag, "[unknown]"), "Count": count, "Value": tag_repr(val)
+            })
     tbl.print_rows(rows)
 
 
