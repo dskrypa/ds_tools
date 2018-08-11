@@ -10,6 +10,7 @@ import types
 from io import StringIO
 from collections import OrderedDict, namedtuple
 
+import grapheme
 import yaml
 from termcolor import colored
 
@@ -100,7 +101,7 @@ class Column:
     @width.setter
     def width(self, value):
         try:
-            self._width = max(self._calc_width(value), len(self.title))
+            self._width = max(self._calc_width(value), grapheme.length(self.title))
         except (ValueError, TypeError) as e:
             try:
                 raise ValueError("{}: Unable to determine width (likely no values were found)".format(self)) from e
@@ -112,12 +113,12 @@ class Column:
             return int(width)
         except TypeError:
             try:
-                return max(len(str(e[self.key])) for e in width.values())
+                return max(grapheme.length(str(e[self.key])) for e in width.values())
             except (KeyError, TypeError, AttributeError):
                 try:
-                    return max(len(str(e[self.key])) for e in width)
+                    return max(grapheme.length(str(e[self.key])) for e in width)
                 except (KeyError, TypeError, AttributeError):
-                    return max(len(str(obj)) for obj in width)
+                    return max(grapheme.length(str(obj)) for obj in width)
 
 
 class SimpleColumn(Column):
