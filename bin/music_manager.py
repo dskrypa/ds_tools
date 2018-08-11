@@ -15,6 +15,7 @@ from collections import Counter, defaultdict
 from fnmatch import fnmatch
 from itertools import chain
 
+import grapheme
 import mutagen
 from mutagen.id3._frames import Frame
 
@@ -96,12 +97,16 @@ def iter_music_files(paths):
             log.error("Invalid path: {}".format(path))
 
 
-def tag_repr(tag_val, max_len=125, sub_len=25):
+def tag_repr(tag_val, max_len=125, sub_len=25, use_grapheme=False):
     if not isinstance(tag_val, str):
         tag_val = str(tag_val)
     tag_val = tag_val.translate(WHITESPACE_TRANS_TBL)
-    if len(tag_val) > max_len:
-        return "{}...{}".format(tag_val[:sub_len], tag_val[-sub_len:])
+    val_len = grapheme.length(tag_val) if use_grapheme else len(tag_val)
+    if val_len > max_len:
+        if use_grapheme:
+            return "{}...{}".format(grapheme.slice(tag_val, 0, sub_len), grapheme.slice(tag_val, val_len - sub_len))
+        else:
+            return "{}...{}".format(tag_val[:sub_len], tag_val[-sub_len:])
     return tag_val
 
 
@@ -117,14 +122,18 @@ def remove_tags(paths, tag_ids, dry_run):
     for music_file in iter_music_files(paths):
         to_remove = {}
         for tag_id in tag_ids:
-            file_tags = list(map(tag_repr, music_file.tags.getall(tag_id)))
+            file_tags = music_file.tags.getall(tag_id)
             if file_tags:
                 to_remove[tag_id] = file_tags
 
         if to_remove:
             if i:
                 log.debug("")
-            rm_str = ", ".join("{}: {}".format(tag_id, val) for tag_id, vals in sorted(to_remove.items()) for val in vals)
+            rm_str = ", ".join(
+                "{}: {}".format(tag_id, tag_repr(val, use_grapheme=True))
+                for tag_id, vals in sorted(to_remove.items())
+                for val in vals
+            )
             info_str = ", ".join("{} ({})".format(tag_id, len(vals)) for tag_id, vals in sorted(to_remove.items()))
 
             log.info("{}{}: {} tags: {}".format(prefix, music_file.filename, verb, info_str))
@@ -187,7 +196,8 @@ def count_unique_vals(paths, tag_ids):
     for tag, val_counter in unique_vals.items():
         for val, count in val_counter.items():
             rows.append({
-                "Tag": tag, "Tag Name": tag_name_map.get(tag, "[unknown]"), "Count": count, "Value": tag_repr(val)
+                "Tag": tag, "Tag Name": tag_name_map.get(tag, "[unknown]"), "Count": count,
+                "Value": tag_repr(val, use_grapheme=True)
             })
     tbl.print_rows(rows)
 
