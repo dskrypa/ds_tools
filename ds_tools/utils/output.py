@@ -130,7 +130,7 @@ class SimpleColumn(Column):
     :param str align: String formatting alignment indicator (default: left; example: ">" for right)
     :param str ftype: String formatting type/format indicator (default: none; example: ",d" for thousands indicator)
     """
-    def __init__(self, title, width, display=True, align="", ftype=""):
+    def __init__(self, title, width=0, display=True, align="", ftype=""):
         super().__init__(title, title, width, display, align, ftype)
 
 
