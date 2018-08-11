@@ -8,7 +8,7 @@ import time
 from array import array
 from bisect import bisect_left
 
-from cprimes import PrimeFinder as PrimeFinderC
+from cprimes import PrimeFinder32, PrimeFinder64    # PrimeFinder as PrimeFinderC,
 
 PRIMES = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97,101,103,107,109,113,127,131,137,139]
 
@@ -74,6 +74,7 @@ class PrimeFinder:
         elif self._is_known_prime(n):
             return True
 
+        i = 3
         last = int(math.sqrt(n)) + 1
         for i in self.primes[1:]:
             if i > last:
@@ -137,11 +138,24 @@ def main():
     mgroup.add_argument("--test", "-t", type=int, help="Test the given value to see if it is prime or not")
     mgroup.add_argument("--save", "-s", type=int, help="Number of prime numbers to find to cache to a file; if the cache file already exists, this many additional primes will be appended to it")
 
-    parser.add_argument("--prime_cache", "-p", help="Path of prime number cache file to use if it exists")
+    bgroup = parser.add_mutually_exclusive_group()
+    bgroup.add_argument("--prime_cache32", "-p32", help="Path of 32 bit integer prime number cache file to use if it exists")
+    bgroup.add_argument("--prime_cache64", "-p64", help="Path of 64 bit integer prime number cache file to use if it exists")
     args = parser.parse_args()
 
-    pfc = PrimeFinder if args.mode == "py" else PrimeFinderC
-    pf = pfc(args.prime_cache)
+    if args.mode == "py":
+        prime_cache = args.prime_cache32 or args.prime_cache64
+        pf = PrimeFinder(prime_cache)
+    else:
+        if args.prime_cache64:
+            pf = PrimeFinder64(args.prime_cache64)
+            prime_cache = args.prime_cache64
+        elif args.prime_cache32:
+            pf = PrimeFinder32(args.prime_cache32)
+            prime_cache = args.prime_cache32
+        else:
+            raise ValueError("A prime cache file is required for C mode")
+
     print("Most recent prime: {:,d}".format(pf.primes[-1]))
 
     start = time.time()
@@ -160,16 +174,16 @@ def main():
         finish = time.time()
         print("Is {:,d} prime? {} (values checked: {:,d})".format(args.test, result, pf.values_checked))
     elif args.save:
-        if not args.prime_cache:
+        if not prime_cache:
             raise ValueError("--prime_cache / -p PATH is required to save results to a file")
         pf.find_new_primes(args.save)
         finish = time.time()
         print("Most recent prime: {:,d}".format(pf.primes[-1]))
-        pf.save(args.prime_cache)
+        pf.save(prime_cache)
     else:
         raise ValueError("Unexpected option")
 
-    if args.prime_cache:
+    if prime_cache:
         print("{:,d} prime numbers are currently cached".format(len(pf.primes)))
 
     print("Took {:,f} seconds".format(finish - start))
