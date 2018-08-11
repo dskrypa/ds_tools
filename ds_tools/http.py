@@ -6,7 +6,7 @@
 
 import logging
 import os
-from abc import ABC, abstractmethod
+from atexit import register
 from contextlib import suppress
 from weakref import WeakSet
 
@@ -52,7 +52,7 @@ def requests_session(http_proxy=None, https_proxy=None):
     return session
 
 
-class GenericRestClient(ABC):
+class GenericRestClient:
     """
     :param str host: Hostname to communicate with
     :param str|int port: Port to use
@@ -120,6 +120,7 @@ class GenericRestClient(ABC):
         return self.request("DELETE", endpoint, **kwargs)
 
 
+@register
 def http_cleanup():
     with synchronized(__instances):
         for session in __instances:

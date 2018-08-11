@@ -13,7 +13,6 @@ import sys
 from bs4 import BeautifulSoup
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from ds_tools.cleanup import cleanup
 from ds_tools.http import GenericRestClient
 from ds_tools.logging import LogManager
 from ds_tools.utils import Table, SimpleColumn, Printer
@@ -96,5 +95,3 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print()
-    finally:
-        cleanup()

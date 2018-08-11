@@ -19,7 +19,6 @@ from collections import defaultdict
 from urllib.parse import urlsplit
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from ds_tools.cleanup import cleanup
 from ds_tools.http import GenericRestClient
 from ds_tools.logging import LogManager
 from ds_tools.utils import Table, SimpleColumn, validate_or_make_dir
@@ -517,5 +516,3 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print()
-    finally:
-        cleanup()
