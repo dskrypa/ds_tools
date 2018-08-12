@@ -153,6 +153,8 @@ def save_tag_backups(source_paths, backup_path):
     if not backup_path:
         backup_path = "/var/tmp/id3_tags.pickled"
     log.info("backup_path: {}".format(backup_path))
+
+    backup_path = os.path.expanduser(backup_path)
     if os.path.exists(backup_path) and os.path.isdir(backup_path):
         backup_path = os.path.join(backup_path, "id3_tags.pickled")
 
@@ -161,8 +163,11 @@ def save_tag_backups(source_paths, backup_path):
     else:
         tag_info = {}
 
-    for music_file in iter_music_files(source_paths):
-        content_hash = tagless_sha256sum(music_file)
+    for i, music_file in enumerate(iter_music_files(source_paths, include_backups=True)):
+        if isinstance(music_file, FakeMusicFile):
+            content_hash = music_file.filename
+        else:
+            content_hash = tagless_sha256sum(music_file)
         log.debug("{}: {}".format(music_file.filename, content_hash))
         tag_info[content_hash] = music_file.tags
 
@@ -181,7 +186,12 @@ def load_tags(paths):
             for root, dirs, files in os.walk(path):
                 for f in files:
                     file_path = os.path.join(root, f)
-                    music_file = mutagen.File(file_path)
+                    try:
+                        music_file = mutagen.File(file_path)
+                    except Exception as e:
+                        log.debug("Error loading {}: {}".format(file_path, e))
+                        music_file = None
+
                     if music_file:
                         content_hash = tagless_sha256sum(music_file)
                         log.debug("{}: {}".format(music_file.filename, content_hash))
@@ -195,7 +205,12 @@ def load_tags(paths):
                             else:
                                 log.debug("Loaded pickled tag info from {}".format(file_path))
         elif os.path.isfile(path):
-            music_file = mutagen.File(path)
+            try:
+                music_file = mutagen.File(path)
+            except Exception as e:
+                log.debug("Error loading {}: {}".format(path, e))
+                music_file = None
+
             if music_file:
                 content_hash = tagless_sha256sum(music_file)
                 log.debug("{}: {}".format(music_file.filename, content_hash))
@@ -230,7 +245,12 @@ def tagless_sha256sum(music_file):
     with open(music_file.filename, "rb") as f:
         tmp = BytesIO(f.read())
 
-    mutagen.File(tmp).tags.delete(tmp)
+    try:
+        mutagen.File(tmp).tags.delete(tmp)
+    except AttributeError as e:
+        log.error("Error determining tagless sha256sum for {}: {}".format(music_file.filename, e))
+        return music_file.filename
+
     tmp.seek(0)
     return sha256(tmp.read()).hexdigest()
 
@@ -241,7 +261,12 @@ def iter_music_files(paths, include_backups=False):
             for root, dirs, files in os.walk(path):
                 for f in files:
                     file_path = os.path.join(root, f)
-                    music_file = mutagen.File(file_path)
+                    try:
+                        music_file = mutagen.File(file_path)
+                    except Exception as e:
+                        log.debug("Error loading {}: {}".format(file_path, e))
+                        music_file = None
+
                     if music_file:
                         yield music_file
                     else:
@@ -255,7 +280,12 @@ def iter_music_files(paths, include_backups=False):
                         else:
                             log.debug("Not a music file: {}".format(file_path))
         elif os.path.isfile(path):
-            music_file = mutagen.File(path)
+            try:
+                music_file = mutagen.File(path)
+            except Exception as e:
+                log.debug("Error loading {}: {}".format(path, e))
+                music_file = None
+
             if music_file:
                 yield music_file
             else:
