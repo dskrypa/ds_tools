@@ -5,12 +5,15 @@
 """
 
 import functools
+import logging
 import time
 from operator import attrgetter
+from threading import RLock
 
 from .itertools import partitioned
 
-__all__ = ["cached_property", "classproperty", "partitioned_exec", "trace_entry", "timed"]
+__all__ = ["cached_property", "classproperty", "partitioned_exec", "trace_entry", "timed", "rate_limited"]
+log = logging.getLogger("ds_tools.decorate")
 
 
 class cached_property:
@@ -125,3 +128,26 @@ def timed(func):
         print("{} ran in {} s".format(func.__name__, end - start))
         return r
     return wrapper
+
+
+def rate_limited(interval):
+    """
+    :param float interval: Interval between allowed invocations in seconds
+    """
+    def decorator(func):
+        last_call = 0
+        lock = RLock()
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            nonlocal last_call
+            with lock:
+                elapsed = time.time() - last_call
+                if elapsed < interval:
+                    wait_secs = interval - elapsed
+                    log.debug("Waiting {:,.3f} seconds before executing rate limited function '{}'".format(wait_secs, func.__name__))
+                    time.sleep(wait_secs)
+                last_call = time.time()
+                return func(*args, **kwargs)
+        return wrapper
+    return decorator

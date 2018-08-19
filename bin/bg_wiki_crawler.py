@@ -17,7 +17,7 @@ from ds_tools.http import GenericRestClient
 from ds_tools.logging import LogManager
 from ds_tools.utils import Table, SimpleColumn, Printer
 
-log = logging.getLogger("ds_tools.{}".format(__file__))
+log = logging.getLogger("ds_tools.{}".format(__name__))
 
 
 def main():

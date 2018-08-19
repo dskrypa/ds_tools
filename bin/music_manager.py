@@ -27,7 +27,7 @@ from ds_tools.logging import LogManager
 from ds_tools.utils import Table, SimpleColumn, validate_or_make_dir
 from music.constants import tag_name_map
 
-log = logging.getLogger("ds_tools.{}".format(__file__))
+log = logging.getLogger("ds_tools.{}".format(__name__))
 
 # Translate whitespace characters (such as \n, \r, etc.) to their escape sequences
 WHITESPACE_TRANS_TBL = str.maketrans({c: c.encode("unicode_escape").decode("utf-8") for c in string.whitespace})

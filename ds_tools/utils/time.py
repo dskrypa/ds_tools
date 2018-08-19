@@ -69,7 +69,12 @@ def str2epoch(datetime_str, fmt=DATETIME_FMT, millis=False, tz=None):
     else:
         tz_name = time.strftime("%Z", time.strptime(datetime_str, fmt))     # datetime.strptime discards TZ
         tz = pytz.timezone(tz_name) if tz_name else TZ_LOCAL
-    dt = tz.localize(datetime.strptime(datetime_str, fmt))
+
+    dt = datetime.strptime(datetime_str, fmt)
+    try:
+        dt = tz.localize(dt)
+    except ValueError:
+        pass
     return int(dt.timestamp() * 1000) // (1 if millis else 1000)
 
 
