@@ -18,7 +18,7 @@ def soupify(html, mode="html.parser"):
         try:
             html = html.text
         except AttributeError as e:
-            raise TypeError("Only strings or Requests library responses are supported") from e
+            raise TypeError("Only strings or Requests library response objects are supported") from e
     return BeautifulSoup(html, mode)
 
 

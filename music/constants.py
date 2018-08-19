@@ -124,3 +124,63 @@ tag_name_map = {
     "TZZZ": "Text frame [invalid]",
     "CM1": "Comment? [invalid]"
 }
+
+"""
+TODO: MP4:
+
+    ‘\xa9nam’ – track title
+    ‘\xa9alb’ – album
+    ‘\xa9ART’ – artist
+    ‘aART’ – album artist
+    ‘\xa9wrt’ – composer
+    ‘\xa9day’ – year
+    ‘\xa9cmt’ – comment
+    ‘desc’ – description (usually used in podcasts)
+    ‘purd’ – purchase date
+    ‘\xa9grp’ – grouping
+    ‘\xa9gen’ – genre
+    ‘\xa9lyr’ – lyrics
+    ‘purl’ – podcast URL
+    ‘egid’ – podcast episode GUID
+    ‘catg’ – podcast category
+    ‘keyw’ – podcast keywords
+    ‘\xa9too’ – encoded by
+    ‘cprt’ – copyright
+    ‘soal’ – album sort order
+    ‘soaa’ – album artist sort order
+    ‘soar’ – artist sort order
+    ‘sonm’ – title sort order
+    ‘soco’ – composer sort order
+    ‘sosn’ – show sort order
+    ‘tvsh’ – show name
+    ‘\xa9wrk’ – work
+    ‘\xa9mvn’ – movement
+
+Boolean values:
+
+    ‘cpil’ – part of a compilation
+    ‘pgap’ – part of a gapless album
+    ‘pcst’ – podcast (iTunes reads this only on import)
+
+Tuples of ints (multiple values per key are supported):
+
+    ‘trkn’ – track number, total tracks
+    ‘disk’ – disc number, total discs
+
+Integer values:
+
+    ‘tmpo’ – tempo/BPM
+    ‘\xa9mvc’ – Movement Count
+    ‘\xa9mvi’ – Movement Index
+    ‘shwm’ – work/movement
+    ‘stik’ – Media Kind
+    ‘rtng’ – Content Rating
+    ‘tves’ – TV Episode
+    ‘tvsn’ – TV Season
+    ‘plID’, ‘cnID’, ‘geID’, ‘atID’, ‘sfID’, ‘cmID’, ‘akID’ – Various iTunes Internal IDs
+
+Others:
+
+    ‘covr’ – cover artwork, list of MP4Cover objects (which are tagged strs)
+    ‘gnre’ – ID3v1 genre. Not supported, use ‘\xa9gen’ instead.
+"""

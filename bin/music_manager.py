@@ -20,11 +20,13 @@ from itertools import chain
 
 import grapheme
 import mutagen
+from mutagen.id3 import ID3, TDRC
 from mutagen.id3._frames import Frame
+from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ds_tools.logging import LogManager
-from ds_tools.utils import Table, SimpleColumn, validate_or_make_dir
+from ds_tools.utils import Table, SimpleColumn, validate_or_make_dir, localize, TableBar
 from music.constants import tag_name_map
 
 log = logging.getLogger("ds_tools.{}".format(__name__))
@@ -46,6 +48,20 @@ def _frame_repr(self):
     return "{}({})".format(type(self).__name__, ", ".join(kw))
 Frame.__repr__ = _frame_repr
 
+_orig_reprs = {}
+
+def _MP4Cover_repr(self):
+    return "{}({}, {})".format(type(self).__name__, tag_repr(bytes(self), 10, 5), AtomDataType(self.imageformat))
+
+def _MP4FreeForm_repr(self):
+    return "{}({}, {})".format(type(self).__name__, tag_repr(bytes(self), 10, 5), AtomDataType(self.dataformat))
+
+for cls in (MP4Cover, MP4FreeForm):
+    _orig_reprs[cls] = cls.__repr__
+
+MP4Cover.__repr__ = _MP4Cover_repr
+MP4FreeForm.__repr__ = _MP4FreeForm_repr
+
 
 class FakeMusicFile:
     def __init__(self, sha256sum, tags):
@@ -64,6 +80,7 @@ def main():
     info_group.add_argument("--count", "-c", action="store_true", help="Count tag types rather than printing all info")
     info_group.add_argument("--unique", "-u", metavar="TAGID", nargs="+", help="Count unique values of the specified tag(s)")
     info_group.add_argument("--tags", "-t", nargs="+", help="Filter tags to display in file info mode")
+    info_group.add_argument("--table", "-T", action="store_true", help="Print a full table instead of individual tables per file")
 
     rm_parser = sparsers.add_parser("remove", help="Remove specified tags from the given files")
     rm_parser.add_argument("path", nargs="+", help="One or more file/directory paths that contain music files")
@@ -74,6 +91,12 @@ def main():
     cp_parser.add_argument("--dest", "-d", nargs="+", help="One or more file/directory paths that contain music files, or a path to store an ID3 info backup")
     cp_parser.add_argument("--backup", "-b", action="store_true", help="Store a backup of ID3 information instead of writing directly to matching music files")
     cp_parser.add_argument("--tags", "-t", nargs="+", help="One or more tag IDs to copy to the destination files")
+
+    fix_parser = sparsers.add_parser("fix", help="Fix poorly chosen tags in the given files (such as TXXX:DATE, etc)")
+    fix_parser.add_argument("path", nargs="+", help="One or more file/directory paths that contain music files")
+
+    sort_parser = sparsers.add_parser("sort", help="Sort music into directories based on tag info")
+    sort_parser.add_argument("path", help="A directory that contains directories that contain music files")
 
     for p in chain((parser,), sparsers.choices.values()):
         p.add_argument("--verbose", "-v", action="count", help="Print more verbose log info (may be specified multiple times to increase verbosity)")
@@ -87,10 +110,14 @@ def main():
             count_tag_types(args.path)
         elif args.unique:
             count_unique_vals(args.path, args.unique)
+        elif args.table:
+            table_song_tags(args.path)
         else:
             print_song_tags(args.path, args.tags)
     elif args.action == "remove":
         remove_tags(args.path, args.tags, args.dry_run)
+    elif args.action == "fix":
+        fix_tags(args.path, args.dry_run)
     elif args.action == "copy":
         if args.backup:
             if len(args.dest) > 1:
@@ -98,8 +125,144 @@ def main():
             save_tag_backups(args.source, args.dest)
         else:
             copy_tags(args.source, args.dest, args.tags, args.dry_run)
+    elif args.action == "sort":
+        sort_albums(args.path, args.dry_run)
     else:
         log.error("Unconfigured action")
+
+
+def sort_albums(path, dry_run):
+    prefix, verb = ("[DRY RUN] ", "Would rename") if dry_run else ("", "Renaming")
+    punc_strip_tbl = str.maketrans({c: "" for c in string.punctuation})
+
+    for root, dirs, files in os.walk(path):
+        parent_dir = os.path.dirname(root)
+        album_dir = os.path.basename(root)
+        if files and not album_dir.startswith("["):
+            dates = set()
+            skip_dir = False
+            for music_file in iter_music_files(root):
+                if isinstance(music_file.tags, MP4Tags):
+                    dates.add(str(music_file.tags["\xa9day"][0]))
+                elif isinstance(music_file.tags, ID3):
+                    dates.add(str(music_file.tags["TDRC"].text[0]))
+                else:
+                    log.warning("Skipping dir with unhandled file type: {} ({})".format(root, type(music_file.tags).__name__))
+                    skip_dir = True
+                    break
+
+            if skip_dir:
+                continue
+
+            if len(dates) == 1:
+                date_str = dates.pop().translate(punc_strip_tbl)[:8]
+                date_fmt_in = "%Y" if len(date_str) == 4 else "%Y%m%d"
+                date_fmt_out = "%Y" if len(date_str) == 4 else "%Y.%m.%d"
+                try:
+                    album_date = localize(date_str, in_fmt=date_fmt_in, out_fmt=date_fmt_out)
+                except Exception:
+                    album_date = None
+            else:
+                log.warning("Unexpected dates found for album '{}': {}".format(root, ", ".join(sorted(dates))))
+                album_date = None
+
+            if album_date:
+                album_dir = "[{}] {}".format(album_date, album_dir)
+                new_path = os.path.join(parent_dir, album_dir)
+                log.info("{}{} '{}' -> '{}'".format(prefix, verb, root, new_path))
+                if not dry_run:
+                    os.rename(root, new_path)
+
+    numbered_albums = defaultdict(dict)
+
+    for root, dirs, files in os.walk(path):
+        parent_dir = os.path.dirname(root)
+        album_dir = os.path.basename(root)
+        category_dir = os.path.basename(parent_dir)
+
+        if (category_dir in ("Albums", "Mini Albums")) and files and album_dir.startswith("[") and ("summer mini album" not in album_dir.lower()):
+            category = category_dir[:-1]
+
+            files, japanese = 0, 0
+            for music_file in iter_music_files(root):
+                files += 1
+                if isinstance(music_file.tags, MP4Tags):
+                    try:
+                        genre_tags = [t.translate(punc_strip_tbl).lower() for t in music_file.tags["\xa9gen"]]
+                    except KeyError:
+                        genre_tags = []
+                    try:
+                        title_tags = [t.translate(punc_strip_tbl).lower() for t in music_file.tags["\xa9nam"]]
+                    except KeyError:
+                        title_tags = []
+                elif isinstance(music_file.tags, ID3):
+                    try:
+                        genre_tags = [t.translate(punc_strip_tbl).lower() for t in music_file.tags["TCON"]]
+                    except KeyError:
+                        genre_tags = []
+                    try:
+                        title_tags = [t.translate(punc_strip_tbl).lower() for t in music_file.tags["TIT2"]]
+                    except KeyError:
+                        title_tags = []
+                else:
+                    genre_tags, title_tags = [], []
+
+                if any("jpop" in t for t in genre_tags) or any("japanese" in t for t in title_tags):
+                    japanese += 1
+
+            if japanese == files:
+                category = "Japanese {}".format(category)
+
+            num = len(numbered_albums[category]) + 1
+            numbered_albums[category][num] = root
+
+    for cat, albums in sorted(numbered_albums.items()):
+        for num, path in sorted(albums.items()):
+            if not path.endswith("]"):
+                parent_dir = os.path.dirname(path)
+                album_dir = os.path.basename(path)
+                album_dir = "{} [{}{} {}]".format(album_dir, num, num_suffix(num), cat)
+                new_path = os.path.join(parent_dir, album_dir)
+                log.info("{}{} '{}' -> '{}'".format(prefix, verb, path, new_path))
+                if not dry_run:
+                    os.rename(path, new_path)
+            else:
+                log.info("Album already has correct name: {}".format(path))
+
+
+def num_suffix(num):
+    if 3 < num < 21:
+        return "th"
+
+    ones_place = str(num)[-1:]
+    if ones_place == "1":
+        return "st"
+    elif ones_place == "2":
+        return "nd"
+    elif ones_place == "3":
+        return "rd"
+    return "th"
+
+
+def fix_tags(paths, dry_run):
+    # TODO: Convert ` to '
+    prefix, verb1, verb2 = ("[DRY RUN] ", "Would add", "remove") if dry_run else ("", "Adding", "removing")
+
+    for music_file in iter_music_files(paths):
+        if not isinstance(music_file.tags, ID3):
+            log.warning("Skipping non-MP3: {}".format(music_file.filename))
+            continue
+
+        tdrc = music_file.tags.getall("TDRC")
+        txxx_date = music_file.tags.getall("TXXX:DATE")
+        if (not tdrc) and txxx_date:
+            file_date = txxx_date[0].text[0]
+
+            log.info("{}{} TDRC={} to {} and {} its TXXX:DATE tag".format(prefix, verb1, file_date, music_file.filename, verb2))
+            if not dry_run:
+                music_file.tags.add(TDRC(text=file_date))
+                music_file.tags.delall("TXXX:DATE")
+                music_file.tags.save(music_file.filename)
 
 
 def copy_tags(source_paths, dest_paths, tags, dry_run):
@@ -112,7 +275,6 @@ def copy_tags(source_paths, dest_paths, tags, dry_run):
     prefix, verb = ("[DRY RUN] ", "Would update") if dry_run else ("", "Updating")
 
     for music_file in iter_music_files(dest_paths):
-
         path = music_file.filename
         content_hash = tagless_sha256sum(music_file)
         if content_hash in src_tags:
@@ -256,6 +418,9 @@ def tagless_sha256sum(music_file):
 
 
 def iter_music_files(paths, include_backups=False):
+    if isinstance(paths, str):
+        paths = [paths]
+
     for path in paths:
         if os.path.isdir(path):
             for root, dirs, files in os.walk(path):
@@ -318,18 +483,38 @@ def tag_repr(tag_val, max_len=125, sub_len=25, use_grapheme=False):
 def remove_tags(paths, tag_ids, dry_run):
     prefix, verb = ("[DRY RUN] ", "Would remove") if dry_run else ("", "Removing")
 
-    tag_ids = sorted({tag_id.upper() for tag_id in tag_ids})
+    # tag_ids = sorted({tag_id.upper() for tag_id in tag_ids})
+    tag_id_pats = sorted({tag_id for tag_id in tag_ids})
     log.info("{}{} the following tags from all files:".format(prefix, verb))
     for tag_id in tag_ids:
         log.info("\t{}: {}".format(tag_id, tag_name_map.get(tag_id, "[unknown]")))
 
     i = 0
     for music_file in iter_music_files(paths):
+        if isinstance(music_file.tags, MP4Tags):
+            # file_tag_ids = {tag_id.upper(): tag_id for tag_id in music_file.tags}
+            pass
+        elif isinstance(music_file.tags, ID3):
+            pass
+        else:
+            raise TypeError("Unhandled tag type: {}".format(type(music_file.tags).__name__))
+
         to_remove = {}
-        for tag_id in tag_ids:
-            file_tags = music_file.tags.getall(tag_id)
-            if file_tags:
-                to_remove[tag_id] = file_tags
+
+        for tag, val in sorted(music_file.tags.items()):
+            if any(fnmatch(tag, pat) for pat in tag_id_pats):
+                to_remove[tag] = val
+
+        # for tag_id in tag_ids:
+        #     if isinstance(music_file.tags, MP4Tags):
+        #         if tag_id in file_tag_ids:
+        #             case_sensitive_tag_id = file_tag_ids[tag_id]
+        #             to_remove[case_sensitive_tag_id] = music_file.tags[case_sensitive_tag_id]
+        #
+        #     elif isinstance(music_file.tags, ID3):
+        #         file_tags = music_file.tags.getall(tag_id)
+        #         if file_tags:
+        #             to_remove[tag_id] = file_tags
 
         if to_remove:
             if i:
@@ -346,7 +531,10 @@ def remove_tags(paths, tag_ids, dry_run):
 
             if not dry_run:
                 for tag_id in to_remove:
-                    music_file.tags.delall(tag_id)
+                    if isinstance(music_file.tags, MP4Tags):
+                        del music_file.tags[tag_id]
+                    elif isinstance(music_file.tags, ID3):
+                        music_file.tags.delall(tag_id)
                 music_file.tags.save(music_file.filename)
             i += 1
         else:
@@ -355,6 +543,24 @@ def remove_tags(paths, tag_ids, dry_run):
     if not i:
         log.info("None of the provided files had the specified tags")
 
+def table_song_tags(paths):
+    rows = [TableBar()]
+    tags = set()
+    for music_file in iter_music_files(paths, include_backups=True):
+        row = defaultdict(str, path=music_file.filename)
+        for tag, val in sorted(music_file.tags.items()):
+            tag = ":".join(tag.split(":")[:2])
+            tags.add(tag)
+            row[tag] = tag_repr(str(val), 10, 5) if tag.startswith("APIC") else tag_repr(str(val))
+        rows.append(row)
+
+    desc_row = {tag: tag_name_map.get(tag[:4], "[unknown]") for tag in tags}
+    desc_row["path"] = "[Tag Description]"
+    rows.insert(0, desc_row)
+    cols = [SimpleColumn(tag) for tag in sorted(tags)]
+    tbl = Table(SimpleColumn("path"), *cols, update_width=True)
+    tbl.print_rows(rows)
+
 
 def print_song_tags(paths, tags):
     tags = {tag.upper() for tag in tags} if tags else None
@@ -362,7 +568,14 @@ def print_song_tags(paths, tags):
     for music_file in iter_music_files(paths, include_backups=True):
         if i:
             print()
-        print("{} (ID3v{}.{}):".format(music_file.filename, *music_file.tags.version[:2]))
+
+        if isinstance(music_file.tags, MP4Tags):
+            print("{} (MP4):".format(music_file.filename))
+        elif isinstance(music_file.tags, ID3):
+            print("{} (ID3v{}.{}):".format(music_file.filename, *music_file.tags.version[:2]))
+        else:
+            raise TypeError("Unhandled tag type: {}".format(type(music_file.tags).__name__))
+
         tbl = Table(SimpleColumn("Tag"), SimpleColumn("Tag Name"), SimpleColumn("Value"), update_width=True)
         rows = []
         for tag, val in sorted(music_file.tags.items()):

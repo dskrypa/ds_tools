@@ -7,8 +7,9 @@
 import functools
 import logging
 import time
+from collections import OrderedDict
 from operator import attrgetter
-from threading import RLock
+from threading import Lock
 
 from .itertools import partitioned
 
@@ -31,6 +32,22 @@ class cached_property:
             return self
         value = obj.__dict__[self.func.__name__] = self.func(obj)
         return value
+
+
+class cached_classproperty:
+    def __init__(self, func):
+        self.__doc__ = func.__doc__
+        if not isinstance(func, (classmethod, staticmethod)):
+            func = classmethod(func)
+        self.func = func
+
+    def __get__(self, obj, cls):
+        try:
+            return self.value
+        except AttributeError:
+            # noinspection PyCallingNonCallable
+            value = self.value = self.func.__get__(obj, cls)()
+            return value
 
 
 class classproperty:
@@ -130,24 +147,80 @@ def timed(func):
     return wrapper
 
 
-def rate_limited(interval):
+def rate_limited(interval=0):
     """
     :param float interval: Interval between allowed invocations in seconds
     """
+    if isinstance(interval, (attrgetter, str)):
+        interval = attrgetter(interval) if isinstance(interval, str) else interval
+
     def decorator(func):
         last_call = 0
-        lock = RLock()
+        lock = Lock()
 
+        if isinstance(interval, attrgetter):
+            @functools.wraps(func)
+            def wrapper(self, *args, **kwargs):
+                nonlocal last_call, lock
+                obj_interval = interval(self)
+                with lock:
+                    elapsed = time.time() - last_call
+                    if elapsed < obj_interval:
+                        wait = obj_interval - elapsed
+                        log.debug("Rate limited method '{}' is being delayed {:,.3f} seconds".format(func.__name__, wait))
+                        time.sleep(wait)
+                    last_call = time.time()
+                    return func(*args, **kwargs)
+        else:
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                nonlocal last_call, lock
+                with lock:
+                    elapsed = time.time() - last_call
+                    if elapsed < interval:
+                        wait = interval - elapsed
+                        log.debug("Rate limited function '{}' is being delayed {:,.3f} seconds".format(func.__name__, wait))
+                        time.sleep(wait)
+                    last_call = time.time()
+                    return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def retry_on_exception(retries=0, delay=0, *exception_classes, warn=True):
+    """
+    Decorator to wrap function with a callable that waits and retries when the given exceptions are encountered
+
+    :param int retries: Number of times to retry; 0 (default) is equivalent to not using this wrapper
+    :param float delay: Number of seconds to wait between an exception and a retry
+    :param exception_classes: Exceptions to expect and gracefully retry upon catching
+    :param bool warn: [KW-only] Log a warning when an exception is encountered
+    :return: Decorator function that returns the wrapped/decorated function
+    """
+    def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            nonlocal last_call
-            with lock:
-                elapsed = time.time() - last_call
-                if elapsed < interval:
-                    wait_secs = interval - elapsed
-                    log.debug("Waiting {:,.3f} seconds before executing rate limited function '{}'".format(wait_secs, func.__name__))
-                    time.sleep(wait_secs)
-                last_call = time.time()
-                return func(*args, **kwargs)
+            nonlocal retries, delay, warn, exception_classes
+            last_action = 0
+            while retries >= 0:
+                retries -= 1
+                remaining = delay - (time.time() - last_action)
+                if remaining > 0:
+                    time.sleep(remaining)
+                last_action = time.time()
+                try:
+                    return func(*args, **kwargs)
+                except exception_classes as e:
+                    if retries >= 0:
+                        if warn:
+                            fn_args = ", ".join(map(str, args)) if args else ""
+                            if kwargs:
+                                if fn_args:
+                                    fn_args += ", "
+                                fn_args += ", ".join("{}={}".format(k, v) for k, v in OrderedDict(kwargs).items())
+                            fn_str = "{}({}".format(func.__name__, fn_args)
+                            log.warning("Error calling {}: {}; retrying in {}s".format(fn_str, e, delay))
+                    else:
+                        raise e
         return wrapper
     return decorator

@@ -4,7 +4,8 @@
 :author: Doug Skrypa
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
+from copy import deepcopy
 from itertools import chain
 
 __all__ = ["itemfinder", "chunked", "partitioned", "kwmerge", "merge", "flatten_mapping"]
@@ -74,6 +75,43 @@ def merge(*args, factory=None):
     for arg in args:
         merged.update(arg)
     return merged
+
+
+def nested_merge(a, b):
+    """
+    Merge the given dicts and any nested dicts that they contain.  Values from dict b will replace values from dict a if
+    there is a key conflict on a value that is not a dict.
+    """
+    merged = deepcopy(a)
+    for key, b_val in b.items():
+        try:
+            a_val = a[key]
+        except KeyError:
+            merged[key] = b_val
+        else:
+            if isinstance(a_val, MutableMapping) and isinstance(b_val, Mapping):
+                merged[key] = nested_merge(a_val, b_val)
+            else:
+                merged[key] = b_val
+    return merged
+
+
+def nvmap(func, key, seq):
+    """
+    Nested Value Map.  For each item in the given sequence, apply the function to the value of item[key], then yield the
+    item.
+    """
+    for val in seq:
+        val[key] = func(val[key])
+        yield val
+
+
+def vmap(func, mapping):
+    """Value Map.  Preserves the type of the original dict, and applies the function to each value in the given dict"""
+    obj = type(mapping)()
+    for k, v in mapping.items():
+        obj[k] = func(v)
+    return obj
 
 
 def flatten_mapping(mapping, delimiter="."):

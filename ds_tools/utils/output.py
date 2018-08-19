@@ -5,10 +5,12 @@ import json
 import logging
 import math
 import pprint
+import re
 import sys
 import types
+from collections import OrderedDict, namedtuple, UserDict
+from collections.abc import Mapping, Sized, Iterable, Container, KeysView
 from io import StringIO
-from collections import OrderedDict, namedtuple
 
 import grapheme
 import yaml
@@ -19,10 +21,11 @@ from .operator import replacement_itemgetter
 
 __all__ = [
     "uprint", "uerror", "Column", "SimpleColumn", "Table", "readable_bytes", "format_output", "format_percent",
-    "format_tiered", "print_tiered", "Printer", "to_bytes", "to_str"
+    "format_tiered", "print_tiered", "Printer", "to_bytes", "to_str", "TableBar"
 ]
 log = logging.getLogger("ds_tools.utils.output")
 
+ANSI_COLOR_RX = re.compile("(\033\[\d+m)(.*)(\033\[\d+m)")
 _uout = open(sys.stdout.fileno(), mode="w", encoding="utf-8", buffering=1)
 _uerr = open(sys.stderr.fileno(), mode="w", encoding="utf-8", buffering=1)
 
@@ -54,6 +57,20 @@ def uerror(msg):
     _uerr.flush()
 
 
+class TableFormatException(Exception):
+    def __init__(self, scope, fmt_str, value, exc, *args):
+        self.scope = scope
+        self.fmt_str = fmt_str
+        self.value = value
+        self.exc = exc
+        super().__init__(*args)
+
+    def __str__(self):
+        msg_fmt = "Error formatting {}: {} {}\nFormat string: '{}'\nContent: {}"
+        return msg_fmt.format(self.scope, type(self.exc).__name__, self.exc, self.fmt_str, self.value)
+
+
+
 class Column:
     """
     An output column metadata handler
@@ -74,7 +91,7 @@ class Column:
     :param str align: String formatting alignment indicator (default: left; example: ">" for right)
     :param str ftype: String formatting type/format indicator (default: none; example: ",d" for thousands indicator)
     """
-    def __init__(self, key, title, width, display=True, align="", ftype=""):
+    def __init__(self, key, title, width, display=True, align="", ftype="", formatter=None):
         self.key = key
         self.title = str(title)
         self._width = 0
@@ -82,6 +99,7 @@ class Column:
         self.display = display
         self.align = align
         self.ftype = ftype
+        self.formatter = formatter
 
     def __repr__(self):
         return "<{}('{}', '{}')>".format(type(self).__name__, self.key, self.title)
@@ -93,6 +111,27 @@ class Column:
     @property
     def header_fmt(self):
         return "{{0[{}]:{}{}}}".format(self.key, self.align, self.width)
+
+    def format(self, value):
+        try:
+            if self.formatter:
+                try:
+                    col = self.row_fmt.format({self.key: value})
+                except ValueError:
+                    col = self.header_fmt.format({self.key: value})
+                return self.formatter(value, col)
+            else:
+                prefix, suffix = "", ""
+                if isinstance(value, str):
+                    m = ANSI_COLOR_RX.match(value)
+                    if m:
+                        prefix, value, suffix = m.groups()
+                try:
+                    return prefix + self.row_fmt.format({self.key: value}) + suffix
+                except ValueError:
+                    return prefix + self.header_fmt.format({self.key: value}) + suffix
+        except TypeError as e:
+            raise TableFormatException("column", self.row_fmt, value, e) from e
 
     @property
     def width(self):
@@ -135,8 +174,13 @@ class SimpleColumn(Column):
         super().__init__(title, title, width, display, align, ftype)
 
 
+class TableBar:
+    def __getitem__(self, item):
+        return None
+
+
 class Table:
-    def __init__(self, *columns, mode="table", auto_header=True, auto_bar=True, sort=False, sort_by=None, update_width=False):
+    def __init__(self, *columns, mode="table", auto_header=True, auto_bar=True, sort=False, sort_by=None, update_width=False, fix_ansi_width=False):
         if mode not in ("table", "csv"):
             raise ValueError("Invalid output mode: {}".format(mode))
         self.mode = mode
@@ -146,6 +190,13 @@ class Table:
         self.sort = sort
         self.sort_by = sort_by
         self.update_width = update_width
+        self.fix_ansi_width = fix_ansi_width
+
+    def __getitem__(self, item):
+        for c in self.columns:
+            if c.key == item:
+                return c
+        raise KeyError(item)
 
     @cached_property
     def keys(self):
@@ -166,7 +217,11 @@ class Table:
     @cached_property
     def row_fmt(self):
         return "  ".join(c.row_fmt for c in self.columns)
-    
+
+    @cached_property
+    def has_custom_formatter(self):
+        return any(c.formatter is not None for c in self.columns)
+
     @cached_property
     def header_row(self):
         if self.mode == "csv":
@@ -248,10 +303,21 @@ class Table:
         elif self.mode == "table":
             # Don't str() the row_dict[k] value! That will break type-specific format strings (e.g., int/float)
             row = {k: row_dict[k] if row_dict[k] is not None else "" for k in self.keys}
-            try:
-                return self.row_fmt.format(row).rstrip()
-            except ValueError:
-                return self.header_fmt.format(row).rstrip()
+
+            if self.has_custom_formatter:
+                row_str = "  ".join(c.format(row[c.key]) for c in self.columns)
+            else:
+                try:
+                    row_str = self.row_fmt.format(row)
+                    if self.fix_ansi_width and ANSI_COLOR_RX.match(row_str):
+                        row_str = "  ".join(c.format(row[c.key]) for c in self.columns)
+                except TypeError as e:
+                    raise TableFormatException("row", self.row_fmt, row, e) from e
+                except ValueError:
+                    row_str = self.header_fmt.format(row)
+                    if self.fix_ansi_width and ANSI_COLOR_RX.match(row_str):
+                        row_str = "  ".join(c.format(row[c.key]) for c in self.columns)
+            return row_str.rstrip()
 
     def print_row(self, row_dict, color=None):
         if self.auto_header:
@@ -301,7 +367,10 @@ class Table:
                 self.csv_writer.writerows(rows)
             elif self.mode == "table":
                 for row in rows:
-                    uprint(self.format_row(row))
+                    if isinstance(row, TableBar) or row is TableBar:
+                        self.print_bar()
+                    else:
+                        uprint(self.format_row(row))
         except IOError as e:
             if e.errno == 32:   #broken pipe
                 return
@@ -380,6 +449,54 @@ def format_tiered(obj):
     return lines
 
 
+def pseudo_yaml(obj, indent=4):
+    lines = []
+    if isinstance(obj, Mapping):
+        if len(obj) < 1:
+            return pseudo_yaml("{}", indent)
+        pad = " " * indent
+        key_list = obj.keys() if isinstance(obj, OrderedDict) else sorted(obj.keys())
+        for k in key_list:
+            fk = k.ljust(indent)
+            val = obj[k]
+            if isinstance(val, (Mapping, Sized, Iterable, Container)):
+                if isinstance(val, str):
+                    if "\n" in val:
+                        lines.append("{}:".format(fk))
+                        for line in val.splitlines():
+                            lines.append("{}{}".format(pad, line))
+                    else:
+                        lines.append("{}: {}".format(fk, val))
+                else:
+                    lines.append("{}:".format(fk))
+                    for sub_obj in pseudo_yaml(val, indent):
+                        lines.append("{}{}".format(pad, sub_obj))
+            else:
+                lines.append("{}: {}".format(fk, val))
+    elif all(isinstance(obj, abc_type) for abc_type in (Sized, Iterable, Container)):
+        if len(obj) < 1:
+            return pseudo_yaml("[]", indent)
+        pad = " " * indent
+        fmtA = "{}- {{}}".format(pad)
+        fmtB = "{}  {{}}".format(pad)
+        for val in obj:
+            if isinstance(val, (Mapping, Sized, Iterable, Container)):
+                sub_objs = val.splitlines() if isinstance(val, str) else pseudo_yaml(val, indent)
+                for j, sub_obj in enumerate(sub_objs):
+                    if j == 0:
+                        lines.append(fmtA.format(sub_obj))
+                    else:
+                        lines.append(fmtB.format(sub_obj))
+            else:
+                lines.append(fmtA.format(val))
+    else:
+        try:
+            lines.append(str(obj))
+        except UnicodeEncodeError as e:
+            lines.append(obj)
+    return lines
+
+
 def print_tiered(obj):
     for line in format_tiered(obj):
         uprint(line)
@@ -387,12 +504,20 @@ def print_tiered(obj):
 
 class JSONSetEncoder(json.JSONEncoder):
     def default(self, o):
-        if isinstance(o, set):
+        if isinstance(o, (set, KeysView)):
             return sorted(o)
         return super().default(o)
 
 
+class IndentedYamlDumper(yaml.SafeDumper):
+    """This indents lists that are nested in dicts in the same way as the Perl yaml library"""
+    def increase_indent(self, flow=False, indentless=False):
+        return super().increase_indent(flow, False)
+
+
 def prep_for_yaml(obj):
+    if isinstance(obj, UserDict):
+        obj = obj.data
     if isinstance(obj, dict):
         return {prep_for_yaml(k): prep_for_yaml(v) for k, v in obj.items()}
     elif isinstance(obj, (list, set)):
@@ -401,14 +526,53 @@ def prep_for_yaml(obj):
         return obj
 
 
+def yaml_dump(data, force_single_yaml=False, indent_nested_lists=False):
+    """
+    Serialize the given data as YAML
+
+    :param data: Data structure to be serialized
+    :param bool force_single_yaml: Force a single YAML document to be created instead of multiple ones when the
+      top-level data structure is not a dict
+    :param bool indent_nested_lists: Indent lists that are nested in dicts in the same way as the Perl yaml library
+    :return str: Yaml-formatted data
+    """
+    content = prep_for_yaml(data)
+    kwargs = {"explicit_start": True, "width": float("inf"), "allow_unicode": True}
+    if indent_nested_lists:
+        kwargs["Dumper"] = IndentedYamlDumper
+
+    if isinstance(content, (dict, str)) or force_single_yaml:
+        kwargs["default_flow_style"] = False
+        formatted = yaml.dump(content, **kwargs)
+    else:
+        formatted = yaml.dump_all(content, **kwargs)
+    if formatted.endswith("...\n"):
+        formatted = formatted[:-4]
+    if formatted.endswith("\n"):
+        formatted = formatted[:-1]
+    return formatted
+
+
 class Printer:
-    formats = ["json", "json-pretty", "json-compact", "text", "yaml", "pprint", "csv", "table"]
+    formats = ["json", "json-pretty", "json-compact", "text", "yaml", "pprint", "csv", "table", "pseudo-yaml", "json-lines", "plain"]
 
     def __init__(self, output_format):
         if output_format is None or output_format in Printer.formats:
             self.output_format = output_format
         else:
             raise ValueError("Invalid output format: {} (valid options: {})".format(output_format, Printer.formats))
+
+    @staticmethod
+    def jsonc(content):
+        return json.dumps(content, separators=(",", ":"), cls=JSONSetEncoder)
+
+    @staticmethod
+    def json(content):
+        return json.dumps(content, cls=JSONSetEncoder)
+
+    @staticmethod
+    def jsonp(content):
+        return json.dumps(content, sort_keys=True, indent=4, cls=JSONSetEncoder)
 
     def pformat(self, content, *args, **kwargs):
         if isinstance(content, types.GeneratorType):
@@ -419,19 +583,31 @@ class Printer:
             return json.dumps(content, sort_keys=True, indent=4, cls=JSONSetEncoder)
         elif self.output_format == "json-compact":
             return json.dumps(content, separators=(",", ":"), cls=JSONSetEncoder)
+        elif self.output_format == "json-lines":
+            if not isinstance(content, (list, set)):
+                raise TypeError("Expected list or set; found {}".format(type(content).__name__))
+            lines = ["["]
+            last = len(content) - 1
+            for i, val in enumerate(content):
+                suffix = "," if i < last else ""
+                lines.append(json.dumps(val, cls=JSONSetEncoder) + suffix)
+            lines.append("]\n")
+            return "\n".join(lines)
         elif self.output_format == "text":
-            return format_tiered(content)
-        elif self.output_format == "yaml":
-            content = prep_for_yaml(content)
-            if isinstance(content, dict) or kwargs.pop("force_single_yaml", False):
-                formatted = yaml.safe_dump(content, explicit_start=True, default_flow_style=False, width=float("inf"), allow_unicode=True)
+            return "\n".join(format_tiered(content))
+        elif self.output_format == "plain":
+            if isinstance(content, "str"):
+                return content
+            elif isinstance(content, Mapping):
+                return "\n".join("{}: {}".format(k, v) for k, v in sorted(content.items()))
+            elif all(isinstance(content, abc_type) for abc_type in (Sized, Iterable, Container)):
+                return "\n".join(sorted(map(str, content)))
             else:
-                formatted = yaml.safe_dump(content, explicit_start=True, width=float("inf"), allow_unicode=True)
-            if formatted.endswith("...\n"):
-                formatted = formatted[:-4]
-            if formatted.endswith("\n"):
-                formatted = formatted[:-1]
-            return formatted
+                return str(content)
+        elif self.output_format == "pseudo-yaml":
+            return "\n".join(pseudo_yaml(content))
+        elif self.output_format == "yaml":
+            return yaml_dump(content, kwargs.pop("force_single_yaml", False), kwargs.pop("indent_nested_lists", False))
         elif self.output_format == "pprint":
             return pprint.pformat(content)
         elif self.output_format in ("csv", "table"):
@@ -452,8 +628,6 @@ class Printer:
 
             if (i == 0) and gen_empty_error:
                 log.error(gen_empty_error)
-        elif self.output_format == "text":
-            print_tiered(content)
         elif self.output_format in ("csv", "table"):
             kwargs["mode"] = self.output_format
             try:
