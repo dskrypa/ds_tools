@@ -33,6 +33,8 @@ log = logging.getLogger("ds_tools.{}".format(__name__))
 
 # Translate whitespace characters (such as \n, \r, etc.) to their escape sequences
 WHITESPACE_TRANS_TBL = str.maketrans({c: c.encode("unicode_escape").decode("utf-8") for c in string.whitespace})
+RM_TAGS_MP4 = ["*itunes*", "??ID", "?cmt", "ownr", "xid "]
+RM_TAGS_ID3 = ["TXXX*", "PRIV*", "WXXX*", "COMM*", "TCOP"]
 
 # Monkey-patch Frame's repr so APIC and similar frames don't kill terminals
 _orig_frame_repr = Frame.__repr__
@@ -84,7 +86,10 @@ def main():
 
     rm_parser = sparsers.add_parser("remove", help="Remove specified tags from the given files")
     rm_parser.add_argument("path", nargs="+", help="One or more file/directory paths that contain music files")
-    rm_parser.add_argument("--tags", "-t", nargs="+", help="One or more tag IDs to remove from the given files")
+
+    rm_group = rm_parser.add_mutually_exclusive_group()
+    rm_group.add_argument("--tags", "-t", nargs="+", help="One or more tag IDs to remove from the given files")
+    rm_group.add_argument("--recommended", "-r", action="store_true", help="Remove recommended tags")
 
     cp_parser = sparsers.add_parser("copy", help="Copy specified tags from one set of files to another")
     cp_parser.add_argument("--source", "-s", nargs="+", help="One or more file/directory paths that contain music files or ID3 info backups", required=True)
@@ -115,7 +120,7 @@ def main():
         else:
             print_song_tags(args.path, args.tags)
     elif args.action == "remove":
-        remove_tags(args.path, args.tags, args.dry_run)
+        remove_tags(args.path, args.tags, args.dry_run, args.recommended)
     elif args.action == "fix":
         fix_tags(args.path, args.dry_run)
     elif args.action == "copy":
@@ -138,14 +143,23 @@ def sort_albums(path, dry_run):
     for root, dirs, files in os.walk(path):
         parent_dir = os.path.dirname(root)
         album_dir = os.path.basename(root)
-        if files and not album_dir.startswith("["):
+        if files and (not dirs) and (not album_dir.startswith("[")):
             dates = set()
             skip_dir = False
             for music_file in iter_music_files(root):
                 if isinstance(music_file.tags, MP4Tags):
-                    dates.add(str(music_file.tags["\xa9day"][0]))
+                    date_tag = str(music_file.tags["\xa9day"][0]).strip()
+                    if date_tag:
+                        dates.add(date_tag)
                 elif isinstance(music_file.tags, ID3):
-                    dates.add(str(music_file.tags["TDRC"].text[0]))
+                    try:
+                        date_tag = str(music_file.tags["TDRC"].text[0]).strip()
+                        if date_tag:
+                            dates.add(date_tag)
+                    except KeyError as e:
+                        log.warning("Skipping dir with missing TDRC in file: {}".format(music_file.filename))
+                        skip_dir = True
+                        break
                 else:
                     log.warning("Skipping dir with unhandled file type: {} ({})".format(root, type(music_file.tags).__name__))
                     skip_dir = True
@@ -173,14 +187,19 @@ def sort_albums(path, dry_run):
                 if not dry_run:
                     os.rename(root, new_path)
 
-    numbered_albums = defaultdict(dict)
+    numbered_albums = defaultdict(lambda: defaultdict(dict))
 
     for root, dirs, files in os.walk(path):
         parent_dir = os.path.dirname(root)
+        artist_dir = os.path.dirname(parent_dir)
         album_dir = os.path.basename(root)
         category_dir = os.path.basename(parent_dir)
 
-        if (category_dir in ("Albums", "Mini Albums")) and files and album_dir.startswith("[") and ("summer mini album" not in album_dir.lower()):
+        if (category_dir in ("Albums", "Mini Albums")) and files and album_dir.startswith("["):
+            album_dir_lower = album_dir.lower()
+            if any(skip_reason in album_dir_lower for skip_reason in ("summer mini album", "reissue", "repackage")):
+                log.debug("Skipping non-standard album: {}".format(album_dir))
+                continue
             category = category_dir[:-1]
 
             files, japanese = 0, 0
@@ -210,24 +229,26 @@ def sort_albums(path, dry_run):
                 if any("jpop" in t for t in genre_tags) or any("japanese" in t for t in title_tags):
                     japanese += 1
 
-            if japanese == files:
+            log.debug("{}: Japanese: {:.2%}".format(root, japanese / files))
+            if japanese / files >= .45:
                 category = "Japanese {}".format(category)
 
-            num = len(numbered_albums[category]) + 1
-            numbered_albums[category][num] = root
+            num = len(numbered_albums[artist_dir][category]) + 1
+            numbered_albums[artist_dir][category][num] = root
 
-    for cat, albums in sorted(numbered_albums.items()):
-        for num, path in sorted(albums.items()):
-            if not path.endswith("]"):
-                parent_dir = os.path.dirname(path)
-                album_dir = os.path.basename(path)
-                album_dir = "{} [{}{} {}]".format(album_dir, num, num_suffix(num), cat)
-                new_path = os.path.join(parent_dir, album_dir)
-                log.info("{}{} '{}' -> '{}'".format(prefix, verb, path, new_path))
-                if not dry_run:
-                    os.rename(path, new_path)
-            else:
-                log.info("Album already has correct name: {}".format(path))
+    for artist_dir, categorized_albums in sorted(numbered_albums.items()):
+        for cat, albums in sorted(categorized_albums.items()):
+            for num, path in sorted(albums.items()):
+                if not path.endswith("]"):
+                    parent_dir = os.path.dirname(path)
+                    album_dir = os.path.basename(path)
+                    album_dir = "{} [{}{} {}]".format(album_dir, num, num_suffix(num), cat)
+                    new_path = os.path.join(parent_dir, album_dir)
+                    log.info("{}{} '{}' -> '{}'".format(prefix, verb, path, new_path))
+                    if not dry_run:
+                        os.rename(path, new_path)
+                else:
+                    log.info("Album already has correct name: {}".format(path))
 
 
 def num_suffix(num):
@@ -250,7 +271,7 @@ def fix_tags(paths, dry_run):
 
     for music_file in iter_music_files(paths):
         if not isinstance(music_file.tags, ID3):
-            log.warning("Skipping non-MP3: {}".format(music_file.filename))
+            log.debug("Skipping non-MP3: {}".format(music_file.filename))
             continue
 
         tdrc = music_file.tags.getall("TDRC")
@@ -480,22 +501,25 @@ def tag_repr(tag_val, max_len=125, sub_len=25, use_grapheme=False):
     return tag_val
 
 
-def remove_tags(paths, tag_ids, dry_run):
+def remove_tags(paths, tag_ids, dry_run, recommended):
     prefix, verb = ("[DRY RUN] ", "Would remove") if dry_run else ("", "Removing")
 
     # tag_ids = sorted({tag_id.upper() for tag_id in tag_ids})
-    tag_id_pats = sorted({tag_id for tag_id in tag_ids})
+    tag_id_pats = sorted({tag_id for tag_id in tag_ids}) if tag_ids else []
     log.info("{}{} the following tags from all files:".format(prefix, verb))
-    for tag_id in tag_ids:
-        log.info("\t{}: {}".format(tag_id, tag_name_map.get(tag_id, "[unknown]")))
+    if tag_ids:
+        for tag_id in tag_ids:
+            log.info("\t{}: {}".format(tag_id, tag_name_map.get(tag_id, "[unknown]")))
 
     i = 0
     for music_file in iter_music_files(paths):
         if isinstance(music_file.tags, MP4Tags):
+            if recommended:
+                tag_id_pats = RM_TAGS_MP4
             # file_tag_ids = {tag_id.upper(): tag_id for tag_id in music_file.tags}
-            pass
         elif isinstance(music_file.tags, ID3):
-            pass
+            if recommended:
+                tag_id_pats = RM_TAGS_ID3
         else:
             raise TypeError("Unhandled tag type: {}".format(type(music_file.tags).__name__))
 
@@ -503,7 +527,7 @@ def remove_tags(paths, tag_ids, dry_run):
 
         for tag, val in sorted(music_file.tags.items()):
             if any(fnmatch(tag, pat) for pat in tag_id_pats):
-                to_remove[tag] = val
+                to_remove[tag] = val if isinstance(val, list) else [val]
 
         # for tag_id in tag_ids:
         #     if isinstance(music_file.tags, MP4Tags):
@@ -639,7 +663,12 @@ def count_tag_types(paths):
             unique_values[tag][str(val)] += 1
 
         unique_tags.update(tag_set)
-        id3_versions.update(["ID3v{}.{}".format(*music_file.tags.version[:2])])
+        if isinstance(music_file.tags, MP4Tags):
+            pass
+        elif isinstance(music_file.tags, ID3):
+            id3_versions.update(["ID3v{}.{}".format(*music_file.tags.version[:2])])
+        else:
+            log.warning("{}: Unhandled tag type: {}".format(music_file.filename, type(music_file.tags).__name__))
 
     tag_rows = []
     for tag in unique_tags:
