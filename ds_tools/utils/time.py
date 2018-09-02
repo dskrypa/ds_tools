@@ -4,8 +4,10 @@
 :author: Doug Skrypa
 """
 
-import time
+import logging
+import re
 from datetime import datetime
+from _strptime import TimeRE    # Needed to work around timezone handling limitations
 
 import pytz
 from tzlocal import get_localzone
@@ -14,6 +16,7 @@ __all__ = [
     "TZ_LOCAL", "TZ_UTC", "ISO8601", "DATETIME_FMT", "DATE_FMT", "TIME_FMT", "now", "epoch2str", "str2epoch",
     "format_duration", "datetime_with_tz", "localize", "as_utc"
 ]
+log = logging.getLogger("ds_tools.utils.time")
 
 TZ_UTC = pytz.utc
 TZ_LOCAL = get_localzone()
@@ -25,6 +28,10 @@ DATE_FMT = "%Y-%m-%d"
 TIME_FMT = "%H:%M:%S %Z"
 TIME_FMT_NO_TZ = "%H:%M:%S"
 TZ_ALIAS_MAP = {"HKT": "Asia/Hong_Kong", "NYT": "America/New_York"}
+
+time_re = TimeRE()
+time_re["z"] = r"(?P<z>[+-]\d\d:?[0-5]\d)"  # Allow ':' in timezone offset notation
+time_re["Z"] = r"(?P<Z>[0-9A-Za-z_/+-]+)"   # Allow any timezone possibly supported by pytz
 
 
 def _get_tz(tz):
@@ -38,31 +45,80 @@ def _get_tz(tz):
             raise e
 
 
+def _tokenize_datetime(dt, fmt):
+    dt = str(dt)
+    time_rx = time_re.compile(fmt)
+    m = time_rx.match(dt)
+    if not m:
+        raise ValueError("time data {!r} does not match format {!r}".format(dt, fmt))
+    if len(dt) != m.end():
+        raise ValueError("unconverted data remains: {}".format(dt[m.end():]))
+    return m.groupdict()
+
+
+def _recompile_datetime(tokens, fmt):
+    dt_str = fmt
+    for token, value in tokens.items():
+        dt_str = dt_str.replace("%" + token, value)
+    return dt_str
+
+
 def datetime_with_tz(dt, fmt=DATETIME_FMT_NO_TZ, tz=None):
     """
     Converts the given timestamp string to a datetime object, and ensures that its tzinfo is set.
+
+    Handles ``%z``=``[+-]\d\d:?[0-5]\d`` (Python's default strptime only supports ``[+-]\d\d[0-5]\d``)\n
+    Handles long-form ``%Z`` values provided in ``dt`` (e.g., ``America/New_York``)
 
     :param str|float|datetime dt: A timestamp string/float or datetime object
     :param str fmt: Time format used by the given input string
     :param tz: A :class:`datetime.tzinfo` or str timezone name to use if not parsed from dt (default: local)
     :return datetime: A :class:`datetime.datetime` object with tzinfo set
     """
-    original = dt
-
+    original_dt = dt
+    original_fmt = fmt
+    tokens = {}
     if isinstance(dt, str):
-        dt = datetime.strptime(dt, fmt)
+        if tz and re.search("(?<!%)%(%%)*(?!%)[zZ]", fmt):      # Odd number of preceding % => unescaped %z/%Z
+            tokens = _tokenize_datetime(dt, fmt)
+            fmt = fmt.replace("%z", "").replace("%Z", "")
+            dt = _recompile_datetime(tokens, fmt)
+            for tok in ("z", "Z"):
+                if tok in tokens:
+                    log.debug("Discarding %{}='{}' from '{}' due to provided tz={!r}".format(tok, tokens[tok], original_dt, tz))
+
+        try:
+            dt = datetime.strptime(dt, fmt)
+        except ValueError as e:
+            if "does not match format" in str(e) and "%z" in fmt.lower():
+                tokens = tokens or _tokenize_datetime(dt, fmt)
+
+                if ("z" in tokens) and (":" in tokens["z"]):
+                    tokens["z"] = tokens["z"].replace(":", "")
+                    dt = datetime.strptime(_recompile_datetime(tokens, fmt), fmt)
+                elif "Z" in tokens:
+                    alt_fmt = fmt.replace("%Z", "")
+                    dt = datetime.strptime(_recompile_datetime(tokens, alt_fmt), alt_fmt)
+                else:
+                    raise e
+            else:
+                raise e
     elif isinstance(dt, (int, float)):
         dt = datetime.fromtimestamp(dt)
 
     if not dt.tzinfo:
-        # datetime.strptime discards TZ
+        # datetime.strptime discards TZ when provided via %Z but retains it via %z
         if tz is not None:
             tz = _get_tz(tz)
         else:
-            try:
-                tz = _get_tz(time.strptime("%Z", time.strptime(original, fmt)))
-            except Exception:
-                tz = _get_tz(None)
+            if (not tokens) and ("%Z" in fmt):
+                tokens = _tokenize_datetime(dt, fmt)
+
+            if tokens.get("Z"):
+                tz = _get_tz(tokens["Z"])
+            else:
+                log.debug("Defaulting to tz={!r} for datatime without %Z or %z: '{}'".format(TZ_LOCAL, original_dt))
+                tz = TZ_LOCAL
         dt = tz.localize(dt)
     return dt
 

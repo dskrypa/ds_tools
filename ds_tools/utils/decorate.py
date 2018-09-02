@@ -14,7 +14,7 @@ from threading import Lock
 from .itertools import partitioned
 
 __all__ = ["cached_property", "classproperty", "partitioned_exec", "trace_entry", "timed", "rate_limited"]
-log = logging.getLogger("ds_tools.decorate")
+log = logging.getLogger("ds_tools.utils.decorate")
 
 
 class cached_property:
