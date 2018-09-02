@@ -9,7 +9,7 @@ from tempfile import NamedTemporaryFile
 
 from .output import Printer
 
-__all__ = ["cdiff", "cdiff_json", "cdiff_yaml"]
+__all__ = ["cdiff", "cdiff_objs"]
 
 
 def cdiff(path1, path2):
