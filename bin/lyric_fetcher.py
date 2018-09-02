@@ -21,6 +21,7 @@ from ds_tools.utils import Table, SimpleColumn, validate_or_make_dir, soupify, f
 
 log = logging.getLogger("ds_tools.{}".format(__name__))
 
+DEFAULT_SITE = "colorcodedlyrics"
 SITES = ("colorcodedlyrics", "klyrics")
 CACHE_DIR = "/var/tmp/script_cache"
 TIDY_PATH = "C:/unix/home/user/lib/tidy-5.6.0-vc14-64b/bin/tidy.dll"
@@ -52,6 +53,8 @@ HTML_TEMPLATE = """<html>
 
 def main():
     parser = argparse.ArgumentParser(description="Lyric Fetcher")
+    parser.add_argument("action", choices=("get", "search", "hybrid_get", "index"), help="Action to perform")
+
     parser.add_argument("song", help="colorcodedlyrics.com endpoint")
     parser.add_argument("--title", "-t", help="Page title to use (default: last part of song endpoint)")
 
@@ -65,11 +68,22 @@ def main():
 
     parser.add_argument("--size", "-z", type=int, default=12, help="Font size to use")
     parser.add_argument("--verbose", "-v", action="count", help="Print more verbose log info (may be specified multiple times to increase verbosity)")
-    parser.add_argument("--site", "-S", choices=SITES, default="colorcodedlyrics", help="Site from which lyrics should be retrieved (default: %(default)s)")
+
+    parser.add_argument("--site", "-S", choices=SITES, default=DEFAULT_SITE, help="Site from which lyrics should be retrieved (default: %(default)s)")
+    parser.add_argument("--korean", "-k", choices=SITES, help="Site from which Korean lyrics should be retrieved")
+    parser.add_argument("--english", "-e", choices=SITES, help="Site from which the English translation should be retrieved")
+
     args = parser.parse_args()
     LogManager.create_default_logger(args.verbose, log_path=None)
 
-    if args.site == "colorcodedlyrics":
+    if args.korean and args.english and ((args.site != DEFAULT_SITE) or ("-S" in sys.argv or "--site" in sys.argv)):
+        raise ValueError("You can only provide --site / -S if it is the source of both the Korean lyrics and the English translation")
+    elif (args.korean and not args.english) or (args.english and not args.korean):
+        raise ValueError("Both --english / -e and --korean / -k are required if one is specified")
+
+    if args.korean and args.english:
+        lf = HybridLyricFetcher()
+    elif args.site == "colorcodedlyrics":
         lf = ColorCodedLyricFetcher()
     elif args.site == "klyrics":
         lf = KlyricsLyricFetcher()
@@ -86,13 +100,10 @@ def main():
 
 class LyricFetcher(GenericRestClient, metaclass=ABCMeta):
     def __init__(self, *args, **kwargs):
-        validate_or_make_dir(CACHE_DIR)
         super().__init__(*args, **kwargs)
+        self._cache_dir = os.path.join(CACHE_DIR, self.host)
+        validate_or_make_dir(self._cache_dir)
         fix_html_prettify()
-
-    @abstractmethod
-    def search(self, query):
-        return None
 
     @abstractmethod
     def print_search_results(self, query):
@@ -105,6 +116,12 @@ class LyricFetcher(GenericRestClient, metaclass=ABCMeta):
         :return dict: Mapping of {"Korean": list(lyrics), "English": list(lyrics), "title": title}
         """
         return {}
+
+    def get_korean_lyrics(self, song):
+        return self.get_lyrics(song)["Korean"]
+
+    def get_english_translation(self, song):
+        return self.get_lyrics(song)["English"]
 
     def process_lyrics(self, song, title=None, size=12):
         lyrics = self.get_lyrics(song)
@@ -175,27 +192,89 @@ class LyricFetcher(GenericRestClient, metaclass=ABCMeta):
             f.write(prettified)
 
     def get(self, endpoint, **kwargs):
-        cache_file = "{}/get_{}_{}.html".format(CACHE_DIR, self.host, endpoint.replace("/", "_"))
+        cache_file = "{}/get_{}.html".format(self._cache_dir, endpoint.replace("/", "_"))
+
+        if not kwargs.get("params"):
+            if os.path.exists(cache_file):
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    return f.read()
+
+        resp = super().get(endpoint, **kwargs)
+
+        if not kwargs.get("params"):
+            with open(cache_file, "w", encoding="utf-8") as f:
+                f.write(resp.text)
+
+        return resp.text
+
+    def search(self, query):
+        cache_file = "{}/search_{}.html".format(self._cache_dir, query.replace("/", "_"))
         if os.path.exists(cache_file):
             with open(cache_file, "r", encoding="utf-8") as f:
                 return f.read()
 
-        resp = super().get(endpoint, **kwargs)
+        resp = self.get("/", params={"s": query})
         with open(cache_file, "w", encoding="utf-8") as f:
-            f.write(resp.text)
+            f.write(resp)
 
-        return resp.text
+        return resp
+
+
+class HybridLyricFetcher(LyricFetcher):
+    # noinspection PyMissingConstructor
+    def __init__(self, korean_lf, eng_lf):
+        self.korean_lf = korean_lf
+        self.eng_lf = eng_lf
+        self._cache_dir = os.path.join(CACHE_DIR, self.host)
+        validate_or_make_dir(self._cache_dir)
+        fix_html_prettify()
+
+    def get_lyrics(self, song, title=None):
+        """
+        :param str song: Song endpoint for lyrics
+        :return dict: Mapping of {"Korean": list(lyrics), "English": list(lyrics), "title": title}
+        """
+        return {"Korean": self.korean_lf.get_korean_lyrics(song), "English": self.eng_lf.get_english_translation(song)}
+
+
+class LyricsTranslateLyricFetcher(LyricFetcher):
+    def __init__(self):
+        super().__init__("lyricstranslate.com", proto="https")
+
+    def search(self, artist):
+        return self.get("en/translations/0/328/{}/none/none/0/0/0/0".format(artist))
+
+    def print_search_results(self, query):
+        soup = soupify(self.search(query))
+        tbl = Table(SimpleColumn("Link", 0), SimpleColumn("Song", 0), update_width=True)
+        results = []
+        for post in soup.find_all("td", class_="ltsearch-translatenameoriginal"):
+            link = post.find("a").get("href")
+            text = post.get_text()
+            results.append({"Song": text, "Link": urlsplit(link).path[1:]})
+        tbl.print_rows(results)
+
+    def get_english_translation(self, song):
+        return self.get_lyrics(song)["English"]
+
+    # TODO: get_lyrics
+    # https://lyricstranslate.com/en/piano-man-piano-man.html
+    # TODO: Hybrid source - other for hangul, this for english
 
 
 class KlyricsLyricFetcher(LyricFetcher):
     def __init__(self):
         super().__init__("klyrics.net", proto="https")
 
-    def search(self, query):
-        return None
-
     def print_search_results(self, query):
-        return None
+        soup = soupify(self.search(query))
+        tbl = Table(SimpleColumn("Link", 0), SimpleColumn("Song", 0), update_width=True)
+        results = []
+        for post in soup.find_all("h3", class_="entry-title"):
+            link = post.find("a").get("href")
+            text = post.get_text()
+            results.append({"Song": text, "Link": urlsplit(link).path[1:]})
+        tbl.print_rows(results)
 
     def get_lyrics(self, song, title=None):
         lyrics = {"Korean": [], "English": [], "title": title}
@@ -211,8 +290,11 @@ class KlyricsLyricFetcher(LyricFetcher):
             else:
                 continue
 
+            log.debug("Found {} section".format(lang))
+
             ele = h2.next_sibling
             while ele.name in (None, "p"):
+                log.log(9, "Processing element: <{0}>{1}</{0}>".format(ele.name, ele))
                 if ele.name == "p":
                     lines = [l for l in ele.text.replace("<br/>", "\n").splitlines() if l]
                     log.log(19, "{}: found stanza with {} lines".format(lang, len(lines)))
@@ -269,18 +351,6 @@ class ColorCodedLyricFetcher(LyricFetcher):
             except Exception as e:
                 print("(none)")
             print()
-
-    def search(self, query):
-        cache_file = "{}/search_{}.html".format(CACHE_DIR, query.replace(" ", "_"))
-        if os.path.exists(cache_file):
-            with open(cache_file, "r", encoding="utf-8") as f:
-                return f.read()
-
-        resp = super().get("/", params={"s": query})
-        with open(cache_file, "w", encoding="utf-8") as f:
-            f.write(resp.text)
-
-        return resp.text
 
     def print_search_results(self, query):
         soup = soupify(self.search(query))
