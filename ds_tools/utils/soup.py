@@ -9,8 +9,7 @@ import collections
 from bs4 import BeautifulSoup, DEFAULT_OUTPUT_ENCODING
 from bs4.element import AttributeValueWithCharsetSubstitution, EntitySubstitution, NavigableString, Tag, PageElement
 
-__all__ = ["soupify", "fix_html_prettify"
-]
+__all__ = ["soupify", "fix_html_prettify"]
 
 
 def soupify(html, mode="html.parser"):

@@ -6,22 +6,20 @@
 
 import logging
 import os
-from atexit import register
+from atexit import register as atexit_register
 from contextlib import suppress
 from weakref import WeakSet
 
 import requests
-from cachetools import TTLCache
 # from urllib3 import disable_warnings as disable_urllib3_warnings
 from wrapt import synchronized
 
 from .exceptions import CodeBasedRestException
-from .utils import cached
 
-__all__ = ["proxy_bypass_append", "requests_session", "http_cleanup", "GenericRestClient"]
+__all__ = ["proxy_bypass_append", "requests_session", "http_cleanup", "RestClient"]
 log = logging.getLogger("ds_tools.http")
 
-# disable_urllib3_warnings()
+# disable_urllib3_warnings()    # Mostly needed for dealing with un-verified SSL connections
 
 __instances = WeakSet()
 
@@ -52,21 +50,40 @@ def requests_session(http_proxy=None, https_proxy=None):
     return session
 
 
-class GenericRestClient:
+class RestClient:
     """
     :param str host: Hostname to communicate with
     :param str|int port: Port to use
-    :param str path_prefix: URL path prefix for all requests
-    :param str proto: Protocol to use (http, https, etc.)
+    :param str prefix: URL path prefix for all requests
+    :param str proto: Protocol to use (http, https, etc.) (default: http)
+    :param bool verify: Argument to pass in all requests governing SSL cert verification (see:
+      `requests.Session.request <http://docs.python-requests.org/en/master/api/#requests.Session.request>`_)
+    :param class exc: Exception class to raise on non-2xx responses (default: :class:`CodeBasedRestException`)
+    :param function session_factory: A function that accepts no arguments and returns a `requests.Session
+      <http://docs.python-requests.org/en/master/api/#requests.Session>`_ object (default: :func:`requests_session`)
     """
-    def __init__(self, host, port=None, path_prefix=None, proto="http"):
+    def __init__(self, host, port=None, *, prefix=None, proto="http", verify=None, exc=None, session_factory=None):
         self.host = host
         self.port = port
         self.proto = proto
-        self.path_prefix = path_prefix
+        self.path_prefix = prefix
+        self._exc_type = exc or CodeBasedRestException
+        self._verify_ssl = verify
+        self._session_factory = session_factory or requests_session
+        self.__session = None
+
+    @property
+    def port(self):
+        """The port to connect to; defined as a property so subclasses may use it as such"""
+        return self.__port
+
+    @port.setter
+    def port(self, value):
+        self.__port = value
 
     @property
     def path_prefix(self):
+        """A prefix for all URL paths that is used when generating the URL for a given REST endpoint"""
         return self._path_prefix
 
     @path_prefix.setter
@@ -87,24 +104,63 @@ class GenericRestClient:
         return self._url_fmt.format(endpoint if not endpoint.startswith("/") else endpoint[1:])
 
     @synchronized
-    @cached(TTLCache(1, 86400))
     def _get_session(self):
-        session = requests_session()
-        return session
+        if self.__session is None:
+            self.__session = self._session_factory()
+        return self.__session
 
     @property
     def session(self):
-        return self._get_session()
+        """
+        The `requests.Session <http://docs.python-requests.org/en/master/api/#requests.Session>`_ object to use for the
+        next request.
+        """
+        with synchronized(self):
+            return self._get_session()
 
-    def request(self, method, endpoint, *, raise_non_200=True, **kwargs):
+    @session.setter
+    def session(self, value):
+        with synchronized(self):
+            self.__session = value
+
+    def close(self):
+        with synchronized(self):
+            if self.__session is not None:
+                try:
+                    self.__session.close()
+                except Exception as e:
+                    log.debug("Encountered {} while closing {}: {}".format(type(e).__name__, self, e))
+                self.__session = None
+
+    def request(self, method, endpoint, *, raise_non_200=True, no_log=False, **kwargs):
+        """
+        Perform a generic request with the given HTTP method for the given endpoint.  Even id raise_non_200 is False,
+        an exception may still be raised if a `requests.RequestException
+        <http://docs.python-requests.org/en/master/api/#requests.RequestException>`_ was raised during processing of the
+        request (default: :class:`CodeBasedRestException`)
+
+        :param str method: HTTP method to use (GET/POST/etc.)
+        :param str endpoint: A REST API endpoint
+        :param dict params: URL parameters to include in the query string
+        :param dict headers: Headers to send with the request
+        :param bool raise_non_200: Raise an exception is the response has a non-2xx status code (default: True)
+        :param bool no_log:
+        :param kwargs: Args to pass to `requests.Session.request
+          <http://docs.python-requests.org/en/master/api/#requests.Session.request>`_: files, data, json, auth, cookies,
+          hooks, timeout
+        :return requests.Response: The response as a `requests.Response
+          <http://docs.python-requests.org/en/master/api/#requests.Response>`_ object
+        """
         url = self.url_for(endpoint)
-        log.debug("{} -> {}".format(method, url))
+        if not no_log:
+            log.debug("{} -> {}".format(method, url))
+        kwargs.setdefault("verify", self._verify_ssl)
         try:
             resp = self.session.request(method, url, **kwargs)
         except requests.RequestException as e:
-            raise CodeBasedRestException(e, endpoint)
+            raise self._exc_type(e, endpoint)
         if raise_non_200 and not (200 <= resp.status_code <= 299):
-            raise CodeBasedRestException(resp, endpoint)
+            raise self._exc_type(resp, endpoint)
         return resp
 
     def get(self, endpoint, **kwargs):
@@ -120,7 +176,7 @@ class GenericRestClient:
         return self.request("DELETE", endpoint, **kwargs)
 
 
-@register
+@atexit_register
 def http_cleanup():
     with synchronized(__instances):
         for session in __instances:

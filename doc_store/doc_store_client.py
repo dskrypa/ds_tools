@@ -23,12 +23,12 @@ import os
 import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from ds_tools.http import GenericRestClient
+from ds_tools.http import RestClient
 
 log = logging.getLogger("doc_store.client")
 
 
-class DocStoreRestClient(GenericRestClient):
+class DocStoreRestClient(RestClient):
     def get_doc(self, doc_id, rev=None):
         return self.get("doc/{}".format(doc_id), params={"rev": rev})
 

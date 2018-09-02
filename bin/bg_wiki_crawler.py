@@ -13,7 +13,7 @@ import sys
 from bs4 import BeautifulSoup
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from ds_tools.http import GenericRestClient
+from ds_tools.http import RestClient
 from ds_tools.logging import LogManager
 from ds_tools.utils import Table, SimpleColumn, Printer
 
@@ -52,7 +52,7 @@ def main():
         print(crawler.get_soup(args.endpoint))
 
 
-class WikiCrawler(GenericRestClient):
+class WikiCrawler(RestClient):
     def __init__(self):
         super().__init__("www.bg-wiki.com")
 

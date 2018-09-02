@@ -8,7 +8,6 @@ Input Handling
 
 import logging
 
-
 __all__ = ["get_input", "parse_yes_no", "parse_full_yes_no", "InputValidationException"]
 log = logging.getLogger("ds_tools.utils.input")
 

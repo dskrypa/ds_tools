@@ -15,7 +15,7 @@ from abc import ABCMeta, abstractmethod
 from urllib.parse import urlsplit
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from ds_tools.http import GenericRestClient
+from ds_tools.http import RestClient
 from ds_tools.logging import LogManager
 from ds_tools.utils import Table, SimpleColumn, validate_or_make_dir, soupify, fix_html_prettify
 
@@ -98,7 +98,7 @@ def main():
         lf.process_lyrics(args.song, args.title, args.size)
 
 
-class LyricFetcher(GenericRestClient, metaclass=ABCMeta):
+class LyricFetcher(RestClient, metaclass=ABCMeta):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._cache_dir = os.path.join(CACHE_DIR, self.host)
