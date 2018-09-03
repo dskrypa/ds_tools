@@ -17,7 +17,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ds_tools.http import RestClient
 from ds_tools.logging import LogManager
 from ds_tools.utils import (
-    Table, SimpleColumn, validate_or_make_dir, soupify, fix_html_prettify, ArgParser, FSCache, cached
+    Table, SimpleColumn, validate_or_make_dir, soupify, fix_html_prettify, ArgParser, FSCache, cached, get_user_cache_dir
 )
 
 log = logging.getLogger("ds_tools.{}".format(__name__))
@@ -62,6 +62,7 @@ def parser():
     get_parser.add_argument("--title", "-t", help="Page title to use (default: last part of song endpoint)")
     get_parser.add_argument("--size", "-z", type=int, default=12, help="Font size to use for output")
     get_parser.add_argument("--ignore_len", "-i", action="store_true", help="Ignore stanza length match")
+    get_parser.add_argument("--output", "-o", help="Output directory to store the lyrics")
 
     search_parser = parser.add_subparser("action", "search", "Search for lyric pages")
     search_parser.add_argument("query", help="Query to run")
@@ -84,6 +85,7 @@ def parser():
     hybrid_parser.add_argument("--title", "-t", help="Page title to use (default: last part of song endpoint)")
     hybrid_parser.add_argument("--size", "-z", type=int, default=12, help="Font size to use for output")
     hybrid_parser.add_argument("--ignore_len", "-i", action="store_true", help="Ignore stanza length match")
+    hybrid_parser.add_argument("--output", "-o", help="Output directory to store the lyrics")
 
     hybrid_parser.add_argument("--english_lb", "-el", nargs="+", help="Additional linebreaks to use to split English stanzas")
     hybrid_parser.add_argument("--korean_lb", "-kl", nargs="+", help="Additional linebreaks to use to split Korean stanzas")
@@ -113,7 +115,7 @@ def main():
         elif args.action == "index":
             lf.index(args.index, args.album_filter, args.list)
         elif args.action == "get":
-            lf.process_lyrics(args.song, args.title, args.size, args.ignore_len)
+            lf.process_lyrics(args.song, args.title, args.size, args.ignore_len, args.output)
         else:
             raise ValueError("Unconfigured action: {}".format(args.action))
     elif args.action == "hybrid_get":
@@ -130,7 +132,7 @@ def main():
         english_lb = {int(str(val).strip()) for val in args.english_lb or []}
         korean_lb = {int(str(val).strip()) for val in args.korean_lb or []}
         hlf.process_lyrics(
-            None, args.title, args.size, args.ignore_len,
+            None, args.title, args.size, args.ignore_len, args.output,
             kor_endpoint=args.korean_endpoint, eng_endpoint=args.english_endpoint,
             english_lb=english_lb, korean_lb=korean_lb,
             english_extra=args.english_extra, korean_extra=args.korean_extra
@@ -142,8 +144,6 @@ def main():
 class LyricFetcher(RestClient):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._cache_dir = os.path.join(CACHE_DIR, self.host)
-        validate_or_make_dir(self._cache_dir)
         fix_html_prettify()
 
     def print_search_results(self, *args):
@@ -167,7 +167,7 @@ class LyricFetcher(RestClient):
         lyrics = self.get_lyrics(song)
         return lyrics["English"], lyrics["title"]
 
-    def process_lyrics(self, song, title=None, size=12, ignore_len=False, english_lb=None, korean_lb=None, english_extra=None, korean_extra=None, **kwargs):
+    def process_lyrics(self, song, title=None, size=12, ignore_len=False, output_dir=None, english_lb=None, korean_lb=None, english_extra=None, korean_extra=None, **kwargs):
         """
         Process lyrics from the given song and write them to an html file
 
@@ -177,6 +177,9 @@ class LyricFetcher(RestClient):
         :param bool ignore_len: Ignore stanza length mismatches
         :param kwargs: Keyword arguments to pass to :func:`LyricFetcher.get_lyrics`
         """
+        if output_dir and (os.path.exists(output_dir) and not os.path.isdir(output_dir)):
+            raise ValueError("Invalid output dir - it exists but is not a directory: {}".format(output_dir))
+
         lyrics = self.get_lyrics(song, title, **kwargs)
 
         linebreaks = {
@@ -263,17 +266,20 @@ class LyricFetcher(RestClient):
             row.append(td)
             tbody.append(row)
 
-        cache_file = "{}/lyrics_{}.html".format(CACHE_DIR, new_header.text.replace(" ", "_"))
-        log.info("Saving lyrics to {}".format(cache_file))
+        output_dir = output_dir or get_user_cache_dir("lyric_fetcher/lyrics")
+        validate_or_make_dir(output_dir)
+        output_filename = "lyrics_{}.html".format(new_header.text.replace(" ", "_"))
+        output_path = os.path.join(output_dir, output_filename)
+        log.info("Saving lyrics to {}".format(output_path))
         prettified = html.prettify(formatter="html")
-        with open(cache_file, "w", encoding="utf-8") as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             f.write(prettified)
 
-    @cached(FSCache(prefix="get__", ext="html"), lock=True, key=FSCache.html_key)
+    @cached(FSCache(cache_subdir="lyric_fetcher", prefix="get__", ext="html"), lock=True, key=FSCache.html_key)
     def get_page(self, endpoint, **kwargs):
         return self.get(endpoint, **kwargs).text
 
-    @cached(FSCache(prefix="search__", ext="html"), lock=True, key=FSCache.dated_html_key)
+    @cached(FSCache(cache_subdir="lyric_fetcher", prefix="search__", ext="html"), lock=True, key=FSCache.dated_html_key)
     def search(self, query_0, query_1=None):
         return self.get("/", params={"s": query_0}).text
 
@@ -286,8 +292,6 @@ class HybridLyricFetcher(LyricFetcher):
     def __init__(self, kor_lf, eng_lf):
         self.kor_lf = kor_lf
         self.eng_lf = eng_lf
-        self._cache_dir = os.path.join(CACHE_DIR, self.kor_lf.host, self.eng_lf.host)
-        validate_or_make_dir(self._cache_dir)
         fix_html_prettify()
 
     def get_lyrics(self, song=None, title=None, *, kor_endpoint=None, eng_endpoint=None):
@@ -308,7 +312,7 @@ class LyricsTranslateLyricFetcher(LyricFetcher):
     def __init__(self):
         super().__init__("lyricstranslate.com", proto="https")
 
-    @cached(FSCache(prefix="search__", ext="html"), lock=True, key=FSCache.dated_html_key)
+    @cached(FSCache(cache_subdir="lyric_fetcher", prefix="search__", ext="html"), lock=True, key=FSCache.dated_html_key)
     def search(self, artist, song=None):
         return self.get("en/translations/0/328/{}/{}/none/0/0/0/0".format(artist, song if song else "none")).text
 
@@ -404,7 +408,7 @@ class ColorCodedLyricFetcher(LyricFetcher):
     def __init__(self):
         super().__init__("colorcodedlyrics.com", proto="https")
 
-    @cached(FSCache(prefix="index__", ext="html"), lock=True, key=FSCache.dated_html_key)
+    @cached(FSCache(cache_subdir="lyric_fetcher", prefix="index__", ext="html"), lock=True, key=FSCache.dated_html_key)
     def _get_index(self, endpoint, **kwargs):
         return self.get(endpoint, **kwargs).text
 
