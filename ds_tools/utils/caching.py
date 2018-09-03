@@ -30,13 +30,13 @@ from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.exc import NoSuchTableError, OperationalError
 from wrapt import synchronized
 
-from .filesystem import validate_or_make_dir
+from .filesystem import validate_or_make_dir, get_user_cache_dir
 from .introspection import split_arg_vals_with_defaults, insert_kwonly_arg
 from .output import to_str, to_bytes, JSONSetEncoder
 from .sql import ScopedSession
 from .time import now
 
-__all__ = ["cached", "CacheKey", "CacheLockWarning", "disk_cached", "DBCacheEntry", "DBCache"]
+__all__ = ["cached", "CacheKey", "CacheLockWarning", "disk_cached", "DBCacheEntry", "DBCache", "FSCache"]
 log = logging.getLogger("ds_tools.utils.caching")
 
 Base = declarative_base()
@@ -312,6 +312,83 @@ def cached(cache=True, *, key=None, lock=None, optional=None, default=True, meth
             insert_kwonly_arg(wrapper, new_param, description, "bool", sig=sig)
         return wrapper
     return decorator
+
+
+class FSCache:
+    def __init__(self, cache_dir=None, cache_subdir=None, prefix=None, ext="txt", dumper=None, loader=None, binary=False):
+        if cache_dir:
+            self.cache_dir = os.path.join(cache_dir, cache_subdir) if cache_subdir else cache_dir
+            validate_or_make_dir(self.cache_dir)
+        else:
+            self.cache_dir = get_user_cache_dir(cache_subdir)
+        self.prefix = prefix or ""
+        self._ext = ext
+        self.dumper = dumper
+        self.loader = loader
+        self.binary = binary
+
+    @property
+    def ext(self):
+        return ("." + self._ext) if self._ext else ""
+
+    @property
+    def read_mode(self):
+        return "rb" if self.binary else "r"
+
+    @property
+    def write_mode(self):
+        return "wb" if self.binary else "w"
+
+    def filename_for_key(self, key):
+        return "{}{}{}".format(self.prefix, key, self.ext)
+
+    def path_for_key(self, key):
+        return os.path.join(self.cache_dir, "{}{}{}".format(self.prefix, key, self.ext))
+
+    @classmethod
+    def html_key(cls, self, endpoint, *args, **kwargs):
+        return "{}__{}".format(self.host, endpoint.replace("/", "_"))
+
+    @classmethod
+    def dated_html_key(cls, self, endpoint, *args, **kwargs):
+        return "{}__{}__{}".format(self.host, now("%Y-%m"), endpoint.replace("/", "_"))
+
+    @synchronized
+    def keys(self):
+        p_len = len(self.prefix)
+        e_len = len(self.ext)
+        keys = [
+            f[p_len:-e_len] for f in os.listdir(self.cache_dir) if f.startswith(self.prefix) and f.endswith(self.ext)
+        ]
+        return keys
+
+    @synchronized
+    def values(self):
+        return [self[key] for key in self.keys()]
+
+    @synchronized
+    def items(self):
+        return zip(self.keys(), self.values())
+
+    def __getitem__(self, item):
+        file_path = self.path_for_key(item)
+        if not (os.path.exists(file_path) and os.path.isfile(file_path)):
+            raise KeyError(item)
+
+        kwargs = {} if self.binary else {"encoding": "utf-8"}
+        with open(file_path, self.read_mode, **kwargs) as f:
+            value = f.read()
+
+        return self.loader(value) if self.loader else value
+
+    def __setitem__(self, key, value):
+        file_path = self.path_for_key(key)
+        if self.dumper:
+            value = self.dumper(value)
+
+        kwargs = {} if self.binary else {"encoding": "utf-8"}
+        with open(file_path, self.write_mode, **kwargs) as f:
+            f.write(value)
 
 
 class DBCacheEntry(Base):

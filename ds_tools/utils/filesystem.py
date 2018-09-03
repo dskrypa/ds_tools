@@ -6,8 +6,9 @@
 
 import os
 import logging
+from getpass import getuser
 
-__all__ = ["validate_or_make_dir"]
+__all__ = ["validate_or_make_dir", "get_user_cache_dir"]
 log = logging.getLogger("ds_tools.utils.filesystem")
 
 
@@ -35,3 +36,11 @@ def validate_or_make_dir(dir_path, permissions=None, suppress_perm_change_exc=Tr
                 log.error("Error changing permissions of path '{}' to 0o{:o}: {}".format(dir_path, permissions, e))
                 if not suppress_perm_change_exc:
                     raise e
+
+
+def get_user_cache_dir(subdir=None, permissions=None):
+    cache_dir = os.path.join("/var/tmp/", getuser(), "ds_tools_cache")
+    if subdir:
+        cache_dir = os.path.join(cache_dir, subdir)
+    validate_or_make_dir(cache_dir, permissions=permissions)
+    return cache_dir

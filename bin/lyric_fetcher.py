@@ -16,7 +16,9 @@ from urllib.parse import urlsplit
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ds_tools.http import RestClient
 from ds_tools.logging import LogManager
-from ds_tools.utils import Table, SimpleColumn, validate_or_make_dir, soupify, fix_html_prettify, ArgParser, now
+from ds_tools.utils import (
+    Table, SimpleColumn, validate_or_make_dir, soupify, fix_html_prettify, ArgParser, FSCache, cached
+)
 
 log = logging.getLogger("ds_tools.{}".format(__name__))
 
@@ -267,33 +269,13 @@ class LyricFetcher(RestClient):
         with open(cache_file, "w", encoding="utf-8") as f:
             f.write(prettified)
 
-    def get(self, endpoint, **kwargs):
-        cache_file = "{}/get_{}.html".format(self._cache_dir, endpoint.replace("/", "_"))
+    @cached(FSCache(prefix="get__", ext="html"), lock=True, key=FSCache.html_key)
+    def get_page(self, endpoint, **kwargs):
+        return self.get(endpoint, **kwargs).text
 
-        if not kwargs.get("params"):
-            if os.path.exists(cache_file):
-                with open(cache_file, "r", encoding="utf-8") as f:
-                    return f.read()
-
-        resp = super().get(endpoint, **kwargs)
-
-        if not kwargs.get("params"):
-            with open(cache_file, "w", encoding="utf-8") as f:
-                f.write(resp.text)
-
-        return resp.text
-
-    def search(self, query, query_part_2=None):
-        cache_file = "{}/search_{}_{}.html".format(self._cache_dir, now("%Y-%m-%d"), query.replace("/", "_"))
-        if os.path.exists(cache_file):
-            with open(cache_file, "r", encoding="utf-8") as f:
-                return f.read()
-
-        resp = self.get("/", params={"s": query})
-        with open(cache_file, "w", encoding="utf-8") as f:
-            f.write(resp)
-
-        return resp
+    @cached(FSCache(prefix="search__", ext="html"), lock=True, key=FSCache.dated_html_key)
+    def search(self, query_0, query_1=None):
+        return self.get("/", params={"s": query_0}).text
 
     def index(self, query, album_filter=None, list=False):
         raise TypeError("Song index information is not available for {}".format(self.host))
@@ -326,8 +308,9 @@ class LyricsTranslateLyricFetcher(LyricFetcher):
     def __init__(self):
         super().__init__("lyricstranslate.com", proto="https")
 
+    @cached(FSCache(prefix="search__", ext="html"), lock=True, key=FSCache.dated_html_key)
     def search(self, artist, song=None):
-        return self.get("en/translations/0/328/{}/{}/none/0/0/0/0".format(artist, song if song else "none"))
+        return self.get("en/translations/0/328/{}/{}/none/0/0/0/0".format(artist, song if song else "none")).text
 
     def print_search_results(self, *args):
         soup = soupify(self.search(*args))
@@ -343,7 +326,7 @@ class LyricsTranslateLyricFetcher(LyricFetcher):
         tbl.print_rows(results)
 
     def get_english_translation(self, song):
-        html = soupify(self.get(song), "lxml")
+        html = soupify(self.get_page(song), "lxml")
         artist_ele = html.find("li", class_="song-node-info-artist")
         artist = artist_ele.text.replace("Artist:", "").strip()
         title = html.find("h2", class_="title-h2").text
@@ -376,7 +359,7 @@ class KlyricsLyricFetcher(LyricFetcher):
 
     def get_lyrics(self, song, title=None, *, kor_endpoint=None, eng_endpoint=None):
         lyrics = {"Korean": [], "English": [], "title": title}
-        html = soupify(self.get(song), "lxml")
+        html = soupify(self.get_page(song), "lxml")
         content = html.find("div", class_="td-post-content")
         for h2 in content.find_all("h2"):
             if h2.text.endswith("Hangul"):
@@ -421,13 +404,17 @@ class ColorCodedLyricFetcher(LyricFetcher):
     def __init__(self):
         super().__init__("colorcodedlyrics.com", proto="https")
 
+    @cached(FSCache(prefix="index__", ext="html"), lock=True, key=FSCache.dated_html_key)
+    def _get_index(self, endpoint, **kwargs):
+        return self.get(endpoint, **kwargs).text
+
     def index(self, query, album_filter=None, list=False):
         alb_filter = re.compile(album_filter) if album_filter else None
         endpoint = self.indexes.get(re.sub("[\[\]~!@#$%^&*(){}:;<>,.?/\\+= -]", "", query.lower()))
         if not endpoint:
             raise ValueError("No index is configured for {}".format(query))
 
-        soup = soupify(self.get(endpoint))
+        soup = soupify(self._get_index(endpoint))
         for td in soup.find_all("td"):
             tbl = Table(SimpleColumn("Link", 0), SimpleColumn("Song", 0), update_width=True)
             results = []
@@ -461,7 +448,7 @@ class ColorCodedLyricFetcher(LyricFetcher):
         tbl.print_rows(results)
 
     def get_lyrics(self, song, title=None, *, kor_endpoint=None, eng_endpoint=None):
-        html = soupify(self.get(song), "lxml")
+        html = soupify(self.get_page(song), "lxml")
         lyrics = {"Korean": [], "English": [], "title": title or html.find("h1", class_="entry-title").get_text()}
         lang_names = {1: "Korean", 2: "English"}
 
@@ -487,61 +474,6 @@ class ColorCodedLyricFetcher(LyricFetcher):
                     lyrics[lang].extend(lines)
 
         return lyrics
-
-    # def process_lyrics(self, song, title=None, size=12):
-    #     html = soupify(self.get(song), "lxml")
-    #     new_html = soupify(HTML_TEMPLATE.format(size))
-    #
-    #     new_header = new_html.new_tag("h1")
-    #     new_header.string = title or html.find("h1", class_="entry-title").get_text()
-    #     new_html.find("body").insert(0, new_header)
-    #
-    #     lang_names = {1: "Korean", 2: "English"}
-    #     stanza_lines = defaultdict(list)
-    #     lang_row = html.find("th", text="Romanization").parent.next_sibling.next_sibling
-    #     for i, td in enumerate(lang_row.find_all("td")):
-    #         if i:   # Skip romanization
-    #             td_str = str(td)
-    #             td_str = td_str[:4] + "<p>" + td_str[4:]
-    #             fixed_td = soupify(re.sub("(?<!</p>|<td>)<p>", "</p><p>", td_str))
-    #
-    #             log.log(5, "Fixed td:\n{}\n\n".format(fixed_td))
-    #
-    #             for p in fixed_td.find_all("p"):
-    #                 lines = [l for l in p.get_text().replace("<br/>", "\n").splitlines() if l]
-    #                 for j, line in enumerate(lines):
-    #                     if line.startswith("<span"):
-    #                         lines[j] = soupify(line).find("span").get_text()
-    #                 log.log(9, "{}: found stanza with {} lines".format(lang_names[i], len(lines)))
-    #
-    #                 # lines = [l for span in p.find_all("span") for l in span.get_text().replace("<br/>", "\n").splitlines() if l]
-    #                 # if not lines:
-    #                 #     lines = [l for l in p.get_text().replace("<br/>", "\n").splitlines() if l]
-    #                 #     log.log(9, "{}: found stanza with {} plain lines".format(lang_names[i], len(lines)))
-    #                 # else:
-    #                 #     log.log(9, "{}: found stanza with {} span lines".format(lang_names[i], len(lines)))
-    #
-    #                 lines.append("<br/>")
-    #                 stanza_lines[i].extend(lines)
-    #
-    #     tbody = new_html.find("tbody")
-    #     langs = sorted(stanza_lines.keys())
-    #
-    #     for n in range(len(stanza_lines[1])):
-    #         new_row = new_html.new_tag("tr")
-    #         for lang in langs:
-    #             line = stanza_lines[lang][n]
-    #             td = new_html.new_tag("td")
-    #             td.append(line if line != "<br/>" else new_html.new_tag("br"))
-    #             new_row.append(td)
-    #
-    #         tbody.append(new_row)
-    #
-    #     cache_file = "{}/lyrics_{}.html".format(CACHE_DIR, new_header.text.replace(" ", "_"))
-    #     log.info("Saving lyrics to {}".format(cache_file))
-    #     prettified = new_html.prettify(formatter="html")
-    #     with open(cache_file, "w", encoding="utf-8") as f:
-    #         f.write(prettified)
 
 
 SITE_CLASS_MAPPING = {
