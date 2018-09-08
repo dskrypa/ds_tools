@@ -64,6 +64,8 @@ def parser():
     get_parser.add_argument("--size", "-z", type=int, default=12, help="Font size to use for output")
     get_parser.add_argument("--ignore_len", "-i", action="store_true", help="Ignore stanza length match")
     get_parser.add_argument("--output", "-o", help="Output directory to store the lyrics")
+    get_parser.add_argument("--linebreaks", "-lb", nargs="+", help="Additional linebreaks to use to split stanzas")
+    get_parser.add_argument("--replace_lb", "-R", action="store_true", help="Replace existing linebreaks")
 
     search_parser = parser.add_subparser("action", "search", "Search for lyric pages")
     search_parser.add_argument("query", help="Query to run")
@@ -115,6 +117,11 @@ def main():
         args.english_site = "file"
         args.korean_endpoint = args.korean
         args.english_endpoint = args.english
+        args.english_lb = None
+        args.korean_lb = None
+        args.ignore_len = None
+        args.english_extra = None
+        args.korean_extra = None
 
     if args.action == "list":
         for site in sorted(SITE_CLASS_MAPPING.keys()):
@@ -130,8 +137,12 @@ def main():
         elif args.action == "index":
             lf.print_index_results(args.index, args.album_filter, args.list)
         elif args.action == "get":
+            linebreaks = {int(str(val).strip()) for val in args.linebreaks or []}
             for song in args.song:
-                lf.process_lyrics(song, args.title, args.size, args.ignore_len, args.output)
+                lf.process_lyrics(
+                    song, args.title, args.size, args.ignore_len, args.output,
+                    english_lb=linebreaks, korean_lb=linebreaks, replace_lb=args.replace_lb
+                )
         else:
             raise ValueError("Unconfigured action: {}".format(args.action))
     elif args.action == "hybrid_get":
@@ -155,6 +166,13 @@ def main():
         )
     else:
         raise ValueError("Unconfigured action: {}".format(args.action))
+
+
+def fix_links(results):
+    for result in results:
+        link = result["Link"]
+        if link.startswith("/"):
+            result["Link"] = link[1:]
 
 
 class LyricFetcher(RestClient):
@@ -186,6 +204,7 @@ class LyricFetcher(RestClient):
     def print_search_results(self, *args):
         results = self.get_search_results(*args)
         tbl = Table(SimpleColumn("Link"), SimpleColumn("Song"), update_width=True)
+        fix_links(results)
         tbl.print_rows(results)
 
     def print_index_results(self, query, album_filter=None, list_albums=False):
@@ -198,6 +217,7 @@ class LyricFetcher(RestClient):
                 print(album)
         else:
             tbl = Table(SimpleColumn("Album"), SimpleColumn("Link"), SimpleColumn("Song"), update_width=True)
+            fix_links(filtered)
             tbl.print_rows(filtered)
 
     def get_lyrics(self, song, title=None, *, kor_endpoint=None, eng_endpoint=None):
@@ -218,7 +238,10 @@ class LyricFetcher(RestClient):
         lyrics = self.get_lyrics(song)
         return lyrics["English"], lyrics["title"]
 
-    def process_lyrics(self, song, title=None, size=12, ignore_len=False, output_dir=None, english_lb=None, korean_lb=None, english_extra=None, korean_extra=None, **kwargs):
+    def process_lyrics(self, song, title=None, size=12, ignore_len=False, output_dir=None,
+                       english_lb=None, korean_lb=None, english_extra=None, korean_extra=None,
+                       replace_lb=False,
+                       **kwargs):
         """
         Process lyrics from the given song and write them to an html file
 
@@ -248,6 +271,8 @@ class LyricFetcher(RestClient):
         for lang in ("Korean", "English"):
             lb_set = linebreaks[lang]
             lang_lyrics = lyrics[lang]
+            if replace_lb:
+                lang_lyrics = [l for l in lang_lyrics if l != "<br/>"]
             lyric_len = len(lang_lyrics)
 
             for lb in list(lb_set):
@@ -516,9 +541,42 @@ class ColorCodedLyricFetcher(LyricFetcher):
         return lyrics
 
 
+def exact_class_match(ele_name, css_class):
+    def func(ele):
+        return ele.name == ele_name and {css_class} == set(ele.get("class", []))
+    return func
+
+
 class MusixMatchLyricFetcher(LyricFetcher):
     def __init__(self):
         super().__init__("musixmatch.com", proto="https", imitate="firefox@win10")
+
+    def get_lyrics(self, song, title=None, *, kor_endpoint=None, eng_endpoint=None):
+        song = song[:-1] if song.endswith("/") else song
+        if not song.endswith("/translation/english"):
+            song += "/translation/english"
+        html = soupify(self.get_page(song), "lxml")
+
+        title_header = html.find("div", class_="mxm-track-title")
+        track_title = list(title_header.find("h1").children)[-1]
+        track_artist = title_header.find("h2").get_text()
+
+        lyrics = {"Korean": [], "English": [], "title": title or "{} - {}".format(track_artist, track_title)}
+        lang_names = {0: "Korean", 1: "English"}
+
+        container = html.find("div", class_="mxm-track-lyrics-container")
+        for row in container.find_all("div", class_="mxm-translatable-line-readonly"):
+            last_i = -1
+            for i, div in enumerate(row.find_all(exact_class_match("div", ""))):
+                lang = lang_names[i]
+                text = div.get_text() or "<br/>"
+                lyrics[lang].append(text)
+                last_i = i
+
+            if (last_i == 0) and (len(lyrics["Korean"]) != len(lyrics["English"])):
+                lyrics["English"].append("<br/>")
+
+        return lyrics
 
     @cached(FSCache(cache_subdir="lyric_fetcher", prefix="search__", ext="html"), lock=True, key=FSCache.dated_html_key)
     def _search(self, query_0, query_1=None):
