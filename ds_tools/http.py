@@ -15,13 +15,24 @@ import requests
 from wrapt import synchronized
 
 from .exceptions import CodeBasedRestException
+from .utils.decorate import rate_limited
 
 __all__ = ["proxy_bypass_append", "requests_session", "http_cleanup", "RestClient"]
 log = logging.getLogger("ds_tools.http")
+__instances = WeakSet()
 
 # disable_urllib3_warnings()    # Mostly needed for dealing with un-verified SSL connections
 
-__instances = WeakSet()
+IMITATE_HEADERS = {
+    "firefox@win10": {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Upgrade-Insecure-Requests": "1",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:62.0) Gecko/20100101 Firefox/62.0"
+    }
+}
 
 
 def proxy_bypass_append(host):
@@ -61,8 +72,13 @@ class RestClient:
     :param class exc: Exception class to raise on non-2xx responses (default: :class:`CodeBasedRestException`)
     :param function session_factory: A function that accepts no arguments and returns a `requests.Session
       <http://docs.python-requests.org/en/master/api/#requests.Session>`_ object (default: :func:`requests_session`)
+    :param str imitate: A browser to imitate.  Valid values are keys of :data:`IMITATE_HEADERS` (default: None)
+    :param float rate_limit: A rate limit (in seconds) for all requests made by this object (default: no limit)
     """
-    def __init__(self, host, port=None, *, prefix=None, proto="http", verify=None, exc=None, session_factory=None):
+    def __init__(self, host, port=None, *, prefix=None, proto="http", verify=None, exc=None, session_factory=None, imitate=None, rate_limit=0):
+        if imitate and (imitate not in IMITATE_HEADERS):
+            err_fmt = "Invalid imitate value ({!r}) - must be one of: {}"
+            raise ValueError(err_fmt.format(imitate, ", ".join(sorted(IMITATE_HEADERS.keys()))))
         self.host = host
         self.port = port
         self.proto = proto
@@ -71,6 +87,9 @@ class RestClient:
         self._verify_ssl = verify
         self._session_factory = session_factory or requests_session
         self.__session = None
+        self._imitate = imitate
+        if rate_limit:
+            self.request = rate_limited(rate_limit)(self.request)
 
     @property
     def port(self):
@@ -107,6 +126,8 @@ class RestClient:
     def _get_session(self):
         if self.__session is None:
             self.__session = self._session_factory()
+            if self._imitate:
+                self.__session.headers.update(IMITATE_HEADERS[self._imitate])
         return self.__session
 
     @property

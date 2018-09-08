@@ -10,7 +10,6 @@ import logging
 import os
 import re
 import sys
-from collections import OrderedDict
 from itertools import chain
 from urllib.parse import urlsplit
 
@@ -163,7 +162,7 @@ class LyricFetcher(RestClient):
     _search_result_class = None
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, rate_limit=1, **kwargs)
         fix_html_prettify()
 
     def _format_index(self, query):
@@ -326,10 +325,6 @@ class LyricFetcher(RestClient):
         prettified = html.prettify(formatter="html")
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(prettified)
-
-    @rate_limited(1)
-    def get(self, *args, **kwargs):
-        return super().get(*args, **kwargs)
 
     @cached(FSCache(cache_subdir="lyric_fetcher", prefix="get__", ext="html"), lock=True, key=FSCache.html_key)
     def get_page(self, endpoint, **kwargs):
@@ -523,15 +518,20 @@ class ColorCodedLyricFetcher(LyricFetcher):
 
 class MusixMatchLyricFetcher(LyricFetcher):
     def __init__(self):
-        super().__init__("musixmatch.com", proto="https")
-        self.session.headers.update({
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-            "Upgrade-Insecure-Requests": "1",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:62.0) Gecko/20100101 Firefox/62.0"
-        })
+        super().__init__("musixmatch.com", proto="https", imitate="firefox@win10")
+
+    @cached(FSCache(cache_subdir="lyric_fetcher", prefix="search__", ext="html"), lock=True, key=FSCache.dated_html_key)
+    def _search(self, query_0, query_1=None):
+        return self.get("search/{}/tracks".format(query_0)).text
+
+    def get_search_results(self, *args, **kwargs):
+        results = []
+        for a in self.search(*args, **kwargs).find_all("a", href=re.compile("/lyrics/.*")):
+            link = a.get("href")
+            if not link.endswith(("/edit", "/add")):
+                title = a.get_text()
+                results.append({"Song": title, "Link": link})
+        return results
 
     def _format_index(self, query):
         return "artist/{}/albums".format(query)
