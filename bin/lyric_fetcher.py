@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import sys
+from collections import OrderedDict
 from itertools import chain
 from urllib.parse import urlsplit
 
@@ -17,7 +18,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ds_tools.http import RestClient
 from ds_tools.logging import LogManager
 from ds_tools.utils import (
-    Table, SimpleColumn, validate_or_make_dir, soupify, fix_html_prettify, ArgParser, FSCache, cached, get_user_cache_dir
+    Table, SimpleColumn, validate_or_make_dir, soupify, fix_html_prettify, ArgParser, FSCache, cached,
+    get_user_cache_dir, rate_limited
 )
 
 log = logging.getLogger("ds_tools.{}".format(__name__))
@@ -58,8 +60,8 @@ def parser():
     list_parser = parser.add_subparser("action", "list", "List available sites")
 
     get_parser = parser.add_subparser("action", "get", "Retrieve lyrics from a particular page from a single site")
-    get_parser.add_argument("song", help="Endpoint that contains lyrics for a particular song")
-    get_parser.add_argument("--title", "-t", help="Page title to use (default: last part of song endpoint)")
+    get_parser.add_argument("song", nargs="+", help="One or more endpoints that contain lyrics for particular songs")
+    get_parser.add_argument("--title", "-t", help="Page title to use (default: extracted from lyric page)")
     get_parser.add_argument("--size", "-z", type=int, default=12, help="Font size to use for output")
     get_parser.add_argument("--ignore_len", "-i", action="store_true", help="Ignore stanza length match")
     get_parser.add_argument("--output", "-o", help="Output directory to store the lyrics")
@@ -93,6 +95,13 @@ def parser():
     hybrid_parser.add_argument("--english_extra", "-ex", nargs="+", help="Additional lines to add to the English stanzas at the end")
     hybrid_parser.add_argument("--korean_extra", "-kx", nargs="+", help="Additional lines to add to the Korean stanzas at the end")
 
+    file_parser = parser.add_subparser("action", "file_get", "Retrieve lyrics from two separate text files and merge them")
+    file_parser.add_argument("--korean", "-k", metavar="PATH", help="Path to a text file containing Korean lyrics")
+    file_parser.add_argument("--english", "-e", metavar="PATH", help="Path to a text file containing the English translation")
+    file_parser.add_argument("--title", "-t", help="Page title to use", required=True)
+    file_parser.add_argument("--size", "-z", type=int, default=12, help="Font size to use for output")
+    file_parser.add_argument("--output", "-o", help="Output directory to store the processed lyrics")
+
     parser.include_common_args("verbosity")
     return parser
 
@@ -100,6 +109,13 @@ def parser():
 def main():
     args = parser().parse_args(req_subparser_value=True)
     LogManager.create_default_logger(args.verbose, log_path=None)
+
+    if args.action == "file_get":
+        args.action = "hybrid_get"
+        args.korean_site = "file"
+        args.english_site = "file"
+        args.korean_endpoint = args.korean
+        args.english_endpoint = args.english
 
     if args.action == "list":
         for site in sorted(SITE_CLASS_MAPPING.keys()):
@@ -113,9 +129,10 @@ def main():
         if args.action == "search":
             lf.print_search_results(args.query, args.sub_query)
         elif args.action == "index":
-            lf.index(args.index, args.album_filter, args.list)
+            lf.print_index_results(args.index, args.album_filter, args.list)
         elif args.action == "get":
-            lf.process_lyrics(args.song, args.title, args.size, args.ignore_len, args.output)
+            for song in args.song:
+                lf.process_lyrics(song, args.title, args.size, args.ignore_len, args.output)
         else:
             raise ValueError("Unconfigured action: {}".format(args.action))
     elif args.action == "hybrid_get":
@@ -142,12 +159,47 @@ def main():
 
 
 class LyricFetcher(RestClient):
+    _search_result_tag = None
+    _search_result_class = None
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         fix_html_prettify()
 
+    def _format_index(self, query):
+        raise TypeError("get_index() is not implemented for {}".format(self.host))
+
+    def get_index_results(self, *args, **kwargs):
+        raise TypeError("get_index_results() is not implemented for {}".format(self.host))
+
+    def get_search_results(self, *args, **kwargs):
+        if any(val is None for val in (self._search_result_tag, self._search_result_class)):
+            raise TypeError("get_search_results() is not implemented for {}".format(self.host))
+
+        soup = self.search(*args, **kwargs)
+        results = []
+        for post in soup.find_all(self._search_result_tag, class_=self._search_result_class):
+            link = post.find("a").get("href")
+            text = post.get_text()
+            results.append({"Song": text, "Link": urlsplit(link).path[1:]})
+        return results
+
     def print_search_results(self, *args):
-        raise TypeError("print_search_results() is not implemented for {}".format(self.host))
+        results = self.get_search_results(*args)
+        tbl = Table(SimpleColumn("Link"), SimpleColumn("Song"), update_width=True)
+        tbl.print_rows(results)
+
+    def print_index_results(self, query, album_filter=None, list_albums=False):
+        alb_filter = re.compile(album_filter) if album_filter else None
+        results = self.get_index_results(query)
+        filtered = [r for r in results if r["Album"] and alb_filter.search(r["Album"])] if alb_filter else results
+        if list_albums:
+            albums = {r["Album"] for r in filtered if r["Album"]}
+            for album in sorted(albums):
+                print(album)
+        else:
+            tbl = Table(SimpleColumn("Album"), SimpleColumn("Link"), SimpleColumn("Song"), update_width=True)
+            tbl.print_rows(filtered)
 
     def get_lyrics(self, song, title=None, *, kor_endpoint=None, eng_endpoint=None):
         """
@@ -268,23 +320,34 @@ class LyricFetcher(RestClient):
 
         output_dir = output_dir or get_user_cache_dir("lyric_fetcher/lyrics")
         validate_or_make_dir(output_dir)
-        output_filename = "lyrics_{}.html".format(new_header.text.replace(" ", "_"))
+        output_filename = "lyrics_{}.html".format(new_header.text.replace(" ", "_").replace("?", ""))
         output_path = os.path.join(output_dir, output_filename)
         log.info("Saving lyrics to {}".format(output_path))
         prettified = html.prettify(formatter="html")
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(prettified)
 
+    @rate_limited(1)
+    def get(self, *args, **kwargs):
+        return super().get(*args, **kwargs)
+
     @cached(FSCache(cache_subdir="lyric_fetcher", prefix="get__", ext="html"), lock=True, key=FSCache.html_key)
     def get_page(self, endpoint, **kwargs):
         return self.get(endpoint, **kwargs).text
 
     @cached(FSCache(cache_subdir="lyric_fetcher", prefix="search__", ext="html"), lock=True, key=FSCache.dated_html_key)
-    def search(self, query_0, query_1=None):
+    def _search(self, query_0, query_1=None):
         return self.get("/", params={"s": query_0}).text
 
-    def index(self, query, album_filter=None, list=False):
-        raise TypeError("Song index information is not available for {}".format(self.host))
+    @cached(FSCache(cache_subdir="lyric_fetcher", prefix="index__", ext="html"), lock=True, key=FSCache.dated_html_key)
+    def _index(self, endpoint, **kwargs):
+        return self.get(self._format_index(endpoint), **kwargs).text
+
+    def search(self, *args, **kwargs):
+        return soupify(self._search(*args, **kwargs))
+
+    def get_index(self, *args, **kwargs):
+        return soupify(self._index(*args, **kwargs))
 
 
 class HybridLyricFetcher(LyricFetcher):
@@ -297,7 +360,7 @@ class HybridLyricFetcher(LyricFetcher):
     def get_lyrics(self, song=None, title=None, *, kor_endpoint=None, eng_endpoint=None):
         """
         :param str song: Song endpoint for lyrics
-        :param str title: Title to use (overrides automatically-extracted title is specified)
+        :param str title: Title to use (overrides automatically-extracted title if specified)
         :param str kor_endpoint: Endpoint from which Korean lyrics should be retrieved
         :param str eng_endpoint: Endpoint from which English lyrics should be retrieved
         :return dict: Mapping of {"Korean": list(lyrics), "English": list(lyrics), "title": title}
@@ -305,7 +368,20 @@ class HybridLyricFetcher(LyricFetcher):
         kor_lyrics, kor_title = self.kor_lf.get_korean_lyrics(kor_endpoint)
         eng_lyrics, eng_title = self.eng_lf.get_english_translation(eng_endpoint)
         log.debug("Found Korean title: '{}', English title: '{}'".format(kor_title, eng_title))
-        return {"Korean": kor_lyrics, "English": eng_lyrics, "title": kor_title or eng_title}
+        return {"Korean": kor_lyrics, "English": eng_lyrics, "title": title or kor_title or eng_title}
+
+
+class TextFileLyricFetcher(LyricFetcher):
+    # noinspection PyMissingConstructor
+    def __init__(self):
+        super().__init__(None)
+
+    def get_lyrics(self, file_path, title=None, **kwargs):
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read().splitlines()
+
+        lines = [line.strip() or "<br/>" for line in content]
+        return {"Korean": lines, "English": lines, "title": title}
 
 
 class LyricsTranslateLyricFetcher(LyricFetcher):
@@ -313,21 +389,19 @@ class LyricsTranslateLyricFetcher(LyricFetcher):
         super().__init__("lyricstranslate.com", proto="https")
 
     @cached(FSCache(cache_subdir="lyric_fetcher", prefix="search__", ext="html"), lock=True, key=FSCache.dated_html_key)
-    def search(self, artist, song=None):
+    def _search(self, artist, song=None):
         return self.get("en/translations/0/328/{}/{}/none/0/0/0/0".format(artist, song if song else "none")).text
 
-    def print_search_results(self, *args):
-        soup = soupify(self.search(*args))
-        tbl = Table(SimpleColumn("Link", 0), SimpleColumn("Song", 0), update_width=True)
+    def get_search_results(self, *args, **kwargs):
         results = []
-        for row in soup.find("div", class_="ltsearch-results-line").find_all("tr"):
+        for row in self.search(*args, **kwargs).find("div", class_="ltsearch-results-line").find_all("tr"):
             lang = row.find("td", class_="ltsearch-translatelanguages")
             if lang and ("English" in lang.text):
                 a = row.find_all("td", class_="ltsearch-translatenameoriginal")[1].find("a")
                 link = a.get("href")
                 text = a.get_text()
                 results.append({"Song": text, "Link": urlsplit(link).path[1:]})
-        tbl.print_rows(results)
+        return results
 
     def get_english_translation(self, song):
         html = soupify(self.get_page(song), "lxml")
@@ -348,18 +422,11 @@ class LyricsTranslateLyricFetcher(LyricFetcher):
 
 
 class KlyricsLyricFetcher(LyricFetcher):
+    _search_result_tag = "h3"
+    _search_result_class = "entry-title"
+
     def __init__(self):
         super().__init__("klyrics.net", proto="https")
-
-    def print_search_results(self, *args):
-        soup = soupify(self.search(*args))
-        tbl = Table(SimpleColumn("Link", 0), SimpleColumn("Song", 0), update_width=True)
-        results = []
-        for post in soup.find_all("h3", class_="entry-title"):
-            link = post.find("a").get("href")
-            text = post.get_text()
-            results.append({"Song": text, "Link": urlsplit(link).path[1:]})
-        tbl.print_rows(results)
 
     def get_lyrics(self, song, title=None, *, kor_endpoint=None, eng_endpoint=None):
         lyrics = {"Korean": [], "English": [], "title": title}
@@ -390,6 +457,8 @@ class KlyricsLyricFetcher(LyricFetcher):
 
 
 class ColorCodedLyricFetcher(LyricFetcher):
+    _search_result_tag = "h2"
+    _search_result_class = "entry-title"
     indexes = {
         "redvelvet": "2015/03/red-velvet-lyrics-index",
         "gidle": "2018/05/g-dle-lyrics-index",
@@ -408,48 +477,20 @@ class ColorCodedLyricFetcher(LyricFetcher):
     def __init__(self):
         super().__init__("colorcodedlyrics.com", proto="https")
 
-    @cached(FSCache(cache_subdir="lyric_fetcher", prefix="index__", ext="html"), lock=True, key=FSCache.dated_html_key)
-    def _get_index(self, endpoint, **kwargs):
-        return self.get(endpoint, **kwargs).text
-
-    def index(self, query, album_filter=None, list=False):
-        alb_filter = re.compile(album_filter) if album_filter else None
+    def _format_index(self, query):
         endpoint = self.indexes.get(re.sub("[\[\]~!@#$%^&*(){}:;<>,.?/\\+= -]", "", query.lower()))
         if not endpoint:
             raise ValueError("No index is configured for {}".format(query))
+        return endpoint
 
-        soup = soupify(self._get_index(endpoint))
-        for td in soup.find_all("td"):
-            tbl = Table(SimpleColumn("Link", 0), SimpleColumn("Song", 0), update_width=True)
-            results = []
-            img = td.find("img")
-            title = img.get("title")
-
-            if alb_filter and (not title or not alb_filter.search(title)):
-                continue
-            if list:
-                print(title)
-                continue
-
+    def get_index_results(self, query):
+        results = []
+        for td in self.get_index(query).find_all("td"):
+            title = td.find("img").get("title")
             for a in td.find_all("a"):
                 link = a.get("href")
-                results.append({"Song": a.text, "Link": urlsplit(link).path[1:]})
-            print("{}:".format(title))
-            try:
-                tbl.print_rows(results)
-            except Exception as e:
-                print("(none)")
-            print()
-
-    def print_search_results(self, *args):
-        soup = soupify(self.search(*args))
-        tbl = Table(SimpleColumn("Link", 0), SimpleColumn("Song", 0), update_width=True)
-        results = []
-        for post in soup.find_all("h2", class_="entry-title"):
-            link = post.find("a").get("href")
-            text = post.get_text()
-            results.append({"Song": text, "Link": urlsplit(link).path[1:]})
-        tbl.print_rows(results)
+                results.append({"Album": title, "Song": a.text, "Link": urlsplit(link).path[1:]})
+        return results
 
     def get_lyrics(self, song, title=None, *, kor_endpoint=None, eng_endpoint=None):
         html = soupify(self.get_page(song), "lxml")
@@ -480,10 +521,45 @@ class ColorCodedLyricFetcher(LyricFetcher):
         return lyrics
 
 
+class MusixMatchLyricFetcher(LyricFetcher):
+    def __init__(self):
+        super().__init__("musixmatch.com", proto="https")
+        self.session.headers.update({
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "Upgrade-Insecure-Requests": "1",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:62.0) Gecko/20100101 Firefox/62.0"
+        })
+
+    def _format_index(self, query):
+        return "artist/{}/albums".format(query)
+
+    def get_index_results(self, query):
+        album_soup = self.get_index(query)
+        results = []
+        for a in album_soup.find_all("a", href=re.compile("/album/.*")):
+            year = a.parent.next_sibling.get_text()
+            album = "[{}] {}".format(year, a.get_text())
+            link = a.get("href")
+
+            album_page = soupify(self.get_page(link))
+            for track_a in album_page.find_all("a", href=re.compile("/lyrics/.*(?<!/edit)$")):
+                track_link = track_a.get("href")
+                track_name = track_a.find("h2", class_=re.compile(".*title$")).get_text()
+                results.append({"Album": album, "Song": track_name, "Link": track_link})
+
+            # print(album, link)
+        return results
+
+
 SITE_CLASS_MAPPING = {
     "colorcodedlyrics": ColorCodedLyricFetcher,
     "klyrics": KlyricsLyricFetcher,
     "lyricstranslate": LyricsTranslateLyricFetcher,
+    "file": TextFileLyricFetcher,
+    "musixmatch": MusixMatchLyricFetcher,
 }
 
 

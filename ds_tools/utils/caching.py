@@ -350,8 +350,16 @@ class FSCache:
         return "{}__{}".format(self.host, endpoint.replace("/", "_"))
 
     @classmethod
+    def html_key_nohost(cls, self, endpoint, *args, **kwargs):
+        return endpoint.replace("/", "_")
+
+    @classmethod
     def dated_html_key(cls, self, endpoint, *args, **kwargs):
-        return "{}__{}__{}".format(self.host, now("%Y-%m"), endpoint.replace("/", "_"))
+        return "{}__{}__{}".format(self.host, now("%Y-%m-%d"), endpoint.replace("/", "_"))
+
+    @classmethod
+    def dated_html_key_nohost(cls, self, endpoint, *args, **kwargs):
+        return "{}__{}".format(now("%Y-%m-%d"), endpoint.replace("/", "_"))
 
     @synchronized
     def keys(self):
