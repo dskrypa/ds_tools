@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import sys
+from difflib import SequenceMatcher
 from itertools import chain
 from urllib.parse import urlsplit
 
@@ -18,7 +19,7 @@ from ds_tools.http import RestClient
 from ds_tools.logging import LogManager
 from ds_tools.utils import (
     Table, SimpleColumn, validate_or_make_dir, soupify, fix_html_prettify, ArgParser, FSCache, cached,
-    get_user_cache_dir, rate_limited
+    get_user_cache_dir, to_str
 )
 
 log = logging.getLogger("ds_tools.{}".format(__name__))
@@ -76,7 +77,11 @@ def parser():
     index_parser.add_argument("--album_filter", "-af", help="Filter for albums to be displayed")
     index_parser.add_argument("--list", "-L", action="store_true", help="List albums instead of song links (default: %(default)s)")
 
-    for _parser in (get_parser, search_parser, index_parser):
+    cmp_parser = parser.add_subparser("action", "compare", "Compare lyrics from separate songs for common phrases, etc")
+    cmp_parser.add_argument("song_1", help="One or more endpoints that contain lyrics for particular songs")
+    cmp_parser.add_argument("song_2", help="One or more endpoints that contain lyrics for particular songs")
+
+    for _parser in (get_parser, search_parser, index_parser, cmp_parser):
         _parser.add_argument("--site", "-s", choices=site_names, default=DEFAULT_SITE, help="Site to use (default: %(default)s)")
 
     hybrid_parser = parser.add_subparser("action", "hybrid_get", "Retrieve lyrics from two separate sites and merge them")
@@ -126,7 +131,7 @@ def main():
     if args.action == "list":
         for site in sorted(SITE_CLASS_MAPPING.keys()):
             print(site)
-    elif args.action in ("get", "search", "index"):
+    elif args.action in ("get", "search", "index", "compare"):
         try:
             lf = SITE_CLASS_MAPPING[args.site]()
         except KeyError as e:
@@ -143,6 +148,8 @@ def main():
                     song, args.title, args.size, args.ignore_len, args.output,
                     english_lb=linebreaks, korean_lb=linebreaks, replace_lb=args.replace_lb
                 )
+        elif args.action == "compare":
+            lf.compare_lyrics(args.song_1, args.song_2)
         else:
             raise ValueError("Unconfigured action: {}".format(args.action))
     elif args.action == "hybrid_get":
@@ -171,7 +178,7 @@ def main():
 def fix_links(results):
     for result in results:
         link = result["Link"]
-        if link.startswith("/"):
+        if link and link.startswith("/"):
             result["Link"] = link[1:]
 
 
@@ -238,10 +245,22 @@ class LyricFetcher(RestClient):
         lyrics = self.get_lyrics(song)
         return lyrics["English"], lyrics["title"]
 
-    def process_lyrics(self, song, title=None, size=12, ignore_len=False, output_dir=None,
-                       english_lb=None, korean_lb=None, english_extra=None, korean_extra=None,
-                       replace_lb=False,
-                       **kwargs):
+    def compare_lyrics(self, song_1, song_2):
+        lyrics_1 = re.sub("\s+", " ", " ".join(l for l in self.get_lyrics(song_1)["Korean"] if l != "<br/>"))
+        lyrics_2 = re.sub("\s+", " ", " ".join(l for l in self.get_lyrics(song_2)["Korean"] if l != "<br/>"))
+
+        seqs = set()
+        sm = SequenceMatcher(None, lyrics_1, lyrics_2)
+        for block in sm.get_matching_blocks():
+            seq = lyrics_1[block.a: block.a + block.size]
+            if (" " in seq) and (len(seq.strip()) >= 3):
+                seqs.add(seq)
+
+        for seq in sorted(seqs, key=lambda x: len(x), reverse=True):
+            print(seq)
+
+
+    def process_lyrics(self, song, title=None, size=12, ignore_len=False, output_dir=None, english_lb=None, korean_lb=None, english_extra=None, korean_extra=None, replace_lb=False, **kwargs):
         """
         Process lyrics from the given song and write them to an html file
 
@@ -321,7 +340,8 @@ class LyricFetcher(RestClient):
                 lang_tbody = html.new_tag("tbody")
                 lang_tbl.append(lang_tbody)
 
-                for line in stanzas[lang][n]:
+                stanza = stanzas[lang][n] if n < len(stanzas[lang]) else []
+                for line in stanza:
                     row = html.new_tag("tr")
                     td = html.new_tag("td")
                     td.append(line)
@@ -492,6 +512,7 @@ class ColorCodedLyricFetcher(LyricFetcher):
         "snsd": "2012/02/snsd_lyrics_index",
         "missa": "2011/11/miss_a_lyrics_index",
         "apink": "2011/11/a_pink_index",
+        "momoland": "2018/02/momoland-momolaendeu-lyrics-index"
     }
 
     def __init__(self):
@@ -509,7 +530,7 @@ class ColorCodedLyricFetcher(LyricFetcher):
             title = td.find("img").get("title")
             for a in td.find_all("a"):
                 link = a.get("href")
-                results.append({"Album": title, "Song": a.text, "Link": urlsplit(link).path[1:]})
+                results.append({"Album": title, "Song": a.text, "Link": to_str(urlsplit(link).path[1:])})
         return results
 
     def get_lyrics(self, song, title=None, *, kor_endpoint=None, eng_endpoint=None):

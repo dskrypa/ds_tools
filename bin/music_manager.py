@@ -3,6 +3,26 @@
 """
 Manage music files
 
+
+Example usage - List unique tags in the current directory, filtering out known tags::
+
+    $ /c/unix/home/user/git/ds_tools/bin/music_manager.py info . -u '*' | egrep -v 'TIT2|TALB|TCON|TRCK|USLT|APIC|TDRC|TPE1|TPOS|TPE2|nam  \[|wrt  \[|TCOM|trkn|sonm|alb  \[|soa[alr]  \[ |ART  \[|day  \['
+
+Example usage - Remove recommended tags from files in the current directory::
+
+    $ /c/unix/home/user/git/ds_tools/bin/music_manager.py remove . -r
+
+
+TODO:
+- Implement AcoustID scanning or whatever audio fingerprinting method is current, and have a mapping of detected artist => preferred artist name for renaming artist tags?
+- Look up artist wiki discography to sort directories by album type
+    - Use generic / genre-specific wikis, such as http://kpop.wikia.com/wiki/$artist
+    - Can use this to append '[Xth [$lang] [Mini] Album]' suffixes
+- Remove artist from '[$date] $artist - $album' directory names
+- Provide way to replace tag values with a provided value
+
+- Cleanup lyric content to remove url from end if present (example: in CLC/Crystyle/Hobgoblin)
+
 :author: Doug Skrypa
 """
 
@@ -10,6 +30,7 @@ import argparse
 import logging
 import os
 import pickle
+import re
 import string
 import sys
 from collections import Counter, defaultdict
@@ -20,7 +41,7 @@ from itertools import chain
 
 import grapheme
 import mutagen
-from mutagen.id3 import ID3, TDRC
+from mutagen.id3 import ID3, TDRC, TIT2
 from mutagen.id3._frames import Frame
 from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
 
@@ -33,7 +54,7 @@ log = logging.getLogger("ds_tools.{}".format(__name__))
 
 # Translate whitespace characters (such as \n, \r, etc.) to their escape sequences
 WHITESPACE_TRANS_TBL = str.maketrans({c: c.encode("unicode_escape").decode("utf-8") for c in string.whitespace})
-RM_TAGS_MP4 = ["*itunes*", "??ID", "?cmt", "ownr", "xid "]
+RM_TAGS_MP4 = ["*itunes*", "??ID", "?cmt", "ownr", "xid ", "purd"]
 RM_TAGS_ID3 = ["TXXX*", "PRIV*", "WXXX*", "COMM*", "TCOP"]
 
 # Monkey-patch Frame's repr so APIC and similar frames don't kill terminals
@@ -103,6 +124,10 @@ def main():
     sort_parser = sparsers.add_parser("sort", help="Sort music into directories based on tag info")
     sort_parser.add_argument("path", help="A directory that contains directories that contain music files")
 
+    p2t_parser = sparsers.add_parser("path2tag", help="Update tags based on the path to each file")
+    p2t_parser.add_argument("path", help="A directory that contains directories that contain music files")
+    p2t_parser.add_argument("--title", "-t", action="store_true", help="Update title based on filename")
+
     for p in chain((parser,), sparsers.choices.values()):
         p.add_argument("--verbose", "-v", action="count", help="Print more verbose log info (may be specified multiple times to increase verbosity)")
         p.add_argument("--dry_run", "-D", action="store_true", help="Print the actions that would be taken instead of taking them")
@@ -132,8 +157,56 @@ def main():
             copy_tags(args.source, args.dest, args.tags, args.dry_run)
     elif args.action == "sort":
         sort_albums(args.path, args.dry_run)
+    elif args.action == "path2tag":
+        path2tag(args.path, args.dry_run, args.title)
     else:
         log.error("Unconfigured action")
+
+
+def path2tag(path, dry_run, incl_title):
+    prefix = "[DRY RUN] Would update" if dry_run else "Updating"
+    punc_strip_tbl = str.maketrans({c: "" for c in string.punctuation})
+    filename_rx = re.compile("\d+\.\s+(.*)")
+
+    for root, dirs, files in os.walk(path):
+        parent_dir = os.path.dirname(root)
+        artist_dir = os.path.dirname(parent_dir)
+        album_dir = os.path.basename(root)
+        category_dir = os.path.basename(parent_dir)
+
+        for music_file in iter_music_files(root):
+            filename = os.path.splitext(os.path.basename(music_file.filename))[0]
+            m = filename_rx.match(filename)
+            if m:
+                filename = m.group(1)
+
+            if isinstance(music_file.tags, MP4Tags):
+                title_key = "\xa9nam"
+                ftype = "mp4"
+            elif isinstance(music_file.tags, ID3):
+                title_key = "TIT2"
+                ftype = "mp3"
+            else:
+                log.warning("Skipping {}: Unhandled filetype".format(music_file.filename))
+                continue
+
+            try:
+                title = music_file.tags[title_key].text[0]
+            except Exception as e:
+                log.error("{}: Error retrieving title: {}".format(music_file.filename, e))
+                continue
+            else:
+                if len(music_file.tags[title_key].text) > 1:
+                    log.warning("Skipping {}: More than 1 title value".format(music_file.filename))
+                    continue
+
+            if title != filename:
+                log.info("{} the title of {} from {!r} to {!r}".format(prefix, music_file.filename, title, filename))
+                if not dry_run:
+                    music_file.tags[title_key] = filename if (ftype == "mp4") else TIT2(text=filename)
+                    music_file.tags.save(music_file.filename)
+            else:
+                log.info("The title of {} is already correct".format(music_file.filename))
 
 
 def sort_albums(path, dry_run):
@@ -566,6 +639,7 @@ def remove_tags(paths, tag_ids, dry_run, recommended):
 
     if not i:
         log.info("None of the provided files had the specified tags")
+
 
 def table_song_tags(paths):
     rows = [TableBar()]
