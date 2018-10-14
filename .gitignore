@@ -1,5 +1,5 @@
 .idea
-bin/*link_fetcher.py
+link_fetcher/
 primes/*.gz
 primes/build
 primes/*.pyd

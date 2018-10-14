@@ -8,6 +8,7 @@ import logging
 import os
 from atexit import register as atexit_register
 from contextlib import suppress
+from urllib.parse import urlencode
 from weakref import WeakSet
 
 import requests
@@ -121,6 +122,12 @@ class RestClient:
 
     def url_for(self, endpoint):
         return self._url_fmt.format(endpoint if not endpoint.startswith("/") else endpoint[1:])
+
+    def url_for_params(self, endpoint, params):
+        url = self.url_for(endpoint)
+        if params:
+            url += "?" + urlencode(params, True)
+        return url
 
     @synchronized
     def _get_session(self):

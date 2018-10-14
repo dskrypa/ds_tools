@@ -23,6 +23,7 @@ from getpass import getuser
 from inspect import Signature, Parameter
 from operator import attrgetter
 from threading import RLock
+from urllib.parse import urlencode
 
 from sqlalchemy import create_engine, MetaData, Table, Column, PickleType
 from sqlalchemy.ext.declarative import declarative_base
@@ -346,12 +347,24 @@ class FSCache:
         return os.path.join(self.cache_dir, "{}{}{}".format(self.prefix, key, self.ext))
 
     @classmethod
+    def _html_key_with_extras(cls, key, kwargs):
+        for arg, name in (("params", "query"), ("data", "data"), ("json", "json")):
+            value = kwargs.get(arg)
+            if value:
+                if hasattr(value, "items"):
+                    value = sorted(value.items())
+                key += "__{}__{}".format(name, urlencode(value, True))
+        return key
+
+    @classmethod
     def html_key(cls, self, endpoint, *args, **kwargs):
-        return "{}__{}".format(self.host, endpoint.replace("/", "_"))
+        key = "{}__{}".format(self.host, endpoint.replace("/", "_"))
+        return cls._html_key_with_extras(key, kwargs)
 
     @classmethod
     def html_key_nohost(cls, self, endpoint, *args, **kwargs):
-        return endpoint.replace("/", "_")
+        key = endpoint.replace("/", "_")
+        return cls._html_key_with_extras(key, kwargs)
 
     @classmethod
     def dated_html_key(cls, self, endpoint, *args, **kwargs):

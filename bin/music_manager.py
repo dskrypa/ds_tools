@@ -164,6 +164,7 @@ def main():
 
 
 def path2tag(path, dry_run, incl_title):
+    # TODO: Add prompt / default yes for individual files
     prefix = "[DRY RUN] Would update" if dry_run else "Updating"
     punc_strip_tbl = str.maketrans({c: "" for c in string.punctuation})
     filename_rx = re.compile("\d+\.\s+(.*)")
@@ -200,7 +201,7 @@ def path2tag(path, dry_run, incl_title):
                     log.warning("Skipping {}: More than 1 title value".format(music_file.filename))
                     continue
 
-            if title != filename:
+            if incl_title and (title != filename):
                 log.info("{} the title of {} from {!r} to {!r}".format(prefix, music_file.filename, title, filename))
                 if not dry_run:
                     music_file.tags[title_key] = filename if (ftype == "mp4") else TIT2(text=filename)
