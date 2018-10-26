@@ -301,9 +301,10 @@ class LyricFetcher(RestClient):
             stanza = []
             for i, line in enumerate(chain(lang_lyrics, extras[lang])):
                 if (line == "<br/>") or (i in lb_set):
-                    stanzas[lang].append(stanza)
-                    stanza = []
-                else:
+                    if stanza:
+                        stanzas[lang].append(stanza)
+                        stanza = []
+                elif line.strip():
                     stanza.append(line)
 
             if stanza:
