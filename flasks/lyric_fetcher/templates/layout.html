@@ -7,6 +7,14 @@
 </head>
 <body>
 {% block body %}
+    {% if error %}
+        {% if error_code %}
+            <br/>
+            <h2>{{ error_code }}</h2>
+        {% endif %}
+        <br/>
+        <div class="error">{{ error|safe }}</div>
+    {% endif %}
 {% endblock %}
 </body>
 </html>

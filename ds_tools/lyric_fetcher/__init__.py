@@ -23,7 +23,7 @@ from ..utils import (
 
 __all__ = [
     "normalize_lyrics", "LyricFetcher", "HybridLyricFetcher", "TextFileLyricFetcher", "LyricsTranslateLyricFetcher",
-    "KlyricsLyricFetcher", "ColorCodedLyricFetcher", "MusixMatchLyricFetcher", "SITE_CLASS_MAPPING"
+    "KlyricsLyricFetcher", "ColorCodedLyricFetcher", "MusixMatchLyricFetcher", "SITE_CLASS_MAPPING", "fix_links"
 ]
 log = logging.getLogger("ds_tools.lyric_fetcher")
 

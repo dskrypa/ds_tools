@@ -19,42 +19,15 @@ from werkzeug.http import HTTP_STATUS_CODES as codes
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from ds_tools.logging import LogManager
-from ds_tools.lyric_fetcher import SITE_CLASS_MAPPING, normalize_lyrics
+from ds_tools.lyric_fetcher import SITE_CLASS_MAPPING, normalize_lyrics, fix_links
 
 log = logging.getLogger("lyric_fetcher.server")
 app = Flask("lyric_fetcher")
 # app.config["APPLICATION_ROOT"] = os.environ.get("APP_PREFIX", "/")  # For future Apache support
 
 DEFAULT_SITE = "colorcodedlyrics"
-
+SITES = list(SITE_CLASS_MAPPING.keys())
 fetchers = {site: fetcher_cls() for site, fetcher_cls in SITE_CLASS_MAPPING.items()}
-
-
-
-class ResponseException(Exception):
-    def __init__(self, code, reason):
-        super().__init__()
-        self.code = code
-        self.reason = reason
-        if isinstance(reason, Exception):
-            log.error(traceback.format_exc())
-        log.error(self.reason)
-
-    def __repr__(self):
-        return "<{}({}, '{}')>".format(type(self).__name__, self.code, self.reason)
-
-    def __str__(self):
-        return "{}: [{}] {}".format(type(self).__name__, self.code, self.reason)
-
-    def as_response(self):
-        # noinspection PyUnresolvedReferences
-        rendered = render_template("layout.html", error_code=codes[self.code], error=self.reason, form_values={})
-        return Response(rendered, self.code)
-
-
-@app.errorhandler(ResponseException)
-def handle_response_exception(err):
-    return err.as_response()
 
 
 @app.route("/")
@@ -86,14 +59,34 @@ def search():
             redirect_to += "?" + urlencode(params, True)
         return redirect(redirect_to)
 
-    query = params.get("q")         # query
-    sub_query = params.get("subq")  # sub query
-    site = params.get("site")       # site from which results should be retrieved
-    index = params.get("index")     # bool: show index results instead of search results
-    if not query:
-        raise ResponseException(400, "You must provide a valid query.")
+    query = params.get("q")                     # query
+    sub_query = params.get("subq")              # sub query
+    site = params.get("site") or DEFAULT_SITE   # site from which results should be retrieved
+    index = params.get("index")                 # bool: show index results instead of search results
 
     form_values = {"query": query, "sub_query": sub_query, "site": site, "index": index}
+    render_vars = {
+        "title": "Lyric Fetcher - Search", "form_values": form_values, "sites": SITES
+    }
+
+    if not query:
+        # noinspection PyUnresolvedReferences
+        return render_template("search.html", error="You must provide a valid query.", **render_vars)
+    elif site not in fetchers:
+        # noinspection PyUnresolvedReferences
+        return render_template("search.html", error="Invalid site.", **render_vars)
+
+    fetcher = fetchers[site]
+    if index:
+        try:
+            results = fetcher.get_index_results(query)
+        except TypeError as e:
+            raise ResponseException(501, str(e))
+    else:
+        results = fetcher.get_search_results(query, sub_query)
+
+    # noinspection PyUnresolvedReferences
+    return render_template("search.html", results=results, **render_vars)
 
 
 
@@ -123,7 +116,34 @@ def song(song):
         "title": alt_title or discovered_title or song, "lyrics": stanzas, "lang_order": ["Korean", "Translation"],
         "stanza_count": max_stanzas
     }
+    # noinspection PyUnresolvedReferences
     return render_template("song.html", **render_vars)
+
+
+class ResponseException(Exception):
+    def __init__(self, code, reason):
+        super().__init__()
+        self.code = code
+        self.reason = reason
+        if isinstance(reason, Exception):
+            log.error(traceback.format_exc())
+        log.error(self.reason)
+
+    def __repr__(self):
+        return "<{}({}, '{}')>".format(type(self).__name__, self.code, self.reason)
+
+    def __str__(self):
+        return "{}: [{}] {}".format(type(self).__name__, self.code, self.reason)
+
+    def as_response(self):
+        # noinspection PyUnresolvedReferences
+        rendered = render_template("layout.html", error_code=codes[self.code], error=self.reason)
+        return Response(rendered, self.code)
+
+
+@app.errorhandler(ResponseException)
+def handle_response_exception(err):
+    return err.as_response()
 
 
 if __name__ == "__main__":
