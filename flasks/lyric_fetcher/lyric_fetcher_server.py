@@ -17,12 +17,13 @@ from urllib.parse import urlencode, urlparse
 from flask import Flask, request, render_template, session, redirect, g, Response, url_for
 from werkzeug.http import HTTP_STATUS_CODES as codes
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+lf_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.dirname(os.path.dirname(lf_dir)))
 from ds_tools.logging import LogManager
 from ds_tools.lyric_fetcher import SITE_CLASS_MAPPING, normalize_lyrics, fix_links
 
 log = logging.getLogger("lyric_fetcher.server")
-app = Flask("lyric_fetcher")
+app = Flask("lyric_fetcher", static_folder=os.path.join(lf_dir, "static"), template_folder=os.path.join(lf_dir, "templates"))
 # app.config["APPLICATION_ROOT"] = os.environ.get("APP_PREFIX", "/")  # For future Apache support
 
 DEFAULT_SITE = "colorcodedlyrics"
@@ -85,9 +86,13 @@ def search():
     else:
         results = fetcher.get_search_results(query, sub_query)
 
+    fix_links(results)
+    if not results:
+        # noinspection PyUnresolvedReferences
+        return render_template("search.html", error="No results.", **render_vars)
+
     # noinspection PyUnresolvedReferences
     return render_template("search.html", results=results, **render_vars)
-
 
 
 @app.route("/song/<path:song>", methods=["GET"])
