@@ -1,0 +1,31 @@
+{% extends "layout.html" %}
+{% block body %}
+<h1>{{ title }}</h1>
+
+<table>
+    <tbody>
+        <tr>
+            {% for lang in lang_order %}
+                <th>{{ lang }}</th>
+            {% endfor %}
+        </tr>
+
+        {% for n in range(stanza_count) %}
+            <tr>
+                {% for lang in lang_order %}
+                    <td>
+                        <table>
+                            <tbody>
+                                {% for line in lyrics[lang][n] %}
+                                    <tr><td>{{ line }}</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </td>
+                {% endfor %}
+            </tr>
+            <tr><td><br/></td><td><br/></td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

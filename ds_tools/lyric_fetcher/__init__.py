@@ -57,7 +57,7 @@ def fix_links(results):
             result["Link"] = link[1:]
 
 
-def normalize_lyrics(lyrics_by_lang, extra_linebreaks, extra_lines, replace_lb=False, ignore_len=False):
+def normalize_lyrics(lyrics_by_lang, extra_linebreaks=None, extra_lines=None, replace_lb=False, ignore_len=False):
     linebreaks = {lang: set(lang_lb) for lang, lang_lb in extra_linebreaks.items()} if extra_linebreaks else {}
     extra_lyrics = {lang: lang_lines for lang, lang_lines in extra_lines.items()} if extra_lines else {}
     stanzas = {lang: [] for lang in lyrics_by_lang}

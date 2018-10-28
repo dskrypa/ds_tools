@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Flask server for cleaning up Korean to English translations of song lyrics to make them easier to print
+
+:author: Doug Skrypa
+"""
+
+import argparse
+import logging
+import os
+import socket
+import sys
+import traceback
+from urllib.parse import urlencode, urlparse
+
+from flask import Flask, request, render_template, session, redirect, g, Response, url_for
+from werkzeug.http import HTTP_STATUS_CODES as codes
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from ds_tools.logging import LogManager
+from ds_tools.lyric_fetcher import SITE_CLASS_MAPPING, normalize_lyrics
+
+log = logging.getLogger("lyric_fetcher.server")
+app = Flask("lyric_fetcher")
+# app.config["APPLICATION_ROOT"] = os.environ.get("APP_PREFIX", "/")  # For future Apache support
+
+DEFAULT_SITE = "colorcodedlyrics"
+
+fetchers = {site: fetcher_cls() for site, fetcher_cls in SITE_CLASS_MAPPING.items()}
+
+
+
+class ResponseException(Exception):
+    def __init__(self, code, reason):
+        super().__init__()
+        self.code = code
+        self.reason = reason
+        if isinstance(reason, Exception):
+            log.error(traceback.format_exc())
+        log.error(self.reason)
+
+    def __repr__(self):
+        return "<{}({}, '{}')>".format(type(self).__name__, self.code, self.reason)
+
+    def __str__(self):
+        return "{}: [{}] {}".format(type(self).__name__, self.code, self.reason)
+
+    def as_response(self):
+        # noinspection PyUnresolvedReferences
+        rendered = render_template("layout.html", error_code=codes[self.code], error=self.reason, form_values={})
+        return Response(rendered, self.code)
+
+
+@app.errorhandler(ResponseException)
+def handle_response_exception(err):
+    return err.as_response()
+
+
+@app.route("/")
+def home():
+    url = url_for(".search")
+    log.info("Redirecting from / to {}".format(url))
+    return redirect(url)
+
+
+@app.route("/search/", methods=["GET", "POST"])
+def search():
+    req_is_post = request.method == "POST"
+    params = {}
+    for param in ("q", "subq", "site", "index"):
+        value = request.form.get(param)
+        if value is None:
+            value = request.args.get(param)
+        if value is not None:
+            if isinstance(value, str):
+                value = value.strip()
+                if value:
+                    params[param] = value
+            else:
+                params[param] = value
+
+    if req_is_post:
+        redirect_to = url_for(".search")
+        if params:
+            redirect_to += "?" + urlencode(params, True)
+        return redirect(redirect_to)
+
+    query = params.get("q")         # query
+    sub_query = params.get("subq")  # sub query
+    site = params.get("site")       # site from which results should be retrieved
+    index = params.get("index")     # bool: show index results instead of search results
+    if not query:
+        raise ResponseException(400, "You must provide a valid query.")
+
+    form_values = {"query": query, "sub_query": sub_query, "site": site, "index": index}
+
+
+
+@app.route("/song/<path:song>", methods=["GET"])
+def song(song):
+    site = request.args.get("site") or DEFAULT_SITE
+    if site not in fetchers:
+        raise ResponseException(400, "Invalid site.")
+
+    alt_title = request.args.get("title")
+    ignore_len = request.args.get("ignore_len", type=bool)
+    fetcher = fetchers[site]
+
+    lyrics = fetcher.get_lyrics(song, alt_title)
+    discovered_title = lyrics.pop("title", None)
+    stanzas = normalize_lyrics(lyrics, ignore_len=ignore_len)
+    stanzas["Translation"] = stanzas.pop("English")
+
+    max_stanzas = max(len(lang_stanzas) for lang_stanzas in stanzas.values())
+    for lang, lang_stanzas in stanzas.items():
+        add_stanzas = max_stanzas - len(lang_stanzas)
+        if add_stanzas:
+            for i in range(add_stanzas):
+                lang_stanzas.append([])
+
+    render_vars = {
+        "title": alt_title or discovered_title or song, "lyrics": stanzas, "lang_order": ["Korean", "Translation"],
+        "stanza_count": max_stanzas
+    }
+    return render_template("song.html", **render_vars)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser("Lyric Fetcher Flask Server")
+    parser.add_argument("--use_hostname", "-u", action="store_true", help="Use hostname instead of localhost/127.0.0.1")
+    parser.add_argument("--port", "-p", type=int, help="Port to use")
+    parser.add_argument("--verbose", "-v", action="count", help="Print more verbose log info (may be specified multiple times to increase verbosity)")
+    args = parser.parse_args()
+    lm = LogManager.create_default_logger(args.verbose, log_path=None)
+
+    flask_logger = logging.getLogger("flask.app")
+    for handler in lm.logger.handlers:
+        if handler.name == "stderr":
+            flask_logger.addHandler(handler)
+
+    run_args = {"port": args.port}
+    if args.use_hostname:
+        run_args["host"] = socket.gethostname()
+
+    try:
+        app.run(**run_args)
+    except Exception as e:
+        log.debug(traceback.format_exc())
+        log.error(e)
