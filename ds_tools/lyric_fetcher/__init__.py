@@ -11,7 +11,10 @@ import os
 import re
 from difflib import SequenceMatcher
 from itertools import chain
+from os.path import dirname, abspath
 from urllib.parse import urlsplit
+
+from jinja2 import Environment as JinjaEnv, FileSystemLoader as JinjaFSLoader
 
 from ..http import RestClient
 from ..utils import (
@@ -24,30 +27,12 @@ __all__ = [
 ]
 log = logging.getLogger("ds_tools.lyric_fetcher")
 
-HTML_TEMPLATE = """<html>
-<head>
-    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
-    <meta charset="UTF-8">
-    <style type="text/css">
-    * {{font-family: sans-serif;}}
-    h1 {{text-align: center;}}
-    /*table {{margin: auto;}}*/
-    td {{padding: 0px 20px 0px 20px; font-size: {}pt;}}
-    th {{margin: auto; text-align: center;}}
-    </style>
-</head>
-<body>
-    <table>
-        <tbody>
-            <tr>
-                <th>Korean</th>
-                <th>Translation</th>
-            </tr>
-        </tbody>
-    </table>
-</body>
-</html>
-"""
+TMPL_DIR = os.path.join(dirname(dirname(dirname(abspath(__file__)))), "flasks/lyric_fetcher/templates")
+
+
+def url_for_file(rel_path, filename=None):
+    file_path = os.path.join(dirname(TMPL_DIR), rel_path, filename)
+    return "file:///{}".format(file_path)
 
 
 def fix_links(results):
@@ -107,6 +92,7 @@ class LyricFetcher(RestClient):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, rate_limit=1, **kwargs)
         fix_html_prettify()
+        self.song_tmpl = JinjaEnv(loader=JinjaFSLoader(TMPL_DIR)).get_template("song.html")
 
     def _format_index(self, query):
         raise TypeError("get_index() is not implemented for {}".format(self.host))
@@ -198,51 +184,27 @@ class LyricFetcher(RestClient):
         lyrics = self.get_lyrics(song, title, **kwargs)
         discovered_title = lyrics.pop("title", None)
         stanzas = normalize_lyrics(lyrics, extra_linebreaks, extra_lines, replace_lb=replace_lb, ignore_len=ignore_len)
+        stanzas["Translation"] = stanzas.pop("English")
 
-        html = soupify(HTML_TEMPLATE.format(size))
+        max_stanzas = max(len(lang_stanzas) for lang_stanzas in stanzas.values())
+        for lang, lang_stanzas in stanzas.items():
+            add_stanzas = max_stanzas - len(lang_stanzas)
+            if add_stanzas:
+                for i in range(add_stanzas):
+                    lang_stanzas.append([])
 
-        new_header = html.new_tag("h1")
-        new_header.string = title or discovered_title or song
-
-        html.find("body").insert(0, new_header)
-        tbody = html.find("tbody")
-
-        for n in range(len(stanzas["Korean"])):
-            stanza_row = html.new_tag("tr")
-            for lang in ("Korean", "English"):
-                lang_td = html.new_tag("td")
-                lang_tbl = html.new_tag("table")
-                lang_tbody = html.new_tag("tbody")
-                lang_tbl.append(lang_tbody)
-
-                stanza = stanzas[lang][n] if n < len(stanzas[lang]) else []
-                for line in stanza:
-                    row = html.new_tag("tr")
-                    td = html.new_tag("td")
-                    td.append(line)
-                    row.append(td)
-                    lang_tbody.append(row)
-
-                lang_td.append(lang_tbl)
-                stanza_row.append(lang_td)
-
-            tbody.append(stanza_row)
-
-            row = html.new_tag("tr")
-            td = html.new_tag("td")
-            td.append(html.new_tag("br"))
-            row.append(td)
-            td = html.new_tag("td")
-            td.append(html.new_tag("br"))
-            row.append(td)
-            tbody.append(row)
+        final_title = title or discovered_title or song
+        render_vars = {
+            "title": final_title, "lyrics": stanzas, "lang_order": ["Korean", "Translation"],
+            "stanza_count": max_stanzas, "url_for": url_for_file
+        }
+        prettified = self.song_tmpl.render(**render_vars)
 
         output_dir = output_dir or get_user_cache_dir("lyric_fetcher/lyrics")
         validate_or_make_dir(output_dir)
-        output_filename = "lyrics_{}.html".format(new_header.text.replace(" ", "_").replace("?", ""))
+        output_filename = "lyrics_{}.html".format(final_title.replace(" ", "_").replace("?", ""))
         output_path = os.path.join(output_dir, output_filename)
         log.info("Saving lyrics to {}".format(output_path))
-        prettified = html.prettify(formatter="html")
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(prettified)
 
