@@ -362,9 +362,9 @@ def set_tags(paths, tag_ids, value, replace_pats, partial, dry_run):
                     raise ValueError("Invalid tag ID: {} (no frame class found for it)".format(tag_id)) from e
 
                 log.info("{}{} {}/{} = '{}' in file: {}".format(prefix, set_msg, tag_id, tag_name, value, music_file.filename))
+                should_save = True
                 if not dry_run:
                     music_file.tags.add(fcls(text=value))
-                    should_save = True
             else:
                 if len(current_vals) > 1:
                     log.warning("Skipping file with multiple values for {}/{}: {}".format(tag_id, tag_name, music_file.filename))
@@ -377,21 +377,22 @@ def set_tags(paths, tag_ids, value, replace_pats, partial, dry_run):
                         new_text = rx.sub(value, new_text)
                 else:
                     if repl_rxs:
-                        if any(rx.match(current_text) for rx in repl_rxs):
+                        if any(rx.search(current_text) for rx in repl_rxs):
                             new_text = value
                     else:
                         new_text = value
 
                 if new_text != current_text:
                     log.info("{}{} {}/{} {!r} with {!r} in {}".format(prefix, repl_msg, tag_id, tag_name, current_text, new_text, music_file.filename))
+                    should_save = True
                     if not dry_run:
                         current_vals[0].text[0] = new_text
-                        should_save = True
-                else:
-                    log.info("Nothing to change for {}".format(music_file.filename))
 
         if should_save:
-            music_file.tags.save(music_file.filename)
+            if not dry_run:
+                music_file.tags.save(music_file.filename)
+        else:
+            log.log(19, "Nothing to change for {}".format(music_file.filename))
 
 
 def fix_tags(paths, dry_run):
