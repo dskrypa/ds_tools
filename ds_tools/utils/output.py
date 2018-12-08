@@ -21,7 +21,7 @@ from .operator import replacement_itemgetter
 
 __all__ = [
     "uprint", "uerror", "Column", "SimpleColumn", "Table", "readable_bytes", "format_output", "format_percent",
-    "format_tiered", "print_tiered", "Printer", "to_bytes", "to_str", "TableBar"
+    "format_tiered", "print_tiered", "Printer", "to_bytes", "to_str", "TableBar", "num_suffix"
 ]
 log = logging.getLogger("ds_tools.utils.output")
 
@@ -55,6 +55,19 @@ def uprint(msg):
 def uerror(msg):
     _uerr.write(msg + "\n")
     _uerr.flush()
+
+
+def num_suffix(num):
+    if 3 < num < 21:
+        return "th"
+    ones_place = str(num)[-1:]
+    if ones_place == "1":
+        return "st"
+    elif ones_place == "2":
+        return "nd"
+    elif ones_place == "3":
+        return "rd"
+    return "th"
 
 
 class TableFormatException(Exception):

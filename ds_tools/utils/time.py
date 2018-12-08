@@ -1,13 +1,39 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
+Library to facilitate working with timezone-aware datetimes
+
+.. note::
+    If you have a :class:`datetime.datetime` object with a timezone configured, and you modify the date/time via a
+    :class:`datetime.timedelta` so that the time is pushed across a DST threshold, then you will need to fix the
+    timezone to reflect the new one.
+
+    Example (with ways to fix it) - midnight on 2018-11-04 is in EDT, but 3 hours later is actually 2:00 EST::\n
+        >>> pre_dst = datetime_with_tz("2018-11-04 00:00:00 America/New_York")
+        >>> pre_dst.strftime(DATETIME_FMT)
+        '2018-11-04 00:00:00 EDT'
+
+        >>> post_dst = pre_dst + timedelta(hours=3)
+        >>> post_dst.strftime(DATETIME_FMT)
+        '2018-11-04 03:00:00 EDT'
+
+        >>> datetime_with_tz("2018-11-04 03:00:00 America/New_York").strftime(DATETIME_FMT)
+        '2018-11-04 03:00:00 EST'
+
+        >>> datetime_with_tz(post_dst.timestamp()).strftime(DATETIME_FMT)
+        '2018-11-04 02:00:00 EST'
+        >>> TZ_LOCAL.normalize(post_dst).strftime(DATETIME_FMT)
+        '2018-11-04 02:00:00 EST'
+        >>> post_dst.astimezone(TZ_LOCAL).strftime(DATETIME_FMT)
+        '2018-11-04 02:00:00 EST'
+
 :author: Doug Skrypa
 """
 
 import logging
 import re
-from datetime import datetime
-from _strptime import TimeRE    # Needed to work around timezone handling limitations
+from datetime import datetime, timedelta
+from _strptime import TimeRE                # Needed to work around timezone handling limitations
 
 import pytz
 from tzlocal import get_localzone
@@ -17,6 +43,10 @@ __all__ = [
     "format_duration", "datetime_with_tz", "localize", "as_utc"
 ]
 log = logging.getLogger("ds_tools.utils.time")
+# Loggers that should not be displayed by default
+logr = {"parse": logging.getLogger("ds_tools.utils.time.parse")}
+for logger in logr.values():
+    logger.setLevel(logging.WARNING)
 
 TZ_UTC = pytz.utc
 TZ_LOCAL = get_localzone()
@@ -29,9 +59,10 @@ TIME_FMT = "%H:%M:%S %Z"
 TIME_FMT_NO_TZ = "%H:%M:%S"
 TZ_ALIAS_MAP = {"HKT": "Asia/Hong_Kong", "NYT": "America/New_York"}
 
+DT_FMT_TZ_RX = re.compile("(?<!%)%(%%)*(?!%)[zZ]")  # Odd number of preceding % => unescaped %z (i.e., need to tokenize)
 time_re = TimeRE()
-time_re["z"] = r"(?P<z>[+-]\d\d:?[0-5]\d)"  # Allow ':' in timezone offset notation
-time_re["Z"] = r"(?P<Z>[0-9A-Za-z_/+-]+)"   # Allow any timezone possibly supported by pytz
+time_re["z"] = r"(?P<z>[+-]\d\d:?[0-5]\d)"          # Allow ':' in timezone offset notation
+time_re["Z"] = r"(?P<Z>[0-9A-Za-z_/+-]+)"           # Allow any timezone possibly supported by pytz
 
 
 def _get_tz(tz):
@@ -63,7 +94,7 @@ def _recompile_datetime(tokens, fmt):
     return dt_str
 
 
-def datetime_with_tz(dt, fmt=DATETIME_FMT_NO_TZ, tz=None):
+def datetime_with_tz(dt, fmt=DATETIME_FMT, tz=None):
     """
     Converts the given timestamp string to a datetime object, and ensures that its tzinfo is set.
 
@@ -72,27 +103,29 @@ def datetime_with_tz(dt, fmt=DATETIME_FMT_NO_TZ, tz=None):
 
     :param str|float|datetime dt: A timestamp string/float or datetime object
     :param str fmt: Time format used by the given input string
-    :param tz: A :class:`datetime.tzinfo` or str timezone name to use if not parsed from dt (default: local)
+    :param tz: A :class:`datetime.tzinfo` or str timezone name to use if not parsed from dt (or instead of the one that
+      is in dt if dt is a string) (default: local)
     :return datetime: A :class:`datetime.datetime` object with tzinfo set
     """
+    _log = logr["parse"]
     original_dt = dt
-    original_fmt = fmt
+    # original_fmt = fmt
     tokens = {}
     if isinstance(dt, str):
-        if tz and re.search("(?<!%)%(%%)*(?!%)[zZ]", fmt):      # Odd number of preceding % => unescaped %z/%Z
-            tokens = _tokenize_datetime(dt, fmt)
-            fmt = fmt.replace("%z", "").replace("%Z", "")
-            dt = _recompile_datetime(tokens, fmt)
-            for tok in ("z", "Z"):
-                if tok in tokens:
-                    log.debug("Discarding %{}='{}' from '{}' due to provided tz={!r}".format(tok, tokens[tok], original_dt, tz))
+        if DT_FMT_TZ_RX.search(fmt):                # Trade-off: %z without : won't need this, but more conditions
+            tokens = _tokenize_datetime(dt, fmt)    # would be required to tell if tokens should be generated later
+            if tz:
+                fmt = fmt.replace("%z", "").replace("%Z", "")
+                dt = _recompile_datetime(tokens, fmt)           # type(dt) is still str here
+                for tok in ("z", "Z"):
+                    if tok in tokens:
+                        dbg_fmt = "Discarding %{}='{}' from '{}' due to provided tz={!r}"
+                        _log.debug(dbg_fmt.format(tok, tokens[tok], original_dt, tz))
 
         try:
             dt = datetime.strptime(dt, fmt)
         except ValueError as e:
-            if "does not match format" in str(e) and "%z" in fmt.lower():
-                tokens = tokens or _tokenize_datetime(dt, fmt)
-
+            if tokens and "does not match format" in str(e):
                 if ("z" in tokens) and (":" in tokens["z"]):
                     tokens["z"] = tokens["z"].replace(":", "")
                     dt = datetime.strptime(_recompile_datetime(tokens, fmt), fmt)
@@ -106,18 +139,16 @@ def datetime_with_tz(dt, fmt=DATETIME_FMT_NO_TZ, tz=None):
     elif isinstance(dt, (int, float)):
         dt = datetime.fromtimestamp(dt)
 
+    # From this point forward, type(dt) is (assumed to be) datetime - it will no longer be str or a number
     if not dt.tzinfo:
-        # datetime.strptime discards TZ when provided via %Z but retains it via %z
         if tz is not None:
             tz = _get_tz(tz)
         else:
-            if (not tokens) and ("%Z" in fmt):
-                tokens = _tokenize_datetime(dt, fmt)
-
-            if tokens.get("Z"):
+            if tokens.get("Z"):             # datetime.strptime discards TZ when provided via %Z but retains it via %z
                 tz = _get_tz(tokens["Z"])
+                _log.debug("Found tz={!r} => {!r} for datetime: {!r}".format(tokens["Z"], tz, original_dt))
             else:
-                log.debug("Defaulting to tz={!r} for datatime without %Z or %z: '{}'".format(TZ_LOCAL, original_dt))
+                _log.debug("Defaulting to tz={!r} for datetime without %Z or %z: {!r}".format(TZ_LOCAL, original_dt))
                 tz = TZ_LOCAL
         dt = tz.localize(dt)
     return dt
@@ -217,3 +248,9 @@ def timedelta_to_str(delta):
     if delta.days != 0:
         td_str = "{:d}d, {}".format(delta.days, td_str)
     return td_str
+
+
+if __name__ == "__main__":
+    from ds_tools.logging import LogManager
+    lm = LogManager.create_default_logger(2, log_path=None, levels={"ds_tools.utils.time.parse": "DEBUG"})
+

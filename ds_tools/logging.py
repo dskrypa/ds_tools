@@ -14,17 +14,20 @@ import signal
 import sys
 import time
 from contextlib import suppress
+from datetime import datetime
 from logging import handlers
 
 from termcolor import colored
 
-from .utils import validate_or_make_dir
+from .utils import validate_or_make_dir, TZ_LOCAL
 
-__all__ = ["LogManager"]
-log = logging.getLogger("ds_tools.utils.logging")
+__all__ = ["LogManager", "add_context_filter"]
+log = logging.getLogger("ds_tools.logging")
 
 ENTRY_FMT_DETAILED = "%(asctime)s %(levelname)s %(threadName)s %(name)s %(lineno)d %(message)s"
 DEFAULT_LOGGER_NAME = "ds_tools"
+
+COLOR_CODED_THREADS = os.environ.get("DS_TOOLS_COLOR_CODED_THREAD_LOGS", "0") == "1"
 
 
 class _NotSet:
@@ -86,7 +89,7 @@ class LogManager:
             self.__initialized = True
 
     @classmethod
-    def create_default_logger(cls, verbosity=0, log_path=_NotSet, name=_NotSet, entry_fmt=None, **kwargs):
+    def create_default_logger(cls, verbosity=0, log_path=_NotSet, name=_NotSet, entry_fmt=None, levels=None, **kwargs):
         """
         Creates a LogManager and runs :func:`LogManager.init_default_stream_logger` and
          :func:`LogManager.init_default_file_logger` to initialize stdout/stderr + file handlers.
@@ -107,6 +110,7 @@ class LogManager:
         :param log_path: Path to log file destination (default: use default location); None for no log file
         :param name: Logger name (default: `DEFAULT_LOGGER_NAME` if verbosity <= 10, None if verbosity > 10)
         :param str entry_fmt: Log entry format for streams (defaults to "%(message)s")
+        :param dict levels: Mapping of {logger_name: log_level}s to set, e.g., ``{"ds_tools.logging":"DEBUG"}``
         :param kwargs: Keyword args to be passed to the LogManager constructor
         :return LogManager: LogManager instance initialized with the given/default parameters
         """
@@ -119,6 +123,11 @@ class LogManager:
         if log_path is not None:
             lm.init_default_file_logger(log_path)
             log.log(19, "Logging to {}".format(lm.log_path))
+        if levels:
+            if not isinstance(levels, dict):
+                raise TypeError("levels must be a dict of logger_name=level pairs")
+            for logger_name, level in levels.items():
+                logging.getLogger(logger_name).setLevel(level)
         return lm
 
     def get_levels(self):
@@ -175,7 +184,7 @@ class LogManager:
         """
         entry_fmt = fmt if fmt is not None else self.defaults["entry_format"]
         date_fmt = date_fmt if date_fmt is not None else self.defaults["date_format"]
-        formatter = formatter if formatter is not None else logging.Formatter
+        formatter = formatter if formatter is not None else DatetimeFormatter
 
         if hasattr(destination, "write"):
             handler = logging.StreamHandler(destination)
@@ -210,7 +219,7 @@ class LogManager:
         red_formatter = create_formatter(lambda rec: getattr(rec, "red", False), lambda msg: colored(msg, "red"))
         stdout = open(sys.stdout.fileno(), mode="w", encoding="utf-8", buffering=1)
         stderr = open(sys.stderr.fileno(), mode="w", encoding="utf-8", buffering=1)
-        self.add_handler(stdout, self.stdout_lvl, filter=stdout_filter, name="stdout")
+        self.add_handler(stdout, self.stdout_lvl, filter=stdout_filter, formatter=ColorLogFormatter, name="stdout")
         self.add_handler(stderr, filter=stderr_filter, formatter=red_formatter, name="stderr")
 
     def init_default_file_logger(self, log_path=None, file_level=logging.DEBUG, file_fmt=None):
@@ -231,7 +240,7 @@ class LogManager:
             while calling_module == this_file:
                 try:
                     calling_module = os.path.splitext(os.path.basename(inspect.getsourcefile(inspect.stack()[1][0])))[0]
-                except TypeError:
+                except (TypeError, AttributeError):
                     calling_module = "{}_interactive".format(this_file)
                 except IndexError:
                     break
@@ -292,6 +301,38 @@ def create_filter(filter_fn):
     return CustomLogFilter()
 
 
+class DatetimeFormatter(logging.Formatter):
+    def formatTime(self, record, datefmt=None):
+        dt = TZ_LOCAL.localize(datetime.fromtimestamp(record.created))
+        if datefmt:
+            s = dt.strftime(datefmt)
+        else:
+            t = dt.strftime(self.default_time_format)
+            s = self.default_msec_format % (t, record.msecs)
+        return s
+
+
+class ColorLogFormatter(DatetimeFormatter):
+    def format(self, record):
+        formatted = super().format(record)
+        color = getattr(record, "color", None) or ("red" if getattr(record, "red", False) else None)
+        if color:
+            formatted = colored(formatted, color)
+        if COLOR_CODED_THREADS:
+            try:
+                threadno = int(record.threadName.split("-")[1])
+            except Exception:
+                pass
+            else:
+                color_num = threadno % 256
+                while color_num in (0, 16, 17, 18, 19, 232, 233, 234, 235, 236, 237):
+                    color_num += 51
+                    if color_num > 255:
+                        color_num %= 256
+                formatted = colored(formatted, color_num)
+        return formatted
+
+
 def create_formatter(should_format_fn, format_fn):
     """
     Example usage of an extra attribute: ``log.error("Example message", extra={"red": True})``
@@ -300,7 +341,7 @@ def create_formatter(should_format_fn, format_fn):
     :param format_fn: fn(message) that returns the formatted message
     :return: A custom, uninitialized subclass of logging.Formatter
     """
-    class CustomLogFormatter(logging.Formatter):
+    class CustomLogFormatter(DatetimeFormatter):
         def format(self, record):
             formatted = super(CustomLogFormatter, self).format(record)
             if should_format_fn(record):
@@ -321,3 +362,23 @@ def prep_log_dir(log_path, perm_change_prefix="/var/tmp/", new_dir_permissions=0
     """
     log_dir = os.path.dirname(log_path)
     validate_or_make_dir(log_dir, permissions=new_dir_permissions if log_dir.startswith(perm_change_prefix) else None)
+
+
+def add_context_filter(filter_instance, name=None):
+    """
+    :param filter_instance: An instance of the :class:`logging.Filter` class that should be used
+    :param str|None name: None to add to all loggers, or a string that is the prefix of all loggers that should use the
+      given filter
+    """
+    for lname, logger in logging.Logger.manager.loggerDict.items():
+        if (name is None) or (isinstance(lname, str) and lname.startswith(name)):
+            try:
+                logger.addFilter(filter_instance)
+            except AttributeError:                  # ignore PlaceHolder objects
+                pass
+
+
+if __name__ == "__main__":
+    lm = LogManager.create_default_logger(
+        2, log_path=None, date_fmt="%Y-%m-%d %H:%M:$S.%f %Z", entry_fmt="%(asctime)s %(name)s %(message)s"
+    )

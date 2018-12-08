@@ -26,7 +26,6 @@ TODO:
 :author: Doug Skrypa
 """
 
-import argparse
 import logging
 import os
 import pickle
@@ -34,20 +33,28 @@ import re
 import string
 import sys
 from collections import Counter, defaultdict
-from fnmatch import fnmatch
+from contextlib import suppress
+from fnmatch import fnmatch, translate as fnpat2re
 from hashlib import sha256
 from io import BytesIO
-from itertools import chain
 
 import grapheme
 import mutagen
+import mutagen.id3._frames
 from mutagen.id3 import ID3, TDRC, TIT2
 from mutagen.id3._frames import Frame
 from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_file_path = os.path.abspath(__file__)
+if os.path.islink(_file_path):
+    _link_path = os.readlink(_file_path)
+    if _link_path.startswith(".."):
+        _file_path = os.path.abspath(os.path.join(os.path.dirname(_file_path), _link_path))
+    else:
+        _file_path = os.path.abspath(_link_path)
+sys.path.append(os.path.dirname(os.path.dirname(_file_path)))
 from ds_tools.logging import LogManager
-from ds_tools.utils import Table, SimpleColumn, validate_or_make_dir, localize, TableBar
+from ds_tools.utils import Table, SimpleColumn, localize, TableBar, num_suffix, ArgParser
 from music.constants import tag_name_map
 
 log = logging.getLogger("ds_tools.{}".format(__name__))
@@ -92,47 +99,52 @@ class FakeMusicFile:
         self.tags = tags
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Music Manager")
-    sparsers = parser.add_subparsers(dest="action", help="Action to perform")
+def parser():
+    parser = ArgParser(description="Music Manager")
 
-    info_parser = sparsers.add_parser("info", help="Get song/tag information")
+    info_parser = parser.add_subparser("action", "info", help="Get song/tag information")
     info_parser.add_argument("path", nargs="+", help="One or more file/directory paths that contain music files")
-
     info_group = info_parser.add_mutually_exclusive_group()
     info_group.add_argument("--count", "-c", action="store_true", help="Count tag types rather than printing all info")
     info_group.add_argument("--unique", "-u", metavar="TAGID", nargs="+", help="Count unique values of the specified tag(s)")
     info_group.add_argument("--tags", "-t", nargs="+", help="Filter tags to display in file info mode")
     info_group.add_argument("--table", "-T", action="store_true", help="Print a full table instead of individual tables per file")
 
-    rm_parser = sparsers.add_parser("remove", help="Remove specified tags from the given files")
+    rm_parser = parser.add_subparser("action", "remove", help="Remove specified tags from the given files")
     rm_parser.add_argument("path", nargs="+", help="One or more file/directory paths that contain music files")
-
     rm_group = rm_parser.add_mutually_exclusive_group()
     rm_group.add_argument("--tags", "-t", nargs="+", help="One or more tag IDs to remove from the given files")
     rm_group.add_argument("--recommended", "-r", action="store_true", help="Remove recommended tags")
 
-    cp_parser = sparsers.add_parser("copy", help="Copy specified tags from one set of files to another")
+    cp_parser = parser.add_subparser("action", "copy", help="Copy specified tags from one set of files to another")
     cp_parser.add_argument("--source", "-s", nargs="+", help="One or more file/directory paths that contain music files or ID3 info backups", required=True)
     cp_parser.add_argument("--dest", "-d", nargs="+", help="One or more file/directory paths that contain music files, or a path to store an ID3 info backup")
     cp_parser.add_argument("--backup", "-b", action="store_true", help="Store a backup of ID3 information instead of writing directly to matching music files")
     cp_parser.add_argument("--tags", "-t", nargs="+", help="One or more tag IDs to copy to the destination files")
 
-    fix_parser = sparsers.add_parser("fix", help="Fix poorly chosen tags in the given files (such as TXXX:DATE, etc)")
+    fix_parser = parser.add_subparser("action", "fix", help="Fix poorly chosen tags in the given files (such as TXXX:DATE, etc)")
     fix_parser.add_argument("path", nargs="+", help="One or more file/directory paths that contain music files")
 
-    sort_parser = sparsers.add_parser("sort", help="Sort music into directories based on tag info")
+    sort_parser = parser.add_subparser("action", "sort", help="Sort music into directories based on tag info")
     sort_parser.add_argument("path", help="A directory that contains directories that contain music files")
 
-    p2t_parser = sparsers.add_parser("path2tag", help="Update tags based on the path to each file")
+    p2t_parser = parser.add_subparser("action", "path2tag", help="Update tags based on the path to each file")
     p2t_parser.add_argument("path", help="A directory that contains directories that contain music files")
     p2t_parser.add_argument("--title", "-t", action="store_true", help="Update title based on filename")
 
-    for p in chain((parser,), sparsers.choices.values()):
-        p.add_argument("--verbose", "-v", action="count", help="Print more verbose log info (may be specified multiple times to increase verbosity)")
-        p.add_argument("--dry_run", "-D", action="store_true", help="Print the actions that would be taken instead of taking them")
+    set_parser = parser.add_subparser("action", "set", help="Set the value of the given tag on all music files in the given path")
+    set_parser.add_argument("path", nargs="+", help="One or more file/directory paths that contain music files")
+    set_parser.add_argument("--tag", "-t", nargs="+", help="Tag ID(s) to modify", required=True)
+    set_parser.add_argument("--value", "-V", help="Value to replace existing values with", required=True)
+    set_parser.add_argument("--replace", "-r", nargs="+", help="If specified, only replace tag values that match the given patterns(s)")
+    set_parser.add_argument("--partial", "-p", action="store_true", help="Update only parts of tags that match a pattern specified via --replace/-r")
 
-    args = parser.parse_args()
+    parser.include_common_args("verbosity", "dry_run")
+    return parser
+
+
+def main():
+    args = parser().parse_args()
     LogManager.create_default_logger(args.verbose, log_path=None)
 
     if args.action == "info":
@@ -159,6 +171,8 @@ def main():
         sort_albums(args.path, args.dry_run)
     elif args.action == "path2tag":
         path2tag(args.path, args.dry_run, args.title)
+    elif args.action == "set":
+        set_tags(args.path, args.tag, args.value, args.replace, args.partial, args.dry_run)
     else:
         log.error("Unconfigured action")
 
@@ -211,6 +225,12 @@ def path2tag(path, dry_run, incl_title):
 
 
 def sort_albums(path, dry_run):
+    """
+    Sort albums in the given path by album type
+
+    :param str path: Path to the directory to sort
+    :param bool dry_run: Print the actions that would be taken instead of taking them
+    """
     prefix, verb = ("[DRY RUN] ", "Would rename") if dry_run else ("", "Renaming")
     punc_strip_tbl = str.maketrans({c: "" for c in string.punctuation})
 
@@ -279,26 +299,18 @@ def sort_albums(path, dry_run):
             files, japanese = 0, 0
             for music_file in iter_music_files(root):
                 files += 1
+                gkey, tkey = None, None
                 if isinstance(music_file.tags, MP4Tags):
-                    try:
-                        genre_tags = [t.translate(punc_strip_tbl).lower() for t in music_file.tags["\xa9gen"]]
-                    except KeyError:
-                        genre_tags = []
-                    try:
-                        title_tags = [t.translate(punc_strip_tbl).lower() for t in music_file.tags["\xa9nam"]]
-                    except KeyError:
-                        title_tags = []
+                    gkey, tkey = "\xa9gen", "\xa9nam"
                 elif isinstance(music_file.tags, ID3):
-                    try:
-                        genre_tags = [t.translate(punc_strip_tbl).lower() for t in music_file.tags["TCON"]]
-                    except KeyError:
-                        genre_tags = []
-                    try:
-                        title_tags = [t.translate(punc_strip_tbl).lower() for t in music_file.tags["TIT2"]]
-                    except KeyError:
-                        title_tags = []
-                else:
-                    genre_tags, title_tags = [], []
+                    gkey, tkey = "TCON", "TIT2"
+
+                genre_tags, title_tags = [], []
+                if all(k is not None for k in (gkey, tkey)):
+                    with suppress(KeyError):
+                        genre_tags = [t.translate(punc_strip_tbl).lower() for t in music_file.tags[gkey]]
+                    with suppress(KeyError):
+                        title_tags = [t.translate(punc_strip_tbl).lower() for t in music_file.tags[tkey]]
 
                 if any("jpop" in t for t in genre_tags) or any("japanese" in t for t in title_tags):
                     japanese += 1
@@ -325,18 +337,61 @@ def sort_albums(path, dry_run):
                     log.info("Album already has correct name: {}".format(path))
 
 
-def num_suffix(num):
-    if 3 < num < 21:
-        return "th"
+def set_tags(paths, tag_ids, value, replace_pats, partial, dry_run):
+    prefix, repl_msg, set_msg = ("[DRY RUN] ", "Would replace", "Would set") if dry_run else ("", "Replacing", "Setting")
+    repl_rxs = [re.compile(fnpat2re(pat)[4:-3]) for pat in replace_pats] if replace_pats else []
+    if partial and not repl_rxs:
+        raise ValueError("When using --partial/-p, --replace/-r must also be specified")
 
-    ones_place = str(num)[-1:]
-    if ones_place == "1":
-        return "st"
-    elif ones_place == "2":
-        return "nd"
-    elif ones_place == "3":
-        return "rd"
-    return "th"
+    for music_file in iter_music_files(paths):
+        if not isinstance(music_file.tags, ID3):
+            log.debug("Skipping non-MP3: {}".format(music_file.filename))
+            continue
+
+        should_save = False
+        for tag_id in tag_ids:
+            tag_name = tag_name_map.get(tag_id)
+            if not tag_name:
+                raise ValueError("Invalid tag ID: {}".format(tag_id))
+
+            current_vals = music_file.tags.getall(tag_id)
+            if not current_vals:
+                try:
+                    fcls = getattr(mutagen.id3._frames, tag_id.upper())
+                except AttributeError as e:
+                    raise ValueError("Invalid tag ID: {} (no frame class found for it)".format(tag_id)) from e
+
+                log.info("{}{} {}/{} = '{}' in file: {}".format(prefix, set_msg, tag_id, tag_name, value, music_file.filename))
+                if not dry_run:
+                    music_file.tags.add(fcls(text=value))
+                    should_save = True
+            else:
+                if len(current_vals) > 1:
+                    log.warning("Skipping file with multiple values for {}/{}: {}".format(tag_id, tag_name, music_file.filename))
+
+                current_val = current_vals[0]
+                current_text = current_val.text[0]
+                new_text = current_text
+                if partial:
+                    for rx in repl_rxs:
+                        new_text = rx.sub(value, new_text)
+                else:
+                    if repl_rxs:
+                        if any(rx.match(current_text) for rx in repl_rxs):
+                            new_text = value
+                    else:
+                        new_text = value
+
+                if new_text != current_text:
+                    log.info("{}{} {}/{} {!r} with {!r} in {}".format(prefix, repl_msg, tag_id, tag_name, current_text, new_text, music_file.filename))
+                    if not dry_run:
+                        current_vals[0].text[0] = new_text
+                        should_save = True
+                else:
+                    log.info("Nothing to change for {}".format(music_file.filename))
+
+        if should_save:
+            music_file.tags.save(music_file.filename)
 
 
 def fix_tags(paths, dry_run):
@@ -626,7 +681,6 @@ def remove_tags(paths, tag_ids, dry_run, recommended):
 
             log.info("{}{}: {} tags: {}".format(prefix, music_file.filename, verb, info_str))
             log.debug("\t{}: {}".format(music_file.filename, rm_str))
-
             if not dry_run:
                 for tag_id in to_remove:
                     if isinstance(music_file.tags, MP4Tags):
@@ -663,8 +717,7 @@ def table_song_tags(paths):
 
 def print_song_tags(paths, tags):
     tags = {tag.upper() for tag in tags} if tags else None
-    i = 0
-    for music_file in iter_music_files(paths, include_backups=True):
+    for i, music_file in enumerate(iter_music_files(paths, include_backups=True)):
         if i:
             print()
 
@@ -682,15 +735,9 @@ def print_song_tags(paths, tags):
                 tag = tag[:4]
 
             if not tags or (tag in tags):
-                val = str(val)
-                rows.append({
-                    "Tag": tag,
-                    "Tag Name": tag_name_map.get(tag, "[unknown]"),
-                    "Value": tag_repr(val)
-                })
+                rows.append({"Tag": tag, "Tag Name": tag_name_map.get(tag, "[unknown]"), "Value": tag_repr(str(val))})
         if rows:
             tbl.print_rows(rows)
-        i += 1
 
 
 def count_unique_vals(paths, tag_ids):
@@ -712,7 +759,6 @@ def count_unique_vals(paths, tag_ids):
         SimpleColumn("Value"), update_width=True
     )
     rows = []
-
     for tag, val_counter in unique_vals.items():
         for val, count in val_counter.items():
             rows.append({
