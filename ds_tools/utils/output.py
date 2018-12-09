@@ -22,7 +22,7 @@ from .operator import replacement_itemgetter
 
 __all__ = [
     "uprint", "uerror", "Column", "SimpleColumn", "Table", "readable_bytes", "format_output", "format_percent",
-    "format_tiered", "print_tiered", "Printer", "to_bytes", "to_str", "TableBar", "num_suffix"
+    "format_tiered", "print_tiered", "Printer", "to_bytes", "to_str", "TableBar", "num_suffix", "mono_width"
 ]
 log = logging.getLogger("ds_tools.utils.output")
 

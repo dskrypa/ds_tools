@@ -33,12 +33,9 @@ import re
 import string
 import sys
 from collections import Counter, defaultdict
-from contextlib import suppress
 from fnmatch import fnmatch, translate as fnpat2re
-from hashlib import sha256
-from io import BytesIO
+from unicodedata import normalize
 
-import grapheme
 import mutagen
 import mutagen.id3._frames
 from mutagen.id3 import ID3, TDRC, TIT2
@@ -139,6 +136,9 @@ def parser():
     list_parser = parser.add_subparser("action", "list", help="TEMP")
     list_parser.add_argument("path", help="A directory that contains directories that contain music files")
 
+    auto_parser = parser.add_subparser("action", "auto", help="Automatically perform the most common tasks")
+    auto_parser.add_argument("path", help="A directory that contains directories that contain music files")
+
     parser.include_common_args("verbosity", "dry_run")
     return parser
 
@@ -158,6 +158,10 @@ def main():
             table_song_tags(args.path, args.tag_table)
         else:
             print_song_tags(args.path, args.tags)
+    elif args.action == "auto":
+        remove_tags(args.path, None, args.dry_run, True)    # remove . -r
+        fix_tags(args.path, args.dry_run)                   # fix .
+        sort_albums(args.path, args.dry_run)                # sort .
     elif args.action == "remove":
         remove_tags(args.path, args.tags, args.dry_run, args.recommended)
     elif args.action == "fix":
@@ -310,16 +314,31 @@ def sort_albums(path, dry_run):
 
     for artist_dir, categorized_albums in sorted(numbered_albums.items()):
         for cat, albums in sorted(categorized_albums.items()):
-            for num, path in sorted(albums.items()):
-                if not path.endswith("]"):
-                    parent_dir, album_dir = os.path.split(path)
+            for num, _path in sorted(albums.items()):
+                if not _path.endswith("]"):
+                    parent_dir, album_dir = os.path.split(_path)
                     album_dir = "{} [{}{} {}]".format(album_dir, num, num_suffix(num), cat)
                     new_path = os.path.join(parent_dir, album_dir)
-                    log.info("{}{} '{}' -> '{}'".format(prefix, verb, path, new_path))
+                    log.info("{}{} '{}' -> '{}'".format(prefix, verb, _path, new_path))
                     if not dry_run:
-                        os.rename(path, new_path)
+                        os.rename(_path, new_path)
                 else:
-                    log.info("Album already has correct name: {}".format(path))
+                    log.log(19, "Album already has correct name: {}".format(_path))
+
+    for parent_dir, artist_dir, category_dir, album_dir, music_files in iter_categorized_music_files(path):
+        album_path = os.path.join(parent_dir, artist_dir, category_dir, album_dir)
+        pat = "^(\[[^\]]+\])?\s*" + artist_dir + "\s*-?\s*(.*)$"
+        m = re.match(pat, album_dir)
+        if m:
+            date_prefix = m.group(1)
+            album_name = m.group(2).strip()
+            new_album_dir = album_name if not date_prefix else "{} {}".format(date_prefix, album_name)
+            # new_album_dir = m.group(1).strip()
+            if new_album_dir:
+                new_album_path = os.path.join(parent_dir, artist_dir, category_dir, new_album_dir)
+                log.info("{}{} '{}' -> '{}'".format(prefix, verb, album_path, new_album_path))
+                if not dry_run:
+                    os.rename(album_path, new_album_path)
 
 
 def set_tags(paths, tag_ids, value, replace_pats, partial, dry_run):
@@ -382,7 +401,8 @@ def set_tags(paths, tag_ids, value, replace_pats, partial, dry_run):
 
 def fix_tags(paths, dry_run):
     # TODO: Convert ` to '
-    prefix, verb1, verb2 = ("[DRY RUN] ", "Would add", "remove") if dry_run else ("", "Adding", "removing")
+    prefix, add_msg, rmv_msg = ("[DRY RUN] ", "Would add", "remove") if dry_run else ("", "Adding", "removing")
+    upd_msg = "Would update" if dry_run else "Updating"
 
     for music_file in iter_music_files(paths):
         if not isinstance(music_file.tags, ID3):
@@ -394,11 +414,22 @@ def fix_tags(paths, dry_run):
         if (not tdrc) and txxx_date:
             file_date = txxx_date[0].text[0]
 
-            log.info("{}{} TDRC={} to {} and {} its TXXX:DATE tag".format(prefix, verb1, file_date, music_file.filename, verb2))
+            log.info("{}{} TDRC={} to {} and {} its TXXX:DATE tag".format(prefix, add_msg, file_date, music_file.filename, rmv_msg))
             if not dry_run:
                 music_file.tags.add(TDRC(text=file_date))
                 music_file.tags.delall("TXXX:DATE")
                 music_file.tags.save(music_file.filename)
+
+        lyrics_tags = music_file.tags.getall("USLT")
+        if len(lyrics_tags) == 1:
+            lyrics_tag = lyrics_tags[0]
+            m = re.match("^(.*)(https?://\S+)$", lyrics_tag.text, re.DOTALL)
+            if m:
+                new_lyrics = m.group(1).strip() + "\r\n"
+                log.info("{}{} lyrics for {} from {!r} to {!r}".format(prefix, upd_msg, music_file.filename, tag_repr(lyrics_tag.text), tag_repr(new_lyrics)))
+                if not dry_run:
+                    lyrics_tag.text = new_lyrics
+                    music_file.tags.save(music_file.filename)
 
 
 def copy_tags(source_paths, dest_paths, tags, dry_run):
@@ -467,16 +498,10 @@ def save_tag_backups(source_paths, backup_path):
         pickle.dump(tag_info, f)
 
 
-def tag_repr(tag_val, max_len=125, sub_len=25, use_grapheme=False):
-    if not isinstance(tag_val, str):
-        tag_val = str(tag_val)
-    tag_val = tag_val.translate(WHITESPACE_TRANS_TBL)
-    val_len = grapheme.length(tag_val) if use_grapheme else len(tag_val)
-    if val_len > max_len:
-        if use_grapheme:
-            return "{}...{}".format(grapheme.slice(tag_val, 0, sub_len), grapheme.slice(tag_val, val_len - sub_len))
-        else:
-            return "{}...{}".format(tag_val[:sub_len], tag_val[-sub_len:])
+def tag_repr(tag_val, max_len=125, sub_len=25):
+    tag_val = normalize("NFC", str(tag_val)).translate(WHITESPACE_TRANS_TBL)
+    if len(tag_val) > max_len:
+        return "{}...{}".format(tag_val[:sub_len], tag_val[-sub_len:])
     return tag_val
 
 
@@ -485,7 +510,8 @@ def remove_tags(paths, tag_ids, dry_run, recommended):
 
     # tag_ids = sorted({tag_id.upper() for tag_id in tag_ids})
     tag_id_pats = sorted({tag_id for tag_id in tag_ids}) if tag_ids else []
-    log.info("{}{} the following tags from all files:".format(prefix, verb))
+    if tag_id_pats:
+        log.info("{}{} the following tags from all files:".format(prefix, verb))
     if tag_ids:
         for tag_id in tag_ids:
             log.info("\t{}: {}".format(tag_id, tag_name_map.get(tag_id, "[unknown]")))
@@ -523,9 +549,7 @@ def remove_tags(paths, tag_ids, dry_run, recommended):
             if i:
                 log.debug("")
             rm_str = ", ".join(
-                "{}: {}".format(tag_id, tag_repr(val, use_grapheme=True))
-                for tag_id, vals in sorted(to_remove.items())
-                for val in vals
+                "{}: {}".format(tag_id, tag_repr(val)) for tag_id, vals in sorted(to_remove.items()) for val in vals
             )
             info_str = ", ".join("{} ({})".format(tag_id, len(vals)) for tag_id, vals in sorted(to_remove.items()))
 
@@ -613,8 +637,7 @@ def count_unique_vals(paths, tag_ids):
     for tag, val_counter in unique_vals.items():
         for val, count in val_counter.items():
             rows.append({
-                "Tag": tag, "Tag Name": tag_name_map.get(tag, "[unknown]"), "Count": count,
-                "Value": tag_repr(val, use_grapheme=True)
+                "Tag": tag, "Tag Name": tag_name_map.get(tag, "[unknown]"), "Count": count, "Value": tag_repr(val)
             })
     tbl.print_rows(rows)
 
