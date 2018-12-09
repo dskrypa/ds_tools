@@ -11,10 +11,11 @@ import types
 from collections import OrderedDict, namedtuple, UserDict
 from collections.abc import Mapping, Sized, Iterable, Container, KeysView
 from io import StringIO
+from unicodedata import normalize
 
-import grapheme
 import yaml
 from termcolor import colored
+from wcwidth import wcswidth
 
 from .decorate import cached_property
 from .operator import replacement_itemgetter
@@ -83,6 +84,9 @@ class TableFormatException(Exception):
         return msg_fmt.format(self.scope, type(self.exc).__name__, self.exc, self.fmt_str, self.value)
 
 
+def mono_width(text):
+    return wcswidth(normalize("NFC", text))
+
 
 class Column:
     """
@@ -108,14 +112,18 @@ class Column:
         self.key = key
         self.title = str(title)
         self._width = 0
-        self.width = width
         self.display = display
         self.align = align
         self.ftype = ftype
         self.formatter = formatter
+        self.width = width
 
     def __repr__(self):
         return "<{}('{}', '{}')>".format(type(self).__name__, self.key, self.title)
+
+    @property
+    def _test_fmt(self):
+        return "{{:{}{}}}".format(self.align, self.ftype)
 
     @property
     def row_fmt(self):
@@ -126,6 +134,14 @@ class Column:
         return "{{0[{}]:{}{}}}".format(self.key, self.align, self.width)
 
     def format(self, value):
+        orig_width = self._width
+        test_val = self._test_fmt.format(value)
+        char_count = len(test_val)
+        str_width = mono_width(test_val)
+        if char_count != str_width:
+            diff = str_width - char_count
+            self._width -= diff
+
         try:
             if self.formatter:
                 try:
@@ -145,6 +161,8 @@ class Column:
                     return prefix + self.header_fmt.format({self.key: value}) + suffix
         except TypeError as e:
             raise TableFormatException("column", self.row_fmt, value, e) from e
+        finally:
+            self._width = orig_width
 
     @property
     def width(self):
@@ -153,24 +171,32 @@ class Column:
     @width.setter
     def width(self, value):
         try:
-            self._width = max(self._calc_width(value), grapheme.length(self.title))
+            self._width = max(self._calc_width(value), mono_width(self.title))
         except (ValueError, TypeError) as e:
             try:
                 raise ValueError("{}: Unable to determine width (likely no values were found)".format(self)) from e
             except ValueError as e2:
                 raise ValueError("No results.") from e2
 
+    def _len(self, text):
+        char_count = len(text)
+        str_width = mono_width(text)
+        if (char_count != str_width) and not self.formatter:
+            self.formatter = lambda a, b: b             # Force Table.format_row to delegate formatting to Column.format
+        return str_width
+
     def _calc_width(self, width):
+        fmt = self._test_fmt
         try:
             return int(width)
         except TypeError:
             try:
-                return max(grapheme.length(str(e[self.key])) for e in width.values())
+                return max(self._len(fmt.format(e[self.key])) for e in width.values())
             except (KeyError, TypeError, AttributeError):
                 try:
-                    return max(grapheme.length(str(e[self.key])) for e in width)
+                    return max(self._len(fmt.format(e[self.key])) for e in width)
                 except (KeyError, TypeError, AttributeError):
-                    return max(grapheme.length(str(obj)) for obj in width)
+                    return max(self._len(fmt.format(obj)) for obj in width)
 
 
 class SimpleColumn(Column):
@@ -183,8 +209,8 @@ class SimpleColumn(Column):
     :param str align: String formatting alignment indicator (default: left; example: ">" for right)
     :param str ftype: String formatting type/format indicator (default: none; example: ",d" for thousands indicator)
     """
-    def __init__(self, title, width=0, display=True, align="", ftype=""):
-        super().__init__(title, title, width, display, align, ftype)
+    def __init__(self, title, width=0, display=True, align="", ftype="", formatter=None):
+        super().__init__(title, title, width, display, align, ftype, formatter)
 
 
 class TableBar:
