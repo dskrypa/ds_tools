@@ -19,13 +19,13 @@ TODO:
     - Use generic / genre-specific wikis, such as http://kpop.wikia.com/wiki/$artist
     - Can use this to append '[Xth [$lang] [Mini] Album]' suffixes
 - Remove artist from '[$date] $artist - $album' directory names
-- Provide way to replace tag values with a provided value
 
 - Cleanup lyric content to remove url from end if present (example: in CLC/Crystyle/Hobgoblin)
 
 :author: Doug Skrypa
 """
 
+import json
 import logging
 import os
 import pickle
@@ -45,15 +45,16 @@ from mutagen.id3 import ID3, TDRC, TIT2
 from mutagen.id3._frames import Frame
 from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
 
-_file_path = os.path.abspath(__file__)
-if os.path.islink(_file_path):
-    _link_path = os.readlink(_file_path)
+_script_path = os.path.abspath(__file__)
+if os.path.islink(_script_path):
+    _link_path = os.readlink(_script_path)
     if _link_path.startswith(".."):
-        _file_path = os.path.abspath(os.path.join(os.path.dirname(_file_path), _link_path))
+        _script_path = os.path.abspath(os.path.join(os.path.dirname(_script_path), _link_path))
     else:
-        _file_path = os.path.abspath(_link_path)
-sys.path.append(os.path.dirname(os.path.dirname(_file_path)))
+        _script_path = os.path.abspath(_link_path)
+sys.path.append(os.path.dirname(os.path.dirname(_script_path)))
 from ds_tools.logging import LogManager
+from ds_tools.music import iter_music_files, load_tags, iter_music_albums, iter_categorized_music_files
 from ds_tools.utils import Table, SimpleColumn, localize, TableBar, num_suffix, ArgParser
 from music.constants import tag_name_map
 
@@ -63,6 +64,7 @@ log = logging.getLogger("ds_tools.{}".format(__name__))
 WHITESPACE_TRANS_TBL = str.maketrans({c: c.encode("unicode_escape").decode("utf-8") for c in string.whitespace})
 RM_TAGS_MP4 = ["*itunes*", "??ID", "?cmt", "ownr", "xid ", "purd"]
 RM_TAGS_ID3 = ["TXXX*", "PRIV*", "WXXX*", "COMM*", "TCOP"]
+
 
 # Monkey-patch Frame's repr so APIC and similar frames don't kill terminals
 _orig_frame_repr = Frame.__repr__
@@ -93,12 +95,6 @@ MP4Cover.__repr__ = _MP4Cover_repr
 MP4FreeForm.__repr__ = _MP4FreeForm_repr
 
 
-class FakeMusicFile:
-    def __init__(self, sha256sum, tags):
-        self.filename = sha256sum
-        self.tags = tags
-
-
 def parser():
     parser = ArgParser(description="Music Manager")
 
@@ -109,6 +105,7 @@ def parser():
     info_group.add_argument("--unique", "-u", metavar="TAGID", nargs="+", help="Count unique values of the specified tag(s)")
     info_group.add_argument("--tags", "-t", nargs="+", help="Filter tags to display in file info mode")
     info_group.add_argument("--table", "-T", action="store_true", help="Print a full table instead of individual tables per file")
+    info_group.add_argument("--tag_table", "-TT", nargs="+", help="Print a table comparing the specified tag IDs across each file")
 
     rm_parser = parser.add_subparser("action", "remove", help="Remove specified tags from the given files")
     rm_parser.add_argument("path", nargs="+", help="One or more file/directory paths that contain music files")
@@ -139,6 +136,9 @@ def parser():
     set_parser.add_argument("--replace", "-r", nargs="+", help="If specified, only replace tag values that match the given patterns(s)")
     set_parser.add_argument("--partial", "-p", action="store_true", help="Update only parts of tags that match a pattern specified via --replace/-r")
 
+    list_parser = parser.add_subparser("action", "list", help="TEMP")
+    list_parser.add_argument("path", help="A directory that contains directories that contain music files")
+
     parser.include_common_args("verbosity", "dry_run")
     return parser
 
@@ -154,6 +154,8 @@ def main():
             count_unique_vals(args.path, args.unique)
         elif args.table:
             table_song_tags(args.path)
+        elif args.tag_table:
+            table_song_tags(args.path, args.tag_table)
         else:
             print_song_tags(args.path, args.tags)
     elif args.action == "remove":
@@ -173,6 +175,28 @@ def main():
         path2tag(args.path, args.dry_run, args.title)
     elif args.action == "set":
         set_tags(args.path, args.tag, args.value, args.replace, args.partial, args.dry_run)
+    elif args.action == "list":
+        tools_dir = os.path.dirname(os.path.dirname(_script_path))
+        with open(os.path.join(tools_dir, "music", "artist_dir_to_artist.json"), "r", encoding="utf-8") as f:
+            dir2artist = json.load(f)
+
+        for _dir, disp_name in sorted(dir2artist.items()):
+            if not disp_name:
+                artist_dir = os.path.join(args.path, _dir)
+                if os.path.exists(artist_dir):
+                    for mfile in iter_music_files(artist_dir):
+                        try:
+                            artist = mfile.tags["TPE1"].text[0]
+                        except KeyError as e:
+                            pass
+                        else:
+                            if "," not in artist:
+                                print("\"{}\": \"{}\",".format(_dir, artist))
+                                break
+                else:
+                    print("\"{}\": \"{}\",".format(_dir, ""))
+            else:
+                print("\"{}\": \"{}\",".format(_dir, disp_name))
     else:
         log.error("Unconfigured action")
 
@@ -180,48 +204,33 @@ def main():
 def path2tag(path, dry_run, incl_title):
     # TODO: Add prompt / default yes for individual files
     prefix = "[DRY RUN] Would update" if dry_run else "Updating"
-    punc_strip_tbl = str.maketrans({c: "" for c in string.punctuation})
-    filename_rx = re.compile("\d+\.\s+(.*)")
 
-    for root, dirs, files in os.walk(path):
-        parent_dir = os.path.dirname(root)
-        artist_dir = os.path.dirname(parent_dir)
-        album_dir = os.path.basename(root)
-        category_dir = os.path.basename(parent_dir)
+    for music_file in iter_music_files(path):
+        try:
+            title_key = music_file.tag_name_to_id("title")
+        except KeyError as e:
+            log.warning("Skipping due to unhandled file type: {}".format(music_file.filename))
+            continue
 
-        for music_file in iter_music_files(root):
-            filename = os.path.splitext(os.path.basename(music_file.filename))[0]
-            m = filename_rx.match(filename)
-            if m:
-                filename = m.group(1)
-
-            if isinstance(music_file.tags, MP4Tags):
-                title_key = "\xa9nam"
-                ftype = "mp4"
-            elif isinstance(music_file.tags, ID3):
-                title_key = "TIT2"
-                ftype = "mp3"
-            else:
-                log.warning("Skipping {}: Unhandled filetype".format(music_file.filename))
+        try:
+            titles = music_file.tags[title_key].text
+        except Exception as e:
+            log.error("Error retrieving title for {} - {}".format(music_file.filename, e))
+            continue
+        else:
+            if len(titles) > 1:
+                log.warning("Skipping {} - More than 1 title value".format(music_file.filename))
                 continue
+            title = titles[0]
 
-            try:
-                title = music_file.tags[title_key].text[0]
-            except Exception as e:
-                log.error("{}: Error retrieving title: {}".format(music_file.filename, e))
-                continue
-            else:
-                if len(music_file.tags[title_key].text) > 1:
-                    log.warning("Skipping {}: More than 1 title value".format(music_file.filename))
-                    continue
-
-            if incl_title and (title != filename):
-                log.info("{} the title of {} from {!r} to {!r}".format(prefix, music_file.filename, title, filename))
-                if not dry_run:
-                    music_file.tags[title_key] = filename if (ftype == "mp4") else TIT2(text=filename)
-                    music_file.tags.save(music_file.filename)
-            else:
-                log.info("The title of {} is already correct".format(music_file.filename))
+        filename = music_file.basename(True, True)
+        if incl_title and (title != filename):
+            log.info("{} the title of {} from {!r} to {!r}".format(prefix, music_file.filename, title, filename))
+            if not dry_run:
+                music_file.tags[title_key] = filename if (music_file.file_type == "mp4") else TIT2(text=filename)
+                music_file.tags.save(music_file.filename)
+        else:
+            log.log(19, "Skipping file with already correct title: {}".format(music_file.filename))
 
 
 def sort_albums(path, dry_run):
@@ -234,35 +243,26 @@ def sort_albums(path, dry_run):
     prefix, verb = ("[DRY RUN] ", "Would rename") if dry_run else ("", "Renaming")
     punc_strip_tbl = str.maketrans({c: "" for c in string.punctuation})
 
-    for root, dirs, files in os.walk(path):
-        parent_dir = os.path.dirname(root)
-        album_dir = os.path.basename(root)
-        if files and (not dirs) and (not album_dir.startswith("[")):
+    for parent_dir, album_dir, music_files in iter_music_albums(path):
+        if not album_dir.startswith("["):
+            album_path = os.path.join(parent_dir, album_dir)
             dates = set()
             skip_dir = False
-            for music_file in iter_music_files(root):
-                if isinstance(music_file.tags, MP4Tags):
-                    date_tag = str(music_file.tags["\xa9day"][0]).strip()
-                    if date_tag:
-                        dates.add(date_tag)
-                elif isinstance(music_file.tags, ID3):
-                    try:
-                        date_tag = str(music_file.tags["TDRC"].text[0]).strip()
-                        if date_tag:
-                            dates.add(date_tag)
-                    except KeyError as e:
-                        log.warning("Skipping dir with missing TDRC in file: {}".format(music_file.filename))
-                        skip_dir = True
-                        break
-                else:
-                    log.warning("Skipping dir with unhandled file type: {} ({})".format(root, type(music_file.tags).__name__))
+            for music_file in music_files:
+                try:
+                    date_tag = music_file.tag_named("date")
+                except KeyError as e:
+                    log.warning("Skipping dir due to problem finding date for {} - {}".format(music_file.filename, e))
                     skip_dir = True
                     break
+                else:
+                    date_tag_val = str(getattr(date_tag, "text", date_tag)[0]).strip()
+                    if date_tag_val:
+                        dates.add(date_tag_val)
 
             if skip_dir:
                 continue
-
-            if len(dates) == 1:
+            elif len(dates) == 1:
                 date_str = dates.pop().translate(punc_strip_tbl)[:8]
                 date_fmt_in = "%Y" if len(date_str) == 4 else "%Y%m%d"
                 date_fmt_out = "%Y" if len(date_str) == 4 else "%Y.%m.%d"
@@ -271,25 +271,20 @@ def sort_albums(path, dry_run):
                 except Exception:
                     album_date = None
             else:
-                log.warning("Unexpected dates found for album '{}': {}".format(root, ", ".join(sorted(dates))))
+                log.warning("Unexpected dates found for album '{}': {}".format(album_path, ", ".join(sorted(dates))))
                 album_date = None
 
             if album_date:
                 album_dir = "[{}] {}".format(album_date, album_dir)
                 new_path = os.path.join(parent_dir, album_dir)
-                log.info("{}{} '{}' -> '{}'".format(prefix, verb, root, new_path))
+                log.info("{}{} '{}' -> '{}'".format(prefix, verb, album_path, new_path))
                 if not dry_run:
-                    os.rename(root, new_path)
+                    os.rename(album_path, new_path)
 
     numbered_albums = defaultdict(lambda: defaultdict(dict))
-
-    for root, dirs, files in os.walk(path):
-        parent_dir = os.path.dirname(root)
-        artist_dir = os.path.dirname(parent_dir)
-        album_dir = os.path.basename(root)
-        category_dir = os.path.basename(parent_dir)
-
-        if (category_dir in ("Albums", "Mini Albums")) and files and album_dir.startswith("["):
+    for parent_dir, artist_dir, category_dir, album_dir, music_files in iter_categorized_music_files(path):
+        album_path = os.path.join(parent_dir, artist_dir, category_dir, album_dir)
+        if (category_dir in ("Albums", "Mini Albums")) and album_dir.startswith("["):
             album_dir_lower = album_dir.lower()
             if any(skip_reason in album_dir_lower for skip_reason in ("summer mini album", "reissue", "repackage")):
                 log.debug("Skipping non-standard album: {}".format(album_dir))
@@ -297,37 +292,27 @@ def sort_albums(path, dry_run):
             category = category_dir[:-1]
 
             files, japanese = 0, 0
-            for music_file in iter_music_files(root):
+            for music_file in music_files:
                 files += 1
-                gkey, tkey = None, None
-                if isinstance(music_file.tags, MP4Tags):
-                    gkey, tkey = "\xa9gen", "\xa9nam"
-                elif isinstance(music_file.tags, ID3):
-                    gkey, tkey = "TCON", "TIT2"
+                _tags = {"genre": [], "title": [], "album": []}
+                for tag_name in _tags:
+                    _tags[tag_name] = [t.translate(punc_strip_tbl).lower() for t in music_file.all_tag_text(tag_name)]
 
-                genre_tags, title_tags = [], []
-                if all(k is not None for k in (gkey, tkey)):
-                    with suppress(KeyError):
-                        genre_tags = [t.translate(punc_strip_tbl).lower() for t in music_file.tags[gkey]]
-                    with suppress(KeyError):
-                        title_tags = [t.translate(punc_strip_tbl).lower() for t in music_file.tags[tkey]]
-
-                if any("jpop" in t for t in genre_tags) or any("japanese" in t for t in title_tags):
+                if any(i in tag for tag_list in _tags.values() for tag in tag_list for i in ("jpop", "japanese")):
                     japanese += 1
 
-            log.debug("{}: Japanese: {:.2%}".format(root, japanese / files))
+            log.debug("{}: Japanese: {:.2%}".format(album_path, japanese / files))
             if japanese / files >= .45:
                 category = "Japanese {}".format(category)
 
             num = len(numbered_albums[artist_dir][category]) + 1
-            numbered_albums[artist_dir][category][num] = root
+            numbered_albums[artist_dir][category][num] = album_path
 
     for artist_dir, categorized_albums in sorted(numbered_albums.items()):
         for cat, albums in sorted(categorized_albums.items()):
             for num, path in sorted(albums.items()):
                 if not path.endswith("]"):
-                    parent_dir = os.path.dirname(path)
-                    album_dir = os.path.basename(path)
+                    parent_dir, album_dir = os.path.split(path)
                     album_dir = "{} [{}{} {}]".format(album_dir, num, num_suffix(num), cat)
                     new_path = os.path.join(parent_dir, album_dir)
                     log.info("{}{} '{}' -> '{}'".format(prefix, verb, path, new_path))
@@ -427,7 +412,7 @@ def copy_tags(source_paths, dest_paths, tags, dry_run):
 
     for music_file in iter_music_files(dest_paths):
         path = music_file.filename
-        content_hash = tagless_sha256sum(music_file)
+        content_hash = music_file.tagless_sha256sum()
         if content_hash in src_tags:
             if all_tags:
                 log.info("{}{} all tags in {}".format(prefix, verb, path))
@@ -471,151 +456,15 @@ def save_tag_backups(source_paths, backup_path):
     if os.path.exists(backup_path) and os.path.isdir(backup_path):
         backup_path = os.path.join(backup_path, "id3_tags.pickled")
 
-    if os.path.isfile(backup_path):
-        tag_info = load_tags([backup_path])
-    else:
-        tag_info = {}
-
+    tag_info = load_tags([backup_path]) if os.path.isfile(backup_path) else {}
     for i, music_file in enumerate(iter_music_files(source_paths, include_backups=True)):
-        if isinstance(music_file, FakeMusicFile):
-            content_hash = music_file.filename
-        else:
-            content_hash = tagless_sha256sum(music_file)
+        content_hash = music_file.tagless_sha256sum()
         log.debug("{}: {}".format(music_file.filename, content_hash))
         tag_info[content_hash] = music_file.tags
 
     with open(backup_path, "wb") as f:
         log.info("Writing tag info to: {}".format(backup_path))
         pickle.dump(tag_info, f)
-
-
-def load_tags(paths):
-    if isinstance(paths, str):
-        paths = [paths]
-
-    tag_info = {}
-    for path in paths:
-        if os.path.isdir(path):
-            for root, dirs, files in os.walk(path):
-                for f in files:
-                    file_path = os.path.join(root, f)
-                    try:
-                        music_file = mutagen.File(file_path)
-                    except Exception as e:
-                        log.debug("Error loading {}: {}".format(file_path, e))
-                        music_file = None
-
-                    if music_file:
-                        content_hash = tagless_sha256sum(music_file)
-                        log.debug("{}: {}".format(music_file.filename, content_hash))
-                        tag_info[content_hash] = music_file.tags
-                    else:
-                        with open(file_path, "rb") as f:
-                            try:
-                                tag_info.update(pickle.load(f))
-                            except Exception as e:
-                                log.debug("Unable to load tag info from file: {}".format(file_path))
-                            else:
-                                log.debug("Loaded pickled tag info from {}".format(file_path))
-        elif os.path.isfile(path):
-            try:
-                music_file = mutagen.File(path)
-            except Exception as e:
-                log.debug("Error loading {}: {}".format(path, e))
-                music_file = None
-
-            if music_file:
-                content_hash = tagless_sha256sum(music_file)
-                log.debug("{}: {}".format(music_file.filename, content_hash))
-                tag_info[content_hash] = music_file.tags
-            else:
-                with open(path, "rb") as f:
-                    try:
-                        tag_info.update(pickle.load(f))
-                    except Exception as e:
-                        log.debug("Unable to load tag info from file: {}".format(path))
-                    else:
-                        log.debug("Loaded pickled tag info from {}".format(path))
-        else:
-            log.error("Invalid path: {}".format(path))
-
-    # tbl = Table(
-    #     SimpleColumn("Hash"), SimpleColumn("Tag"), SimpleColumn("Tag Name"), SimpleColumn("Value"), update_width=True
-    # )
-    # rows = []
-    # for sha256sum, tags in tag_info.items():
-    #     for tag, val in tags.items():
-    #         tag = tag[:4]
-    #         rows.append({
-    #             "Hash": sha256sum, "Tag": tag, "Value": tag_repr(val), "Tag Name": tag_name_map.get(tag, "[unknown]")
-    #         })
-    # tbl.print_rows(rows)
-
-    return tag_info
-
-
-def tagless_sha256sum(music_file):
-    with open(music_file.filename, "rb") as f:
-        tmp = BytesIO(f.read())
-
-    try:
-        mutagen.File(tmp).tags.delete(tmp)
-    except AttributeError as e:
-        log.error("Error determining tagless sha256sum for {}: {}".format(music_file.filename, e))
-        return music_file.filename
-
-    tmp.seek(0)
-    return sha256(tmp.read()).hexdigest()
-
-
-def iter_music_files(paths, include_backups=False):
-    if isinstance(paths, str):
-        paths = [paths]
-
-    for path in paths:
-        if os.path.isdir(path):
-            for root, dirs, files in os.walk(path):
-                for f in files:
-                    file_path = os.path.join(root, f)
-                    try:
-                        music_file = mutagen.File(file_path)
-                    except Exception as e:
-                        log.debug("Error loading {}: {}".format(file_path, e))
-                        music_file = None
-
-                    if music_file:
-                        yield music_file
-                    else:
-                        if include_backups:
-                            found_backup = False
-                            for sha256sum, tags in load_tags(file_path).items():
-                                found_backup = True
-                                yield FakeMusicFile(sha256sum, tags)
-                            if not found_backup:
-                                log.debug("Not a music file: {}".format(file_path))
-                        else:
-                            log.debug("Not a music file: {}".format(file_path))
-        elif os.path.isfile(path):
-            try:
-                music_file = mutagen.File(path)
-            except Exception as e:
-                log.debug("Error loading {}: {}".format(path, e))
-                music_file = None
-
-            if music_file:
-                yield music_file
-            else:
-                if include_backups:
-                    found_backup = False
-                    for sha256sum, tags in load_tags(path).items():
-                        found_backup = True
-                        yield FakeMusicFile(sha256sum, tags)
-                    if not found_backup:
-                        log.debug("Not a music file: {}".format(path))
-                else:
-                    log.debug("Not a music file: {}".format(path))
-        else:
-            log.error("Invalid path: {}".format(path))
 
 
 def tag_repr(tag_val, max_len=125, sub_len=25, use_grapheme=False):
@@ -697,15 +546,16 @@ def remove_tags(paths, tag_ids, dry_run, recommended):
         log.info("None of the provided files had the specified tags")
 
 
-def table_song_tags(paths):
+def table_song_tags(paths, include_tags=None):
     rows = [TableBar()]
     tags = set()
     for music_file in iter_music_files(paths, include_backups=True):
         row = defaultdict(str, path=music_file.filename)
         for tag, val in sorted(music_file.tags.items()):
             tag = ":".join(tag.split(":")[:2])
-            tags.add(tag)
-            row[tag] = tag_repr(str(val), 10, 5) if tag.startswith("APIC") else tag_repr(str(val))
+            if (include_tags is None) or (tag in include_tags):
+                tags.add(tag)
+                row[tag] = tag_repr(str(val), 10, 5) if tag.startswith("APIC") else tag_repr(str(val))
         rows.append(row)
 
     desc_row = {tag: tag_name_map.get(tag[:4], "[unknown]") for tag in tags}
