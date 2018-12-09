@@ -380,5 +380,5 @@ def add_context_filter(filter_instance, name=None):
 
 if __name__ == "__main__":
     lm = LogManager.create_default_logger(
-        2, log_path=None, date_fmt="%Y-%m-%d %H:%M:$S.%f %Z", entry_fmt="%(asctime)s %(name)s %(message)s"
+        2, log_path=None, date_fmt="%Y-%m-%d %H:%M:%S.%f %Z", entry_fmt="%(asctime)s %(name)s %(message)s"
     )
