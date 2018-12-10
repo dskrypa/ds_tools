@@ -11,10 +11,74 @@ from collections import defaultdict
 import bs4
 
 from ..http import RestClient
-from ..utils import soupify, FSCache, cached
+from ..utils import soupify, FSCache, cached, is_hangul
 
-__all__ = ["KpopWikiClient"]
+__all__ = ["KpopWikiClient", "Artist", "Album", "Song"]
 log = logging.getLogger("ds_tools.music.wiki")
+
+
+class Artist:
+    def __init__(self, name, page, client, content):
+        self._client = client
+        self._page = page
+        self._content = content
+        self.name = name
+
+    def __repr__(self):
+        return "<{}({!r})>".format(type(self).__name__, self.name)
+
+    def members(self):
+        members_h2 = self._content.find("span", id="Members").parent
+        ul = members_h2.next_sibling.next_sibling
+        members = []
+        for li in ul:
+            m = re.match("(.*?)\s*-\s*(.*)", li.text)
+            members.append(tuple(map(str.strip, m.groups())))
+        return members
+
+    def albums(self):
+        discography = self._client.get_discography(self._page)
+        for lang, type_albums in discography.items():
+            for album_type, albums in type_albums.items():
+                for album, (year, uri_path) in albums.items():
+                    yield Album(self, album, lang, album_type, year, uri_path, self._client)
+
+
+class Song:
+    def __init__(self, artist, album, title, length, extra):
+        self.artist = artist
+        self.album = album
+        self.title = title
+        self.length = length
+        self.extra = extra
+
+    def __repr__(self):
+        return "<{}({!r} by {})[{}]>".format(type(self).__name__, self.title, self.artist, self.length)
+
+
+class Album:
+    def __init__(self, artist, title, lang, alb_type, year, uri_path, client):
+        self.artist = artist
+        self.title = title
+        self.language = lang
+        self.type = alb_type
+        self.year = year
+        self._page = uri_path
+        self._client = client
+        self._tracks = None
+
+    def __repr__(self):
+        return "<{}({!r} by {}, {})>".format(type(self).__name__, self.title, self.artist, self.year)
+
+    def tracks(self):
+        if self._tracks is not None:
+            return self._tracks
+        if not self._page:
+            raise AttributeError("{} has no known wiki page from which tracks can be retrieved".format(self))
+        tracks = self._client._get_album(self._page)
+        if tracks:
+            for title, extra, length in tracks:
+                yield Song(self.artist, self, title, length, extra)
 
 
 class KpopWikiClient(RestClient):
@@ -25,6 +89,25 @@ class KpopWikiClient(RestClient):
     def get_page(self, endpoint, **kwargs):
         return self.get(endpoint, **kwargs).text
 
+    def get_artist(self, artist, **kwargs):
+        soup = soupify(self.get_page(artist, **kwargs))
+        content = soup.find("div", id="mw-content-text")
+        aside = content.find("aside")
+        if aside:
+            aside.extract()
+        intro = content.text.strip()
+        m = re.match("^(.*?)\s*\((.*?)\)", intro)
+        if not m:
+            raise ValueError("Unexpected intro format: {}".format(intro))
+        eng, han = m.groups()
+        if not is_hangul(han):
+            m = re.match("Korean:\s*([^;]+);", han)
+            if not m:
+                raise ValueError("Unexpected hangul name format: {}".format(intro))
+            han = m.group(1)
+        name = "{} ({})".format(eng, han)
+        return Artist(name, artist, self, soup)
+
     def get_all_albums(self, artist, **kwargs):
         albums_by_lang_type = defaultdict(lambda: defaultdict(dict))
 
@@ -32,13 +115,13 @@ class KpopWikiClient(RestClient):
             for album_type, albums in type_albums.items():
                 for album, (year, uri_path) in albums.items():
                     if uri_path:
-                        track_list = self.get_album(uri_path, **kwargs)
+                        track_list = self._get_album(uri_path, **kwargs)
                     else:
                         track_list = None
                     albums_by_lang_type[lang][album_type][album] = (year, uri_path, track_list)
         return albums_by_lang_type
 
-    def get_album(self, album, **kwargs):
+    def _get_album(self, album, **kwargs):
         soup = soupify(self.get_page(album, **kwargs))
         try:
             track_list_h2 = soup.find("span", id="Track_list").parent

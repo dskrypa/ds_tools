@@ -9,6 +9,7 @@ from .req_saver import *
 from .soup import *
 from .sql import *
 from .time import *
+from .unicode import *
 
 # These depend on other modules in this package
 from .caching import *                              # Depends on .filesystem, .introspection, .output, .sql, .time
