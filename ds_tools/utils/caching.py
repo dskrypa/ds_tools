@@ -367,6 +367,15 @@ class FSCache:
         return cls._html_key_with_extras(key, kwargs)
 
     @classmethod
+    def dated_html_key_func(cls, date_fmt="%Y-%m-%d", include_host=True):
+        def key_func(self, endpoint, *args, **kwargs):
+            if include_host:
+                return "{}__{}__{}".format(self.host, now(date_fmt), endpoint.replace("/", "_"))
+            else:
+                return "{}__{}".format(now(date_fmt), endpoint.replace("/", "_"))
+        return key_func
+
+    @classmethod
     def dated_html_key(cls, self, endpoint, *args, **kwargs):
         return "{}__{}__{}".format(self.host, now("%Y-%m-%d"), endpoint.replace("/", "_"))
 
