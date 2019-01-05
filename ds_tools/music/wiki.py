@@ -152,8 +152,8 @@ class Artist(WikiObject):
 
                     year, collab = None, None
                     li_text = li.text.strip()
-
-                    plain_m = re.match("\"?(.*?)\"?\s*(?:\([^)]+\))?\s*\([^)]+\)$", li_text)
+                    pat_base = "\"?(.*?)\"?" if li_text.startswith("\"") else "(.*?)"
+                    plain_m = re.match(pat_base + "\s*(?:\([^)]+\))?\s*\([^)]+\)$", li_text)
                     try:
                         album_name = plain_m.group(1)
                     except AttributeError as e:
@@ -171,10 +171,7 @@ class Artist(WikiObject):
                     if collab_m:
                         collab = collab_m.group(1)
 
-                    for a, b in (("\"", "\""), ("(", ")")):
-                        if title_remainder.startswith(a) and title_remainder.endswith(b):
-                            title_remainder = title_remainder[1:-1].strip()
-
+                    title_remainder = unsurround(title_remainder)
                     first_a = li.find("a")
                     if first_a:
                         link = first_a.get("href")
@@ -191,43 +188,6 @@ class Artist(WikiObject):
                                 yield Album(self, album, lang, album_type, year, collab, title_remainder, url.path[6:], WikipediaClient())
                             else:
                                 yield Album(self, album, lang, album_type, year, collab, title_remainder, None, self._client)
-
-                    # found = 0
-                    # for a in li.find_all("a"):
-                    #     collab = None
-                    #     link = a.get("href")
-                    #     album = a.text
-                    #     if album != album_name:
-                    #         log.log(9, "Skipping album {!r} != {!r}".format(album, album_name))
-                    #         continue
-                    #
-                    #     if a.parent.name == "li":
-                    #         year = list(a.parent.children)[-1]
-                    #         collab_m = re.search("\(with ([^\)]+)\)", a.parent.text)
-                    #         if collab_m:
-                    #             collab = collab_m.group(1)
-                    #     else:
-                    #         year = a.parent.next_sibling
-                    #     year = year.strip()[1:-1].strip()
-                    #     m = re.match("\(?(\d+)\)?", year)
-                    #     if m:
-                    #         year = m.group(1)
-                    #
-                    #     if not link.startswith("http"):     # If it starts with http, then it is an external link
-                    #         yield Album(self, album, lang, album_type, year, collab, link[6:], self._client)
-                    #     else:
-                    #         url = urlparse(link)
-                    #         if url.hostname == "en.wikipedia.org":
-                    #             yield Album(self, album, lang, album_type, year, collab, url.path[6:], WikipediaClient())
-                    #         else:
-                    #             yield Album(self, album, lang, album_type, year, collab, None, self._client)
-                    #     found += 1
-                    #
-                    # if not found:
-                    #     m = re.match("\"?(.*?)\"?\s* \((\d+)\)$", li.text.strip())
-                    #     if m:
-                    #         album, year = m.groups()
-                    #         yield Album(self, album, lang, album_type, year, None, None, self._client)
 
             elif ele.name in ("h2", "div"):
                 break
@@ -252,11 +212,11 @@ class Artist(WikiObject):
 
 
 class Album(WikiObject):
+    """An album by a K-Pop :class:`Artist`.  Should not be initialized manually - use :attr:`Artist.albums`"""
     track_with_len_rx = re.compile("[\"“]?(.*?)[\"“]?\s*(\(.*?\))?\s*-?\s*(\d+:\d{2})\s*\(?(.*)\)?$")
     track_with_artist_rx = re.compile("[\"“]?(.*?)[\"“]?\s*\((.*?)\)$")
     track_no_len_rx = re.compile("[\"“]?(.+?)(\(.*?\))?[\"“]?\s*\(?(.*)\)?$")
 
-    """An album by a K-Pop :class:`Artist`.  Should not be initialized manually - use :attr:`Artist.albums`"""
     def __init__(self, artist, title, lang, alb_type, year, collaborators, addl_info, uri_path, client):
         super().__init__(uri_path, client)
         self.artist = artist                # may end up being a str when using an alternate wiki client
