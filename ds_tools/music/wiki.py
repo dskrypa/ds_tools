@@ -6,7 +6,7 @@
 
 import logging
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote as url_quote
 
 import bs4
 
@@ -24,16 +24,16 @@ class WikiObject:
     def __init__(self, uri_path, client):
         self._client = client
         self._uri_path = uri_path
-        self.__page_content = None
+        self._raw_content = None
 
     @property
     def _page_content(self):
-        if self.__page_content is None:
+        if self._raw_content is None:
             if not self._uri_path:
                 raise AttributeError("{} does not have a valid uri_path from which page content could be retrieved")
-            self.__page_content = self._client.get_page(self._uri_path)
+            self._raw_content = self._client.get_page(self._uri_path)
         # soupify every time so that elements may be modified/removed without affecting other functions
-        return soupify(self.__page_content)
+        return soupify(self._raw_content)
 
 
 class Artist(WikiObject):
@@ -57,6 +57,8 @@ class Artist(WikiObject):
 
     def _find_name(self):
         content = self._page_content.find("div", id="mw-content-text")
+        if "This article is a disambiguation page" in self._raw_content:
+            raise AmbiguousArtistException(self._uri_path, self._raw_content)
         to_remove = ("center", "aside")
         for ele_name in to_remove:
             rm_ele = content.find(ele_name)
@@ -64,12 +66,12 @@ class Artist(WikiObject):
                 rm_ele.extract()
 
         intro = content.text.strip()
-        m = re.match("^(.*?)\s*\((.*?)\)", intro)
+        m = re.match("^(.*)\s*\((.*?)\)", intro)
         if not m:
             raise ValueError("Unexpected intro format: {}".format(intro))
         stylized = None
-        eng, han = m.groups()
-        if not is_hangul(han):
+        eng, han = map(str.strip, m.groups())
+        if not is_hangul(re.sub("\s+", "", han)):
             stylized_m = re.match("([^;]+);\s*stylized as\s*(.*)", han)
             korean_m = re.match("Korean:\s*([^;]+);", han)
             if stylized_m:
@@ -77,12 +79,13 @@ class Artist(WikiObject):
             elif korean_m:
                 han = m.group(1)
             else:
-                raise ValueError("Unexpected hangul name format: {}".format(intro))
+                if eng != "yyxy":   # the only exception for now
+                    raise ValueError("Unexpected hangul name format {!r} in: {}".format(han, intro))
 
-        return eng.strip(), han.strip(), (stylized.strip() if stylized else stylized)
+        return eng, han.strip(), (stylized.strip() if stylized else stylized)
 
     def __repr__(self):
-        return "<{}({!r})>".format(type(self).__name__, self.name)
+        return "<{}({!r})>".format(type(self).__name__, self.stylized_name or self.name)
 
     def members(self):
         content = self._page_content.find("div", id="mw-content-text")
@@ -175,7 +178,7 @@ class Album(WikiObject):
     """An album by a K-Pop :class:`Artist`.  Should not be initialized manually - use :attr:`Artist.albums`"""
     def __init__(self, artist, title, lang, alb_type, year, collaborators, uri_path, client):
         super().__init__(uri_path, client)
-        self.artist = artist
+        self.artist = artist                # may end up being a str when using an alternate wiki client
         self.title = title
         self.language = lang
         if alb_type:
@@ -190,74 +193,76 @@ class Album(WikiObject):
     def __iter__(self):
         yield from self.tracks
 
-    def _tracks(self):
+    def _tracks_from_wikipedia(self):
         num_strs = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
-        if isinstance(self._client, WikipediaClient):
-            # If this is using the WikipediaClient, then it's likely for a non-Korean artist
-            side_bar = self._page_content.find("table", class_="infobox vevent haudio")
-            desc = side_bar.find("th", class_="description")
-            for ele in desc:
-                if str(ele).strip() == "by":
-                    self.artist = ele.next_sibling.text
-                    break
+        # If this is using the WikipediaClient, then it's likely for a non-Korean artist
+        side_bar = self._page_content.find("table", class_="infobox vevent haudio")
+        desc = side_bar.find("th", class_="description")
+        for ele in desc:
+            if str(ele).strip() == "by":
+                self.artist = ele.next_sibling.text
+                break
 
-            track_list_h2 = self._page_content.find("span", id="Track_listing").parent
-            ele = track_list_h2.next_sibling
-            super_edition, edition = None, None
-            disk = 1
-            while ele.name != "h2":
-                if ele.name == "h3":
-                    first_span = ele.find("span")
-                    if first_span and "edition" in first_span.text.lower():
-                        super_edition = first_span.text.strip()
-                        edition = None
+        track_list_h2 = self._page_content.find("span", id="Track_listing").parent
+        ele = track_list_h2.next_sibling
+        super_edition, edition = None, None
+        disk = 1
+        while ele.name != "h2":
+            if ele.name == "h3":
+                first_span = ele.find("span")
+                if first_span and "edition" in first_span.text.lower():
+                    super_edition = first_span.text.strip()
+                    edition = None
+                else:
+                    raise ValueError("Unexpected value in h3 for {}".format(self))
+            elif ele.name == "table":
+                first_th = ele.find("th")
+                if first_th and first_th.text.strip() != "No.":
+                    edition_candidate = first_th.text.strip()
+                    m = re.match("(.*?)(?:\[[0-9]+\])+$", edition_candidate)  # Strip citations
+                    if m:
+                        edition_candidate = m.group(1)
+                    m = re.match("Dis[ck]\s*(\S+)\s*[-:–]?\s*(.*)", edition_candidate, re.IGNORECASE)
+                    if m:
+                        disk_str, edition = map(str.strip, m.groups())
+                        disk_str = disk_str.lower()
+                        try:
+                            disk = int(disk_str)
+                        except Exception as e:
+                            if disk_str in num_strs:
+                                disk = num_strs[disk_str]
+                            else:
+                                raise ValueError("Unexpected disc number format for {}: {!r}".format(self, disk_str))
                     else:
-                        raise ValueError("Unexpected value in h3 for {}".format(self))
-                elif ele.name == "table":
-                    first_th = ele.find("th")
-                    if first_th and first_th.text.strip() != "No.":
-                        edition_candidate = first_th.text.strip()
-                        m = re.match("(.*?)(?:\[[0-9]+\])+$", edition_candidate)  # Strip citations
+                        edition = edition_candidate
+
+                for tr in ele.find_all("tr"):
+                    cells = [td.text.strip() for td in tr.find_all("td")]
+                    if len(cells) == 5:
+                        try:
+                            track_num = int(cells[0][:-1])
+                        except Exception as e:
+                            raise ValueError("Unexpected format for track number in {}".format(self)) from e
+                        title = cells[1]
+                        m = re.match("^\"?(.*?)\"?\s*\((.*?)\)", title)
                         if m:
-                            edition_candidate = m.group(1)
-                        m = re.match("Dis[ck]\s*(\S+)\s*[-:–]?\s*(.*)", edition_candidate, re.IGNORECASE)
-                        if m:
-                            disk_str, edition = map(str.strip, m.groups())
-                            disk_str = disk_str.lower()
-                            try:
-                                disk = int(disk_str)
-                            except Exception as e:
-                                if disk_str in num_strs:
-                                    disk = num_strs[disk_str]
-                                else:
-                                    raise ValueError("Unexpected disc number format for {}: {!r}".format(self, disk_str))
+                            title, note = m.groups()
                         else:
-                            edition = edition_candidate
+                            if title.startswith("\"") and title.endswith("\""):
+                                title = title[1:-1]
+                            note = None
+                        runtime = cells[-1]
+                        if super_edition and edition:
+                            song_edition = "{} - {}".format(super_edition, edition)
+                        else:
+                            song_edition = super_edition or edition
+                        yield Song(self.artist, self, title, runtime, note, song_edition, track_num, disk_num=disk)
 
-                    for tr in ele.find_all("tr"):
-                        cells = [td.text.strip() for td in tr.find_all("td")]
-                        if len(cells) == 5:
-                            try:
-                                track_num = int(cells[0][:-1])
-                            except Exception as e:
-                                raise ValueError("Unexpected format for track number in {}".format(self)) from e
-                            title = cells[1]
-                            m = re.match("^\"?(.*?)\"?\s*\((.*?)\)", title)
-                            if m:
-                                title, note = m.groups()
-                            else:
-                                if title.startswith("\"") and title.endswith("\""):
-                                    title = title[1:-1]
-                                note = None
-                            runtime = cells[-1]
+            ele = ele.next_sibling
 
-                            if super_edition and edition:
-                                song_edition = "{} - {}".format(super_edition, edition)
-                            else:
-                                song_edition = super_edition or edition
-                            yield Song(self.artist, self, title, runtime, note, song_edition, track_num, disk_num=disk)
-
-                ele = ele.next_sibling
+    def _tracks(self):
+        if isinstance(self._client, WikipediaClient):
+            yield from self._tracks_from_wikipedia()
         else:
             try:
                 track_list_h2 = self._page_content.find("span", id="Track_list").parent
@@ -280,14 +285,37 @@ class Album(WikiObject):
                     ol = ol.next_sibling.next_sibling
                     assert ol.name == "ol", "Unexpected elements following the Track_list h2"
 
-                track_rx = re.compile("\"?(.*?)\"\s*(\(.*?\))?\s*-\s*(\d+:\d{2})\s*\(?(.*)\)?$")
+                aside = self._page_content.find("aside")
+                artist_h3 = aside.find("h3", text="Artist")
+                if artist_h3:
+                    try:
+                        self.artist = Artist(artist_h3.next_sibling.next_sibling.text)
+                    except AmbiguousArtistException as e:
+                        found_alt = False
+                        eng_alb_artist = self.artist.english_name.replace(" ", "_")
+                        for alt in e.alternatives:
+                            if eng_alb_artist in alt:   # Solo artist with common name + group name for disambiguation
+                                found_alt = True
+                                self.artist = Artist(alt)
+                                break
+                        if not found_alt:
+                            raise e
+
+                track_with_len_rx = re.compile("[\"“]?(.*?)[\"“]\s*(\(.*?\))?\s*-\s*(\d+:\d{2})\s*\(?(.*)\)?$")
+                track_with_artist_rx = re.compile("[\"“]?(.*?)[\"“]\s*\((.*?)\)$")
                 track_num = 0
                 for li in ol:
-                    m = track_rx.match(li.text.strip())
-                    if m:
-                        title, note, runtime, addl_info = m.groups()
+                    li_text = li.text.strip()
+                    track_with_len_m = track_with_len_rx.match(li_text)
+                    track_with_artist_m = track_with_artist_rx.match(li_text)
+                    if track_with_len_m:
+                        title, note, runtime, addl_info = track_with_len_m.groups()
                         track_num += 1
                         yield Song(self.artist, self, title, runtime, note, addl_info, track_num)
+                    elif track_with_artist_m:
+                        title, artist = track_with_artist_m.groups()
+                        track_num += 1
+                        yield Song(Artist(artist), self, title, "-1:00", None, None, track_num)
                     else:
                         raise ValueError("Unexpected value found for track: {}".format(li))
 
@@ -376,24 +404,23 @@ class KpopWikiClient(RestClient):
             self._page_cache = FSCache(cache_subdir="kpop_wiki", prefix="get__", ext="html")
             self.__initialized = True
 
-    @cached(FSCache(cache_subdir="kpop_wiki/artists", prefix="artist__"), lock=True, key=lambda s, a: a)
+    @cached(FSCache(cache_subdir="kpop_wiki/artists", prefix="artist__"), lock=True, key=lambda s, a: url_quote(a, ""))
     def normalize_artist(self, artist):
         artist = artist.replace(" ", "_")
         try:
-            self.get_page(artist)
+            html = self.get_page(artist)
         except CodeBasedRestException as e:
             if e.code == 404:
-                exc_soup = soupify(e.resp.text)
-                try:
-                    alt = exc_soup.find("span", class_="alternative-suggestion").find("a").text
-                except Exception as e1:
-                    raise e
-                else:
+                aae = AmbiguousArtistException(artist, e.resp.text)
+                alt = aae.alternative
+                if alt:
                     if alt.lower() == artist.lower():
                         return alt
-                    else:
-                        raise InvalidArtistException("Artist {!r} doesn't exist - did you mean {!r}?".format(artist, alt)) from e
+                    raise aae from e
+            raise e
         else:
+            if "This article is a disambiguation page" in html:
+                raise AmbiguousArtistException(artist, html)
             return artist
 
     @cached("_page_cache", lock=True, key=FSCache.dated_html_key_func("%Y-%m"))
@@ -458,6 +485,34 @@ class InvalidArtistException(Exception):
 
 class AlbumNotFoundException(Exception):
     pass
+
+
+class AmbiguousArtistException(Exception):
+    def __init__(self, artist, html):
+        self.artist = artist
+        self.html = html
+
+    @cached_property
+    def alternative(self):
+        alts = self.alternatives
+        return alts[0] if len(alts) == 1 else None
+
+    @cached_property
+    def alternatives(self):
+        soup = soupify(self.html)
+        try:
+            return [soup.find("span", class_="alternative-suggestion").find("a").text]
+        except Exception as e:
+            pass
+
+        disambig_div = soup.find("div", id="disambig")
+        return [li.find("a").get("href")[6:] for li in disambig_div.parent.find("ul")]
+
+    def __str__(self):
+        alts = self.alternatives
+        if len(alts) == 1:
+            return "Artist {!r} doesn't exist - did you mean {!r}?".format(self.artist, alts[0])
+        return "Artist {!r} doesn't exist - did you mean one of these? {}".format(self.artist, " | ".join(alts))
 
 
 if __name__ == "__main__":
