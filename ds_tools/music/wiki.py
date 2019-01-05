@@ -38,6 +38,8 @@ class Artist(WikiObject):
     """
     A K-Pop artist.
 
+    Iterating over this object will yield the :class:`Album`s from this artist's discography.
+
     :param str artist_uri_path: The artist name or the uri_path for that artist; if the ``client`` argument is
       provided, then this must be the proper uri_path.
     :param KpopWikiClient client: The :class:`KpopWikiClient` used for retrieving information about this Artist;
@@ -160,6 +162,7 @@ class Artist(WikiObject):
 
 
 class Album(WikiObject):
+    """An album by a K-Pop :class:`Artist`.  Should not be initialized manually - use :attr:`Artist.albums`"""
     def __init__(self, artist, title, lang, alb_type, year, collaborators, uri_path, client):
         super().__init__(uri_path, client)
         self.artist = artist
@@ -232,6 +235,7 @@ class Album(WikiObject):
 
 
 class Song:
+    """A song in an album.  Should not be initialized manually - use :attr:`Album.tracks`"""
     def __init__(self, artist, album, title, length, extra, addl_info, track_num):
         self.artist = artist
         self.album = album
