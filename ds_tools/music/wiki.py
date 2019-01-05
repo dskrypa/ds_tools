@@ -66,21 +66,38 @@ class Artist(WikiObject):
                 rm_ele.extract()
 
         intro = content.text.strip()
-        m = re.match("^(.*)\s*\((.*?)\)", intro)
+        m = re.match("^(.*?)\s+\((.*?)\)", intro)
         if not m:
             raise ValueError("Unexpected intro format: {}".format(intro))
         stylized = None
         eng, han = map(str.strip, m.groups())
-        if not is_hangul(re.sub("\s+", "", han)):
+        # log.debug("Processing name {!r}/{!r}".format(eng, han))
+        if "(" in han and "(" in eng:
+            # log.debug("Attempting to extract name with parenthases: {!r}".format(han))
+            m = re.match("^(.*)\s*\((.*?\(.*?\).*?)\)", intro)
+            if m:
+                eng, han = map(str.strip, m.groups())
+
+        if not is_hangul(han):
             stylized_m = re.match("([^;]+);\s*stylized as\s*(.*)", han)
-            korean_m = re.match("Korean:\s*([^;]+);", han)
+            korean_m = re.match("(?:(?:Korean|Hangul):\s*)?([^;,]+)[;,]", han)
             if stylized_m:
                 han, stylized = stylized_m.groups()
             elif korean_m:
-                han = m.group(1)
+                grp = korean_m.group(1)
+                if is_hangul(grp):
+                    han = grp
+                else:
+                    m = re.search("(?:Korean|Hangul):(.*?)[,;]", han)
+                    if m:
+                        han = m.group(1)
+                        if not is_hangul(han):
+                            msg = "Unexpected hangul name format for {!r}/{!r} in: {}".format(eng, han, intro[:200])
+                            raise ValueError(msg)
             else:
                 if eng != "yyxy":   # the only exception for now
-                    raise ValueError("Unexpected hangul name format {!r} in: {}".format(han, intro))
+                    msg = "Unexpected hangul name format for {!r}/{!r} in: {}".format(eng, han, intro[:200])
+                    raise ValueError(msg)
 
         return eng, han.strip(), (stylized.strip() if stylized else stylized)
 
@@ -119,12 +136,30 @@ class Artist(WikiObject):
             elif ele.name == "h4":
                 album_type = next(ele.children).get("id")
             elif ele.name == "ul":
-                for li in ele.children:
+                li_eles = list(ele.children)
+                while li_eles:
+                    li = li_eles.pop(0)
+                    ul = li.find("ul")
+                    if ul:
+                        ul.extract()                            # remove nested list from tree
+                        li_eles = list(ele.children) + li_eles  # insert elements from the nested list at top
+
+                    li_text = li.text.strip()
+                    plain_m = re.match("\"?(.*?)\"?\s*(?:\([^)]+\))?\s*\([^)]+\)$", li_text)
+                    try:
+                        album_name = plain_m.group(1)
+                    except AttributeError as e:
+                        raise ValueError("Unexpected album li format {!r} in: {}".format(li_text, li)) from e
+
                     found = 0
                     for a in li.find_all("a"):
                         collab = None
                         link = a.get("href")
                         album = a.text
+                        if album != album_name:
+                            log.debug("Skipping album {!r} != {!r}".format(album, album_name))
+                            continue
+
                         if a.parent.name == "li":
                             year = list(a.parent.children)[-1]
                             collab_m = re.search("\(with ([^\)]+)\)", a.parent.text)
@@ -146,6 +181,7 @@ class Artist(WikiObject):
                             else:
                                 yield Album(self, album, lang, album_type, year, collab, None, self._client)
                         found += 1
+
                     if not found:
                         m = re.match("\"?(.*?)\"?\s* \((\d+)\)$", li.text.strip())
                         if m:
@@ -188,7 +224,7 @@ class Album(WikiObject):
         self.collaborators = collaborators
 
     def __repr__(self):
-        return "<{}({!r} by {}, {})>".format(type(self).__name__, self.title, self.artist, self.year)
+        return "<{}'s {}({!r})[{}]>".format(self.artist, type(self).__name__, self.title, self.year)
 
     def __iter__(self):
         yield from self.tracks
@@ -196,69 +232,81 @@ class Album(WikiObject):
     def _tracks_from_wikipedia(self):
         num_strs = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
         # If this is using the WikipediaClient, then it's likely for a non-Korean artist
-        side_bar = self._page_content.find("table", class_="infobox vevent haudio")
+        side_bar = self._page_content.find("table", class_=re.compile("infobox vevent.*"))
         desc = side_bar.find("th", class_="description")
+        alb_type = self.type
         for ele in desc:
             if str(ele).strip() == "by":
+                alb_type = ele.previous_sibling.text.lower()
                 self.artist = ele.next_sibling.text
                 break
 
-        track_list_h2 = self._page_content.find("span", id="Track_listing").parent
-        ele = track_list_h2.next_sibling
-        super_edition, edition = None, None
-        disk = 1
-        while ele.name != "h2":
-            if ele.name == "h3":
-                first_span = ele.find("span")
-                if first_span and "edition" in first_span.text.lower():
-                    super_edition = first_span.text.strip()
-                    edition = None
-                else:
-                    raise ValueError("Unexpected value in h3 for {}".format(self))
-            elif ele.name == "table":
-                first_th = ele.find("th")
-                if first_th and first_th.text.strip() != "No.":
-                    edition_candidate = first_th.text.strip()
-                    m = re.match("(.*?)(?:\[[0-9]+\])+$", edition_candidate)  # Strip citations
-                    if m:
-                        edition_candidate = m.group(1)
-                    m = re.match("Dis[ck]\s*(\S+)\s*[-:–]?\s*(.*)", edition_candidate, re.IGNORECASE)
-                    if m:
-                        disk_str, edition = map(str.strip, m.groups())
-                        disk_str = disk_str.lower()
-                        try:
-                            disk = int(disk_str)
-                        except Exception as e:
-                            if disk_str in num_strs:
-                                disk = num_strs[disk_str]
-                            else:
-                                raise ValueError("Unexpected disc number format for {}: {!r}".format(self, disk_str))
+        try:
+            track_list_h2 = self._page_content.find("span", id="Track_listing").parent
+        except AttributeError as e:
+            if alb_type == "single":
+                len_th = desc.find("th", text="Length")
+                runtime = len_th.next_sibling.text
+                yield Song(self.artist, self, self.title, runtime, None, None, 1)
+            else:
+                log.warning("Unexpected AttributeError for {}".format(self))
+                raise e
+        else:
+            ele = track_list_h2.next_sibling
+            super_edition, edition = None, None
+            disk = 1
+            while ele.name != "h2":
+                if ele.name == "h3":
+                    first_span = ele.find("span")
+                    if first_span and "edition" in first_span.text.lower():
+                        super_edition = first_span.text.strip()
+                        edition = None
                     else:
-                        edition = edition_candidate
-
-                for tr in ele.find_all("tr"):
-                    cells = [td.text.strip() for td in tr.find_all("td")]
-                    if len(cells) == 5:
-                        try:
-                            track_num = int(cells[0][:-1])
-                        except Exception as e:
-                            raise ValueError("Unexpected format for track number in {}".format(self)) from e
-                        title = cells[1]
-                        m = re.match("^\"?(.*?)\"?\s*\((.*?)\)", title)
+                        raise ValueError("Unexpected value in h3 for {}".format(self))
+                elif ele.name == "table":
+                    first_th = ele.find("th")
+                    if first_th and first_th.text.strip() != "No.":
+                        edition_candidate = first_th.text.strip()
+                        m = re.match("(.*?)(?:\[[0-9]+\])+$", edition_candidate)  # Strip citations
                         if m:
-                            title, note = m.groups()
+                            edition_candidate = m.group(1)
+                        m = re.match("Dis[ck]\s*(\S+)\s*[-:–]?\s*(.*)", edition_candidate, re.IGNORECASE)
+                        if m:
+                            disk_str, edition = map(str.strip, m.groups())
+                            disk_str = disk_str.lower()
+                            try:
+                                disk = int(disk_str)
+                            except Exception as e:
+                                if disk_str in num_strs:
+                                    disk = num_strs[disk_str]
+                                else:
+                                    raise ValueError("Unexpected disc number format for {}: {!r}".format(self, disk_str))
                         else:
-                            if title.startswith("\"") and title.endswith("\""):
-                                title = title[1:-1]
-                            note = None
-                        runtime = cells[-1]
-                        if super_edition and edition:
-                            song_edition = "{} - {}".format(super_edition, edition)
-                        else:
-                            song_edition = super_edition or edition
-                        yield Song(self.artist, self, title, runtime, note, song_edition, track_num, disk_num=disk)
+                            edition = edition_candidate
 
-            ele = ele.next_sibling
+                    for tr in ele.find_all("tr"):
+                        cells = [td.text.strip() for td in tr.find_all("td")]
+                        if len(cells) == 5:
+                            try:
+                                track_num = int(cells[0][:-1])
+                            except Exception as e:
+                                raise ValueError("Unexpected format for track number in {}".format(self)) from e
+                            title = cells[1]
+                            m = re.match("^\"?(.*?)\"?\s*\((.*?)\)", title)
+                            if m:
+                                title, note = m.groups()
+                            else:
+                                if title.startswith("\"") and title.endswith("\""):
+                                    title = title[1:-1]
+                                note = None
+                            runtime = cells[-1]
+                            if super_edition and edition:
+                                song_edition = "{} - {}".format(super_edition, edition)
+                            else:
+                                song_edition = super_edition or edition
+                            yield Song(self.artist, self, title, runtime, note, song_edition, track_num, disk_num=disk)
+
+                ele = ele.next_sibling
 
     def _tracks(self):
         if isinstance(self._client, WikipediaClient):
@@ -267,6 +315,10 @@ class Album(WikiObject):
             try:
                 track_list_h2 = self._page_content.find("span", id="Track_list").parent
             except AttributeError as e:
+                if not self._uri_path:
+                    log.debug("No album page exists for {}".format(self))
+                    return
+
                 if self.type in ("single", "digital_single", "other_release"):
                     content = self._page_content.find("div", id="mw-content-text")
                     aside = content.find("aside")
@@ -279,6 +331,9 @@ class Album(WikiObject):
                     else:
                         raise ValueError("Unable to find single length in aside for {}".format(self))
                     yield Song(self.artist, self, title, runtime, None, None, 1)
+                else:
+                    log.warning("Unexpected AttributeError for {}".format(self))
+                    raise e
             else:
                 ol = track_list_h2.next_sibling.next_sibling
                 if ol.name != "ol":
@@ -288,35 +343,53 @@ class Album(WikiObject):
                 aside = self._page_content.find("aside")
                 artist_h3 = aside.find("h3", text="Artist")
                 if artist_h3:
-                    try:
-                        self.artist = Artist(artist_h3.next_sibling.next_sibling.text)
-                    except AmbiguousArtistException as e:
-                        found_alt = False
-                        eng_alb_artist = self.artist.english_name.replace(" ", "_")
-                        for alt in e.alternatives:
-                            if eng_alb_artist in alt:   # Solo artist with common name + group name for disambiguation
-                                found_alt = True
-                                self.artist = Artist(alt)
-                                break
-                        if not found_alt:
-                            raise e
+                    artist_div = artist_h3.next_sibling.next_sibling
+                    artists = list(artist_div)                      # will be a single str or multiple html elements
+                    if len(artists) == 1:
+                        try:
+                            self.artist = Artist(artists[0].text if hasattr(artists[0], "text") else str(artists[0]))
+                        except AmbiguousArtistException as e:
+                            found_alt = False
+                            eng_alb_artist = self.artist.english_name.replace(" ", "_")
+                            for alt in e.alternatives:
+                                if eng_alb_artist in alt:   # Solo artist with common name + group name for disambiguation
+                                    found_alt = True
+                                    self.artist = Artist(alt)
+                                    break
+                            if not found_alt:
+                                raise e
 
-                track_with_len_rx = re.compile("[\"“]?(.*?)[\"“]\s*(\(.*?\))?\s*-\s*(\d+:\d{2})\s*\(?(.*)\)?$")
+                track_with_len_rx = re.compile("[\"“]?(.*?)[\"“]\s*(\(.*?\))?\s*-?\s*(\d+:\d{2})\s*\(?(.*)\)?$")
                 track_with_artist_rx = re.compile("[\"“]?(.*?)[\"“]\s*\((.*?)\)$")
+                track_no_len_rx = re.compile("[\"“]?(.*?)(\(.*?\))?[\"“]\s*\(?(.*)\)?$")
                 track_num = 0
                 for li in ol:
                     li_text = li.text.strip()
                     track_with_len_m = track_with_len_rx.match(li_text)
-                    track_with_artist_m = track_with_artist_rx.match(li_text)
+                    try_more = True
                     if track_with_len_m:
+                        try_more = False
                         title, note, runtime, addl_info = track_with_len_m.groups()
                         track_num += 1
                         yield Song(self.artist, self, title, runtime, note, addl_info, track_num)
-                    elif track_with_artist_m:
-                        title, artist = track_with_artist_m.groups()
-                        track_num += 1
-                        yield Song(Artist(artist), self, title, "-1:00", None, None, track_num)
                     else:
+                        track_with_artist_m = track_with_artist_rx.match(li_text)
+                        if track_with_artist_m:
+                            title, artist = track_with_artist_m.groups()
+                            if artist.lower().strip() not in ("instrumental", "normal edition only", "cd only"):
+                                try_more = False
+                                track_num += 1
+                                yield Song(Artist(artist), self, title, "-1:00", None, None, track_num)
+
+                        if try_more:
+                            track_no_len_m = track_no_len_rx.match(li_text)
+                            if track_no_len_m:
+                                try_more = False
+                                title, note, addl_info = track_no_len_m.groups()
+                                track_num += 1
+                                yield Song(self.artist, self, title, "-1:00", note, addl_info, track_num)
+
+                    if try_more:
                         raise ValueError("Unexpected value found for track: {}".format(li))
 
     @cached_property
