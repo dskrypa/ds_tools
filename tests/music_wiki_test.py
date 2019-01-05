@@ -21,9 +21,9 @@ class MusicTester(unittest.TestCase):
 
         for artist in sorted(artists.keys()):
             for album in Artist(artist):
-                print(album)
                 for song in album:
                     self.assertTrue(bool(song.title), "Song {} from {} has no title".format(song, album))
+                print(album)    # printing after iterating over songs so that the artist is updated
                     # print("\t", song)
         # self.assertTrue(True, "If this is not reached, then an exception was raised")
 

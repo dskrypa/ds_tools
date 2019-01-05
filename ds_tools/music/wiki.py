@@ -53,6 +53,12 @@ class Artist(WikiObject):
         self.english_name, self.hangul_name, self.stylized_name = self._find_name()
         self.name = "{} ({})".format(self.english_name, self.hangul_name)
 
+    def __lt__(self, other):
+        cls = type(self)
+        if not isinstance(other, cls):
+            raise TypeError("'<' not supported between instances of {!r} and {!r}".format(cls.__name__, type(other).__name__))
+        return self.name < other.name
+
     def _find_name(self):
         content = self._page_content.find("div", id="mw-content-text")
         if "This article is a disambiguation page" in self._raw_content:
@@ -119,7 +125,7 @@ class Artist(WikiObject):
         return members
 
     def __iter__(self):
-        yield from self.albums
+        yield from sorted(self.albums)
 
     def _albums(self):
         discography_h2 = self._page_content.find("span", id="Discography").parent
@@ -229,11 +235,17 @@ class Album(WikiObject):
         self.collaborators = collaborators
         self.addl_info = addl_info
 
+    def __lt__(self, other):
+        cls = type(self)
+        if not isinstance(other, cls):
+            raise TypeError("'<' not supported between instances of {!r} and {!r}".format(cls.__name__, type(other).__name__))
+        return (self.artist, self.title) < (other.artist, other.title)
+
     def __repr__(self):
         return "<{}'s {}({!r})[{}]>".format(self.artist, type(self).__name__, self.title, self.year)
 
     def __iter__(self):
-        yield from self.tracks
+        yield from sorted(self.tracks)
 
     def _tracks_from_wikipedia(self):
         num_strs = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
@@ -511,6 +523,12 @@ class Song:
         self.addl_info = addl_info
         self.track = track_num
         self.disk_num = disk_num
+
+    def __lt__(self, other):
+        cls = type(self)
+        if not isinstance(other, cls):
+            raise TypeError("'<' not supported between instances of {!r} and {!r}".format(cls.__name__, type(other).__name__))
+        return (self.artist, self.album, self.title) < (other.artist, other.album, other.title)
 
     def __repr__(self):
         cls = type(self).__name__
