@@ -52,6 +52,7 @@ if os.path.islink(_script_path):
 sys.path.append(os.path.dirname(os.path.dirname(_script_path)))
 from ds_tools.logging import LogManager
 from ds_tools.music import iter_music_files, load_tags, iter_music_albums, iter_categorized_music_files
+from ds_tools.music.wiki import Artist, Album
 from ds_tools.utils import Table, SimpleColumn, localize, TableBar, num_suffix, ArgParser
 from music.constants import tag_name_map
 
@@ -340,6 +341,26 @@ def sort_albums(path, dry_run):
                     log.info("[Remove artist from album dir name] {}{} '{}' -> '{}'".format(prefix, verb, album_path, new_album_path))
                     if not dry_run:
                         os.rename(album_path, new_album_path)
+
+    for parent_dir, artist_dir, category_dir, album_dir, music_files in iter_categorized_music_files(path):
+        for music_file in music_files:
+            wiki_artist = Artist(artist_dir)
+            album_name = music_file.album_name_cleaned
+            song_title = music_file.tag_title
+            wiki_album = wiki_artist.find_album(album_name)
+            if wiki_album is None:
+                artist = music_file.tag_artist
+                m = re.match("(.+?)\s*\(.*", artist)
+                if m:
+                    wiki_artist = Artist(m.group(1))
+                    wiki_album = wiki_artist.find_album(album_name)
+
+            if wiki_album is not None:
+                song = wiki_album.find_track(song_title)
+                log.info("{!r} - {!r} - {!r} ==> {}".format(music_file.tag_artist, album_name, song_title, song))
+            else:
+                log.info("Unable to find match for {!r} - {!r} - {!r}".format(music_file.tag_artist, album_name, song_title))
+                # log.info("Unable to find {} album matching {}".format(wiki_artist, album_name))
 
 
 def set_tags(paths, tag_ids, value, replace_pats, partial, dry_run):

@@ -12,7 +12,9 @@ import bs4
 
 from ..exceptions import CodeBasedRestException
 from ..http import RestClient
-from ..utils import soupify, FSCache, cached, is_hangul, contains_hangul, cached_property, datetime_with_tz, now
+from ..utils import (
+    soupify, FSCache, cached, is_hangul, contains_hangul, cached_property, datetime_with_tz, now, strip_punctuation
+)
 
 __all__ = ["KpopWikiClient", "WikipediaClient", "Artist", "Album", "Song", "InvalidArtistException"]
 log = logging.getLogger("ds_tools.music.wiki")
@@ -213,8 +215,9 @@ class Artist(WikiObject):
         for album in self:
             if (album.title.lower() == lc_title) and ((album_type is None) or (album_type == album.type)):
                 return album
-        err_fmt = "Unable to find an album from {} of type {!r} with title {!r}"
-        raise AlbumNotFoundException(err_fmt.format(self, album_type or "any", title))
+        return None
+        # err_fmt = "Unable to find an album from {} of type {!r} with title {!r}"
+        # raise AlbumNotFoundException(err_fmt.format(self, album_type or "any", title))
 
 
 class Album(WikiObject):
@@ -357,34 +360,56 @@ class Album(WikiObject):
                         raise e
 
     def _parse_song(self, ele, song_str, track_num, common_addl_info=None):
-        title, note = None, None
+        # log.debug("Parsing song info from: {!r}".format(song_str))
+        title, note1, note2 = None, None, None
         m = re.match("(.+?)\s*-\s*(\d+:\d{2})\s*(.*)", song_str)
         if m:
+            # log.debug(" > Pattern 1 matched")
             title_part, runtime, extras = map(str.strip, m.groups())
-            m = re.match("\"(.+)\((.*)\)\"", title_part)
+
+            m = re.match("^\"(.+)\"\s*\((.*)\)$", title_part)
             if m:
-                a, b = map(str.strip, m.groups())
-                if is_hangul(b):
-                    title = unsurround(title_part)
-                else:
-                    title, note = a, b
-            else:
-                m = re.match("\"(.+)\"\s*\((.*)\)", title_part)
+                # log.debug(" > Pattern 1A matched")
+                title_part, note2 = map(str.strip, m.groups())
+                m = re.match("(.+)\((.*)\)", title_part)
                 if m:
-                    title, note = map(str.strip, m.groups())
+                    # log.debug(" > Pattern 1A-1 matched")
+                    a, b = map(str.strip, m.groups())
+                    if is_hangul(b):
+                        title = unsurround(title_part)
+                    else:
+                        title, note1 = a, b
+                else:
+                    # log.debug(" > Pattern 1A-2 matched")
+                    title = title_part
+                    note1, note2 = note2, None
+            else:
+                m = re.match("\"(.+)\((.*)\)\"", title_part)
+                if m:
+                    # log.debug(" > Pattern 1B matched")
+                    a, b = map(str.strip, m.groups())
+                    if is_hangul(b):
+                        title = unsurround(title_part)
+                    else:
+                        title, note1 = a, b
+                # else:
+                #     log.debug(" > Pattern 1B matched")
 
             if title:
-                addl_info = unsurround(extras)
-                return Song(self.artist, self, title, runtime, note, addl_info or common_addl_info, track_num)
+                addl_info = unsurround(extras) or note2
+                # log.debug(" >> title={!r}, note={!r}, runtime={!r}, addl_info={!r}".format(title, note1, runtime, addl_info))
+                return Song(self.artist, self, title, runtime, note1, addl_info or common_addl_info, track_num)
 
         track_with_len_m = self.track_with_len_rx.match(song_str)
         if track_with_len_m:
+            # log.debug(" > Pattern 2 matched")
             title, note, runtime, addl_info = track_with_len_m.groups()
             if title:
                 return Song(self.artist, self, title, runtime, note, addl_info or common_addl_info, track_num)
 
         track_with_artist_m = self.track_with_artist_rx.match(song_str)
         if track_with_artist_m:
+            # log.debug(" > Pattern 3 matched")
             anchors = list(ele.find_all("a"))
             if anchors:
                 a = anchors[-1]
@@ -408,6 +433,7 @@ class Album(WikiObject):
 
         track_no_len_m = self.track_no_len_rx.match(song_str)
         if track_no_len_m:
+            # log.debug(" > Pattern 4 matched")
             title, note, addl_info = track_no_len_m.groups()
             if title:
                 return Song(self.artist, self, title, "-1:00", note, addl_info or common_addl_info, track_num)
@@ -479,6 +505,40 @@ class Album(WikiObject):
     def tracks(self):
         return list(self._tracks())
 
+    def find_track(self, title):
+        for track in self:
+            if track.title == title:
+                return track
+
+        for track in self:
+            if track.inverse_han_eng_title == title:
+                return track
+
+        log.debug("No exact {} track match found for title {!r}, trying lower case...".format(self, title))
+        lc_title = title.lower()
+        for track in self:
+            if track.title.lower() == lc_title:
+                return track
+        log.debug("No exact {} lower-case track match found for title {!r}, trying languages...".format(self, title))
+        for track in self:
+            if title in (track.english_title, track.hangul_title):
+                return track
+        for track in self:
+            if lc_title == track.english_title.lower():
+                return track
+
+        log.debug("No exact {} language-specific lower-case track match found for title {!r}, trying without punctuation...".format(self, title))
+        no_punc = strip_punctuation(lc_title)
+        for track in self:
+            track_no_punc = strip_punctuation(track.english_title.lower() + (track.extra or "").lower() + (track.addl_info or "").lower())
+            if no_punc == track_no_punc:
+                return track
+            # else:
+            #     log.debug("{!r} != {!r}".format(no_punc, track_no_punc))
+
+        return None
+        # raise ValueError("Unable to find a song from {} with title {!r}".format(self, title))
+
     @cached_property
     def release_date(self):
         """
@@ -528,6 +588,10 @@ class Song:
         cls = type(self)
         if not isinstance(other, cls):
             raise TypeError("'<' not supported between instances of {!r} and {!r}".format(cls.__name__, type(other).__name__))
+
+        if self.album == other.album:
+            return (self.disk_num, self.track) < (other.disk_num, other.track)
+
         return (self.artist, self.album, self.title) < (other.artist, other.album, other.title)
 
     def __repr__(self):
@@ -543,13 +607,26 @@ class Song:
         m, s = map(int, self.length.split(":"))
         return s + (m * 60)
 
-    @property
+    @cached_property
     def english_title(self):
-        return eng_name(self, self.title, "english_title")
+        try:
+            return eng_name(self, self.title, "english_title")
+        except AttributeError as e:
+            return None
 
-    @property
+    @cached_property
     def hangul_title(self):
-        return han_name(self, self.title, "hangul_title")
+        try:
+            return han_name(self, self.title, "hangul_title")
+        except AttributeError as e:
+            return None
+
+    @cached_property
+    def inverse_han_eng_title(self):
+        if self.hangul_title and self.english_title:
+            return "{} ({})".format(self.hangul_title, self.english_title)
+        else:
+            return self.title
 
 
 class KpopWikiClient(RestClient):

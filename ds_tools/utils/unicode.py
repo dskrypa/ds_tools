@@ -6,7 +6,7 @@ import re
 import string
 import unicodedata
 
-__all__ = ["is_hangul", "contains_hangul", "print_unicode_names"]
+__all__ = ["is_hangul", "contains_hangul", "print_unicode_names", "strip_punctuation"]
 log = logging.getLogger("ds_tools.utils.unicode")
 
 HANGUL_RANGES = [       # Source: https://en.wikipedia.org/wiki/Korean_language_and_computers#Hangul_in_Unicode
@@ -44,3 +44,7 @@ def contains_hangul(a_str):
 def print_unicode_names(a_str):
     for c in a_str:
         log.info("{!r}: {}".format(c, unicodedata.name(c)))
+
+
+def strip_punctuation(a_str):
+    return re.sub("\s+", "", a_str).translate(PUNC_STRIP_TBL)

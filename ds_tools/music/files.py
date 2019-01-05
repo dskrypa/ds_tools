@@ -154,6 +154,22 @@ class ExtendedMutagenFile:
         return "<{}{}({!r})>".format(type(self).__name__, ftype, self.filename)
 
     @cached_property
+    def album_name_cleaned(self):
+        album = self.tag_named("album").text[0]
+        m = re.match("(.*)\s*\[.*Album\]", album)
+        if m:
+            album = m.group(1).strip()
+        return album
+
+    @cached_property
+    def tag_title(self):
+        return self.tag_named("title").text[0]
+
+    @cached_property
+    def tag_artist(self):
+        return self.tag_named("artist").text[0]
+
+    @cached_property
     def album_dir(self):
         """The directory that this file is in"""
         return os.path.dirname(os.path.abspath(self.filename))
