@@ -12,9 +12,7 @@ import bs4
 
 from ..exceptions import CodeBasedRestException
 from ..http import RestClient
-from ..utils import (
-    soupify, FSCache, cached, is_hangul, get_user_cache_dir, contains_hangul, cached_property, datetime_with_tz
-)
+from ..utils import soupify, FSCache, cached, is_hangul, contains_hangul, cached_property, datetime_with_tz
 
 __all__ = ["KpopWikiClient", "WikipediaClient", "Artist", "Album", "Song", "InvalidArtistException"]
 log = logging.getLogger("ds_tools.music.wiki")
@@ -125,15 +123,23 @@ class Artist(WikiObject):
 
     def _albums(self):
         discography_h2 = self._page_content.find("span", id="Discography").parent
+        h_levels = {"h3": "language", "h4": "type"}
         lang = "Korean"
         album_type = "Unknown"
         ele = discography_h2.next_sibling
         while True:
             while not isinstance(ele, bs4.element.Tag):     # Skip past NavigableString objects
                 ele = ele.next_sibling
-            if ele.name == "h3":
-                lang = next(ele.children).get("id")
-            elif ele.name == "h4":
+            val_type = h_levels.get(ele.name)
+            if val_type == "language":                      # *almost* always h3, but sometimes type is h3
+                val = next(ele.children).get("id")
+                val_lc = val.lower()
+                if any(v in val_lc for v in ("album", "single", "collaboration", "feature")):
+                    h_levels[ele.name] = "type"
+                    album_type = val
+                else:
+                    lang = val
+            elif val_type == "type":
                 album_type = next(ele.children).get("id")
             elif ele.name == "ul":
                 li_eles = list(ele.children)
@@ -142,51 +148,86 @@ class Artist(WikiObject):
                     ul = li.find("ul")
                     if ul:
                         ul.extract()                            # remove nested list from tree
-                        li_eles = list(ele.children) + li_eles  # insert elements from the nested list at top
+                        li_eles = list(ul.children) + li_eles   # insert elements from the nested list at top
 
+                    year, collab = None, None
                     li_text = li.text.strip()
+
                     plain_m = re.match("\"?(.*?)\"?\s*(?:\([^)]+\))?\s*\([^)]+\)$", li_text)
                     try:
                         album_name = plain_m.group(1)
                     except AttributeError as e:
-                        raise ValueError("Unexpected album li format {!r} in: {}".format(li_text, li)) from e
+                        if re.match("Dis[ck]\s*\d+\s*[-:]\s*Track\s*\d.*", li_text, re.IGNORECASE):
+                            continue    # Seemingly one-off case where someone put the track info in the wrong place
+                        raise ValueError("{}: Unexpected album li format {!r} in: {}".format(self, li_text, li)) from e
 
-                    found = 0
-                    for a in li.find_all("a"):
-                        collab = None
-                        link = a.get("href")
-                        album = a.text
+                    skip_len = len(album_name) + (2 if li_text.startswith("\"") else 0)
+                    title_remainder = li_text[skip_len:].strip()
+                    year_m = re.match("(.*)\s*\((\d+)\)$", title_remainder)
+                    if year_m:
+                        title_remainder, year = map(str.strip, year_m.groups())
+
+                    collab_m = re.search("\((?:with|feat\.?)\s+([^\)]+)\)", title_remainder)
+                    if collab_m:
+                        collab = collab_m.group(1)
+
+                    for a, b in (("\"", "\""), ("(", ")")):
+                        if title_remainder.startswith(a) and title_remainder.endswith(b):
+                            title_remainder = title_remainder[1:-1].strip()
+
+                    first_a = li.find("a")
+                    if first_a:
+                        link = first_a.get("href")
+                        album = first_a.text
                         if album != album_name:
                             log.debug("Skipping album {!r} != {!r}".format(album, album_name))
                             continue
 
-                        if a.parent.name == "li":
-                            year = list(a.parent.children)[-1]
-                            collab_m = re.search("\(with ([^\)]+)\)", a.parent.text)
-                            if collab_m:
-                                collab = collab_m.group(1)
-                        else:
-                            year = a.parent.next_sibling
-                        year = year.strip()[1:-1].strip()
-                        m = re.match("\(?(\d+)\)?", year)
-                        if m:
-                            year = m.group(1)
-
                         if not link.startswith("http"):     # If it starts with http, then it is an external link
-                            yield Album(self, album, lang, album_type, year, collab, link[6:], self._client)
+                            yield Album(self, album, lang, album_type, year, collab, title_remainder, link[6:], self._client)
                         else:
                             url = urlparse(link)
                             if url.hostname == "en.wikipedia.org":
-                                yield Album(self, album, lang, album_type, year, collab, url.path[6:], WikipediaClient())
+                                yield Album(self, album, lang, album_type, year, collab, title_remainder, url.path[6:], WikipediaClient())
                             else:
-                                yield Album(self, album, lang, album_type, year, collab, None, self._client)
-                        found += 1
+                                yield Album(self, album, lang, album_type, year, collab, title_remainder, None, self._client)
 
-                    if not found:
-                        m = re.match("\"?(.*?)\"?\s* \((\d+)\)$", li.text.strip())
-                        if m:
-                            album, year = m.groups()
-                            yield Album(self, album, lang, album_type, year, None, None, self._client)
+                    # found = 0
+                    # for a in li.find_all("a"):
+                    #     collab = None
+                    #     link = a.get("href")
+                    #     album = a.text
+                    #     if album != album_name:
+                    #         log.log(9, "Skipping album {!r} != {!r}".format(album, album_name))
+                    #         continue
+                    #
+                    #     if a.parent.name == "li":
+                    #         year = list(a.parent.children)[-1]
+                    #         collab_m = re.search("\(with ([^\)]+)\)", a.parent.text)
+                    #         if collab_m:
+                    #             collab = collab_m.group(1)
+                    #     else:
+                    #         year = a.parent.next_sibling
+                    #     year = year.strip()[1:-1].strip()
+                    #     m = re.match("\(?(\d+)\)?", year)
+                    #     if m:
+                    #         year = m.group(1)
+                    #
+                    #     if not link.startswith("http"):     # If it starts with http, then it is an external link
+                    #         yield Album(self, album, lang, album_type, year, collab, link[6:], self._client)
+                    #     else:
+                    #         url = urlparse(link)
+                    #         if url.hostname == "en.wikipedia.org":
+                    #             yield Album(self, album, lang, album_type, year, collab, url.path[6:], WikipediaClient())
+                    #         else:
+                    #             yield Album(self, album, lang, album_type, year, collab, None, self._client)
+                    #     found += 1
+                    #
+                    # if not found:
+                    #     m = re.match("\"?(.*?)\"?\s* \((\d+)\)$", li.text.strip())
+                    #     if m:
+                    #         album, year = m.groups()
+                    #         yield Album(self, album, lang, album_type, year, None, None, self._client)
 
             elif ele.name in ("h2", "div"):
                 break
@@ -211,8 +252,12 @@ class Artist(WikiObject):
 
 
 class Album(WikiObject):
+    track_with_len_rx = re.compile("[\"“]?(.*?)[\"“]?\s*(\(.*?\))?\s*-?\s*(\d+:\d{2})\s*\(?(.*)\)?$")
+    track_with_artist_rx = re.compile("[\"“]?(.*?)[\"“]?\s*\((.*?)\)$")
+    track_no_len_rx = re.compile("[\"“]?(.+?)(\(.*?\))?[\"“]?\s*\(?(.*)\)?$")
+
     """An album by a K-Pop :class:`Artist`.  Should not be initialized manually - use :attr:`Artist.albums`"""
-    def __init__(self, artist, title, lang, alb_type, year, collaborators, uri_path, client):
+    def __init__(self, artist, title, lang, alb_type, year, collaborators, addl_info, uri_path, client):
         super().__init__(uri_path, client)
         self.artist = artist                # may end up being a str when using an alternate wiki client
         self.title = title
@@ -222,6 +267,7 @@ class Album(WikiObject):
         self.type = alb_type[:-1] if alb_type and alb_type.endswith("s") else alb_type
         self.year = year
         self.collaborators = collaborators
+        self.addl_info = addl_info
 
     def __repr__(self):
         return "<{}'s {}({!r})[{}]>".format(self.artist, type(self).__name__, self.title, self.year)
@@ -232,7 +278,8 @@ class Album(WikiObject):
     def _tracks_from_wikipedia(self):
         num_strs = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
         # If this is using the WikipediaClient, then it's likely for a non-Korean artist
-        side_bar = self._page_content.find("table", class_=re.compile("infobox vevent.*"))
+        page_content = self._page_content
+        side_bar = page_content.find("table", class_=re.compile("infobox vevent.*"))
         desc = side_bar.find("th", class_="description")
         alb_type = self.type
         for ele in desc:
@@ -242,10 +289,10 @@ class Album(WikiObject):
                 break
 
         try:
-            track_list_h2 = self._page_content.find("span", id="Track_listing").parent
+            track_list_h2 = page_content.find("span", id="Track_listing").parent
         except AttributeError as e:
             if alb_type == "single":
-                len_th = desc.find("th", text="Length")
+                len_th = side_bar.find("th", text="Length")
                 runtime = len_th.next_sibling.text
                 yield Song(self.artist, self, self.title, runtime, None, None, 1)
             else:
@@ -308,19 +355,84 @@ class Album(WikiObject):
 
                 ele = ele.next_sibling
 
+    def _fix_artist(self, page_content=None):
+        if page_content is None:
+            page_content = self._page_content
+        aside = page_content.find("aside")
+        artist_h3 = aside.find("h3", text="Artist")
+        if artist_h3:
+            artist_div = artist_h3.next_sibling.next_sibling
+            artists = list(artist_div)                      # will be a single str or multiple html elements
+            if len(artists) == 1:
+                artist = artists[0].text if hasattr(artists[0], "text") else str(artists[0])
+                artist_eng_name = self.artist.english_name
+                if (artist_eng_name in artist) and any(artist.count(d) > artist_eng_name.count(d) for d in ",;"):
+                    return
+                elif any((val in artist) and (val not in artist_eng_name) for val in ("feat", "with")):
+                    return
+
+                try:
+                    self.artist = Artist(artist)
+                except AmbiguousArtistException as e:
+                    found_alt = False
+                    eng_alb_artist = self.artist.english_name.replace(" ", "_")
+                    for alt in e.alternatives:
+                        if eng_alb_artist in alt:   # Solo artist with common name + group name for disambiguation
+                            found_alt = True
+                            self.artist = Artist(alt)
+                            break
+                    if not found_alt:
+                        raise e
+
+    def _parse_song(self, ele, song_str, track_num, common_addl_info=None):
+        track_with_len_m = self.track_with_len_rx.match(song_str)
+        if track_with_len_m:
+            title, note, runtime, addl_info = track_with_len_m.groups()
+            return Song(self.artist, self, title, runtime, note, addl_info or common_addl_info, track_num)
+
+        track_with_artist_m = self.track_with_artist_rx.match(song_str)
+        if track_with_artist_m:
+            anchors = list(ele.find_all("a"))
+            if anchors:
+                a = anchors[-1]
+                if song_str.endswith("({})".format(a.text)):
+                    orig_title = title = song_str[:-(len(a.text) + 2)].strip()
+                    extra, addl_info = None, None
+                    m = re.match("\"([^(]+)(.*)\"", title)
+                    if m:
+                        title, extra = map(str.strip, m.groups())
+
+                    if is_hangul(extra):
+                        title, extra = orig_title, None
+                    else:
+                        m = re.match("\((.+?)\)\s*\(?(.*)\)?", extra)
+                        if m:
+                            extra, addl_info = m.groups()
+
+                    artist_obj = Artist(a.get("href")[6:], self._client)
+                    return Song(artist_obj, self, title, "-1:00", extra, addl_info or common_addl_info, track_num)
+
+        track_no_len_m = self.track_no_len_rx.match(song_str)
+        if track_no_len_m:
+            title, note, addl_info = track_no_len_m.groups()
+            return Song(self.artist, self, title, "-1:00", note, addl_info or common_addl_info, track_num)
+
+        raise ValueError("Unexpected value found for track: {}".format(ele))
+
     def _tracks(self):
         if isinstance(self._client, WikipediaClient):
             yield from self._tracks_from_wikipedia()
         else:
-            try:
-                track_list_h2 = self._page_content.find("span", id="Track_list").parent
-            except AttributeError as e:
-                if not self._uri_path:
-                    log.debug("No album page exists for {}".format(self))
-                    return
+            if not self._uri_path:
+                log.log(9, "No album page exists for {}".format(self))
+                return
 
-                if self.type in ("single", "digital_single", "other_release"):
-                    content = self._page_content.find("div", id="mw-content-text")
+            page_content = self._page_content
+            self._fix_artist(page_content)
+            track_list_span = page_content.find("span", id="Track_list")
+            if not track_list_span:
+                if ("single" in self.type) or (self.type in ("other_release", "collaboration", "feature")):
+                    content = page_content.find("div", id="mw-content-text")
                     aside = content.find("aside")
                     aside.extract()
                     m = re.match("^\"?(.*?)\"?\s*\((.*?)\)", content.text.strip())
@@ -329,68 +441,41 @@ class Album(WikiObject):
                     if len_h3:
                         runtime = len_h3.next_sibling.next_sibling.text
                     else:
-                        raise ValueError("Unable to find single length in aside for {}".format(self))
+                        runtime = "-1:00"
+                        log.warning("Unable to find single length in aside for {}".format(self))
                     yield Song(self.artist, self, title, runtime, None, None, 1)
+                    return
                 else:
-                    log.warning("Unexpected AttributeError for {}".format(self))
-                    raise e
+                    raise TrackDiscoveryException("Unexpected content on page for {} ({})".format(self, self.type))
+
+            track_list_h2 = track_list_span.parent
+            if self.type == "ost":
+                ele = track_list_h2.next_sibling
+                part = None
+                while ele.name not in ("h3", "h2"):
+                    if ele.name == "dl":
+                        dt = ele.find("dt")
+                        if not dt:
+                            if ele.find("dd"):  # Nothing left on the page
+                                return
+                            raise ValueError("Unexpected OST part section in {}: {}".format(self, ele))
+                        m = re.match("(.*?Part\s*.*?)\s*\(?", dt.text, re.IGNORECASE)
+                        if m:
+                            part = m.group(1)
+                        else:
+                            raise ValueError("Unexpected OST part section in {}".format(self))
+                    elif ele.name == "ol":
+                        for track_num, li in enumerate(ele):
+                            yield self._parse_song(li, li.text.strip(), track_num + 1, part)
+                    ele = ele.next_sibling
             else:
                 ol = track_list_h2.next_sibling.next_sibling
                 if ol.name != "ol":
                     ol = ol.next_sibling.next_sibling
                     assert ol.name == "ol", "Unexpected elements following the Track_list h2"
 
-                aside = self._page_content.find("aside")
-                artist_h3 = aside.find("h3", text="Artist")
-                if artist_h3:
-                    artist_div = artist_h3.next_sibling.next_sibling
-                    artists = list(artist_div)                      # will be a single str or multiple html elements
-                    if len(artists) == 1:
-                        try:
-                            self.artist = Artist(artists[0].text if hasattr(artists[0], "text") else str(artists[0]))
-                        except AmbiguousArtistException as e:
-                            found_alt = False
-                            eng_alb_artist = self.artist.english_name.replace(" ", "_")
-                            for alt in e.alternatives:
-                                if eng_alb_artist in alt:   # Solo artist with common name + group name for disambiguation
-                                    found_alt = True
-                                    self.artist = Artist(alt)
-                                    break
-                            if not found_alt:
-                                raise e
-
-                track_with_len_rx = re.compile("[\"“]?(.*?)[\"“]\s*(\(.*?\))?\s*-?\s*(\d+:\d{2})\s*\(?(.*)\)?$")
-                track_with_artist_rx = re.compile("[\"“]?(.*?)[\"“]\s*\((.*?)\)$")
-                track_no_len_rx = re.compile("[\"“]?(.*?)(\(.*?\))?[\"“]\s*\(?(.*)\)?$")
-                track_num = 0
-                for li in ol:
-                    li_text = li.text.strip()
-                    track_with_len_m = track_with_len_rx.match(li_text)
-                    try_more = True
-                    if track_with_len_m:
-                        try_more = False
-                        title, note, runtime, addl_info = track_with_len_m.groups()
-                        track_num += 1
-                        yield Song(self.artist, self, title, runtime, note, addl_info, track_num)
-                    else:
-                        track_with_artist_m = track_with_artist_rx.match(li_text)
-                        if track_with_artist_m:
-                            title, artist = track_with_artist_m.groups()
-                            if artist.lower().strip() not in ("instrumental", "normal edition only", "cd only"):
-                                try_more = False
-                                track_num += 1
-                                yield Song(Artist(artist), self, title, "-1:00", None, None, track_num)
-
-                        if try_more:
-                            track_no_len_m = track_no_len_rx.match(li_text)
-                            if track_no_len_m:
-                                try_more = False
-                                title, note, addl_info = track_no_len_m.groups()
-                                track_num += 1
-                                yield Song(self.artist, self, title, "-1:00", note, addl_info, track_num)
-
-                    if try_more:
-                        raise ValueError("Unexpected value found for track: {}".format(li))
+                for track_num, li in enumerate(ol):
+                    yield self._parse_song(li, li.text.strip(), track_num + 1)
 
     @cached_property
     def tracks(self):
@@ -444,7 +529,7 @@ class Song:
     def __repr__(self):
         cls = type(self).__name__
         core = "{!r} [{}]".format(self.title, self.extra) if self.extra else repr(self.title)
-        addl = "{}, disk {}".format(self.length, self.disk_num)
+        addl = "{}, track {}, disk {}".format(self.length, self.track, self.disk_num)
         if self.addl_info:
             addl += ", {}".format(self.addl_info)
         return "<{}'s {}({})[{}]>".format(self.artist, cls, core, addl)
@@ -560,6 +645,10 @@ class AlbumNotFoundException(Exception):
     pass
 
 
+class TrackDiscoveryException(Exception):
+    pass
+
+
 class AmbiguousArtistException(Exception):
     def __init__(self, artist, html):
         self.artist = artist
@@ -579,13 +668,18 @@ class AmbiguousArtistException(Exception):
             pass
 
         disambig_div = soup.find("div", id="disambig")
-        return [li.find("a").get("href")[6:] for li in disambig_div.parent.find("ul")]
+        if disambig_div:
+            return [li.find("a").get("href")[6:] for li in disambig_div.parent.find("ul")]
+        return []
 
     def __str__(self):
         alts = self.alternatives
         if len(alts) == 1:
             return "Artist {!r} doesn't exist - did you mean {!r}?".format(self.artist, alts[0])
-        return "Artist {!r} doesn't exist - did you mean one of these? {}".format(self.artist, " | ".join(alts))
+        elif alts:
+            return "Artist {!r} doesn't exist - did you mean one of these? {}".format(self.artist, " | ".join(alts))
+        else:
+            return "Artist {!r} doesn't exist and no suggestions could be found."
 
 
 if __name__ == "__main__":

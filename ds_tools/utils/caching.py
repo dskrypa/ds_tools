@@ -23,7 +23,7 @@ from getpass import getuser
 from inspect import Signature, Parameter
 from operator import attrgetter
 from threading import RLock
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote as url_quote
 
 from sqlalchemy import create_engine, MetaData, Table, Column, PickleType
 from sqlalchemy.ext.declarative import declarative_base
@@ -370,18 +370,18 @@ class FSCache:
     def dated_html_key_func(cls, date_fmt="%Y-%m-%d", include_host=True):
         def key_func(self, endpoint, *args, **kwargs):
             if include_host:
-                return "{}__{}__{}".format(self.host, now(date_fmt), endpoint.replace("/", "_"))
+                return "{}__{}__{}".format(self.host, now(date_fmt), url_quote(endpoint, ""))
             else:
-                return "{}__{}".format(now(date_fmt), endpoint.replace("/", "_"))
+                return "{}__{}".format(now(date_fmt), url_quote(endpoint, ""))
         return key_func
 
     @classmethod
     def dated_html_key(cls, self, endpoint, *args, **kwargs):
-        return "{}__{}__{}".format(self.host, now("%Y-%m-%d"), endpoint.replace("/", "_"))
+        return "{}__{}__{}".format(self.host, now("%Y-%m-%d"), url_quote(endpoint, ""))
 
     @classmethod
     def dated_html_key_nohost(cls, self, endpoint, *args, **kwargs):
-        return "{}__{}".format(now("%Y-%m-%d"), endpoint.replace("/", "_"))
+        return "{}__{}".format(now("%Y-%m-%d"), url_quote(endpoint, ""))
 
     @synchronized
     def keys(self):
