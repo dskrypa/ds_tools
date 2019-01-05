@@ -12,7 +12,7 @@ import bs4
 
 from ..exceptions import CodeBasedRestException
 from ..http import RestClient
-from ..utils import soupify, FSCache, cached, is_hangul, contains_hangul, cached_property, datetime_with_tz
+from ..utils import soupify, FSCache, cached, is_hangul, contains_hangul, cached_property, datetime_with_tz, now
 
 __all__ = ["KpopWikiClient", "WikipediaClient", "Artist", "Album", "Song", "InvalidArtistException"]
 log = logging.getLogger("ds_tools.music.wiki")
@@ -385,10 +385,31 @@ class Album(WikiObject):
                         raise e
 
     def _parse_song(self, ele, song_str, track_num, common_addl_info=None):
+        title, note = None, None
+        m = re.match("(.+?)\s*-\s*(\d+:\d{2})\s*(.*)", song_str)
+        if m:
+            title_part, runtime, extras = map(str.strip, m.groups())
+            m = re.match("\"(.+)\((.*)\)\"", title_part)
+            if m:
+                a, b = map(str.strip, m.groups())
+                if is_hangul(b):
+                    title = unsurround(title_part)
+                else:
+                    title, note = a, b
+            else:
+                m = re.match("\"(.+)\"\s*\((.*)\)", title_part)
+                if m:
+                    title, note = map(str.strip, m.groups())
+
+            if title:
+                addl_info = unsurround(extras)
+                return Song(self.artist, self, title, runtime, note, addl_info or common_addl_info, track_num)
+
         track_with_len_m = self.track_with_len_rx.match(song_str)
         if track_with_len_m:
             title, note, runtime, addl_info = track_with_len_m.groups()
-            return Song(self.artist, self, title, runtime, note, addl_info or common_addl_info, track_num)
+            if title:
+                return Song(self.artist, self, title, runtime, note, addl_info or common_addl_info, track_num)
 
         track_with_artist_m = self.track_with_artist_rx.match(song_str)
         if track_with_artist_m:
@@ -410,12 +431,14 @@ class Album(WikiObject):
                             extra, addl_info = m.groups()
 
                     artist_obj = Artist(a.get("href")[6:], self._client)
-                    return Song(artist_obj, self, title, "-1:00", extra, addl_info or common_addl_info, track_num)
+                    if title:
+                        return Song(artist_obj, self, title, "-1:00", extra, addl_info or common_addl_info, track_num)
 
         track_no_len_m = self.track_no_len_rx.match(song_str)
         if track_no_len_m:
             title, note, addl_info = track_no_len_m.groups()
-            return Song(self.artist, self, title, "-1:00", note, addl_info or common_addl_info, track_num)
+            if title:
+                return Song(self.artist, self, title, "-1:00", note, addl_info or common_addl_info, track_num)
 
         raise ValueError("Unexpected value found for track: {}".format(ele))
 
@@ -446,6 +469,9 @@ class Album(WikiObject):
                     yield Song(self.artist, self, title, runtime, None, None, 1)
                     return
                 else:
+                    if self.release_date > now(as_datetime=True):
+                        log.debug("{} had no content, but it will not be released until {}".format(self, self.release_date.strftime("%Y-%m-%d")))
+                        return
                     raise TrackDiscoveryException("Unexpected content on page for {} ({})".format(self, self.type))
 
             track_list_h2 = track_list_span.parent
@@ -635,6 +661,13 @@ def han_name(obj, name, attr):
     if contains_hangul(name):
         return name.strip()
     raise AttributeError("{} Does not have a {}".format(obj, attr))
+
+
+def unsurround(a_str):
+    for a, b in (("\"", "\""), ("(", ")"), ("“", "“")):
+        if a_str.startswith(a) and a_str.endswith(b):
+            a_str = a_str[1:-1].strip()
+    return a_str
 
 
 class InvalidArtistException(Exception):
