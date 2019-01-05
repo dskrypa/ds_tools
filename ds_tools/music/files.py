@@ -43,6 +43,7 @@ def iter_categorized_music_files(paths):
         paths = [paths]
 
     for path in paths:
+        path = os.path.abspath(path)
         if os.path.isdir(path):
             if path.endswith(("/", "\\")):
                 path = path[:-1]
@@ -64,6 +65,7 @@ def iter_music_albums(paths):
         paths = [paths]
 
     for path in paths:
+        path = os.path.abspath(path)
         if os.path.isdir(path):
             if path.endswith(("/", "\\")):
                 path = path[:-1]
@@ -81,6 +83,7 @@ def iter_music_files(paths, include_backups=False):
         paths = [paths]
 
     for path in paths:
+        path = os.path.abspath(path)
         if os.path.isdir(path):
             if path.endswith(("/", "\\")):
                 path = path[:-1]

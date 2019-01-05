@@ -281,7 +281,7 @@ def sort_albums(path, dry_run):
             if album_date:
                 album_dir = "[{}] {}".format(album_date, album_dir)
                 new_path = os.path.join(parent_dir, album_dir)
-                log.info("{}{} '{}' -> '{}'".format(prefix, verb, album_path, new_path))
+                log.info("[add date] {}{} '{}' -> '{}'".format(prefix, verb, album_path, new_path))
                 if not dry_run:
                     os.rename(album_path, new_path)
 
@@ -319,7 +319,7 @@ def sort_albums(path, dry_run):
                     parent_dir, album_dir = os.path.split(_path)
                     album_dir = "{} [{}{} {}]".format(album_dir, num, num_suffix(num), cat)
                     new_path = os.path.join(parent_dir, album_dir)
-                    log.info("{}{} '{}' -> '{}'".format(prefix, verb, _path, new_path))
+                    log.info("[Number within category] {}{} '{}' -> '{}'".format(prefix, verb, _path, new_path))
                     if not dry_run:
                         os.rename(_path, new_path)
                 else:
@@ -336,9 +336,10 @@ def sort_albums(path, dry_run):
             # new_album_dir = m.group(1).strip()
             if new_album_dir:
                 new_album_path = os.path.join(parent_dir, artist_dir, category_dir, new_album_dir)
-                log.info("{}{} '{}' -> '{}'".format(prefix, verb, album_path, new_album_path))
-                if not dry_run:
-                    os.rename(album_path, new_album_path)
+                if new_album_path != album_path:
+                    log.info("[Remove artist from album dir name] {}{} '{}' -> '{}'".format(prefix, verb, album_path, new_album_path))
+                    if not dry_run:
+                        os.rename(album_path, new_album_path)
 
 
 def set_tags(paths, tag_ids, value, replace_pats, partial, dry_run):
