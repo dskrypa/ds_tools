@@ -6,6 +6,8 @@
 
 import logging
 import re
+from urllib.parse import urlparse
+
 import bs4
 
 from ..exceptions import CodeBasedRestException
@@ -14,7 +16,7 @@ from ..utils import (
     soupify, FSCache, cached, is_hangul, get_user_cache_dir, contains_hangul, cached_property, datetime_with_tz
 )
 
-__all__ = ["KpopWikiClient", "Artist", "Album", "Song", "InvalidArtistException"]
+__all__ = ["KpopWikiClient", "WikipediaClient", "Artist", "Album", "Song", "InvalidArtistException"]
 log = logging.getLogger("ds_tools.music.wiki")
 
 
@@ -131,7 +133,15 @@ class Artist(WikiObject):
                         m = re.match("\(?(\d+)\)?", year)
                         if m:
                             year = m.group(1)
-                        yield Album(self, album, lang, album_type, year, collab, link[6:], self._client)
+
+                        if not link.startswith("http"):     # If it starts with http, then it is an external link
+                            yield Album(self, album, lang, album_type, year, collab, link[6:], self._client)
+                        else:
+                            url = urlparse(link)
+                            if url.hostname == "en.wikipedia.org":
+                                yield Album(self, album, lang, album_type, year, collab, url.path[6:], WikipediaClient())
+                            else:
+                                yield Album(self, album, lang, album_type, year, collab, None, self._client)
                         found += 1
                     if not found:
                         m = re.match("\"?(.*?)\"?\s* \((\d+)\)$", li.text.strip())
@@ -168,7 +178,9 @@ class Album(WikiObject):
         self.artist = artist
         self.title = title
         self.language = lang
-        self.type = alb_type
+        if alb_type:
+            alb_type = alb_type.lower()
+        self.type = alb_type[:-1] if alb_type and alb_type.endswith("s") else alb_type
         self.year = year
         self.collaborators = collaborators
 
@@ -179,23 +191,105 @@ class Album(WikiObject):
         yield from self.tracks
 
     def _tracks(self):
-        try:
-            track_list_h2 = self._page_content.find("span", id="Track_list").parent
-        except AttributeError as e:
-            return None
-        ol = track_list_h2.next_sibling.next_sibling
-        assert ol.name == "ol", "Unexpected element following the Track_list h2"
+        num_strs = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
+        if isinstance(self._client, WikipediaClient):
+            # If this is using the WikipediaClient, then it's likely for a non-Korean artist
+            side_bar = self._page_content.find("table", class_="infobox vevent haudio")
+            desc = side_bar.find("th", class_="description")
+            for ele in desc:
+                if str(ele).strip() == "by":
+                    self.artist = ele.next_sibling.text
+                    break
 
-        track_rx = re.compile("\"?(.*?)\"\s*(\(.*?\))?\s*-\s*(\d+:\d{2})\s*\(?(.*)\)?$")
-        track_num = 0
-        for li in ol:
-            m = track_rx.match(li.text.strip())
-            if m:
-                title, note, runtime, addl_info = m.groups()
-                track_num += 1
-                yield Song(self.artist, self, title, runtime, note, addl_info, track_num)
+            track_list_h2 = self._page_content.find("span", id="Track_listing").parent
+            ele = track_list_h2.next_sibling
+            super_edition, edition = None, None
+            disk = 1
+            while ele.name != "h2":
+                if ele.name == "h3":
+                    first_span = ele.find("span")
+                    if first_span and "edition" in first_span.text.lower():
+                        super_edition = first_span.text.strip()
+                        edition = None
+                    else:
+                        raise ValueError("Unexpected value in h3 for {}".format(self))
+                elif ele.name == "table":
+                    first_th = ele.find("th")
+                    if first_th and first_th.text.strip() != "No.":
+                        edition_candidate = first_th.text.strip()
+                        m = re.match("(.*?)(?:\[[0-9]+\])+$", edition_candidate)  # Strip citations
+                        if m:
+                            edition_candidate = m.group(1)
+                        m = re.match("Dis[ck]\s*(\S+)\s*[-:–]?\s*(.*)", edition_candidate, re.IGNORECASE)
+                        if m:
+                            disk_str, edition = map(str.strip, m.groups())
+                            disk_str = disk_str.lower()
+                            try:
+                                disk = int(disk_str)
+                            except Exception as e:
+                                if disk_str in num_strs:
+                                    disk = num_strs[disk_str]
+                                else:
+                                    raise ValueError("Unexpected disc number format for {}: {!r}".format(self, disk_str))
+                        else:
+                            edition = edition_candidate
+
+                    for tr in ele.find_all("tr"):
+                        cells = [td.text.strip() for td in tr.find_all("td")]
+                        if len(cells) == 5:
+                            try:
+                                track_num = int(cells[0][:-1])
+                            except Exception as e:
+                                raise ValueError("Unexpected format for track number in {}".format(self)) from e
+                            title = cells[1]
+                            m = re.match("^\"?(.*?)\"?\s*\((.*?)\)", title)
+                            if m:
+                                title, note = m.groups()
+                            else:
+                                if title.startswith("\"") and title.endswith("\""):
+                                    title = title[1:-1]
+                                note = None
+                            runtime = cells[-1]
+
+                            if super_edition and edition:
+                                song_edition = "{} - {}".format(super_edition, edition)
+                            else:
+                                song_edition = super_edition or edition
+                            yield Song(self.artist, self, title, runtime, note, song_edition, track_num, disk_num=disk)
+
+                ele = ele.next_sibling
+        else:
+            try:
+                track_list_h2 = self._page_content.find("span", id="Track_list").parent
+            except AttributeError as e:
+                if self.type in ("single", "digital_single", "other_release"):
+                    content = self._page_content.find("div", id="mw-content-text")
+                    aside = content.find("aside")
+                    aside.extract()
+                    m = re.match("^\"?(.*?)\"?\s*\((.*?)\)", content.text.strip())
+                    title = "{} ({})".format(*m.groups()) if m else self.title
+                    len_h3 = aside.find("h3", text="Length")
+                    if len_h3:
+                        runtime = len_h3.next_sibling.next_sibling.text
+                    else:
+                        raise ValueError("Unable to find single length in aside for {}".format(self))
+                    yield Song(self.artist, self, title, runtime, None, None, 1)
             else:
-                raise ValueError("Unexpected value found for track: {}".format(li))
+                ol = track_list_h2.next_sibling.next_sibling
+                if ol.name != "ol":
+                    ol = ol.next_sibling.next_sibling
+                    assert ol.name == "ol", "Unexpected elements following the Track_list h2"
+
+                track_rx = re.compile("\"?(.*?)\"\s*(\(.*?\))?\s*-\s*(\d+:\d{2})\s*\(?(.*)\)?$")
+                track_num = 0
+                for li in ol:
+                    m = track_rx.match(li.text.strip())
+                    if m:
+                        title, note, runtime, addl_info = m.groups()
+                        track_num += 1
+                        yield Song(self.artist, self, title, runtime, note, addl_info, track_num)
+                    else:
+                        raise ValueError("Unexpected value found for track: {}".format(li))
 
     @cached_property
     def tracks(self):
@@ -236,7 +330,7 @@ class Album(WikiObject):
 
 class Song:
     """A song in an album.  Should not be initialized manually - use :attr:`Album.tracks`"""
-    def __init__(self, artist, album, title, length, extra, addl_info, track_num):
+    def __init__(self, artist, album, title, length, extra, addl_info, track_num, disk_num=1):
         self.artist = artist
         self.album = album
         self.title = title
@@ -244,9 +338,15 @@ class Song:
         self.extra = extra
         self.addl_info = addl_info
         self.track = track_num
+        self.disk_num = disk_num
 
     def __repr__(self):
-        return "<{}({!r} by {})[{}]>".format(type(self).__name__, self.title, self.artist, self.length)
+        cls = type(self).__name__
+        core = "{!r} [{}]".format(self.title, self.extra) if self.extra else repr(self.title)
+        addl = "{}, disk {}".format(self.length, self.disk_num)
+        if self.addl_info:
+            addl += ", {}".format(self.addl_info)
+        return "<{}'s {}({})[{}]>".format(self.artist, cls, core, addl)
 
     @property
     def seconds(self):
@@ -273,7 +373,6 @@ class KpopWikiClient(RestClient):
     def __init__(self):
         if not getattr(self, "_KpopWikiClient__initialized", False):
             super().__init__("kpop.wikia.com", rate_limit=1, prefix="wiki")
-            self.cache_dir = get_user_cache_dir("kpop_wiki")
             self._page_cache = FSCache(cache_subdir="kpop_wiki", prefix="get__", ext="html")
             self.__initialized = True
 
@@ -303,6 +402,25 @@ class KpopWikiClient(RestClient):
 
     def get_artist(self, artist):
         return Artist(self.normalize_artist(artist), self)
+
+
+class WikipediaClient(RestClient):
+    __instance = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls.__instance is None:
+            cls.__instance = super().__new__(cls)
+        return cls.__instance
+
+    def __init__(self):
+        if not getattr(self, "_WikipediaClient__initialized", False):
+            super().__init__("en.wikipedia.org", rate_limit=1, prefix="wiki", proto="https")
+            self._page_cache = FSCache(cache_subdir="kpop_wiki/wikipedia", prefix="get__", ext="html")
+            self.__initialized = True
+
+    @cached("_page_cache", lock=True, key=FSCache.dated_html_key_func("%Y-%m"))
+    def get_page(self, endpoint, **kwargs):
+        return self.get(endpoint, **kwargs).text
 
 
 def eng_name(obj, name, attr):
