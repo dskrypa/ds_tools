@@ -73,6 +73,8 @@ class SimpleRestException(Exception):
             return "{} [{}] {} on {}: {}".format(type(self).__name__, self.code, self.reason, self.endpoint, self.msg)
         return "{} [{}] {} on {}".format(type(self).__name__, self.code, self.reason, self.endpoint)
 
+    __repr__ = __str__
+
 
 class CodeBasedRestExceptionMeta(ABCMeta):
     def __init__(cls, name, bases, attr_dict):
@@ -131,6 +133,8 @@ class CodeBasedRestException(Exception, metaclass=CodeBasedRestExceptionMeta):
         if self.msg:
             return "{} [{}] {} on {}: {}".format(type(self).__name__, self.code, self.reason, self.endpoint, self.msg)
         return "{} [{}] {} on {}".format(type(self).__name__, self.code, self.reason, self.endpoint)
+
+    __repr__ = __str__
 
 
 class UnauthorizedRestException(CodeBasedRestException):

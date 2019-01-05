@@ -5,15 +5,17 @@
 """
 
 import logging
+import os
 import re
 from collections import defaultdict
 
 import bs4
 
+from ..exceptions import CodeBasedRestException
 from ..http import RestClient
-from ..utils import soupify, FSCache, cached, is_hangul
+from ..utils import soupify, FSCache, cached, is_hangul, get_user_cache_dir, contains_hangul
 
-__all__ = ["KpopWikiClient", "Artist", "Album", "Song"]
+__all__ = ["KpopWikiClient", "Artist", "Album", "Song", "InvalidArtistException"]
 log = logging.getLogger("ds_tools.music.wiki")
 
 
@@ -27,14 +29,31 @@ class Artist:
     def __repr__(self):
         return "<{}({!r})>".format(type(self).__name__, self.name)
 
+    @property
+    def english_name(self):
+        return eng_name(self, self.name, "english_name")
+
+    @property
+    def hangul_name(self):
+        return han_name(self, self.name, "hangul_name")
+
     def members(self):
         members_h2 = self._content.find("span", id="Members").parent
-        ul = members_h2.next_sibling.next_sibling
+        members_ele = members_h2.next_sibling.next_sibling
         members = []
-        for li in ul:
-            m = re.match("(.*?)\s*-\s*(.*)", li.text)
-            members.append(tuple(map(str.strip, m.groups())))
+        if members_ele.name == "ul":
+            for li in members_ele:
+                m = re.match("(.*?)\s*-\s*(.*)", li.text)
+                members.append(tuple(map(str.strip, m.groups())))
+        elif members_ele.name == "table":
+            for tr in members_ele.find_all("tr"):
+                vals = [td.text.strip() for td in tr.find_all("td")]
+                if vals:
+                    members.append(tuple(map(str.strip, vals)))
         return members
+
+    def __iter__(self):
+        yield from self.albums()
 
     def albums(self):
         discography = self._client.get_discography(self._page)
@@ -42,18 +61,6 @@ class Artist:
             for album_type, albums in type_albums.items():
                 for album, (year, uri_path) in albums.items():
                     yield Album(self, album, lang, album_type, year, uri_path, self._client)
-
-
-class Song:
-    def __init__(self, artist, album, title, length, extra):
-        self.artist = artist
-        self.album = album
-        self.title = title
-        self.length = length
-        self.extra = extra
-
-    def __repr__(self):
-        return "<{}({!r} by {})[{}]>".format(type(self).__name__, self.title, self.artist, self.length)
 
 
 class Album:
@@ -70,6 +77,9 @@ class Album:
     def __repr__(self):
         return "<{}({!r} by {}, {})>".format(type(self).__name__, self.title, self.artist, self.year)
 
+    def __iter__(self):
+        yield from self.tracks()
+
     def tracks(self):
         if self._tracks is not None:
             return self._tracks
@@ -77,24 +87,77 @@ class Album:
             raise AttributeError("{} has no known wiki page from which tracks can be retrieved".format(self))
         tracks = self._client._get_album(self._page)
         if tracks:
-            for title, extra, length in tracks:
-                yield Song(self.artist, self, title, length, extra)
+            for i, (title, extra, length, addl_info) in enumerate(tracks):
+                yield Song(self.artist, self, title, length, extra, addl_info, i + 1)
+
+
+class Song:
+    def __init__(self, artist, album, title, length, extra, addl_info, track_num):
+        self.artist = artist
+        self.album = album
+        self.title = title
+        self.length = length
+        self.extra = extra
+        self.addl_info = addl_info
+        self.track = track_num
+
+    def __repr__(self):
+        return "<{}({!r} by {})[{}]>".format(type(self).__name__, self.title, self.artist, self.length)
+
+    @property
+    def seconds(self):
+        m, s = map(int, self.length.split(":"))
+        return s + (m * 60)
+
+    @property
+    def english_title(self):
+        return eng_name(self, self.title, "english_title")
+
+    @property
+    def hangul_title(self):
+        return han_name(self, self.title, "hangul_title")
 
 
 class KpopWikiClient(RestClient):
     def __init__(self):
         super().__init__("kpop.wikia.com", rate_limit=1, prefix="wiki")
+        self.cache_dir = get_user_cache_dir("kpop_wiki")
+        os.path.join(self.cache_dir, "artists")
+
+    @cached(FSCache(cache_subdir="kpop_wiki", prefix="artist__"), lock=True, key=lambda s, a: a)
+    def normalize_artist(self, artist):
+        try:
+            self.get_page(artist)
+        except CodeBasedRestException as e:
+            if e.code == 404:
+                exc_soup = soupify(e.resp.text)
+                try:
+                    alt = exc_soup.find("span", class_="alternative-suggestion").find("a").text
+                except Exception as e1:
+                    raise e
+                else:
+                    if alt.lower() == artist.lower():
+                        return alt
+                    else:
+                        raise InvalidArtistException("Artist {!r} doesn't exist - did you mean {!r}?".format(artist, alt)) from e
+        else:
+            return artist
 
     @cached(FSCache(cache_subdir="kpop_wiki", prefix="get__", ext="html"), lock=True, key=FSCache.dated_html_key)
     def get_page(self, endpoint, **kwargs):
         return self.get(endpoint, **kwargs).text
 
     def get_artist(self, artist, **kwargs):
+        artist = self.normalize_artist(artist)
         soup = soupify(self.get_page(artist, **kwargs))
         content = soup.find("div", id="mw-content-text")
-        aside = content.find("aside")
-        if aside:
-            aside.extract()
+
+        to_remove = ("center", "aside")
+        for ele_name in to_remove:
+            rm_ele = content.find(ele_name)
+            if rm_ele:
+                rm_ele.extract()
+
         intro = content.text.strip()
         m = re.match("^(.*?)\s*\((.*?)\)", intro)
         if not m:
@@ -130,13 +193,13 @@ class KpopWikiClient(RestClient):
         ol = track_list_h2.next_sibling.next_sibling
         assert ol.name == "ol", "Unexpected element following the Track_list h2"
 
-        track_rx = re.compile("\"?(.*?)\"\s*(\(.*?\))?\s*-\s*(\d+:\d{2})$")
+        track_rx = re.compile("\"?(.*?)\"\s*(\(.*?\))?\s*-\s*(\d+:\d{2})\s*\(?(.*)\)?$")
         tracks = []
         for li in ol:
             m = track_rx.match(li.text.strip())
             if m:
-                name, note, runtime = m.groups()
-                tracks.append((name, note, runtime))
+                name, note, runtime, addl_info = m.groups()
+                tracks.append((name, note, runtime, addl_info))
             else:
                 raise ValueError("Unexpected value found for track: {}".format(li))
 
@@ -157,7 +220,7 @@ class KpopWikiClient(RestClient):
         album_type = "Unknown"
         ele = discography_h2.next_sibling
         while True:
-            while not isinstance(ele, bs4.element.Tag):
+            while not isinstance(ele, bs4.element.Tag):     # Skip past NavigableString objects
                 ele = ele.next_sibling
             if ele.name == "h3":
                 lang = next(ele.children).get("id")
@@ -173,7 +236,10 @@ class KpopWikiClient(RestClient):
                             year = list(a.parent.children)[-1]
                         else:
                             year = a.parent.next_sibling
-                        year = year.strip()[1:-1]
+                        year = year.strip()[1:-1].strip()
+                        m = re.match("\(?(\d+)\)?", year)
+                        if m:
+                            year = m.group(1)
                         albums_by_lang_type[lang][album_type][album] = (year, link[6:])
                         found += 1
                     if not found:
@@ -187,6 +253,39 @@ class KpopWikiClient(RestClient):
             ele = ele.next_sibling
 
         return albums_by_lang_type
+
+
+def eng_name(obj, name, attr):
+    m = re.match("(.*)\s*\((.*)\)", name)
+    if m:
+        eng, han = m.groups()
+        if contains_hangul(eng):
+            if contains_hangul(han):
+                raise AttributeError("{} Does not have an {}".format(obj, attr))
+            return han.strip()
+        return eng.strip()
+    if contains_hangul(name):
+        raise AttributeError("{} Does not have an {}".format(obj, attr))
+    return name.strip()
+
+
+def han_name(obj, name, attr):
+    m = re.match("(.*)\s*\((.*)\)", name)
+    if m:
+        eng, han = m.groups()
+        if contains_hangul(han):
+            if contains_hangul(eng):
+                return name.strip()
+            return han.strip()
+        if contains_hangul(eng):
+            return eng.strip()
+    if contains_hangul(name):
+        return name.strip()
+    raise AttributeError("{} Does not have a {}".format(obj, attr))
+
+
+class InvalidArtistException(Exception):
+    pass
 
 
 if __name__ == "__main__":
