@@ -6,6 +6,7 @@
 
 import logging
 import re
+from collections import OrderedDict
 from urllib.parse import urlparse, quote as url_quote
 
 import bs4
@@ -16,8 +17,124 @@ from ..utils import (
     soupify, FSCache, cached, is_hangul, contains_hangul, cached_property, datetime_with_tz, now, strip_punctuation
 )
 
-__all__ = ["KpopWikiClient", "WikipediaClient", "Artist", "Album", "Song", "InvalidArtistException"]
+__all__ = ["KpopWikiClient", "WikipediaClient", "Artist", "Album", "Song", "InvalidArtistException", "TitleParser"]
 log = logging.getLogger("ds_tools.music.wiki")
+
+
+class Token:
+    def __init__(self, tok_type, value):
+        self.type = tok_type
+        self.value = value
+        # log.debug("Found {!r}".format(self))
+
+    def __repr__(self):
+        return "<{}({!r}:{!r})>".format(type(self).__name__, self.type, self.value)
+
+
+class TitleParser:
+    TOKENS = OrderedDict([
+        ("QUOTE", "[\"“]"),
+        ("LPAREN", "[\(（]"),
+        ("RPAREN", "[\)）]"),
+        ("DASH", "\s*[-–]\s*"),
+        ("TIME", "\d+:\d{2}"),
+        ("WS", "\s+"),
+        ("TEXT", "[^\"“()（）]+"),
+    ])
+
+    def __init__(self):
+        self.pattern = re.compile("|".join("(?P<{}>{})".format(k, v) for k, v in self.TOKENS.items()))
+
+    def tokenize(self, text):
+        # noinspection PyUnresolvedReferences
+        scanner = self.pattern.scanner(text)
+        for m in iter(scanner.match, None):
+            yield Token(m.lastgroup, m.group())
+
+    def parse(self, text):
+        self._full = text
+        self.tokens = self.tokenize(text)
+        self.tok = None         # Last symbol consumed
+        self.next_tok = None    # Next symbol tokenized
+        self._advance()         # Load first lookahead taken
+        return self.title()
+
+    def title(self):
+        """
+        title ::= name { (extra) }* { dash }* { time }* { (extra) }*
+        """
+        title = {"name": self.name(), "duration": None, "extras": []}
+        while self.next_tok:
+            if self._accept("LPAREN"):
+                title["extras"].append(self.extra())
+            elif self._accept("DASH") or self._accept("WS"):
+                pass
+            elif self._accept("TIME"):
+                title["duration"] = self.tok.value
+            elif self._accept("QUOTE") and any(self._full.count(c) % 2 == 1 for c in "\"“"):
+                pass
+            else:
+                raise SyntaxError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
+        return title
+
+    def extra(self):
+        """
+        extra ::= ( text | dash | time | quote | (extra) )
+        """
+        text = ""
+        while self.next_tok:
+            if self._accept("RPAREN"):
+                return text
+            elif self._accept("LPAREN"):
+                text += "({})".format(self.extra())
+            else:
+                self._advance()
+                text += self.tok.value
+        return text
+
+    def name(self):
+        """
+        name :: = { " }* text { (extra) }* { " }*
+        """
+        had_extra = False
+        name = ""
+        while self.next_tok:
+            if (self._accept("QUOTE") or self._peek("TIME")) and name:
+                return name
+            elif self._accept("DASH") and self._peek("TIME"):
+                return name
+            elif self._peek("LPAREN") and name and all(self._full.count(c) == 0 for c in "\"“"):
+                return name
+            elif self._accept("LPAREN"):
+                name += "({})".format(self.extra())
+                had_extra = True
+            elif self._accept("TEXT") or self._accept("RPAREN"):
+                name += self.tok.value
+            elif self._accept("WS"):
+                if had_extra and not any(self._full.startswith(c) and (self._full.count(c) > 1) for c in "\"“"):
+                    return name
+                name += self.tok.value
+            elif self._accept("TIME"):
+                name += self.tok.value
+            else:
+                raise SyntaxError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
+        return name
+
+    def _advance(self):
+        self.tok, self.next_tok = self.next_tok, next(self.tokens, None)
+
+    def _peek(self, token_type):
+        return self.next_tok and self.next_tok.type == token_type
+
+    def _accept(self, token_type):
+        if self.next_tok and self.next_tok.type == token_type:
+            self._advance()
+            return True
+        return False
+
+    def _expect(self, token_type):
+        if not self._accept(token_type):
+            raise SyntaxError("Expected {}".format(token_type))
 
 
 class WikiObject:
@@ -47,6 +164,8 @@ class Artist(WikiObject):
     :param KpopWikiClient client: The :class:`KpopWikiClient` used for retrieving information about this Artist;
       this should not be provided by users.
     """
+    # raw_album_names = set()
+
     def __init__(self, artist_uri_path, client=None):
         if client is None:
             client = KpopWikiClient()
@@ -160,6 +279,8 @@ class Artist(WikiObject):
 
                     year, collab = None, None
                     li_text = li.text.strip()
+                    # type(self).raw_album_names.add(li_text)
+
                     pat_base = "\"?(.*?)\"?" if li_text.startswith("\"") else "(.*?)"
                     plain_m = re.match(pat_base + "\s*(?:\([^)]+\))?\s*\([^)]+\)$", li_text)
                     try:
@@ -222,9 +343,9 @@ class Artist(WikiObject):
 
 class Album(WikiObject):
     """An album by a K-Pop :class:`Artist`.  Should not be initialized manually - use :attr:`Artist.albums`"""
-    track_with_len_rx = re.compile("[\"“]?(.*?)[\"“]?\s*(\(.*?\))?\s*-?\s*(\d+:\d{2})\s*\(?(.*)\)?$")
+    title_parser = TitleParser()
     track_with_artist_rx = re.compile("[\"“]?(.*?)[\"“]?\s*\((.*?)\)$")
-    track_no_len_rx = re.compile("[\"“]?(.+?)(\(.*?\))?[\"“]?\s*\(?(.*)\)?$")
+    # raw_track_names = set()
 
     def __init__(self, artist, title, lang, alb_type, year, collaborators, addl_info, uri_path, client):
         super().__init__(uri_path, client)
@@ -269,7 +390,7 @@ class Album(WikiObject):
             if alb_type == "single":
                 len_th = side_bar.find("th", text="Length")
                 runtime = len_th.next_sibling.text
-                yield Song(self.artist, self, self.title, runtime, None, None, 1)
+                yield Song(self.artist, self, self.title, runtime, None, 1)
             else:
                 log.warning("Unexpected AttributeError for {}".format(self))
                 raise e
@@ -326,7 +447,7 @@ class Album(WikiObject):
                                 song_edition = "{} - {}".format(super_edition, edition)
                             else:
                                 song_edition = super_edition or edition
-                            yield Song(self.artist, self, title, runtime, note, song_edition, track_num, disk_num=disk)
+                            yield Song(self.artist, self, title, runtime, [note, song_edition], track_num, disk_num=disk)
 
                 ele = ele.next_sibling
 
@@ -361,84 +482,22 @@ class Album(WikiObject):
 
     def _parse_song(self, ele, song_str, track_num, common_addl_info=None):
         # log.debug("Parsing song info from: {!r}".format(song_str))
-        title, note1, note2 = None, None, None
-        m = re.match("(.+?)\s*-\s*(\d+:\d{2})\s*(.*)", song_str)
-        if m:
-            # log.debug(" > Pattern 1 matched")
-            title_part, runtime, extras = map(str.strip, m.groups())
+        # type(self).raw_track_names.add(song_str)
+        parsed = self.title_parser.parse(song_str)
+        if common_addl_info:
+            parsed["extras"].append(common_addl_info)
 
-            m = re.match("^\"(.+)\"\s*\((.*)\)$", title_part)
-            if m:
-                # log.debug(" > Pattern 1A matched")
-                title_part, note2 = map(str.strip, m.groups())
-                m = re.match("(.+)\((.*)\)", title_part)
-                if m:
-                    # log.debug(" > Pattern 1A-1 matched")
-                    a, b = map(str.strip, m.groups())
-                    if is_hangul(b):
-                        title = unsurround(title_part)
-                    else:
-                        title, note1 = a, b
-                else:
-                    # log.debug(" > Pattern 1A-2 matched")
-                    title = title_part
-                    note1, note2 = note2, None
-            else:
-                m = re.match("\"(.+)\((.*)\)\"", title_part)
-                if m:
-                    # log.debug(" > Pattern 1B matched")
-                    a, b = map(str.strip, m.groups())
-                    if is_hangul(b):
-                        title = unsurround(title_part)
-                    else:
-                        title, note1 = a, b
-                # else:
-                #     log.debug(" > Pattern 1B matched")
+        if not parsed["duration"]:
+            track_with_artist_m = self.track_with_artist_rx.match(song_str)
+            if track_with_artist_m:
+                anchors = list(ele.find_all("a"))
+                if anchors:
+                    a = anchors[-1]
+                    if song_str.endswith("({})".format(a.text)):
+                        artist_obj = Artist(a.get("href")[6:], self._client)
+                        return Song(artist_obj, self, parsed["name"], parsed["duration"], parsed["extras"], track_num)
 
-            if title:
-                addl_info = unsurround(extras) or note2
-                # log.debug(" >> title={!r}, note={!r}, runtime={!r}, addl_info={!r}".format(title, note1, runtime, addl_info))
-                return Song(self.artist, self, title, runtime, note1, addl_info or common_addl_info, track_num)
-
-        track_with_len_m = self.track_with_len_rx.match(song_str)
-        if track_with_len_m:
-            # log.debug(" > Pattern 2 matched")
-            title, note, runtime, addl_info = track_with_len_m.groups()
-            if title:
-                return Song(self.artist, self, title, runtime, note, addl_info or common_addl_info, track_num)
-
-        track_with_artist_m = self.track_with_artist_rx.match(song_str)
-        if track_with_artist_m:
-            # log.debug(" > Pattern 3 matched")
-            anchors = list(ele.find_all("a"))
-            if anchors:
-                a = anchors[-1]
-                if song_str.endswith("({})".format(a.text)):
-                    orig_title = title = song_str[:-(len(a.text) + 2)].strip()
-                    extra, addl_info = None, None
-                    m = re.match("\"([^(]+)(.*)\"", title)
-                    if m:
-                        title, extra = map(str.strip, m.groups())
-
-                    if is_hangul(extra):
-                        title, extra = orig_title, None
-                    else:
-                        m = re.match("\((.+?)\)\s*\(?(.*)\)?", extra)
-                        if m:
-                            extra, addl_info = m.groups()
-
-                    artist_obj = Artist(a.get("href")[6:], self._client)
-                    if title:
-                        return Song(artist_obj, self, title, "-1:00", extra, addl_info or common_addl_info, track_num)
-
-        track_no_len_m = self.track_no_len_rx.match(song_str)
-        if track_no_len_m:
-            # log.debug(" > Pattern 4 matched")
-            title, note, addl_info = track_no_len_m.groups()
-            if title:
-                return Song(self.artist, self, title, "-1:00", note, addl_info or common_addl_info, track_num)
-
-        raise ValueError("Unexpected value found for track: {}".format(ele))
+        return Song(self.artist, self, parsed["name"], parsed["duration"], parsed["extras"], track_num)
 
     def _tracks(self):
         if isinstance(self._client, WikipediaClient):
@@ -506,27 +565,19 @@ class Album(WikiObject):
         return list(self._tracks())
 
     def find_track(self, title):
-        for track in self:
-            if track.file_title == title:
-                return track
-
-        for track in self:
-            if track.title == title:
-                return track
-
-        for track in self:
-            if track.inverse_han_eng_title == title:
-                return track
+        attrs = ("file_title", "title", "inverse_han_eng_title")
+        for attr in attrs:
+            for track in self:
+                if getattr(track, attr) == title:
+                    return track
 
         log.debug("No exact {} track match found for title {!r}, trying lower case...".format(self, title))
         lc_title = title.lower()
-        for track in self:
-            if track.inverse_han_eng_title.lower() == lc_title:
-                return track
+        for attr in attrs:
+            for track in self:
+                if getattr(track, attr).lower() == lc_title:
+                    return track
 
-        for track in self:
-            if track.title.lower() == lc_title:
-                return track
         log.debug("No exact {} lower-case track match found for title {!r}, trying languages...".format(self, title))
         for track in self:
             if title in (track.english_title, track.hangul_title):
@@ -538,7 +589,7 @@ class Album(WikiObject):
         log.debug("No exact {} language-specific lower-case track match found for title {!r}, trying without punctuation...".format(self, title))
         no_punc = strip_punctuation(lc_title)
         for track in self:
-            track_no_punc = strip_punctuation(track.english_title.lower() + (track.extra or "").lower() + (track.addl_info or "").lower())
+            track_no_punc = strip_punctuation(track.english_title + "".join(track.extras)).lower()
             if no_punc == track_no_punc:
                 return track
             # else:
@@ -582,13 +633,12 @@ class Album(WikiObject):
 
 class Song:
     """A song in an album.  Should not be initialized manually - use :attr:`Album.tracks`"""
-    def __init__(self, artist, album, title, length, extra, addl_info, track_num, disk_num=1):
+    def __init__(self, artist, album, title, length, extras, track_num, disk_num=1):
         self.artist = artist
         self.album = album
         self.title = title
-        self.length = length
-        self.extra = extra
-        self.addl_info = addl_info
+        self.length = length or "-1:00"
+        self.extras = extras or []
         self.track = track_num
         self.disk_num = disk_num
 
@@ -604,11 +654,10 @@ class Song:
 
     def __repr__(self):
         cls = type(self).__name__
-        core = "{!r} [{}]".format(self.title, self.extra) if self.extra else repr(self.title)
         addl = "{}, track {}, disk {}".format(self.length, self.track, self.disk_num)
-        if self.addl_info:
-            addl += ", {}".format(self.addl_info)
-        return "<{}'s {}({})[{}]>".format(self.artist, cls, core, addl)
+        if self.extras:
+            addl += "][{}".format("".join("({})".format(e) for e in self.extras))
+        return "<{}'s {}({!r})[{}]>".format(self.artist, cls, self.title, addl)
 
     @property
     def seconds(self):
@@ -638,8 +687,10 @@ class Song:
 
     @cached_property
     def file_title(self):
-        base = "{} ({})".format(self.title, self.extra) if self.extra else self.title
-        return "{} ({})".format(base, self.addl_info) if self.addl_info else base
+        parts = [self.title]
+        if self.extras:
+            parts.extend("({})".format(e) for e in self.extras)
+        return " ".join(parts)
 
 
 class KpopWikiClient(RestClient):

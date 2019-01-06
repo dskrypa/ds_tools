@@ -466,6 +466,8 @@ def fix_tags(paths, dry_run):
                         if not dry_run:
                             music_file.tags[title_key] = song.file_title if (music_file.file_type == "mp4") else TIT2(text=song.file_title)
                             music_file.tags.save(music_file.filename)
+                    else:
+                        log.log(19, "No changes necessary for {!r} - {!r} - {!r} == {!r} / {}".format(music_file.tag_artist, album_name, song_title, song.file_title, song))
                 else:
                     log.debug("Unable to find song match for {!r} - {!r} - {!r}  /  {}".format(music_file.tag_artist, album_name, song_title, music_file))
             else:
