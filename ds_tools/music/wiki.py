@@ -63,11 +63,18 @@ class TitleParser:
         """
         title ::= name { (extra) }* { dash }* { time }* { (extra) }*
         """
-        title = {"name": self.name(), "duration": None, "extras": []}
+        title = {"name": self.name().strip(), "duration": None, "extras": []}
         while self.next_tok:
             if self._accept("LPAREN"):
                 title["extras"].append(self.extra())
-            elif self._accept("DASH") or self._accept("WS"):
+            elif self._accept("DASH"):
+                if self._peek("TIME"):
+                    pass
+                elif self._full.count(self.tok.value.strip()) > 1:
+                    title["extras"].append(self.extra("DASH"))
+                else:
+                    raise SyntaxError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
+            elif self._accept("WS") or self._accept("DASH"):
                 pass
             elif self._accept("TIME"):
                 title["duration"] = self.tok.value
@@ -77,13 +84,13 @@ class TitleParser:
                 raise SyntaxError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
         return title
 
-    def extra(self):
+    def extra(self, closer="RPAREN"):
         """
         extra ::= ( text | dash | time | quote | (extra) )
         """
         text = ""
         while self.next_tok:
-            if self._accept("RPAREN"):
+            if self._accept(closer):
                 return text
             elif self._accept("LPAREN"):
                 text += "({})".format(self.extra())
@@ -99,12 +106,20 @@ class TitleParser:
         had_extra = False
         name = ""
         while self.next_tok:
-            if (self._accept("QUOTE") or self._peek("TIME")) and name:
-                return name
-            elif self._accept("DASH") and self._peek("TIME"):
+            if self._peek("TIME") and name:
                 return name
             elif self._peek("LPAREN") and name and all(self._full.count(c) == 0 for c in "\"“"):
                 return name
+
+            if self._accept("QUOTE") and name:
+                return name
+            elif self._accept("DASH"):
+                if self._peek("TIME"):
+                    return name
+                elif self._full.count(self.tok.value.strip()) > 1:
+                    name += "({})".format(self.extra("DASH"))
+                else:
+                    name += self.tok.value
             elif self._accept("LPAREN"):
                 name += "({})".format(self.extra())
                 had_extra = True
@@ -484,6 +499,12 @@ class Album(WikiObject):
         # log.debug("Parsing song info from: {!r}".format(song_str))
         # type(self).raw_track_names.add(song_str)
         parsed = self.title_parser.parse(song_str)
+        if "(" in parsed["name"]:
+            re_parsed = self.title_parser.parse(parsed["name"])
+            if not ((len(re_parsed["extras"]) == 1) and is_hangul(re_parsed["extras"][0])):
+                parsed["name"] = re_parsed["name"]
+                parsed["extras"] = re_parsed["extras"] + parsed["extras"]
+
         if common_addl_info:
             parsed["extras"].append(common_addl_info)
 
@@ -495,6 +516,8 @@ class Album(WikiObject):
                     a = anchors[-1]
                     if song_str.endswith("({})".format(a.text)):
                         artist_obj = Artist(a.get("href")[6:], self._client)
+                        if parsed["extras"] and a.text in parsed["extras"]:
+                            parsed["extras"].remove(a.text)
                         return Song(artist_obj, self, parsed["name"], parsed["duration"], parsed["extras"], track_num)
 
         return Song(self.artist, self, parsed["name"], parsed["duration"], parsed["extras"], track_num)
