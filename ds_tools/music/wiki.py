@@ -507,6 +507,10 @@ class Album(WikiObject):
 
     def find_track(self, title):
         for track in self:
+            if track.file_title == title:
+                return track
+
+        for track in self:
             if track.title == title:
                 return track
 
@@ -516,6 +520,10 @@ class Album(WikiObject):
 
         log.debug("No exact {} track match found for title {!r}, trying lower case...".format(self, title))
         lc_title = title.lower()
+        for track in self:
+            if track.inverse_han_eng_title.lower() == lc_title:
+                return track
+
         for track in self:
             if track.title.lower() == lc_title:
                 return track
@@ -627,6 +635,11 @@ class Song:
             return "{} ({})".format(self.hangul_title, self.english_title)
         else:
             return self.title
+
+    @cached_property
+    def file_title(self):
+        base = "{} ({})".format(self.title, self.extra) if self.extra else self.title
+        return "{} ({})".format(base, self.addl_info) if self.addl_info else base
 
 
 class KpopWikiClient(RestClient):

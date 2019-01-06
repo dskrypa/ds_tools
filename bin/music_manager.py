@@ -342,26 +342,6 @@ def sort_albums(path, dry_run):
                     if not dry_run:
                         os.rename(album_path, new_album_path)
 
-    for parent_dir, artist_dir, category_dir, album_dir, music_files in iter_categorized_music_files(path):
-        for music_file in music_files:
-            wiki_artist = Artist(artist_dir)
-            album_name = music_file.album_name_cleaned
-            song_title = music_file.tag_title
-            wiki_album = wiki_artist.find_album(album_name)
-            if wiki_album is None:
-                artist = music_file.tag_artist
-                m = re.match("(.+?)\s*\(.*", artist)
-                if m:
-                    wiki_artist = Artist(m.group(1))
-                    wiki_album = wiki_artist.find_album(album_name)
-
-            if wiki_album is not None:
-                song = wiki_album.find_track(song_title)
-                log.info("{!r} - {!r} - {!r} ==> {}".format(music_file.tag_artist, album_name, song_title, song))
-            else:
-                log.info("Unable to find match for {!r} - {!r} - {!r}".format(music_file.tag_artist, album_name, song_title))
-                # log.info("Unable to find {} album matching {}".format(wiki_artist, album_name))
-
 
 def set_tags(paths, tag_ids, value, replace_pats, partial, dry_run):
     prefix, repl_msg, set_msg = ("[DRY RUN] ", "Would replace", "Would set") if dry_run else ("", "Replacing", "Setting")
@@ -452,6 +432,46 @@ def fix_tags(paths, dry_run):
                 if not dry_run:
                     lyrics_tag.text = new_lyrics
                     music_file.tags.save(music_file.filename)
+
+    for parent_dir, artist_dir, category_dir, album_dir, music_files in iter_categorized_music_files(paths):
+        for music_file in music_files:
+            wiki_artist = Artist(artist_dir)
+            try:
+                album_name = music_file.album_name_cleaned
+            except KeyError as e:
+                log.error("Error retrieving album for {}".format(music_file))
+                raise e
+
+            song_title = music_file.tag_title
+            wiki_album = wiki_artist.find_album(album_name)
+            if wiki_album is None:
+                artist = music_file.tag_artist
+                m = re.match("(.+?)\s*\(.*", artist)
+                if m:
+                    wiki_artist = Artist(m.group(1))
+                    wiki_album = wiki_artist.find_album(album_name)
+
+            if wiki_album is not None:
+                song = wiki_album.find_track(song_title)
+                if song:
+                    # log.info("{!r} - {!r} - {!r} ==> {}".format(music_file.tag_artist, album_name, song_title, song))
+                    if (song_title.lower() != song.file_title.lower()) and not song_title.lower().startswith(song.file_title.lower()):
+                        log.info("{}{} {!r} - {!r} - {!r} ==> {!r} / {}".format(prefix, upd_msg, music_file.tag_artist, album_name, song_title, song.file_title, song))
+                        try:
+                            title_key = music_file.tag_name_to_id("title")
+                        except KeyError as e:
+                            log.warning("Skipping due to unhandled file type: {}".format(music_file.filename))
+                            continue
+
+                        if not dry_run:
+                            music_file.tags[title_key] = song.file_title if (music_file.file_type == "mp4") else TIT2(text=song.file_title)
+                            music_file.tags.save(music_file.filename)
+                else:
+                    log.debug("Unable to find song match for {!r} - {!r} - {!r}  /  {}".format(music_file.tag_artist, album_name, song_title, music_file))
+            else:
+                log.debug("Unable to find album match for {!r} - {!r} - {!r}  /  {}".format(music_file.tag_artist, album_name, song_title, music_file))
+                # log.info("Unable to find match for {!r} - {!r} - {!r}".format(music_file.tag_artist, album_name, song_title))
+                # log.info("Unable to find {} album matching {}".format(wiki_artist, album_name))
 
 
 def copy_tags(source_paths, dest_paths, tags, dry_run):
