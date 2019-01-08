@@ -49,14 +49,17 @@ class TitleParser:
         # noinspection PyUnresolvedReferences
         scanner = self.pattern.scanner(text)
         for m in iter(scanner.match, None):
-            yield Token(m.lastgroup, m.group())
+            self._pos = m.span()[0]             # While this token may start at this pos, it will be stored in next_tok,
+            yield Token(m.lastgroup, m.group()) # so the current token being processed at this point ends at this pos
 
+    # noinspection PyAttributeOutsideInit
     def parse(self, text):
+        self._pos = 0
         self._full = text
         self.tokens = self.tokenize(text)
-        self.tok = None         # Last symbol consumed
-        self.next_tok = None    # Next symbol tokenized
-        self._advance()         # Load first lookahead taken
+        self.tok = None                     # Last symbol consumed
+        self.next_tok = None                # Next symbol tokenized
+        self._advance()                     # Load first lookahead taken
         return self.title()
 
     def title(self):
@@ -70,18 +73,18 @@ class TitleParser:
             elif self._accept("DASH"):
                 if self._peek("TIME"):
                     pass
-                elif self._full.count(self.tok.value.strip()) > 1:
+                elif self.tok.value.strip() in self._remaining:
                     title["extras"].append(self.extra("DASH"))
                 else:
-                    raise SyntaxError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
-            elif self._accept("WS") or self._accept("DASH"):
+                    raise SyntaxError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
+            elif self._accept("WS"):
                 pass
             elif self._accept("TIME"):
                 title["duration"] = self.tok.value
             elif self._accept("QUOTE") and any(self._full.count(c) % 2 == 1 for c in "\"“"):
                 pass
             else:
-                raise SyntaxError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
+                raise SyntaxError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
         return title
 
     def extra(self, closer="RPAREN"):
@@ -108,7 +111,7 @@ class TitleParser:
         while self.next_tok:
             if self._peek("TIME") and name:
                 return name
-            elif self._peek("LPAREN") and name and all(self._full.count(c) == 0 for c in "\"“"):
+            elif self._peek("LPAREN") and name and all(c not in self._full for c in "\"“"):
                 return name
 
             if self._accept("QUOTE") and name:
@@ -134,6 +137,10 @@ class TitleParser:
             else:
                 raise SyntaxError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
         return name
+
+    @property
+    def _remaining(self):
+        return self._full[self._pos:]
 
     def _advance(self):
         self.tok, self.next_tok = self.next_tok, next(self.tokens, None)
@@ -549,8 +556,12 @@ class Album(WikiObject):
                     yield Song(self.artist, self, title, runtime, None, None, 1)
                     return
                 else:
+                    rel_date = self.release_date.strftime("%Y-%m-%d")
                     if self.release_date > now(as_datetime=True):
-                        log.debug("{} had no content, but it will not be released until {}".format(self, self.release_date.strftime("%Y-%m-%d")))
+                        log.debug("{} had no content, but it will not be released until {}".format(self, rel_date))
+                        return
+                    elif rel_date == now("%Y-%m-%d"):
+                        log.debug("{} had no content, but it was not released until today".format(self))
                         return
                     raise TrackDiscoveryException("Unexpected content on page for {} ({})".format(self, self.type))
 

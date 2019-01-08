@@ -436,26 +436,33 @@ class DBCache:
     """
     A dictionary-like cache that stores values in an SQLite3 DB.  Old cache files in the cache directory that begin with
     the same ``file_prefix`` and username that have non-matching dates in their filename will be deleted when a cache
-    file with a new date is created.
-    """
+    file with a new date is created (unless preserve_old is set to True).
 
-    def __init__(self, file_prefix, time_fmt="%Y-%m", db_dir="/var/tmp/ds_tools_cache/"):
+    Based on the args provided and the current user, the final path will be: ``db_dir/file_prefix.user.timestamp.db``
+
+    :param str file_prefix: Prefix for DB cache file names
+    :param str time_fmt: Datetime format to use for DB cache file names
+    :param str|None db_dir: Directory in which DB cache files should be stored; default: result of
+      :func:`get_user_cache_dir<ds_tools.utils.filesystem.get_user_cache_dir>`
+    :param bool preserve_old: True to preserve old cache files, False (default) to delete them
+    """
+    def __init__(self, file_prefix, time_fmt="%Y-%m", db_dir=None, preserve_old=False):
         db_file_prefix = "{}.{}.".format(file_prefix, getuser())
         current_db = "{}{}.db".format(db_file_prefix, now(time_fmt))
-        validate_or_make_dir(db_dir, permissions=0o1777)
+        db_dir = validate_or_make_dir(db_dir, permissions=0o1777) if db_dir else get_user_cache_dir(permissions=0o1777)
 
-        for fname in os.listdir(db_dir):
-            if fname.startswith(db_file_prefix) and fname.endswith(".db") and fname != current_db:
-                file_path = os.path.join(db_dir, fname)
-                try:
-                    if os.path.isfile(file_path):
-                        log.debug("Deleting old cache file: {}".format(file_path))
-                        os.remove(file_path)
-                except OSError as e:
-                    log.debug("Error deleting old cache file {}: [{}] {}".format(file_path, type(e).__name__, e))
+        if not preserve_old:
+            for fname in os.listdir(db_dir):
+                if fname.startswith(db_file_prefix) and fname.endswith(".db") and fname != current_db:
+                    file_path = os.path.join(db_dir, fname)
+                    try:
+                        if os.path.isfile(file_path):
+                            log.debug("Deleting old cache file: {}".format(file_path))
+                            os.remove(file_path)
+                    except OSError as e:
+                        log.debug("Error deleting old cache file {}: [{}] {}".format(file_path, type(e).__name__, e))
 
         db_path = os.path.join(db_dir, current_db)
-
         self.engine = create_engine("sqlite:///{}".format(db_path), echo=False)
         self.meta = MetaData(self.engine)
         try:

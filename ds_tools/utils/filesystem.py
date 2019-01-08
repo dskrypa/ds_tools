@@ -22,7 +22,7 @@ def validate_or_make_dir(dir_path, permissions=None, suppress_perm_change_exc=Tr
     :param str dir_path: The path of a directory that exists or should be created if it doesn't
     :param int permissions: Permissions to set on the directory if it needs to be created (octal notation is suggested)
     :param bool suppress_perm_change_exc: Suppress an OSError if the permission change is unsuccessful (default: suppress/True)
-    :return:
+    :return str: The path
     """
     if os.path.exists(dir_path):
         if not os.path.isdir(dir_path):
@@ -36,6 +36,7 @@ def validate_or_make_dir(dir_path, permissions=None, suppress_perm_change_exc=Tr
                 log.error("Error changing permissions of path '{}' to 0o{:o}: {}".format(dir_path, permissions, e))
                 if not suppress_perm_change_exc:
                     raise e
+    return dir_path
 
 
 def get_user_cache_dir(subdir=None, permissions=None):
