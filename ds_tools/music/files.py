@@ -20,6 +20,7 @@ from mutagen.id3._frames import Frame, TextFrame
 from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
 
 from ..utils import cached_property, DBCache, cached, get_user_cache_dir, CacheKey, format_duration
+from .wiki import Artist, eng_name
 
 __all__ = [
     "ExtendedMutagenFile", "FakeMusicFile", "iter_music_files", "load_tags", "iter_music_albums",
@@ -183,6 +184,23 @@ class ExtendedMutagenFile:
     @cached_property
     def tag_artist(self):
         return self.tag_named("artist").text[0]
+
+    @cached_property
+    def wiki_artist(self):
+        try:
+            eng = eng_name(self, self.tag_artist, "english_artist")
+        except AttributeError as e:
+            log.error("{}: Unable to find Wiki artist - unable to parse english name from {!r}".format(self, self.tag_artist))
+            return None
+        return Artist(eng)
+
+    @cached_property
+    def wiki_album(self):
+        return self.wiki_artist.find_album(self.album_name_cleaned)
+
+    @cached_property
+    def wiki_song(self):
+        return self.wiki_album.find_track(self.tag_title)
 
     @cached_property
     def album_dir(self):

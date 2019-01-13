@@ -510,8 +510,9 @@ class Album(WikiObject):
         "mini_album": "Mini Album", "single": "Single", "digital_single": "Single", "special_single": "Single",
         "single_album": "Single Album", "studio_album": "Album", "collaboration": "Collaboration",
         "promotional_single": "Single", "special_album": "Special Album", "ost": "Soundtrack",
-        "feature": "Collaboration", "best_album": "Compilation", "live_album": "Live",
-        "collaborations_and_feature": "Collaboration", "other_release": "Other"
+        "feature": "Collaboration", "best_album": "Compilation", "live_album": "Live", "other_release": "Other",
+        "collaborations_and_feature": "Collaboration", "collaboration_single": "Collaboration",
+        "remake_album": "Remake Album", # Album that contains only covers of other artists' songs
     }
     # raw_track_names = set()
 
@@ -558,7 +559,7 @@ class Album(WikiObject):
             return
 
         num = None
-        num_match = re.search("is the (.*)album \S*\s*by", self._raw_content)
+        num_match = re.search("is the (.*)album.+by", self._raw_content)
         if num_match:
             num = num_match.group(1).split()[0].lower().strip()
             repkg_match = re.search("A repackage titled (.*) (?:was|will be) released", self._raw_content)
@@ -654,7 +655,7 @@ class Album(WikiObject):
     @cached_property
     def expected_album_dirname(self):
         title = self.title
-        if self.type in ("Albums", "Mini Albums", "Special Albums", "Japanese Albums", "Japanese Mini Albums"):
+        if self.type in ("Albums", "Mini Albums", "Special Albums", "Japanese Albums", "Japanese Mini Albums", "Single Albums", "Remake Albums"):
             try:
                 rel_date = self.release_date.strftime("%Y.%m.%d")
             except AttributeError as e:
@@ -673,7 +674,7 @@ class Album(WikiObject):
                 else:
                     title = "{} [{} {}]".format(title, num, _type)
 
-        return os.path.join(self.type, title).replace("/", "_").replace(":", "-").replace("*", "")
+        return re.sub("[*;]", "", os.path.join(self.type, title).replace("/", "_").replace(":", "-"))
 
     @cached_property
     def expected_dirname(self):
@@ -987,7 +988,7 @@ class Album(WikiObject):
 
         tfmt = "%Y-%m-%d"
         rels = ["{}: {}".format(dt.strftime(tfmt), t) if t else dt.strftime(tfmt) for dt, t in sorted(dates.items())]
-        log.debug("{}: Found releases: {}".format(self, ", ".join(rels)))
+        log.log(9, "{}: Found releases: {}".format(self, ", ".join(rels)))
         return min(dates.keys())
 
     @cached_property

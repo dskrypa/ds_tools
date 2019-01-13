@@ -18,6 +18,7 @@ log = logging.getLogger("ds_tools.{}".format(__name__))
 
 class MusicTester(unittest.TestCase):
     def test_iter_songs(self):
+        print("", file=sys.stderr)  # stderr so a newline will be printed even when grepping
         with open(os.path.join(BASE_DIR, "music/artist_dir_to_artist.json"), "r", encoding="utf-8") as f:
             artists = json.load(f)
 
@@ -27,7 +28,25 @@ class MusicTester(unittest.TestCase):
                 for song in album:
                     i += 1
                     self.assertTrue(bool(song.title), "Song {} from {} has no title".format(song, album))
-                print("{}: {}".format(album, i))
+
+                # log.info("{}:  {}".format(album, album.expected_dirname))
+                log.info("{}".format(album.expected_dirname))
+                if album.is_repkg_double_page:
+                    if album.is_repackage:
+                        orig = album.repackage_of
+                        self.assertTrue(orig is not None, "{} is a repackage, but its original album is unknown".format(album))
+                        self.assertLess(len(orig.tracks) - len(album.tracks), 3, "{} is a repackage of {}, but it has significantly fewer songs".format(album, orig))
+
+                    # log.info("{}:  {}".format(album, album.length_str))
+
+                    # for song in album:
+                    #     log.info("    {}".format(song))
+
+                    # if song.length == "-1:00":
+                        # log.warning("Invalid length found in {} on page {}".format(song, song.album._uri_path), extra={"red": True})
+                        # log.warning("Invalid length found in {} on page {}".format(song, song.album._uri_path))
+
+                # print("{}: {}".format(album, i))
                     # print("\t", song)
         # self.assertTrue(True, "If this is not reached, then an exception was raised")
 
@@ -38,13 +57,13 @@ class MusicTester(unittest.TestCase):
         #     f.write("\n".join(sorted(Artist.raw_album_names)) + "\n")
 
     def test_title_parser(self):
+        print("", file=sys.stderr)  # stderr so a newline will be printed even when grepping
         p = TitleParser()
-        print()
         with open("/var/tmp/raw_song_names.txt", "r", encoding="utf-8") as f:
             song_names = f.read().splitlines()
 
         for i, song in enumerate(song_names):
-            p.parse(song)
+            parsed = p.parse(song)
             # print("{:>5,d} {!r} => {}".format(i, song, p.parse(song)))
 
     def _test_song_regexes(self):
