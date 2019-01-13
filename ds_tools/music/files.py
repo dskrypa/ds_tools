@@ -203,6 +203,14 @@ class ExtendedMutagenFile:
         return self.wiki_album.find_track(self.tag_title)
 
     @cached_property
+    def wiki_expected_rel_path(self):
+        ext = self.file_type
+        if self.wiki_song:
+            return self.wiki_song.expected_rel_path(ext)
+        elif self.wiki_album:
+            return os.path.join(self.wiki_album.expected_rel_path, self.basename())
+
+    @cached_property
     def album_dir(self):
         """The directory that this file is in"""
         return os.path.dirname(os.path.abspath(self.filename))
@@ -385,3 +393,8 @@ class AcoustidDB:
         #     logging.warning("Found multiple recordings in best result with score {}: {}".format(best["score"], ", ".join(best_ids)))
         #
         # return self.get_track(best_ids[0])
+
+
+if __name__ == "__main__":
+    from ds_tools.logging import LogManager
+    lm = LogManager.create_default_logger(2, log_path=None, entry_fmt="%(asctime)s %(name)s %(message)s")

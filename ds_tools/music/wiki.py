@@ -286,7 +286,7 @@ class Artist(WikiObject):
 
     @cached_property
     def expected_dirname(self):
-        return self.english_name.replace("/", "_").replace(":", "-").replace("*", "")
+        return sanitize(self.english_name)
 
     def _find_name(self):
         content = self._page_content.find("div", id="mw-content-text")
@@ -328,7 +328,7 @@ class Artist(WikiObject):
                             msg = "Unexpected hangul name format for {!r}/{!r} in: {}".format(eng, han, intro[:200])
                             raise ValueError(msg)
             else:
-                if eng != "yyxy":   # the only exception for now
+                if eng not in ("yyxy", "iKON"):
                     msg = "Unexpected hangul name format for {!r}/{!r} in: {}".format(eng, han, intro[:200])
                     raise ValueError(msg)
 
@@ -513,7 +513,13 @@ class Album(WikiObject):
         "feature": "Collaboration", "best_album": "Compilation", "live_album": "Live", "other_release": "Other",
         "collaborations_and_feature": "Collaboration", "collaboration_single": "Collaboration",
         "remake_album": "Remake Album", # Album that contains only covers of other artists' songs
+        "repackage_album": "Repackage Album"
     }
+    numbered_types = (
+        "Albums", "Mini Albums", "Special Albums", "Japanese Albums", "Japanese Mini Albums", "Single Albums",
+        "Remake Albums", "Repackage Albums"
+    )
+    multi_disk_types = ("Albums", "Special Albums", "Japanese Albums", "Remake Albums", "Repackage Albums")
     # raw_track_names = set()
 
     def __init__(self, artist, title, lang, alb_type, year, collaborators, addl_info, uri_path, client):
@@ -539,12 +545,12 @@ class Album(WikiObject):
 
     def __lt__(self, other):
         if isinstance(other, type(self)):
-            return (self.artist, self.title) < (other.artist, other.title)
+            return (self.artist, self.type, self._num or self.title) < (other.artist, other.type, other._num or other.title)
         raise TypeError("'<' not supported for {!r} < {!r}".format(self, other))
 
     def __gt__(self, other):
         if isinstance(other, type(self)):
-            return (self.artist, self.title) > (other.artist, other.title)
+            return (self.artist, self.type, self._num or self.title) > (other.artist, other.type, other._num or other.title)
         raise TypeError("'>' not supported for {!r} > {!r}".format(self, other))
 
     def __repr__(self):
@@ -558,10 +564,10 @@ class Album(WikiObject):
             self.__is_repackage = False
             return
 
-        num = None
+        nums = []
         num_match = re.search("is the (.*)album.+by", self._raw_content)
         if num_match:
-            num = num_match.group(1).split()[0].lower().strip()
+            nums = num_match.group(1).lower().split()
             repkg_match = re.search("A repackage titled (.*) (?:was|will be) released", self._raw_content)
             if repkg_match:
                 for aside in self._page_content.find_all("aside"):
@@ -579,11 +585,21 @@ class Album(WikiObject):
             else:
                 self.__is_repackage = False
         else:
-            repkg_match = re.search("is a (?:repackage|new edition) of .*'s? (.*)album", self._raw_content)
+            repkg_match = re.search("is a (?:repackage|new edition) of .*?'s? (.*)album", self._raw_content)
             self.__is_repackage = bool(repkg_match)
             if repkg_match:
-                num = repkg_match.group(1).split()[0].lower().strip()
-        self.__num = NUMS.get(num, num)
+                nums = repkg_match.group(1).lower().split()
+
+        for i, num in enumerate(nums):
+            num = num.strip()
+            try:
+                self.__num = NUMS[num]  #.get(num, num)
+            except KeyError as e:
+                # log.error("{}: {!r} is not a number".format(self, num), extra={"red": True})
+                if i > 2:
+                    raise ValueError("Unable to determine album number for {}".format(self))
+            else:
+                break
 
         if self.__is_repackage:
             self.__repackage_name = self.title
@@ -653,9 +669,9 @@ class Album(WikiObject):
         return "{}{}".format(lang, self.type_map.get(_type, "SORT_ME") + "s")
 
     @cached_property
-    def expected_album_dirname(self):
+    def expected_dirname(self):
         title = self.title
-        if self.type in ("Albums", "Mini Albums", "Special Albums", "Japanese Albums", "Japanese Mini Albums", "Single Albums", "Remake Albums"):
+        if self.type in self.numbered_types:
             try:
                 rel_date = self.release_date.strftime("%Y.%m.%d")
             except AttributeError as e:
@@ -673,13 +689,12 @@ class Album(WikiObject):
                     title = "[{}] {} [{} {}]".format(rel_date, title, num, _type)
                 else:
                     title = "{} [{} {}]".format(title, num, _type)
-
-        return re.sub("[*;]", "", os.path.join(self.type, title).replace("/", "_").replace(":", "-"))
+        return os.path.join(self.type, sanitize(title))
 
     @cached_property
-    def expected_dirname(self):
-        artist_dir = self.artist.expected_dirname if hasattr(self.artist, "expected_dirname") else self.artist
-        return os.path.join(artist_dir, self.expected_album_dirname)
+    def expected_rel_path(self):
+        artist_dir = self.artist.expected_dirname if hasattr(self.artist, "expected_dirname") else sanitize(self.artist)
+        return os.path.join(artist_dir, self.expected_dirname)
 
     def _tracks_from_wikipedia(self):
         num_strs = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
@@ -790,7 +805,7 @@ class Album(WikiObject):
                     if not found_alt:
                         raise e
 
-    def _parse_song(self, ele, song_str, track_num, common_addl_info=None):
+    def _parse_song(self, ele, song_str, track_num, common_addl_info=None, disk_num=1):
         # log.debug("Parsing song info from: {!r}".format(song_str))
         # type(self).raw_track_names.add(song_str)
         try:
@@ -818,9 +833,9 @@ class Album(WikiObject):
                         artist_obj = Artist(a.get("href")[6:], self._client)
                         if parsed["extras"] and a.text in parsed["extras"]:
                             parsed["extras"].remove(a.text)
-                        return Song(artist_obj, self, parsed["name"], parsed["duration"], parsed["extras"], track_num)
+                        return Song(artist_obj, self, parsed["name"], parsed["duration"], parsed["extras"], track_num, disk_num=disk_num)
 
-        return Song(self.artist, self, parsed["name"], parsed["duration"], parsed["extras"], track_num)
+        return Song(self.artist, self, parsed["name"], parsed["duration"], parsed["extras"], track_num, disk_num=disk_num)
 
     def _tracks(self):
         if isinstance(self._client, WikipediaClient):
@@ -921,11 +936,22 @@ class Album(WikiObject):
                     for track_num, li in enumerate(ol):
                         yield self._parse_song(li, li.text.strip(), track_num + 1)
 
+                    if self.type in self.multi_disk_types:
+                        cd_rx = re.compile("CD\s*(\d+)", re.IGNORECASE)
+                        section_header = ol.next_sibling.next_sibling
+                        if section_header:
+                            m = cd_rx.search(section_header.text)
+                            if m:
+                                disk_num = int(m.group(1))
+                                new_tracks = section_header.next_sibling.next_sibling
+                                for track_num, li in enumerate(new_tracks):
+                                    yield self._parse_song(li, li.text.strip(), track_num + 1, disk_num=disk_num)
+
     @cached_property
     def tracks(self):
         return list(self._tracks())
 
-    def find_track(self, title):
+    def find_track(self, title, track_num=None):
         attrs = ("file_title", "title", "inverse_han_eng_title")
         for attr in attrs:
             for track in self:
@@ -956,6 +982,11 @@ class Album(WikiObject):
             # else:
             #     log.debug("{!r} != {!r}".format(no_punc, track_no_punc))
 
+        if track_num:
+            for track in self:
+                if track.track == track_num:
+                    return track
+
         return None
         # raise ValueError("Unable to find a song from {} with title {!r}".format(self, title))
 
@@ -971,6 +1002,7 @@ class Album(WikiObject):
             if released_h3:
                 dates_div = released_h3.next_sibling.next_sibling
                 last = None
+                # log.debug("{} dates: {}".format(self, ", ".join("{!r}".format(s) for s in dates_div.stripped_strings)))
                 for s in dates_div.stripped_strings:
                     try:
                         dt = datetime_with_tz(s, "%B %d, %Y")
@@ -978,7 +1010,13 @@ class Album(WikiObject):
                         if last and not dates[last]:
                             dates[last] = s
                         else:
-                            raise ValueError("Unexpected release date value found in: {}".format(dates_div))
+                            m = re.match("^(\S+ \d+, \d{4}) (\(.*\))$", s)
+                            if m:
+                                dt = datetime_with_tz(m.group(1), "%B %d, %Y")
+                                dates[dt] = m.group(2)
+                                last = None
+                            else:
+                                raise ValueError("{}: Unexpected release date value found in: {}".format(self, dates_div))
                     else:
                         last = dt
                         dates[dt] = None
@@ -1066,6 +1104,12 @@ class Song:
             parts.extend("({})".format(e) for e in self.extras)
         return " ".join(parts)
 
+    def expected_filename(self, ext="mp3"):
+        return sanitize("{:02d}. {}.{}".format(self.track, self.file_title, ext))
+
+    def expected_rel_path(self, ext="mp3"):
+        return os.path.join(self.album.expected_rel_path, self.expected_filename(ext))
+
 
 class KpopWikiClient(RestClient):
     __instance = None
@@ -1125,6 +1169,10 @@ class WikipediaClient(RestClient):
     @cached("_page_cache", lock=True, key=FSCache.dated_html_key_func("%Y-%m"))
     def get_page(self, endpoint, **kwargs):
         return self.get(endpoint, **kwargs).text
+
+
+def sanitize(text):
+    return re.sub("[*;]", "", text.replace("/", "_").replace(":", "-"))
 
 
 def eng_name(obj, name, attr):

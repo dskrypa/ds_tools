@@ -30,7 +30,7 @@ class MusicTester(unittest.TestCase):
                     self.assertTrue(bool(song.title), "Song {} from {} has no title".format(song, album))
 
                 # log.info("{}:  {}".format(album, album.expected_dirname))
-                log.info("{}".format(album.expected_dirname))
+                log.info("{}".format(album.expected_rel_path))
                 if album.is_repkg_double_page:
                     if album.is_repackage:
                         orig = album.repackage_of
