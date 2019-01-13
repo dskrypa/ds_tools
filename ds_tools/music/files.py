@@ -10,14 +10,16 @@ import pickle
 import re
 from hashlib import sha256
 from io import BytesIO
+from operator import itemgetter
 
+import acoustid
 import mutagen
 import mutagen.id3._frames
 from mutagen.id3 import ID3, TDRC, TIT2
 from mutagen.id3._frames import Frame, TextFrame
 from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
 
-from ..utils import cached_property
+from ..utils import cached_property, DBCache, cached, get_user_cache_dir, CacheKey, format_duration
 
 __all__ = [
     "ExtendedMutagenFile", "FakeMusicFile", "iter_music_files", "load_tags", "iter_music_albums",
@@ -153,6 +155,19 @@ class ExtendedMutagenFile:
         ftype = "[{}]".format(self.file_type) if self.file_type is not None else ""
         return "<{}{}({!r})>".format(type(self).__name__, ftype, self.filename)
 
+    @property
+    def length(self):
+        return self._f.info.length
+
+    @cached_property
+    def length_str(self):
+        length = format_duration(int(self._f.info.length))  # Most other programs seem to floor the seconds
+        if length.startswith("00:"):
+            length = length[3:]
+        if length.startswith("0"):
+            length = length[1:]
+        return length
+
     @cached_property
     def album_name_cleaned(self):
         album = self.tag_named("album").text[0]
@@ -263,6 +278,11 @@ class ExtendedMutagenFile:
         with open(self.filename, "rb") as f:
             return sha256(f.read()).hexdigest()
 
+    @cached_property
+    def acoustid_fingerprint(self):
+        """Returns the 2-tuple of this file's (duration, fingerprint)"""
+        return acoustid.fingerprint_file(self.filename)
+
 
 def load_tags(paths):
     if isinstance(paths, str):
@@ -314,3 +334,36 @@ def _load_tags(tag_info, file_path):
             else:
                 log.debug("Loaded pickled tag info from {}".format(file_path))
 
+
+class AcoustidDB:
+    lookup_meta = "recordings releasegroups"
+
+    def __init__(self, apikey=None, keyfile="~/acoustid_apikey.txt"):
+        if apikey is None:
+            keyfile_path = os.path.expanduser(keyfile)
+            try:
+                with open(keyfile_path, "r") as keyfile:
+                    apikey = keyfile.read()
+            except OSError as e:
+                raise ValueError("An API key is required; unable to find or read {}".format(keyfile_path))
+        self.apikey = apikey
+        self._cache = DBCache("acoustid", db_dir=get_user_cache_dir(permissions=0o1777), preserve_old=True)
+
+    @cached("_cache", lock=True, key=CacheKey.simple_noself)
+    def _lookup(self, duration, fingerprint, meta=None):
+        return acoustid.lookup(self.apikey, fingerprint, duration, meta or self.lookup_meta)
+
+    def lookup(self, emf):
+        results = self._lookup(*emf.acoustid_fingerprint)#["results"]
+
+        return results
+
+        # best = max(results, key=itemgetter("score"))
+        #
+        # return best
+
+        # best_ids = [rec["id"] for rec in best["recordings"]]
+        # if len(best_ids) > 1:
+        #     logging.warning("Found multiple recordings in best result with score {}: {}".format(best["score"], ", ".join(best_ids)))
+        #
+        # return self.get_track(best_ids[0])

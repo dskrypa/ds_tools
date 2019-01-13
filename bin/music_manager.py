@@ -99,6 +99,7 @@ def parser():
     info_parser = parser.add_subparser("action", "info", help="Get song/tag information")
     info_parser.add_argument("path", nargs="+", help="One or more file/directory paths that contain music files")
     info_group = info_parser.add_mutually_exclusive_group()
+    info_group.add_argument("--meta_only", "-m", action="store_true", help="Only show song metadata")
     info_group.add_argument("--count", "-c", action="store_true", help="Count tag types rather than printing all info")
     info_group.add_argument("--unique", "-u", metavar="TAGID", nargs="+", help="Count unique values of the specified tag(s)")
     info_group.add_argument("--tags", "-t", nargs="+", help="Filter tags to display in file info mode")
@@ -158,7 +159,7 @@ def main():
         elif args.tag_table:
             table_song_tags(args.path, args.tag_table)
         else:
-            print_song_tags(args.path, args.tags)
+            print_song_tags(args.path, args.tags, args.meta_only)
     elif args.action == "auto":
         remove_tags(args.path, None, args.dry_run, True)    # remove . -r
         fix_tags(args.path, args.dry_run)                   # fix .
@@ -634,18 +635,21 @@ def table_song_tags(paths, include_tags=None):
     tbl.print_rows(rows)
 
 
-def print_song_tags(paths, tags):
+def print_song_tags(paths, tags, meta_only=False):
     tags = {tag.upper() for tag in tags} if tags else None
     for i, music_file in enumerate(iter_music_files(paths, include_backups=True)):
-        if i:
+        if i and not meta_only:
             print()
 
         if isinstance(music_file.tags, MP4Tags):
-            print("{} (MP4):".format(music_file.filename))
+            print("{} [{}] (MP4):".format(music_file.filename, music_file.length_str))
         elif isinstance(music_file.tags, ID3):
-            print("{} (ID3v{}.{}):".format(music_file.filename, *music_file.tags.version[:2]))
+            print("{} [{}] (ID3v{}.{}):".format(music_file.filename, music_file.length_str, *music_file.tags.version[:2]))
         else:
             raise TypeError("Unhandled tag type: {}".format(type(music_file.tags).__name__))
+
+        if meta_only:
+            continue
 
         tbl = Table(SimpleColumn("Tag"), SimpleColumn("Tag Name"), SimpleColumn("Value"), update_width=True)
         rows = []

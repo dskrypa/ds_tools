@@ -8,6 +8,7 @@ from .operator import *
 from .req_saver import *
 from .soup import *
 from .sql import *
+from .text_processing import *
 from .time import *
 from .unicode import *
 

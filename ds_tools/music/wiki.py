@@ -5,35 +5,36 @@
 """
 
 import logging
+import os
 import re
 from collections import OrderedDict
 from urllib.parse import urlparse, quote as url_quote
+from weakref import WeakValueDictionary
 
 import bs4
 
 from ..exceptions import CodeBasedRestException
 from ..http import RestClient
 from ..utils import (
-    soupify, FSCache, cached, is_hangul, contains_hangul, cached_property, datetime_with_tz, now, strip_punctuation
+    soupify, FSCache, cached, is_hangul, contains_hangul, cached_property, datetime_with_tz, now, strip_punctuation,
+    RecursiveDescentParser, UnexpectedTokenError
 )
 
 __all__ = ["KpopWikiClient", "WikipediaClient", "Artist", "Album", "Song", "InvalidArtistException", "TitleParser"]
 log = logging.getLogger("ds_tools.music.wiki")
 
-
-class Token:
-    def __init__(self, tok_type, value):
-        self.type = tok_type
-        self.value = value
-        # log.debug("Found {!r}".format(self))
-
-    def __repr__(self):
-        return "<{}({!r}:{!r})>".format(type(self).__name__, self.type, self.value)
+NUMS = {
+    "first": "1st", "second": "2nd", "third": "3rd", "fourth": "4th", "fifth": "5th", "sixth": "6th",
+    "seventh": "7th", "eighth": "8th", "ninth": "9th", "tenth": "10th", "debut": "1st"
+}
+QMARKS = "\"“"
 
 
-class TitleParser:
+class TitleParser(RecursiveDescentParser):
+    _entry_point = "title"
+    _strip = True
     TOKENS = OrderedDict([
-        ("QUOTE", "[\"“]"),
+        ("QUOTE", "[{}]".format(QMARKS)),
         ("LPAREN", "[\(（]"),
         ("RPAREN", "[\)）]"),
         ("DASH", "\s*[-–]\s*"),
@@ -41,26 +42,6 @@ class TitleParser:
         ("WS", "\s+"),
         ("TEXT", "[^\"“()（）]+"),
     ])
-
-    def __init__(self):
-        self.pattern = re.compile("|".join("(?P<{}>{})".format(k, v) for k, v in self.TOKENS.items()))
-
-    def tokenize(self, text):
-        # noinspection PyUnresolvedReferences
-        scanner = self.pattern.scanner(text)
-        for m in iter(scanner.match, None):
-            self._pos = m.span()[0]             # While this token may start at this pos, it will be stored in next_tok,
-            yield Token(m.lastgroup, m.group()) # so the current token being processed at this point ends at this pos
-
-    # noinspection PyAttributeOutsideInit
-    def parse(self, text):
-        self._pos = 0
-        self._full = text
-        self.tokens = self.tokenize(text)
-        self.tok = None                     # Last symbol consumed
-        self.next_tok = None                # Next symbol tokenized
-        self._advance()                     # Load first lookahead taken
-        return self.title()
 
     def title(self):
         """
@@ -76,15 +57,16 @@ class TitleParser:
                 elif self.tok.value.strip() in self._remaining:
                     title["extras"].append(self.extra("DASH"))
                 else:
-                    raise SyntaxError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
+                    raise UnexpectedTokenError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
             elif self._accept("WS"):
                 pass
             elif self._accept("TIME"):
                 title["duration"] = self.tok.value
-            elif self._accept("QUOTE") and any(self._full.count(c) % 2 == 1 for c in "\"“"):
+            elif self._accept("QUOTE") and any(self._full.count(c) % 2 == 1 for c in QMARKS):
+                log.warning("Unpaired quote found in {!r}".format(self._full), extra={"red": True})
                 pass
             else:
-                raise SyntaxError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
+                raise UnexpectedTokenError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
         return title
 
     def extra(self, closer="RPAREN"):
@@ -108,18 +90,24 @@ class TitleParser:
         """
         had_extra = False
         name = ""
+        first_char_was_quote = False
+        # quotes = 0
         while self.next_tok:
             if self._peek("TIME") and name:
                 return name
-            elif self._peek("LPAREN") and name and all(c not in self._full for c in "\"“"):
+            elif self._peek("LPAREN") and name and all(c not in self._full for c in QMARKS):
                 return name
 
-            if self._accept("QUOTE") and name:
-                return name
+            if self._accept("QUOTE"):
+                # quotes += 1
+                if not name:
+                    first_char_was_quote = True
+                else:
+                    return name
             elif self._accept("DASH"):
                 if self._peek("TIME"):
                     return name
-                elif self._full.count(self.tok.value.strip()) > 1:
+                elif self.tok.value.strip() in self._remaining:
                     name += "({})".format(self.extra("DASH"))
                 else:
                     name += self.tok.value
@@ -129,48 +117,116 @@ class TitleParser:
             elif self._accept("TEXT") or self._accept("RPAREN"):
                 name += self.tok.value
             elif self._accept("WS"):
-                if had_extra and not any(self._full.startswith(c) and (self._full.count(c) > 1) for c in "\"“"):
+                if had_extra and not (first_char_was_quote and any(c in self._remaining for c in QMARKS)):
+                # if had_extra and not any(self._full.startswith(c) and (self._full.count(c) > 1) for c in QMARKS):
                     return name
                 name += self.tok.value
             elif self._accept("TIME"):
                 name += self.tok.value
             else:
-                raise SyntaxError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
+                raise UnexpectedTokenError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
         return name
 
-    @property
-    def _remaining(self):
-        return self._full[self._pos:]
 
-    def _advance(self):
-        self.tok, self.next_tok = self.next_tok, next(self.tokens, None)
+class AlbumParser(TitleParser):
+    _entry_point = "title"
+    _strip = True
+    TOKENS = OrderedDict([
+        ("YEAR", "\(\d{4}\)$"),
+        ("QUOTE", "[{}]".format(QMARKS)),
+        ("LPAREN", "[\(（]"),
+        ("RPAREN", "[\)）]"),
+        ("DASH", "\s*[-–]\s*"),
+        ("WS", "\s+"),
+        ("TEXT", "[^\"“()（）]+"),
+    ])
 
-    def _peek(self, token_type):
-        return self.next_tok and self.next_tok.type == token_type
+    def title(self):
+        """
+        title ::= name { (extra) }* { dash }* { (time) }* { (extra) }*
+        """
+        title = {"name": self.name().strip(), "year": None, "extras": []}
+        while self.next_tok:
+            if self._accept("LPAREN"):
+                title["extras"].append(self.extra())
+            elif self._accept("DASH"):
+                if self.tok.value.strip() in self._remaining:
+                    title["extras"].append(self.extra("DASH"))
+                else:
+                    raise UnexpectedTokenError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
+            elif self._accept("WS"):
+                pass
+            elif self._accept("YEAR"):
+                title["year"] = self.tok.value[1:-1]
+            elif self._accept("QUOTE"):
+                if any((c not in self._remaining) and (self._full.count(c) % 2 == 1) for c in QMARKS):
+                    log.warning("Unpaired quote found in {!r}".format(self._full), extra={"red": True})
+                else:
+                    raise UnexpectedTokenError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
+            else:
+                raise UnexpectedTokenError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
+        return title
 
-    def _accept(self, token_type):
-        if self.next_tok and self.next_tok.type == token_type:
-            self._advance()
-            return True
-        return False
+    def name(self):
+        """
+        name :: = { " }* text { (extra) }* { " }*
+        """
+        had_extra = False
+        name = ""
+        first_char_was_quote = False
+        quotes = 0
+        while self.next_tok:
+            if self._peek("YEAR"):
+                return name
+            elif self._peek("LPAREN") and name and (quotes % 2 == 0):
+                return name
 
-    def _expect(self, token_type):
-        if not self._accept(token_type):
-            raise SyntaxError("Expected {}".format(token_type))
+            if self._accept("QUOTE"):
+                quotes += 1
+                if not name:
+                    first_char_was_quote = True
+                elif first_char_was_quote:
+                    return name
+                else:
+                    name += self.tok.value
+            elif self._accept("DASH"):
+                if self.tok.value.strip() in self._remaining:
+                    name += "({})".format(self.extra("DASH"))
+                else:
+                    name += self.tok.value
+            elif self._accept("LPAREN"):
+                name += "({})".format(self.extra())
+                had_extra = True
+            elif self._accept("TEXT") or self._accept("RPAREN"):
+                name += self.tok.value
+            elif self._accept("WS"):
+                if had_extra and not (first_char_was_quote and any(c in self._remaining for c in QMARKS)):
+                    return name
+                name += self.tok.value
+            else:
+                raise UnexpectedTokenError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
+        return name
 
 
 class WikiObject:
     def __init__(self, uri_path, client):
-        self._client = client
-        self._uri_path = uri_path
-        self._raw_content = None
+        if not getattr(self, "_WikiObject__initialized", False):
+            self._client = client
+            self._uri_path = uri_path
+            self.__raw_content = None
+            self.__initialized = True
+
+    @cached_property
+    def _raw_content(self):
+        if not self._uri_path:
+            log.log(9, "{} does not have a valid uri_path from which page content could be retrieved".format(self))
+            return None
+        return self._client.get_page(self._uri_path)
 
     @property
     def _page_content(self):
-        if self._raw_content is None:
-            if not self._uri_path:
-                raise AttributeError("{} does not have a valid uri_path from which page content could be retrieved")
-            self._raw_content = self._client.get_page(self._uri_path)
+        if not self._uri_path:
+            raise AttributeError("{} does not have a valid uri_path from which page content could be retrieved".format(self))
         # soupify every time so that elements may be modified/removed without affecting other functions
         return soupify(self._raw_content)
 
@@ -186,21 +242,51 @@ class Artist(WikiObject):
     :param KpopWikiClient client: The :class:`KpopWikiClient` used for retrieving information about this Artist;
       this should not be provided by users.
     """
+    __instances = WeakValueDictionary()
     # raw_album_names = set()
+
+    def __new__(cls, artist_uri_path, client=None):
+        if client is None:
+            client = KpopWikiClient()
+            artist_uri_path = client.normalize_artist(artist_uri_path)
+
+        key = (artist_uri_path, client)
+        try:
+            return cls.__instances[key]
+        except KeyError as e:
+            cls.__instances[key] = obj = super().__new__(cls)
+            return obj
 
     def __init__(self, artist_uri_path, client=None):
         if client is None:
             client = KpopWikiClient()
             artist_uri_path = client.normalize_artist(artist_uri_path)
-        super().__init__(artist_uri_path, client)
-        self.english_name, self.hangul_name, self.stylized_name = self._find_name()
-        self.name = "{} ({})".format(self.english_name, self.hangul_name)
+
+        if not getattr(self, "_Artist__initialized", False):
+            super().__init__(artist_uri_path, client)
+            self.english_name, self.hangul_name, self.stylized_name = self._find_name()
+            self.name = "{} ({})".format(self.english_name, self.hangul_name)
+            self.feature_tracks = set()
+            self.album_parser = AlbumParser()
+            self.__initialized = True
 
     def __lt__(self, other):
-        cls = type(self)
-        if not isinstance(other, cls):
-            raise TypeError("'<' not supported between instances of {!r} and {!r}".format(cls.__name__, type(other).__name__))
-        return self.name < other.name
+        if isinstance(other, str):
+            return self.name < other
+        elif isinstance(other, type(self)):
+            return self.name < other.name
+        raise TypeError("'<' not supported for {!r} < {!r}".format(self, other))
+
+    def __gt__(self, other):
+        if isinstance(other, str):
+            return self.name > other
+        elif isinstance(other, type(self)):
+            return self.name > other.name
+        raise TypeError("'>' not supported for {!r} > {!r}".format(self, other))
+
+    @cached_property
+    def expected_dirname(self):
+        return self.english_name.replace("/", "_").replace(":", "-").replace("*", "")
 
     def _find_name(self):
         content = self._page_content.find("div", id="mw-content-text")
@@ -299,74 +385,150 @@ class Artist(WikiObject):
                         ul.extract()                            # remove nested list from tree
                         li_eles = list(ul.children) + li_eles   # insert elements from the nested list at top
 
-                    year, collab = None, None
-                    li_text = li.text.strip()
-                    # type(self).raw_album_names.add(li_text)
-
-                    pat_base = "\"?(.*?)\"?" if li_text.startswith("\"") else "(.*?)"
-                    plain_m = re.match(pat_base + "\s*(?:\([^)]+\))?\s*\([^)]+\)$", li_text)
-                    try:
-                        album_name = plain_m.group(1)
-                    except AttributeError as e:
-                        if re.match("Dis[ck]\s*\d+\s*[-:]\s*Track\s*\d.*", li_text, re.IGNORECASE):
-                            continue    # Seemingly one-off case where someone put the track info in the wrong place
-                        raise ValueError("{}: Unexpected album li format {!r} in: {}".format(self, li_text, li)) from e
-
-                    skip_len = len(album_name) + (2 if li_text.startswith("\"") else 0)
-                    title_remainder = li_text[skip_len:].strip()
-                    year_m = re.match("(.*)\s*\((\d+)\)$", title_remainder)
-                    if year_m:
-                        title_remainder, year = map(str.strip, year_m.groups())
-
-                    collab_m = re.search("\((?:with|feat\.?)\s+([^\)]+)\)", title_remainder)
-                    if collab_m:
-                        collab = collab_m.group(1)
-
-                    title_remainder = unsurround(title_remainder)
-                    first_a = li.find("a")
-                    if first_a:
-                        link = first_a.get("href")
-                        album = first_a.text
-                        if album != album_name:
-                            log.debug("Skipping album {!r} != {!r}".format(album, album_name))
-                            continue
-
-                        if not link.startswith("http"):     # If it starts with http, then it is an external link
-                            yield Album(self, album, lang, album_type, year, collab, title_remainder, link[6:], self._client)
-                        else:
-                            url = urlparse(link)
-                            if url.hostname == "en.wikipedia.org":
-                                yield Album(self, album, lang, album_type, year, collab, title_remainder, url.path[6:], WikipediaClient())
-                            else:
-                                yield Album(self, album, lang, album_type, year, collab, title_remainder, None, self._client)
+                    album = self._parse_album(li, album_type, lang)
+                    if album:
+                        yield album
 
             elif ele.name in ("h2", "div"):
                 break
             ele = ele.next_sibling
 
+    def _parse_album(self, ele, album_type, lang):
+        year, collabs, addl_info = None, [], []
+        ele_text = ele.text.strip()
+        # type(self).raw_album_names.add(ele_text)
+        base_alb_type = album_type and (album_type[:-2] if re.search("_\d$", album_type) else album_type).lower() or ""
+        is_feature_or_collab = base_alb_type in ("features", "collaborations")
+        is_ost = base_alb_type in ("ost", "osts")
+        if is_feature_or_collab:
+            feat_m = re.match("(.*)\s*-\s+(\".*)", ele_text)
+            if feat_m:                                          # Matches are most likely single songs, not albums
+                collabs.append(feat_m.group(1).strip())
+                ele_text = feat_m.group(2).strip()
+                # log.debug("{!r} by {} appears to be a collaboration with {!r}".format(ele_text, self, collabs))
+
+        try:
+            parsed = self.album_parser.parse(ele_text)
+        except UnexpectedTokenError as e:
+            log.warning("Unexpected album text format {!r} for {}".format(ele_text, self))
+            fallback_m = re.match("^(.*)\s*\((\d{4})\)$", ele_text)
+            if fallback_m:
+                album_name, year = map(str.strip, fallback_m.groups())
+            else:
+                log.warning("Unhandled album text format {!r} for {}".format(ele_text, self), extra={"red": True})
+                return None
+        else:
+            #{"name": self.name().strip(), "year": None, "extras": []}
+            album_name = parsed["name"]
+            year = parsed["year"]
+            # noinspection PyTypeChecker
+            for extra in parsed["extras"]:
+                if extra.lower().startswith(("with", "feat")):
+                    collabs.append(extra)
+                else:
+                    addl_info.append(extra)
+
+        # pat_base = "\"?(.*?)\"?" if ele_text.startswith("\"") else "(.*?)"
+        # plain_m = re.match(pat_base + "\s*(?:\([^)]+\))?\s*\([^)]+\)$", ele_text)
+        # try:
+        #     album_name = plain_m.group(1)
+        # except AttributeError as e:
+        #     if re.match("Dis[ck]\s*\d+\s*[-:]\s*Track\s*\d.*", ele_text, re.IGNORECASE):
+        #         # Seemingly one-off case where someone put the track info in the wrong place
+        #         log.warning("Found incorrectly placed track info in album section for {}".format(self), extra={"red": True})
+        #         return None
+        #     raise ValueError("{}: Unexpected album element format {!r} in: {}".format(self, ele_text, ele)) from e
+        #
+        # skip_len = len(album_name) + (2 if ele_text.startswith("\"") else 0)
+        # title_remainder = ele_text[skip_len:].strip()
+        # year_m = re.match("(.*)\s*\((\d+)\)$", title_remainder)
+        # if year_m:
+        #     title_remainder, year = map(str.strip, year_m.groups())
+        #
+        # collab_m = re.search("\((?:with|feat\.?)\s+([^\)]+)\)", title_remainder)
+        # if collab_m:
+        #     collab.append(collab_m.group(1))
+        #
+        # title_remainder = unsurround(title_remainder)
+        first_a = ele.find("a")
+        if first_a:
+            link = first_a.get("href")
+            album = first_a.text
+            if album_name != album:
+                if is_feature_or_collab:  # likely a feature / single with a link to a collaborator
+                    self.feature_tracks.add(CollaborationSong(self, album_name, year, collabs, addl_info))
+                else:
+                    log.debug("Unexpected first link text {!r} for album {!r}".format(album, album_name))
+                return None
+
+            if not link.startswith("http"):     # If it starts with http, then it is an external link
+                return Album(self, album, lang, album_type, year, collabs, addl_info, link[6:], self._client)
+            else:
+                url = urlparse(link)
+                if url.hostname == "en.wikipedia.org":
+                    return Album(self, album, lang, album_type, year, collabs, addl_info, url.path[6:], WikipediaClient())
+                else:
+                    return Album(self, album, lang, album_type, year, collabs, addl_info, None, self._client)
+        else:
+            if is_ost:
+                return Album(self, album_name, lang, album_type, year, collabs, addl_info, None, self._client)
+            elif is_feature_or_collab:
+                self.feature_tracks.add(CollaborationSong(self, album_name, year, collabs, addl_info))
+            else:
+                log.warning("No album link found for {!r} by {}".format(album_name, self), extra={"red": True})
+        if is_ost:
+            log.warning("Unable to parse album from '{}' for {}".format(ele, self), extra={"red": True})
+        return None
+
     @cached_property
     def albums(self):
         return list(self._albums())
 
+    def album_for_uri(self, uri_path):
+        for album in self:
+            if album._uri_path == uri_path:
+                return album
+        return None
+
     def find_album(self, title, album_type=None):
         lc_title = title.lower()
         for album in self:
-            if (album.title == title) and ((album_type is None) or (album_type == album.type)):
+            if (album.title == title) and ((album_type is None) or (album_type == album._type)):
                 return album
         log.debug("No exact {} album match found for title {!r}, trying lower case...".format(self, title))
         # If no exact match was found, try again with lower case titles
         for album in self:
-            if (album.title.lower() == lc_title) and ((album_type is None) or (album_type == album.type)):
+            if (album.title.lower() == lc_title) and ((album_type is None) or (album_type == album._type)):
                 return album
         return None
         # err_fmt = "Unable to find an album from {} of type {!r} with title {!r}"
         # raise AlbumNotFoundException(err_fmt.format(self, album_type or "any", title))
 
 
+class CollaborationSong:
+    def __init__(self, artist, title, year, collaborators, addl_info):
+        self.artist = artist
+        self.title = title
+        self.year = year
+        self.collaborators = collaborators
+        self.addl_info = addl_info
+
+    def __repr__(self):
+        cls = type(self).__name__
+        collabs = "[{}]".format("".join("({})".format(e) for e in self.collaborators)) if self.collaborators else ""
+        return "<{}'s {}({!r}){}>".format(self.artist, cls, self.title, collabs)
+
+
 class Album(WikiObject):
     """An album by a K-Pop :class:`Artist`.  Should not be initialized manually - use :attr:`Artist.albums`"""
-    title_parser = TitleParser()
     track_with_artist_rx = re.compile("[\"“]?(.*?)[\"“]?\s*\((.*?)\)$")
+    type_map = {
+        "mini_album": "Mini Album", "single": "Single", "digital_single": "Single", "special_single": "Single",
+        "single_album": "Single Album", "studio_album": "Album", "collaboration": "Collaboration",
+        "promotional_single": "Single", "special_album": "Special Album", "ost": "Soundtrack",
+        "feature": "Collaboration", "best_album": "Compilation", "live_album": "Live",
+        "collaborations_and_feature": "Collaboration", "other_release": "Other"
+    }
     # raw_track_names = set()
 
     def __init__(self, artist, title, lang, alb_type, year, collaborators, addl_info, uri_path, client):
@@ -376,16 +538,28 @@ class Album(WikiObject):
         self.language = lang
         if alb_type:
             alb_type = alb_type.lower()
-        self.type = alb_type[:-1] if alb_type and alb_type.endswith("s") else alb_type
+        self._type = alb_type[:-1] if alb_type and alb_type.endswith("s") else alb_type
         self.year = year
-        self.collaborators = collaborators
+        if collaborators:
+            self.collaborators = [collaborators] if isinstance(collaborators, str) else collaborators
+        else:
+            self.collaborators = []
         self.addl_info = addl_info
+        self.__num = None
+        self.__is_repackage = None
+        self.__repackage_of = None
+        self.__repackage_double_page = False
+        self.title_parser = TitleParser()
 
     def __lt__(self, other):
-        cls = type(self)
-        if not isinstance(other, cls):
-            raise TypeError("'<' not supported between instances of {!r} and {!r}".format(cls.__name__, type(other).__name__))
-        return (self.artist, self.title) < (other.artist, other.title)
+        if isinstance(other, type(self)):
+            return (self.artist, self.title) < (other.artist, other.title)
+        raise TypeError("'<' not supported for {!r} < {!r}".format(self, other))
+
+    def __gt__(self, other):
+        if isinstance(other, type(self)):
+            return (self.artist, self.title) > (other.artist, other.title)
+        raise TypeError("'>' not supported for {!r} > {!r}".format(self, other))
 
     def __repr__(self):
         return "<{}'s {}({!r})[{}]>".format(self.artist, type(self).__name__, self.title, self.year)
@@ -393,13 +567,119 @@ class Album(WikiObject):
     def __iter__(self):
         yield from sorted(self.tracks)
 
+    def _process_intro(self):
+        if not self._raw_content:
+            self.__is_repackage = False
+            return
+
+        num = None
+        num_match = re.search("is the (.*)album \S*\s*by", self._raw_content)
+        if num_match:
+            num = num_match.group(1).split()[0].lower().strip()
+            double_match = re.search("A repackage titled (.*) was released", self._raw_content)
+            self.__repackage_double_page = bool(double_match)
+            if double_match:
+                repackage_title = double_match.group(1).strip()
+                self.__is_repackage = repackage_title.lower() == self.title.lower()
+            else:
+                self.__is_repackage = False
+        else:
+            repkg_match = re.search("is a (?:repackage|new edition) of .*'s? (.*) album", self._raw_content)
+            self.__is_repackage = bool(repkg_match)
+            if repkg_match:
+                num = repkg_match.group(1).split()[0].lower().strip()
+        self.__num = NUMS.get(num, num)
+
+        if self.__is_repackage:
+            content = self._page_content.find("div", id="mw-content-text")
+            aside = content.find("aside")
+            aside.extract()
+            for i, a in enumerate(content.find_all("a")):
+                href = a.get("href")[6:]
+                if href != self.artist._uri_path:
+                    self.__repackage_of = self.artist.album_for_uri(href)
+                    break
+
+    @cached_property
+    def is_repackage(self):
+        if self.__is_repackage is None:
+            self._process_intro()
+        return self.__is_repackage
+
+    @cached_property
+    def repackage_of(self):
+        if self.__is_repackage is None:
+            self._process_intro()
+        return self.__repackage_of
+
+    @cached_property
+    def is_repkg_double_page(self):
+        if self.__is_repackage is None:
+            self._process_intro()
+        return self.__repackage_double_page
+
+    @cached_property
+    def _num(self):
+        if self.__is_repackage is None:
+            self._process_intro()
+        return self.__num
+
+    @cached_property
+    def type(self):
+        lang = ""
+        _type = self._type
+        if _type.endswith("s"):
+            _type = _type[:-1]
+        if re.search("_\d$", _type):
+            _type = _type[:-2]
+            lang = self.language if self.language else ""
+            if not lang:
+                log.warning("{}: No language detected for _2 type: {!r}".format(self, _type), extra={"red": True})
+            else:
+                lang += " "
+        if _type.endswith("s"):
+            _type = _type[:-1]
+
+        if _type not in self.type_map:
+            log.warning("{}: Unhandled type: {!r}".format(self, _type), extra={"red": True})
+        return "{}{}".format(lang, self.type_map.get(_type, "SORT_ME") + "s")
+
+    @cached_property
+    def expected_album_dirname(self):
+        title = self.title
+        if self.type in ("Albums", "Mini Albums", "Special Albums", "Japanese Albums", "Japanese Mini Albums"):
+            try:
+                rel_date = self.release_date.strftime("%Y.%m.%d")
+            except AttributeError as e:
+                rel_date = None
+
+            num = self._num
+            if not num:
+                if self._raw_content:
+                    log.warning("Unable to find album number for {} {}".format(self.type, self), extra={"red": True})
+            else:
+                _type = self.type[:-1] if self.type.endswith("s") else self.type
+                if self.is_repackage:
+                    _type += " Repackage"
+                if rel_date:
+                    title = "[{}] {} [{} {}]".format(rel_date, title, num, _type)
+                else:
+                    title = "{} [{} {}]".format(title, num, _type)
+
+        return os.path.join(self.type, title).replace("/", "_").replace(":", "-").replace("*", "")
+
+    @cached_property
+    def expected_dirname(self):
+        artist_dir = self.artist.expected_dirname if hasattr(self.artist, "expected_dirname") else self.artist
+        return os.path.join(artist_dir, self.expected_album_dirname)
+
     def _tracks_from_wikipedia(self):
         num_strs = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
         # If this is using the WikipediaClient, then it's likely for a non-Korean artist
         page_content = self._page_content
         side_bar = page_content.find("table", class_=re.compile("infobox vevent.*"))
         desc = side_bar.find("th", class_="description")
-        alb_type = self.type
+        alb_type = self._type
         for ele in desc:
             if str(ele).strip() == "by":
                 alb_type = ele.previous_sibling.text.lower()
@@ -541,7 +821,7 @@ class Album(WikiObject):
             self._fix_artist(page_content)
             track_list_span = page_content.find("span", id="Track_list")
             if not track_list_span:
-                if ("single" in self.type) or (self.type in ("other_release", "collaboration", "feature")):
+                if ("single" in self._type) or (self._type in ("other_release", "collaboration", "feature")):
                     content = page_content.find("div", id="mw-content-text")
                     aside = content.find("aside")
                     aside.extract()
@@ -563,10 +843,10 @@ class Album(WikiObject):
                     elif rel_date == now("%Y-%m-%d"):
                         log.debug("{} had no content, but it was not released until today".format(self))
                         return
-                    raise TrackDiscoveryException("Unexpected content on page for {} ({})".format(self, self.type))
+                    raise TrackDiscoveryException("Unexpected content on page for {} ({})".format(self, self._type))
 
             track_list_h2 = track_list_span.parent
-            if self.type == "ost":
+            if self._type == "ost":
                 ele = track_list_h2.next_sibling
                 part = None
                 while ele.name not in ("h3", "h2"):

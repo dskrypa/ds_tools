@@ -235,10 +235,13 @@ def format_duration(seconds):
     """
     x = "-" if seconds < 0 else ""
     m, s = divmod(abs(seconds), 60)
-    h, m = divmod(m, 60)
+    h, m = divmod(int(m), 60)
     d, h = divmod(h, 24)
     x = "{}{}d".format(x, d) if d > 0 else x
-    return "{}{:02d}:{:02d}:{:02d}".format(x, h, m, s)
+
+    if isinstance(s, int):
+        return "{}{:02d}:{:02d}:{:02d}".format(x, h, m, s)
+    return "{}{:02d}:{:02d}:{:05.2f}".format(x, h, m, s)
 
 
 def timedelta_to_str(delta):
