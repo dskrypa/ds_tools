@@ -132,7 +132,7 @@ class AlbumParser(TitleParser):
     _entry_point = "title"
     _strip = True
     TOKENS = OrderedDict([
-        ("YEAR", "\(\d{4}\)$"),
+        ("YEAR", "\(\d{4}\)"),
         ("QUOTE", "[{}]".format(QMARKS)),
         ("LPAREN", "[\(（]"),
         ("RPAREN", "[\)）]"),
@@ -387,9 +387,9 @@ class Artist(WikiObject):
                         li_eles = list(ul.children) + li_eles   # insert elements from the nested list at top
 
                     album = self._parse_album(li, album_type, lang, last_album)
-                    last_album = album
                     if album:
                         yield album
+                    last_album = album
 
             elif ele.name in ("h2", "div"):
                 break
@@ -531,7 +531,7 @@ class Album(WikiObject):
         self.addl_info = addl_info
         self.__num = None
         self.__is_repackage = None
-        self.__repackage_of = None
+        self._repackage_of = None
         self.__repackage_double_page = False
         self.__repackage_name = None
         self.title_parser = TitleParser()
@@ -561,9 +561,8 @@ class Album(WikiObject):
         num_match = re.search("is the (.*)album \S*\s*by", self._raw_content)
         if num_match:
             num = num_match.group(1).split()[0].lower().strip()
-
-            double_match = re.search("A repackage titled (.*) was released", self._raw_content)
-            if double_match:
+            repkg_match = re.search("A repackage titled (.*) (?:was|will be) released", self._raw_content)
+            if repkg_match:
                 for aside in self._page_content.find_all("aside"):
                     released_h3 = aside.find("h3", text="Released")
                     if released_h3:
@@ -573,13 +572,13 @@ class Album(WikiObject):
                                 self.__repackage_double_page = True
                                 break
 
-                repackage_title = double_match.group(1).strip()
+                repackage_title = soupify(repkg_match.group(1).strip()).text
                 self.__repackage_name = repackage_title
                 self.__is_repackage = repackage_title.lower() == self.title.lower()
             else:
                 self.__is_repackage = False
         else:
-            repkg_match = re.search("is a (?:repackage|new edition) of .*'s? (.*) album", self._raw_content)
+            repkg_match = re.search("is a (?:repackage|new edition) of .*'s? (.*)album", self._raw_content)
             self.__is_repackage = bool(repkg_match)
             if repkg_match:
                 num = repkg_match.group(1).split()[0].lower().strip()
@@ -593,8 +592,14 @@ class Album(WikiObject):
             for i, a in enumerate(content.find_all("a")):
                 href = a.get("href")[6:]
                 if href != self.artist._uri_path:
-                    self.__repackage_of = self.artist.album_for_uri(href)
+                    self._repackage_of = self.artist.album_for_uri(href)
                     break
+
+            if not self._repackage_of:
+                for album in self.artist:
+                    if (album != self) and album.repackage_name == self.title:
+                        self._repackage_of = album
+                        break
 
     @cached_property
     def is_repackage(self):
@@ -602,11 +607,11 @@ class Album(WikiObject):
             self._process_intro()
         return self.__is_repackage
 
-    @cached_property
+    @property
     def repackage_of(self):
         if self.__is_repackage is None:
             self._process_intro()
-        return self.__repackage_of
+        return self._repackage_of
 
     @cached_property
     def repackage_name(self):
@@ -787,7 +792,12 @@ class Album(WikiObject):
     def _parse_song(self, ele, song_str, track_num, common_addl_info=None):
         # log.debug("Parsing song info from: {!r}".format(song_str))
         # type(self).raw_track_names.add(song_str)
-        parsed = self.title_parser.parse(song_str)
+        try:
+            parsed = self.title_parser.parse(song_str)
+        except UnexpectedTokenError as e:
+            log.error("Unable to parse song title for {!r} by {}".format(song_str, self))
+            raise e
+
         if "(" in parsed["name"]:
             re_parsed = self.title_parser.parse(parsed["name"])
             if not ((len(re_parsed["extras"]) == 1) and is_hangul(re_parsed["extras"][0])):
@@ -858,7 +868,6 @@ class Album(WikiObject):
                             if ele.find("dd"):  # Nothing left on the page
                                 return
                             raise ValueError("Unexpected OST part section in {}: {}".format(self, ele))
-                        # TODO: double repackage page handling
                         m = re.match("(.*?Part\s*.*?)\s*\(?", dt.text, re.IGNORECASE)
                         if m:
                             part = m.group(1)
@@ -874,8 +883,42 @@ class Album(WikiObject):
                     ol = ol.next_sibling.next_sibling
                     assert ol.name == "ol", "Unexpected elements following the Track_list h2"
 
-                for track_num, li in enumerate(ol):
-                    yield self._parse_song(li, li.text.strip(), track_num + 1)
+                if self.is_repkg_double_page:
+                    if self.is_repackage:
+                        orig_tracks = ol
+                        section_header = ol.next_sibling.next_sibling
+                        lc_title = self.title.lower()
+                        try:
+                            while not any(txt in section_header.text.lower() for txt in (lc_title, "repackage")):
+                                try:
+                                    section_header = section_header.next_sibling.next_sibling.next_sibling.next_sibling
+                                except Exception as e:
+                                    raise ValueError("Unable to find repackaged track list for {}".format(self)) from e
+                        except AttributeError as e:
+                            log.error("AttributeError processing double repackage page for {} in {}".format(self, section_header))
+                            raise e
+
+                        new_tracks = section_header.next_sibling.next_sibling
+                        assert new_tracks.name == "ol", "Unexpected elements following original album tracks on double repackage page"
+
+                        orig_count, new_count = len(orig_tracks), len(new_tracks)
+                        if orig_count > new_count:
+                            if orig_count > 6 and (orig_count - new_count) < 3:
+                                track_lists = (new_tracks,)
+                            else:
+                                track_lists = (orig_tracks, new_tracks)
+                        else:
+                            track_lists = (new_tracks,)
+
+                        for ol in track_lists:
+                            for track_num, li in enumerate(ol):
+                                yield self._parse_song(li, li.text.strip(), track_num + 1)
+                    else:
+                        for track_num, li in enumerate(ol):
+                            yield self._parse_song(li, li.text.strip(), track_num + 1)
+                else:
+                    for track_num, li in enumerate(ol):
+                        yield self._parse_song(li, li.text.strip(), track_num + 1)
 
     @cached_property
     def tracks(self):
