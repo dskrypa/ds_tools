@@ -17,7 +17,7 @@ from ..exceptions import CodeBasedRestException
 from ..http import RestClient
 from ..utils import (
     soupify, FSCache, cached, is_hangul, contains_hangul, cached_property, datetime_with_tz, now, strip_punctuation,
-    RecursiveDescentParser, UnexpectedTokenError
+    RecursiveDescentParser, UnexpectedTokenError, format_duration
 )
 
 __all__ = ["KpopWikiClient", "WikipediaClient", "Artist", "Album", "Song", "InvalidArtistException", "TitleParser"]
@@ -361,6 +361,7 @@ class Artist(WikiObject):
         h_levels = {"h3": "language", "h4": "type"}
         lang = "Korean"
         album_type = "Unknown"
+        last_album = None
         ele = discography_h2.next_sibling
         while True:
             while not isinstance(ele, bs4.element.Tag):     # Skip past NavigableString objects
@@ -385,7 +386,8 @@ class Artist(WikiObject):
                         ul.extract()                            # remove nested list from tree
                         li_eles = list(ul.children) + li_eles   # insert elements from the nested list at top
 
-                    album = self._parse_album(li, album_type, lang)
+                    album = self._parse_album(li, album_type, lang, last_album)
+                    last_album = album
                     if album:
                         yield album
 
@@ -393,7 +395,8 @@ class Artist(WikiObject):
                 break
             ele = ele.next_sibling
 
-    def _parse_album(self, ele, album_type, lang):
+    def _parse_album(self, ele, album_type, lang, last_album):
+        added_feature_track = False
         year, collabs, addl_info = None, [], []
         ele_text = ele.text.strip()
         # type(self).raw_album_names.add(ele_text)
@@ -410,46 +413,17 @@ class Artist(WikiObject):
         try:
             parsed = self.album_parser.parse(ele_text)
         except UnexpectedTokenError as e:
-            log.warning("Unexpected album text format {!r} for {}".format(ele_text, self))
-            fallback_m = re.match("^(.*)\s*\((\d{4})\)$", ele_text)
-            if fallback_m:
-                album_name, year = map(str.strip, fallback_m.groups())
-            else:
-                log.warning("Unhandled album text format {!r} for {}".format(ele_text, self), extra={"red": True})
-                return None
+            log.warning("Unhandled album text format {!r} for {}".format(ele_text, self), extra={"red": True})
+            return None
         else:
-            #{"name": self.name().strip(), "year": None, "extras": []}
             album_name = parsed["name"]
             year = parsed["year"]
-            # noinspection PyTypeChecker
             for extra in parsed["extras"]:
                 if extra.lower().startswith(("with", "feat")):
                     collabs.append(extra)
                 else:
                     addl_info.append(extra)
 
-        # pat_base = "\"?(.*?)\"?" if ele_text.startswith("\"") else "(.*?)"
-        # plain_m = re.match(pat_base + "\s*(?:\([^)]+\))?\s*\([^)]+\)$", ele_text)
-        # try:
-        #     album_name = plain_m.group(1)
-        # except AttributeError as e:
-        #     if re.match("Dis[ck]\s*\d+\s*[-:]\s*Track\s*\d.*", ele_text, re.IGNORECASE):
-        #         # Seemingly one-off case where someone put the track info in the wrong place
-        #         log.warning("Found incorrectly placed track info in album section for {}".format(self), extra={"red": True})
-        #         return None
-        #     raise ValueError("{}: Unexpected album element format {!r} in: {}".format(self, ele_text, ele)) from e
-        #
-        # skip_len = len(album_name) + (2 if ele_text.startswith("\"") else 0)
-        # title_remainder = ele_text[skip_len:].strip()
-        # year_m = re.match("(.*)\s*\((\d+)\)$", title_remainder)
-        # if year_m:
-        #     title_remainder, year = map(str.strip, year_m.groups())
-        #
-        # collab_m = re.search("\((?:with|feat\.?)\s+([^\)]+)\)", title_remainder)
-        # if collab_m:
-        #     collab.append(collab_m.group(1))
-        #
-        # title_remainder = unsurround(title_remainder)
         first_a = ele.find("a")
         if first_a:
             link = first_a.get("href")
@@ -457,6 +431,7 @@ class Artist(WikiObject):
             if album_name != album:
                 if is_feature_or_collab:  # likely a feature / single with a link to a collaborator
                     self.feature_tracks.add(CollaborationSong(self, album_name, year, collabs, addl_info))
+                    added_feature_track = True
                 else:
                     log.debug("Unexpected first link text {!r} for album {!r}".format(album, album_name))
                 return None
@@ -474,9 +449,18 @@ class Artist(WikiObject):
                 return Album(self, album_name, lang, album_type, year, collabs, addl_info, None, self._client)
             elif is_feature_or_collab:
                 self.feature_tracks.add(CollaborationSong(self, album_name, year, collabs, addl_info))
+                added_feature_track = True
             else:
-                log.warning("No album link found for {!r} by {}".format(album_name, self), extra={"red": True})
-        if is_ost:
+                if last_album and last_album.is_repkg_double_page and (not last_album.is_repackage):
+                    if last_album.repackage_name == album_name:
+                        return Album(self, album_name, lang, album_type, year, collabs, addl_info, last_album._uri_path, self._client)
+                    else:
+                        log.warning("{}'s last album seems to be a candidate for original version of a repackage, but {!r} != {!r}".format(self, album_name, last_album.repackage_name), extra={"red": True})
+                else:
+                    log.log(9, "No album link found for {!r} by {}; last album was: {}".format(album_name, self, last_album))
+                return Album(self, album_name, lang, album_type, year, collabs, addl_info, None, self._client)
+        # if not is_ost:
+        if not added_feature_track:
             log.warning("Unable to parse album from '{}' for {}".format(ele, self), extra={"red": True})
         return None
 
@@ -549,6 +533,7 @@ class Album(WikiObject):
         self.__is_repackage = None
         self.__repackage_of = None
         self.__repackage_double_page = False
+        self.__repackage_name = None
         self.title_parser = TitleParser()
 
     def __lt__(self, other):
@@ -576,10 +561,20 @@ class Album(WikiObject):
         num_match = re.search("is the (.*)album \S*\s*by", self._raw_content)
         if num_match:
             num = num_match.group(1).split()[0].lower().strip()
+
             double_match = re.search("A repackage titled (.*) was released", self._raw_content)
-            self.__repackage_double_page = bool(double_match)
             if double_match:
+                for aside in self._page_content.find_all("aside"):
+                    released_h3 = aside.find("h3", text="Released")
+                    if released_h3:
+                        dates_div = released_h3.next_sibling.next_sibling
+                        for s in dates_div.stripped_strings:
+                            if s.lower().endswith("(repackage)"):
+                                self.__repackage_double_page = True
+                                break
+
                 repackage_title = double_match.group(1).strip()
+                self.__repackage_name = repackage_title
                 self.__is_repackage = repackage_title.lower() == self.title.lower()
             else:
                 self.__is_repackage = False
@@ -591,6 +586,7 @@ class Album(WikiObject):
         self.__num = NUMS.get(num, num)
 
         if self.__is_repackage:
+            self.__repackage_name = self.title
             content = self._page_content.find("div", id="mw-content-text")
             aside = content.find("aside")
             aside.extract()
@@ -611,6 +607,12 @@ class Album(WikiObject):
         if self.__is_repackage is None:
             self._process_intro()
         return self.__repackage_of
+
+    @cached_property
+    def repackage_name(self):
+        if self.__is_repackage is None:
+            self._process_intro()
+        return self.__repackage_name
 
     @cached_property
     def is_repkg_double_page(self):
@@ -856,6 +858,7 @@ class Album(WikiObject):
                             if ele.find("dd"):  # Nothing left on the page
                                 return
                             raise ValueError("Unexpected OST part section in {}: {}".format(self, ele))
+                        # TODO: double repackage page handling
                         m = re.match("(.*?Part\s*.*?)\s*\(?", dt.text, re.IGNORECASE)
                         if m:
                             part = m.group(1)
@@ -944,6 +947,19 @@ class Album(WikiObject):
         log.debug("{}: Found releases: {}".format(self, ", ".join(rels)))
         return min(dates.keys())
 
+    @cached_property
+    def length(self):
+        return sum(song.seconds for song in self.tracks)
+
+    @cached_property
+    def length_str(self):
+        length = format_duration(int(self.length))
+        if length.startswith("00:"):
+            length = length[3:]
+        if length.startswith("0"):
+            length = length[1:]
+        return length
+
 
 class Song:
     """A song in an album.  Should not be initialized manually - use :attr:`Album.tracks`"""
@@ -976,7 +992,7 @@ class Song:
     @property
     def seconds(self):
         m, s = map(int, self.length.split(":"))
-        return s + (m * 60)
+        return (s + (m * 60)) if m > -1 else 0
 
     @cached_property
     def english_title(self):
