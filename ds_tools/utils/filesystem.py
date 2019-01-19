@@ -6,10 +6,13 @@
 
 import os
 import logging
+import platform
 from getpass import getuser
 
 __all__ = ["validate_or_make_dir", "get_user_cache_dir"]
 log = logging.getLogger("ds_tools.utils.filesystem")
+
+ON_WINDOWS = platform.system().lower() == "windows"
 
 
 def validate_or_make_dir(dir_path, permissions=None, suppress_perm_change_exc=True):
@@ -40,7 +43,7 @@ def validate_or_make_dir(dir_path, permissions=None, suppress_perm_change_exc=Tr
 
 
 def get_user_cache_dir(subdir=None, permissions=None):
-    cache_dir = os.path.join("/var/tmp/", getuser(), "ds_tools_cache")
+    cache_dir = os.path.join("C:/var/tmp" if ON_WINDOWS else "/var/tmp", getuser(), "ds_tools_cache")
     if subdir:
         cache_dir = os.path.join(cache_dir, subdir)
     validate_or_make_dir(cache_dir, permissions=permissions)

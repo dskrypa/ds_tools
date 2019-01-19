@@ -216,11 +216,11 @@ class LogManager:
         stdout_filter = create_filter(lambda lvl: lvl < logging.WARNING)
         if verbosity:
             self.stdout_lvl = logging.DEBUG + 2 - verbosity     # True == 1; higher val -> lower debug level
-        red_formatter = create_formatter(lambda rec: getattr(rec, "red", False), lambda msg: colored(msg, "red"))
+        # red_formatter = create_formatter(lambda rec: getattr(rec, "red", False), lambda msg: colored(msg, "red"))
         stdout = open(sys.stdout.fileno(), mode="w", encoding="utf-8", buffering=1)
         stderr = open(sys.stderr.fileno(), mode="w", encoding="utf-8", buffering=1)
         self.add_handler(stdout, self.stdout_lvl, filter=stdout_filter, formatter=ColorLogFormatter, name="stdout")
-        self.add_handler(stderr, filter=stderr_filter, formatter=red_formatter, name="stderr")
+        self.add_handler(stderr, filter=stderr_filter, formatter=ColorLogFormatter, name="stderr")
 
     def init_default_file_logger(self, log_path=None, file_level=logging.DEBUG, file_fmt=None):
         """

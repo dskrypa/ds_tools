@@ -22,6 +22,7 @@ from functools import update_wrapper, wraps
 from getpass import getuser
 from inspect import Signature, Parameter
 from operator import attrgetter
+from pathlib import Path
 from threading import RLock
 from urllib.parse import urlencode, quote as url_quote
 
@@ -344,7 +345,7 @@ class FSCache:
         return "{}{}{}".format(self.prefix, key, self.ext)
 
     def path_for_key(self, key):
-        return os.path.join(self.cache_dir, "{}{}{}".format(self.prefix, key, self.ext))
+        return Path(os.path.join(self.cache_dir, "{}{}{}".format(self.prefix, key, self.ext)))
 
     @classmethod
     def _html_key_with_extras(cls, key, kwargs):
@@ -402,13 +403,15 @@ class FSCache:
 
     def __getitem__(self, item):
         file_path = self.path_for_key(item)
-        if not (os.path.exists(file_path) and os.path.isfile(file_path)):
+        if not (file_path.exists() and file_path.is_file()):
+            log.log(9, "No cached value existed for {!r} at {!r}".format(item, file_path.as_posix()))
             raise KeyError(item)
 
         kwargs = {} if self.binary else {"encoding": "utf-8"}
         with open(file_path, self.read_mode, **kwargs) as f:
             value = f.read()
 
+        log.log(9, "Returning value for {!r} from {!r}".format(item, file_path.as_posix()))
         return self.loader(value) if self.loader else value
 
     def __setitem__(self, key, value):
@@ -417,6 +420,7 @@ class FSCache:
             value = self.dumper(value)
 
         kwargs = {} if self.binary else {"encoding": "utf-8"}
+        log.log(9, "Storing value for {!r} in {!r}".format(key, file_path.as_posix()))
         with open(file_path, self.write_mode, **kwargs) as f:
             f.write(value)
 
