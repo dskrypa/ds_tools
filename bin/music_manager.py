@@ -34,13 +34,12 @@ import string
 import sys
 from collections import Counter, defaultdict
 from fnmatch import fnmatch, translate as fnpat2re
-from unicodedata import normalize
+from pathlib import Path
 
 import mutagen
 import mutagen.id3._frames
 from mutagen.id3 import ID3, TDRC, TIT2
-from mutagen.id3._frames import Frame
-from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
+from mutagen.mp4 import MP4Tags
 
 _script_path = os.path.abspath(__file__)
 if os.path.islink(_script_path):
@@ -50,47 +49,21 @@ if os.path.islink(_script_path):
     else:
         _script_path = os.path.abspath(_link_path)
 sys.path.append(os.path.dirname(os.path.dirname(_script_path)))
+from ds_tools.http import CodeBasedRestException
 from ds_tools.logging import LogManager
-from ds_tools.music import iter_music_files, load_tags, iter_music_albums, iter_categorized_music_files
-from ds_tools.music.wiki import Artist, Album
+from ds_tools.music import (
+    iter_music_files, load_tags, iter_music_albums, iter_categorized_music_files, TagAccessException,
+    tag_repr, apply_repr_patches, TagValueException, TagException
+)
 from ds_tools.utils import Table, SimpleColumn, localize, TableBar, num_suffix, ArgParser
 from music.constants import tag_name_map
 
 log = logging.getLogger("ds_tools.{}".format(__name__))
 
-# Translate whitespace characters (such as \n, \r, etc.) to their escape sequences
-WHITESPACE_TRANS_TBL = str.maketrans({c: c.encode("unicode_escape").decode("utf-8") for c in string.whitespace})
+apply_repr_patches()
+
 RM_TAGS_MP4 = ["*itunes*", "??ID", "?cmt", "ownr", "xid ", "purd"]
 RM_TAGS_ID3 = ["TXXX*", "PRIV*", "WXXX*", "COMM*", "TCOP"]
-
-
-# Monkey-patch Frame's repr so APIC and similar frames don't kill terminals
-_orig_frame_repr = Frame.__repr__
-def _frame_repr(self):
-    kw = []
-    for attr in self._framespec:
-        # so repr works during __init__
-        if hasattr(self, attr.name):
-            kw.append("{}={}".format(attr.name, tag_repr(repr(getattr(self, attr.name)))))
-    for attr in self._optionalspec:
-        if hasattr(self, attr.name):
-            kw.append("{}={}".format(attr.name, tag_repr(repr(getattr(self, attr.name)))))
-    return "{}({})".format(type(self).__name__, ", ".join(kw))
-Frame.__repr__ = _frame_repr
-
-_orig_reprs = {}
-
-def _MP4Cover_repr(self):
-    return "{}({}, {})".format(type(self).__name__, tag_repr(bytes(self), 10, 5), AtomDataType(self.imageformat))
-
-def _MP4FreeForm_repr(self):
-    return "{}({}, {})".format(type(self).__name__, tag_repr(bytes(self), 10, 5), AtomDataType(self.dataformat))
-
-for cls in (MP4Cover, MP4FreeForm):
-    _orig_reprs[cls] = cls.__repr__
-
-MP4Cover.__repr__ = _MP4Cover_repr
-MP4FreeForm.__repr__ = _MP4FreeForm_repr
 
 
 def parser():
@@ -123,6 +96,11 @@ def parser():
 
     sort_parser = parser.add_subparser("action", "sort", help="Sort music into directories based on tag info")
     sort_parser.add_argument("path", help="A directory that contains directories that contain music files")
+
+    wiki_sort_parser = parser.add_subparser("action", "wiki_sort", help="Sort music into directories based on tag info")
+    wiki_sort_parser.add_argument("source", metavar="path", help="A directory that contains directories that contain music files")
+    wiki_sort_parser.add_argument("destination", metavar="path", help="The destination directory for the top-level artist directories of the sorted files")
+    wiki_sort_parser.add_argument("--allow_no_dest", "-N", action="store_true", help="Allow sorting to continue even if there are some files that do not have a new destination")
 
     p2t_parser = parser.add_subparser("action", "path2tag", help="Update tags based on the path to each file")
     p2t_parser.add_argument("path", help="A directory that contains directories that contain music files")
@@ -177,6 +155,8 @@ def main():
             copy_tags(args.source, args.dest, args.tags, args.dry_run)
     elif args.action == "sort":
         sort_albums(args.path, args.dry_run)
+    elif args.action == "wiki_sort":
+        sort_by_wiki(args.source, args.destination, args.allow_no_dest, args.dry_run)
     elif args.action == "path2tag":
         path2tag(args.path, args.dry_run, args.title)
     elif args.action == "set":
@@ -213,28 +193,17 @@ def path2tag(path, dry_run, incl_title):
 
     for music_file in iter_music_files(path):
         try:
-            title_key = music_file.tag_name_to_id("title")
-        except KeyError as e:
-            log.warning("Skipping due to unhandled file type: {}".format(music_file.filename))
+            title = music_file.tag_title
+        except TagException as e:
+            log.warning("Skipping due to {}: {}".format(type(e).__name__, e))
             continue
-
-        try:
-            titles = music_file.tags[title_key].text
-        except Exception as e:
-            log.error("Error retrieving title for {} - {}".format(music_file.filename, e))
-            continue
-        else:
-            if len(titles) > 1:
-                log.warning("Skipping {} - More than 1 title value".format(music_file.filename))
-                continue
-            title = titles[0]
 
         filename = music_file.basename(True, True)
         if incl_title and (title != filename):
             log.info("{} the title of {} from {!r} to {!r}".format(prefix, music_file.filename, title, filename))
             if not dry_run:
-                music_file.tags[title_key] = filename if (music_file.file_type == "mp4") else TIT2(text=filename)
-                music_file.tags.save(music_file.filename)
+                music_file.set_title(filename)
+                music_file.save()
         else:
             log.log(19, "Skipping file with already correct title: {}".format(music_file.filename))
 
@@ -252,40 +221,30 @@ def sort_albums(path, dry_run):
     for parent_dir, album_dir, music_files in iter_music_albums(path):
         if not album_dir.startswith("["):
             album_path = os.path.join(parent_dir, album_dir)
-            dates = set()
-            skip_dir = False
-            for music_file in music_files:
-                try:
-                    date_tag = music_file.tag_named("date")
-                except KeyError as e:
-                    log.warning("Skipping dir due to problem finding date for {} - {}".format(music_file.filename, e))
-                    skip_dir = True
-                    break
-                else:
-                    date_tag_val = str(getattr(date_tag, "text", date_tag)[0]).strip()
-                    if date_tag_val:
-                        dates.add(date_tag_val)
-
-            if skip_dir:
-                continue
-            elif len(dates) == 1:
-                date_str = dates.pop().translate(punc_strip_tbl)[:8]
-                date_fmt_in = "%Y" if len(date_str) == 4 else "%Y%m%d"
-                date_fmt_out = "%Y" if len(date_str) == 4 else "%Y.%m.%d"
-                try:
-                    album_date = localize(date_str, in_fmt=date_fmt_in, out_fmt=date_fmt_out)
-                except Exception:
-                    album_date = None
+            try:
+                dates = {f.tag_text("date") for f in music_files}
+            except TagException as e:
+                log.warning("Skipping dir {!r} due to problem finding date: {}".format(album_path, e))
             else:
-                log.warning("Unexpected dates found for album '{}': {}".format(album_path, ", ".join(sorted(dates))))
                 album_date = None
+                dates = {d for d in dates if d}
+                if len(dates) == 1:
+                    date_str = dates.pop().translate(punc_strip_tbl)[:8]
+                    date_fmt_in = "%Y" if len(date_str) == 4 else "%Y%m%d"
+                    date_fmt_out = "%Y" if len(date_str) == 4 else "%Y.%m.%d"
+                    try:
+                        album_date = localize(date_str, in_fmt=date_fmt_in, out_fmt=date_fmt_out)
+                    except Exception as e:
+                        log.warning("Error localizing album date for {!r}: {}".format(album_path, e))
+                else:
+                    log.warning("Unexpected dates found in album {!r}: {}".format(album_path, ", ".join(sorted(dates))))
 
-            if album_date:
-                album_dir = "[{}] {}".format(album_date, album_dir)
-                new_path = os.path.join(parent_dir, album_dir)
-                log.info("[add date] {}{} '{}' -> '{}'".format(prefix, verb, album_path, new_path))
-                if not dry_run:
-                    os.rename(album_path, new_path)
+                if album_date:
+                    album_dir = "[{}] {}".format(album_date, album_dir)
+                    new_path = os.path.join(parent_dir, album_dir)
+                    log.info("[add date] {}{} '{}' -> '{}'".format(prefix, verb, album_path, new_path))
+                    if not dry_run:
+                        os.rename(album_path, new_path)
 
     numbered_albums = defaultdict(lambda: defaultdict(dict))
     for parent_dir, artist_dir, category_dir, album_dir, music_files in iter_categorized_music_files(path):
@@ -344,6 +303,61 @@ def sort_albums(path, dry_run):
                         os.rename(album_path, new_album_path)
 
 
+def sort_by_wiki(source_path, dest_dir, allow_no_dest, dry_run):
+    prefix, verb = ("[DRY RUN] ", "Would move") if dry_run else ("", "Moving")
+
+    dests = {}
+    unplaced = 0
+    conflicts = {}
+    exists = set()
+    for music_file in iter_music_files(source_path):
+        try:
+            rel_path = music_file.wiki_expected_rel_path
+        except Exception as e:
+            log.error("Unable to determine destination for {}: {}".format(music_file, e))
+            raise e
+
+        if rel_path:
+            dest = Path(os.path.join(dest_dir, rel_path)).as_posix()
+            log.log(19, "Destination for {}: {!r}".format(music_file, dest))
+            if os.path.exists(dest):
+                if not music_file.path.samefile(dest):
+                    log.warning("File already exists at destination for {}: {!r}".format(music_file, dest), extra={"color": "yellow"})
+                    exists.add(dest)
+                else:
+                    log.info("File already has the correct path: {}".format(music_file))
+                    continue
+
+            if dest in dests:
+                log.warning("Duplicate destination conflict for {}: {!r}".format(music_file, dest), extra={"color": "yellow"})
+                conflicts[music_file] = dest
+                conflicts[dests[dest]] = dest
+            else:
+                dests[dest] = music_file
+        else:
+            log.warning("Could not determine placement for {}".format(music_file), extra={"red": True})
+            unplaced += 1
+
+    if unplaced and not allow_no_dest:
+        raise RuntimeError("Unable to determine placement for {:,d} files - exiting".format(unplaced))
+
+    if exists:
+        raise RuntimeError("Files already exist in {:,d} destinations - choose another destination directory".format(len(exists)))
+    elif conflicts:
+        raise RuntimeError("There are {:,d} duplicate destination conflicts - exiting".format(len(conflicts)))
+
+    for dest, music_file in sorted(dests.items()):
+        src_path = music_file.path
+        dest_path = Path(dest)
+        log.info("{}{} {!r} -> {!r}".format(prefix, verb, src_path.as_posix(), dest_path.as_posix()))
+        if not dry_run:
+            if not dest_path.parent.exists():
+                os.makedirs(dest_path.parent)
+            if dest_path.exists():
+                raise RuntimeError("Destination for {} already exists: {!r}".format(music_file, dest_path.as_posix()))
+            src_path.rename(dest_path)
+
+
 def set_tags(paths, tag_ids, value, replace_pats, partial, dry_run):
     prefix, repl_msg, set_msg = ("[DRY RUN] ", "Would replace", "Would set") if dry_run else ("", "Replacing", "Setting")
     repl_rxs = [re.compile(fnpat2re(pat)[4:-3]) for pat in replace_pats] if replace_pats else []
@@ -361,12 +375,15 @@ def set_tags(paths, tag_ids, value, replace_pats, partial, dry_run):
             if not tag_name:
                 raise ValueError("Invalid tag ID: {}".format(tag_id))
 
-            current_vals = music_file.tags.getall(tag_id)
+            current_vals = music_file.tags_for_id(tag_id)
             if not current_vals:
-                try:
-                    fcls = getattr(mutagen.id3._frames, tag_id.upper())
-                except AttributeError as e:
-                    raise ValueError("Invalid tag ID: {} (no frame class found for it)".format(tag_id)) from e
+                if music_file.ext == "mp3":
+                    try:
+                        fcls = getattr(mutagen.id3._frames, tag_id.upper())
+                    except AttributeError as e:
+                        raise ValueError("Invalid tag ID: {} (no frame class found for it)".format(tag_id)) from e
+                else:
+                    raise ValueError("Adding new tags to non-MP3s is not currently supported for {}".format(music_file))
 
                 log.info("{}{} {}/{} = '{}' in file: {}".format(prefix, set_msg, tag_id, tag_name, value, music_file.filename))
                 should_save = True
@@ -397,7 +414,7 @@ def set_tags(paths, tag_ids, value, replace_pats, partial, dry_run):
 
         if should_save:
             if not dry_run:
-                music_file.tags.save(music_file.filename)
+                music_file.save()
         else:
             log.log(19, "Nothing to change for {}".format(music_file.filename))
 
@@ -408,8 +425,8 @@ def fix_tags(paths, dry_run):
     upd_msg = "Would update" if dry_run else "Updating"
 
     for music_file in iter_music_files(paths):
-        if not isinstance(music_file.tags, ID3):
-            log.debug("Skipping non-MP3: {}".format(music_file.filename))
+        if music_file.ext != "mp3":
+            log.debug("Skipping non-MP3: {}".format(music_file))
             continue
 
         tdrc = music_file.tags.getall("TDRC")
@@ -421,60 +438,53 @@ def fix_tags(paths, dry_run):
             if not dry_run:
                 music_file.tags.add(TDRC(text=file_date))
                 music_file.tags.delall("TXXX:DATE")
-                music_file.tags.save(music_file.filename)
+                music_file.save()
 
-        lyrics_tags = music_file.tags.getall("USLT")
-        if len(lyrics_tags) == 1:
-            lyrics_tag = lyrics_tags[0]
-            m = re.match("^(.*)(https?://\S+)$", lyrics_tag.text, re.DOTALL)
+        changes = 0
+        for uslt in music_file.tags.getall("USLT"):
+            m = re.match("^(.*)(https?://\S+)$", uslt.text, re.DOTALL)
             if m:
+                # noinspection PyUnresolvedReferences
                 new_lyrics = m.group(1).strip() + "\r\n"
-                log.info("{}{} lyrics for {} from {!r} to {!r}".format(prefix, upd_msg, music_file.filename, tag_repr(lyrics_tag.text), tag_repr(new_lyrics)))
+                log.info("{}{} lyrics for {} from {!r} to {!r}".format(prefix, upd_msg, music_file.filename, tag_repr(uslt.text), tag_repr(new_lyrics)))
                 if not dry_run:
-                    lyrics_tag.text = new_lyrics
-                    music_file.tags.save(music_file.filename)
+                    uslt.text = new_lyrics
+                    changes += 1
 
-    for parent_dir, artist_dir, category_dir, album_dir, music_files in iter_categorized_music_files(paths):
-        for music_file in music_files:
-            wiki_artist = Artist(artist_dir)
+        if changes and not dry_run:
+            log.info("Saving changes to lyrics in {}".format(music_file))
+            music_file.save()
+
+    for music_file in iter_music_files(paths):
+        wiki_artist = music_file.wiki_artist
+        if wiki_artist is not None:
             try:
                 album_name = music_file.album_name_cleaned
             except KeyError as e:
-                log.error("Error retrieving album for {}".format(music_file))
+                log.error("Error retrieving album for {}".format(music_file), extra={"red": True})
                 raise e
-
-            song_title = music_file.tag_title
-            wiki_album = wiki_artist.find_album(album_name)
-            if wiki_album is None:
-                artist = music_file.tag_artist
-                m = re.match("(.+?)\s*\(.*", artist)
-                if m:
-                    wiki_artist = Artist(m.group(1))
-                    wiki_album = wiki_artist.find_album(album_name)
-
+            wiki_album = music_file.wiki_album
             if wiki_album is not None:
-                song = wiki_album.find_track(song_title)
-                if song:
-                    # log.info("{!r} - {!r} - {!r} ==> {}".format(music_file.tag_artist, album_name, song_title, song))
-                    if (song_title.lower() != song.file_title.lower()) and not song_title.lower().startswith(song.file_title.lower()):
-                        log.info("{}{} {!r} - {!r} - {!r} ==> {!r} / {}".format(prefix, upd_msg, music_file.tag_artist, album_name, song_title, song.file_title, song))
-                        try:
-                            title_key = music_file.tag_name_to_id("title")
-                        except KeyError as e:
-                            log.warning("Skipping due to unhandled file type: {}".format(music_file.filename))
-                            continue
-
+                wiki_song = music_file.wiki_song
+                if wiki_song is not None:
+                    song_title = music_file.tag_title
+                    if (song_title.lower() != wiki_song.file_title.lower()) and not song_title.lower().startswith(wiki_song.file_title.lower()):
+                        log.info("{}{} {!r}/{!r}/{!r} ==> {!r} / {}".format(prefix, upd_msg, music_file.tag_artist, album_name, song_title, wiki_song.file_title, wiki_song))
                         if not dry_run:
-                            music_file.tags[title_key] = song.file_title if (music_file.file_type == "mp4") else TIT2(text=song.file_title)
-                            music_file.tags.save(music_file.filename)
+                            try:
+                                music_file.set_title(wiki_song.file_title)
+                            except TagException as e:
+                                log.error(e)
+                            else:
+                                music_file.save()
                     else:
-                        log.log(19, "No changes necessary for {!r} - {!r} - {!r} == {!r} / {}".format(music_file.tag_artist, album_name, song_title, song.file_title, song))
+                        log.log(19, "No changes necessary for {!r}/{!r}/{!r} == {!r} / {}".format(music_file.tag_artist, album_name, song_title, wiki_song.file_title, wiki_song))
                 else:
-                    log.debug("Unable to find song match for {!r} - {!r} - {!r}  /  {}".format(music_file.tag_artist, album_name, song_title, music_file))
+                    log.error("Unable to find song for {} in wiki".format(music_file), extra={"red": True})
             else:
-                log.debug("Unable to find album match for {!r} - {!r} - {!r}  /  {}".format(music_file.tag_artist, album_name, song_title, music_file))
-                # log.info("Unable to find match for {!r} - {!r} - {!r}".format(music_file.tag_artist, album_name, song_title))
-                # log.info("Unable to find {} album matching {}".format(wiki_artist, album_name))
+                log.error("Unable to find album for {} in wiki".format(music_file), extra={"red": True})
+        else:
+            log.error("Unable to find artist for {} in wiki".format(music_file), extra={"red": True})
 
 
 def copy_tags(source_paths, dest_paths, tags, dry_run):
@@ -543,13 +553,6 @@ def save_tag_backups(source_paths, backup_path):
         pickle.dump(tag_info, f)
 
 
-def tag_repr(tag_val, max_len=125, sub_len=25):
-    tag_val = normalize("NFC", str(tag_val)).translate(WHITESPACE_TRANS_TBL)
-    if len(tag_val) > max_len:
-        return "{}...{}".format(tag_val[:sub_len], tag_val[-sub_len:])
-    return tag_val
-
-
 def remove_tags(paths, tag_ids, dry_run, recommended):
     prefix, verb = ("[DRY RUN] ", "Would remove") if dry_run else ("", "Removing")
 
@@ -574,21 +577,9 @@ def remove_tags(paths, tag_ids, dry_run, recommended):
             raise TypeError("Unhandled tag type: {}".format(type(music_file.tags).__name__))
 
         to_remove = {}
-
         for tag, val in sorted(music_file.tags.items()):
             if any(fnmatch(tag, pat) for pat in tag_id_pats):
                 to_remove[tag] = val if isinstance(val, list) else [val]
-
-        # for tag_id in tag_ids:
-        #     if isinstance(music_file.tags, MP4Tags):
-        #         if tag_id in file_tag_ids:
-        #             case_sensitive_tag_id = file_tag_ids[tag_id]
-        #             to_remove[case_sensitive_tag_id] = music_file.tags[case_sensitive_tag_id]
-        #
-        #     elif isinstance(music_file.tags, ID3):
-        #         file_tags = music_file.tags.getall(tag_id)
-        #         if file_tags:
-        #             to_remove[tag_id] = file_tags
 
         if to_remove:
             if i:
@@ -606,7 +597,7 @@ def remove_tags(paths, tag_ids, dry_run, recommended):
                         del music_file.tags[tag_id]
                     elif isinstance(music_file.tags, ID3):
                         music_file.tags.delall(tag_id)
-                music_file.tags.save(music_file.filename)
+                music_file.save()
             i += 1
         else:
             log.debug("{}: Did not have the tags specified for removal".format(music_file.filename))

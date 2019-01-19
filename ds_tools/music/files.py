@@ -8,9 +8,10 @@ import logging
 import os
 import pickle
 import re
+import string
 from hashlib import sha256
 from io import BytesIO
-from operator import itemgetter
+from pathlib import Path
 
 import acoustid
 import mutagen
@@ -19,16 +20,19 @@ from mutagen.id3 import ID3, TDRC, TIT2
 from mutagen.id3._frames import Frame, TextFrame
 from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
 
-from ..utils import cached_property, DBCache, cached, get_user_cache_dir, CacheKey, format_duration
+from ..http import CodeBasedRestException
+from ..utils import cached_property, DBCache, cached, get_user_cache_dir, CacheKey, format_duration, is_hangul
 from .wiki import Artist, eng_name
 
 __all__ = [
     "ExtendedMutagenFile", "FakeMusicFile", "iter_music_files", "load_tags", "iter_music_albums",
-    "iter_categorized_music_files"
+    "iter_categorized_music_files", "TagException",  "TagAccessException", "UnsupportedTagForFileType",
+    "InvalidTagName", "TagValueException", "TagNotFound", "WikiMatchException"
 ]
 log = logging.getLogger("ds_tools.music.files")
 
 NON_MUSIC_EXTS = {"jpg", "jpeg", "png", "jfif", "part", "pdf", "zip"}
+PUNC_STRIP_TBL = str.maketrans({c: "" for c in string.punctuation})
 TYPED_TAG_MAP = {
     "title": {"mp4": "\xa9nam", "mp3": "TIT2"},
     "date": {"mp4": "\xa9day", "mp3": "TDRC"},
@@ -130,6 +134,7 @@ class FakeMusicFile:
 class ExtendedMutagenFile:
     """Adds some properties/methods to mutagen.File types that facilitate other functions"""
     def __new__(cls, file_path, *args, **kwargs):
+        file_path = Path(file_path).as_posix()
         try:
             music_file = mutagen.File(file_path, *args, **kwargs)
         except Exception as e:
@@ -153,15 +158,28 @@ class ExtendedMutagenFile:
         return self._f[item]
 
     def __repr__(self):
-        ftype = "[{}]".format(self.file_type) if self.file_type is not None else ""
+        ftype = "[{}]".format(self.ext) if self.ext is not None else ""
         return "<{}{}({!r})>".format(type(self).__name__, ftype, self.filename)
+
+    def save(self):
+        self.tags.save(self._f.filename)
+
+    @property
+    def path(self):
+        return Path(self._f.filename).resolve()
 
     @property
     def length(self):
+        """
+        :return float: The length of this song in seconds
+        """
         return self._f.info.length
 
     @cached_property
     def length_str(self):
+        """
+        :return str: The length of this song in the format (HH:M)M:SS
+        """
         length = format_duration(int(self._f.info.length))  # Most other programs seem to floor the seconds
         if length.startswith("00:"):
             length = length[3:]
@@ -171,74 +189,152 @@ class ExtendedMutagenFile:
 
     @cached_property
     def album_name_cleaned(self):
-        album = self.tag_named("album").text[0]
+        album = self.tag_text("album")
         m = re.match("(.*)\s*\[.*Album\]", album)
         if m:
             album = m.group(1).strip()
         return album
 
     @cached_property
+    def album_from_dir(self):
+        album = self.album_dir
+        m = re.match("^\[\d{4}[0-9.]*\] (.*)$", album)   # Begins with date
+        if m:
+            album = m.group(1).strip()
+        m = re.match("(.*)\s*\[.*Album\]", album)       # Ends with Xth Album
+        if m:
+            album = m.group(1).strip()
+        return album
+
+    @cached_property
     def tag_title(self):
-        return self.tag_named("title").text[0]
+        return self.tag_text("title")
+
+    def set_title(self, title):
+        title_key = self.tag_name_to_id("title")
+        self.tags[title_key] = title if (self.ext == "mp4") else TIT2(text=title)
 
     @cached_property
     def tag_artist(self):
-        return self.tag_named("artist").text[0]
+        return self.tag_text("artist")
 
     @cached_property
     def wiki_artist(self):
         try:
             eng = eng_name(self, self.tag_artist, "english_artist")
         except AttributeError as e:
-            log.error("{}: Unable to find Wiki artist - unable to parse english name from {!r}".format(self, self.tag_artist))
+            if is_hangul(self.tag_artist):
+                try:
+                    eng = eng_name(self, self.artist_dir, "english_artist")
+                except AttributeError as e:
+                    log.error("{}: Unable to find Wiki artist - unable to parse english name from {!r}".format(self, self.tag_artist))
+                    return None
+            else:
+                log.error("{}: Unable to find Wiki artist - unable to parse english name from {!r}".format(self, self.tag_artist))
+                return None
+
+        lc_dir = self.artist_dir.lower()
+        lc_eng = eng.lower()
+        if (lc_eng != lc_dir) and (lc_dir in lc_eng):
+            collab_indicators = ("and", "&", "feat", ",")
+            if any(i in lc_eng for i in collab_indicators):
+                log.warning("Using artist {!r} instead of {!r} for {}".format(self.artist_dir, eng, self), extra={"color": "cyan"})
+                return Artist(self.artist_dir)
+        try:
+            return Artist(eng)
+        except CodeBasedRestException as e:
+            log.error("Error retrieving information from wiki about artist {!r} for {}: {}".format(eng, self, e))
             return None
-        return Artist(eng)
 
     @cached_property
     def wiki_album(self):
-        return self.wiki_artist.find_album(self.album_name_cleaned)
+        artist = self.wiki_artist
+        album = artist.find_album(self.album_name_cleaned) if artist else None
+        if album:
+            return album
+
+        if artist:
+            album_name = self.album_name_cleaned.lower().translate(PUNC_STRIP_TBL)
+            match = self._find_album_match(album_name)
+            if not match:
+                if is_hangul(album_name):
+                    album = artist.find_album(self.album_from_dir)
+                    if album:
+                        return album
+                    album_name = self.album_from_dir.lower().translate(PUNC_STRIP_TBL)
+                    match = self._find_album_match(album_name)
+
+            if not match:
+                for album in artist:
+                    if album.type == "Collaborations" and album.title == self.tag_title:
+                        return album
+                log.error("Unable to match album {!r} for {}".format(self.album_name_cleaned, self))
+            return match
+        return None
+
+    def _find_album_match(self, title):
+        candidates = set()
+        # noinspection PyTypeChecker
+        for artist_album in self.wiki_artist:
+            if artist_album.title.lower().translate(PUNC_STRIP_TBL) in title:
+                candidates.add(artist_album)
+        if len(candidates) == 1:
+            match = candidates.pop()
+            log.debug("Matched album {!r} to {} for {}".format(self.album_name_cleaned, match, self))
+            return match
+        elif candidates:
+            fmt = "Found too many potential album matches for {!r} for {}: {}"
+            raise WikiMatchException(fmt.format(self.album_name_cleaned, self, ", ".join(map(repr, sorted(candidates)))))
+        return None
 
     @cached_property
     def wiki_song(self):
-        return self.wiki_album.find_track(self.tag_title)
+        album = self.wiki_album
+        return album.find_track(self.tag_title) if album else None
 
     @cached_property
     def wiki_expected_rel_path(self):
-        ext = self.file_type
+        ext = self.ext
         if self.wiki_song:
             return self.wiki_song.expected_rel_path(ext)
         elif self.wiki_album:
             return os.path.join(self.wiki_album.expected_rel_path, self.basename())
+        elif self.wiki_artist and ("single" in self.album_type_dir.lower()):
+            artist_dir = self.wiki_artist.expected_dirname
+            dest = os.path.join(artist_dir, self.album_type_dir, self.album_dir, self.basename())
+            log.warning("{}.wiki_expected_rel_path defaulting to {!r}".format(self, dest))
+            return dest
+        return None
 
     @cached_property
-    def album_dir(self):
+    def album_path(self):
         """The directory that this file is in"""
         return os.path.dirname(os.path.abspath(self.filename))
 
     @cached_property
-    def album_type_dir(self):
+    def album_type_path(self):
         """The directory containing this file's album dir (i.e., 'Albums', 'Mini Albums', 'Singles', etc.)"""
-        return os.path.dirname(self.album_dir)
+        return os.path.dirname(self.album_path)
+
+    @cached_property
+    def artist_path(self):
+        """The directory containing this file's album type dir"""
+        return os.path.dirname(self.album_type_path)
+
+    @cached_property
+    def album_dir(self):
+        return os.path.basename(self.album_path)
+
+    @cached_property
+    def album_type_dir(self):
+        return os.path.basename(self.album_type_path)
 
     @cached_property
     def artist_dir(self):
-        """The directory containing this file's album type dir"""
-        return os.path.dirname(self.album_type_dir)
+        return os.path.basename(self.artist_path)
 
     @cached_property
-    def album_dir_name(self):
-        return os.path.basename(self.album_dir)
-
-    @cached_property
-    def album_type_dir_name(self):
-        return os.path.basename(self.album_type_dir)
-
-    @cached_property
-    def artist_dir_name(self):
-        return os.path.basename(self.artist_dir)
-
-    @cached_property
-    def file_type(self):
+    def ext(self):
         if isinstance(self.tags, MP4Tags):
             return "mp4"
         elif isinstance(self.tags, ID3):
@@ -263,19 +359,63 @@ class ExtendedMutagenFile:
         try:
             type2id = TYPED_TAG_MAP[tag_name]
         except KeyError as e:
-            raise KeyError("Unconfigured tag name: {}".format(tag_name)) from e
+            raise InvalidTagName(tag_name, self) from e
         try:
-            return type2id[self.file_type]
+            return type2id[self.ext]
         except KeyError as e:
-            raise KeyError("Unconfigured tag name for {!r} files: {}".format(self.file_type, tag_name))
+            raise UnsupportedTagForFileType(tag_name, self) from e
+
+    def tags_for_id(self, tag_id):
+        """
+        :param str tag_id: A tag ID
+        :return list: All tags from this file with the given ID
+        """
+        if self.ext == "mp3":
+            return self.tags.getall(tag_id.upper())         # all MP3 tags are uppercase; some MP4 tags are mixed case
+        return self.tags[tag_id]                            # MP4Tags doesn't have getall() and always returns a list
 
     def tags_named(self, tag_name):
-        if self.file_type == "mp3":
-            return self.tags.getall(self.tag_name_to_id(tag_name))
-        return self.tags[self.tag_name_to_id(tag_name)]     # MP4Tags doesn't have getall() and always returns a list
+        """
+        :param str tag_name: A tag name; see :meth:`.tag_name_to_id` for mapping of names to IDs
+        :return list: All tags from this file with the given name
+        """
+        return self.tags_for_id(self.tag_name_to_id(tag_name))
 
-    def tag_named(self, tag_name):
-        return self.tags[self.tag_name_to_id(tag_name)]
+    def get_tag(self, tag, by_id=False):
+        """
+        :param str tag: The name of the tag to retrieve, or the tag ID if by_id is set to True
+        :param bool by_id: The provided value was a tag ID rather than a tag name
+        :return: The tag object if there was a single instance of the tag with the given name/ID
+        :raises: :class:`TagValueException` if multiple tags were found with the given name/ID
+        :raises: :class:`TagNotFound` if no tags were found with the given name/ID
+        """
+        tags = self.tags_for_id(tag) if by_id else self.tags_named(tag)
+        if len(tags) > 1:
+            fmt = "Multiple {!r} tags found for {}: {}"
+            raise TagValueException(fmt.format(tag, self, ", ".join(map(repr, tags))))
+        elif not tags:
+            raise TagNotFound("No {!r} tags were found for {}".format(tag, self))
+        return tags[0]
+
+    def tag_text(self, tag, strip=True, by_id=False):
+        """
+        :param str tag: The name of the tag to retrieve, or the tag ID if by_id is set to True
+        :param bool strip: Strip leading/trailing spaces from the value before returning it
+        :param bool by_id: The provided value was a tag ID rather than a tag name
+        :return str: The text content of the tag with the given name if there was a single value
+        :raises: :class:`TagValueException` if multiple values existed for the given tag
+        """
+        _tag = self.get_tag(tag, by_id)
+        vals = getattr(_tag, "text", _tag)
+        if not isinstance(vals, list):
+            vals = [vals]
+        vals = list(map(str, vals))
+        if len(vals) > 1:
+            fmt = "Multiple {!r} values found for {}: {}"
+            raise TagValueException(fmt.format(tag, self, ", ".join(map(repr, vals))))
+        elif not vals:
+            raise TagValueException("No {!r} tag values were found for {}".format(tag, self))
+        return vals[0].strip() if strip else vals[0]
 
     def all_tag_text(self, tag_name, suppress_exc=True):
         try:
@@ -395,6 +535,44 @@ class AcoustidDB:
         # return self.get_track(best_ids[0])
 
 
+class TagException(Exception):
+    """Generic exception related to problems with tags"""
+
+
+class TagNotFound(TagException):
+    """Exception to be raised when a given tag cannot be found"""
+
+
+class TagAccessException(TagException):
+    """Exception to be raised when unable to access a given tag"""
+    def __init__(self, tag, file_obj):
+        self.tag = tag
+        self.obj = file_obj
+
+
+class UnsupportedTagForFileType(TagAccessException):
+    """Exception to be raised when attempting to access a tag on an unsupported file type"""
+    def __repr__(self):
+        fmt = "Accessing/modifying {!r} tags is not supported on {} because it is a {!r} file"
+        return fmt.format(self.tag, self.obj, self.obj.ext)
+
+
+class InvalidTagName(TagAccessException):
+    """Exception to be raised when attempting to retrieve the value for a tag that does not exist"""
+    def __repr__(self):
+        return "Invalid tag name {!r} for file {}".format(self.tag, self.obj)
+
+
+class TagValueException(TagException):
+    """Exception to be raised when a tag with an unexpected value is encountered"""
+
+
+class WikiMatchException(Exception):
+    """Exception to be raised when unable to find a match for a given field in the wiki"""
+
+
 if __name__ == "__main__":
     from ds_tools.logging import LogManager
-    lm = LogManager.create_default_logger(2, log_path=None, entry_fmt="%(asctime)s %(name)s %(message)s")
+    from .patches import apply_repr_patches
+    apply_repr_patches()
+    lm = LogManager.create_default_logger(0, log_path=None, entry_fmt="%(asctime)s %(name)s %(message)s")

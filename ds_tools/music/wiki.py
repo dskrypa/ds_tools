@@ -7,7 +7,9 @@
 import logging
 import os
 import re
+import string
 from collections import OrderedDict
+from itertools import chain
 from urllib.parse import urlparse, quote as url_quote
 from weakref import WeakValueDictionary
 
@@ -27,6 +29,8 @@ NUMS = {
     "first": "1st", "second": "2nd", "third": "3rd", "fourth": "4th", "fifth": "5th", "sixth": "6th",
     "seventh": "7th", "eighth": "8th", "ninth": "9th", "tenth": "10th", "debut": "1st"
 }
+PATH_SANITIZATION_TABLE = str.maketrans({"*": "", ";": "", "/": "_", ":": "-"})
+STRIP_TBL = str.maketrans({c: "" for c in chain(string.whitespace, string.punctuation)})
 QMARKS = "\"“"
 
 
@@ -469,7 +473,7 @@ class Artist(WikiObject):
         return list(self._albums())
 
     def album_for_uri(self, uri_path):
-        for album in self:
+        for album in self.albums:
             if album._uri_path == uri_path:
                 return album
         return None
@@ -483,6 +487,12 @@ class Artist(WikiObject):
         # If no exact match was found, try again with lower case titles
         for album in self:
             if (album.title.lower() == lc_title) and ((album_type is None) or (album_type == album._type)):
+                return album
+
+        # If a match still could not be found, try without any whitespace/punctuation
+        lc_ns_title = lc_title.translate(STRIP_TBL)
+        for album in self:
+            if (album.title.lower().translate(STRIP_TBL) == lc_ns_title) and ((album_type is None) or (album_type == album._type)):
                 return album
         return None
         # err_fmt = "Unable to find an album from {} of type {!r} with title {!r}"
@@ -1105,7 +1115,9 @@ class Song:
         return " ".join(parts)
 
     def expected_filename(self, ext="mp3"):
-        return sanitize("{:02d}. {}.{}".format(self.track, self.file_title, ext))
+        if self.track:
+            return sanitize("{:02d}. {}.{}".format(self.track, self.file_title, ext))
+        return sanitize("{}.{}".format(self.file_title, ext))
 
     def expected_rel_path(self, ext="mp3"):
         return os.path.join(self.album.expected_rel_path, self.expected_filename(ext))
@@ -1172,18 +1184,28 @@ class WikipediaClient(RestClient):
 
 
 def sanitize(text):
-    return re.sub("[*;]", "", text.replace("/", "_").replace(":", "-"))
+    return text.translate(PATH_SANITIZATION_TABLE)
+    # return re.sub("[*;]", "", text.replace("/", "_").replace(":", "-"))
 
 
 def eng_name(obj, name, attr):
-    m = re.match("(.*)\s*\((.*)\)", name)
+    pat = re.compile("(.*)\s*\((.*)\)")
+    m = pat.match(name)
     if m:
-        eng, han = m.groups()
+        eng, han = map(str.strip, m.groups())
         if contains_hangul(eng):
             if contains_hangul(han):
                 raise AttributeError("{} Does not have an {}".format(obj, attr))
-            return han.strip()
-        return eng.strip()
+            m = pat.match(eng)
+            if m:                                       # Use case: 'soloist (as hangul) (group name)'
+                eng, han = map(str.strip, m.groups())
+                if contains_hangul(eng):
+                    if contains_hangul(han):
+                        raise AttributeError("{} Does not have an {}".format(obj, attr))
+                    return han
+                return eng
+            return han
+        return eng
     if contains_hangul(name):
         raise AttributeError("{} Does not have an {}".format(obj, attr))
     return name.strip()
