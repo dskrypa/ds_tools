@@ -57,11 +57,13 @@ def main():
     pws = {hashed(pw): sites for pw, sites in pws.items()}
     fmt_a = "Password for site={}, user={} was compromised! (occurrences: {:,d}; rank: {:,d})"
     fmt_b = "Password {!r} was compromised! (occurrences: {:,d}; rank: {:,d})"
+    pw_hashes = sorted(pws.keys())
     with open(args.pw_list_path, "r") as f:
         for i, line in enumerate(f):
-            for pw in sorted(pws.keys()):
+            for pw in pw_hashes:
                 if pw in line:
                     sites = pws.pop(pw)
+                    pw_hashes = sorted(pws.keys())          # prevent sort on every line
                     count = int(line.split(":")[1].strip())
                     for site, users in sorted(sites.items()):
                         if site == "(provided via cli)":
@@ -69,6 +71,9 @@ def main():
                         else:
                             for user in sorted(users):
                                 print(fmt_a.format(site, user, count, i + 1))
+
+            if not pw_hashes:
+                break
 
     if pws:
         for pw, sites in sorted(pws.items()):
