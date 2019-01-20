@@ -63,7 +63,7 @@ def main():
             for pw in pw_hashes:
                 if pw in line:
                     sites = pws.pop(pw)
-                    pw_hashes = sorted(pws.keys())          # prevent sort on every line
+                    pw_hashes = sorted(pws.keys())              # prevent sort on every line
                     count = int(line.split(":")[1].strip())
                     for site, users in sorted(sites.items()):
                         if site == "(provided via cli)":
