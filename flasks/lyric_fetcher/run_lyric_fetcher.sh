@@ -10,4 +10,4 @@ else
 fi
 
 lf_dir="`dirname $0`"
-/usr/bin/env python3 "$lf_dir"/lyric_fetcher_server.py -p $port & "/c/Program Files (x86)/Mozilla Firefox/firefox.exe" localhost:$port
+/usr/bin/env python3 "$lf_dir"/lyric_fetcher_server.py -p $port & "/c/Program Files/Mozilla Firefox/firefox.exe" localhost:$port
