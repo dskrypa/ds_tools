@@ -408,7 +408,7 @@ class FSCache:
             raise KeyError(item)
 
         kwargs = {} if self.binary else {"encoding": "utf-8"}
-        with open(file_path, self.read_mode, **kwargs) as f:
+        with open(file_path.as_posix(), self.read_mode, **kwargs) as f:
             value = f.read()
 
         log.log(9, "Returning value for {!r} from {!r}".format(item, file_path.as_posix()))
@@ -421,7 +421,7 @@ class FSCache:
 
         kwargs = {} if self.binary else {"encoding": "utf-8"}
         log.log(9, "Storing value for {!r} in {!r}".format(key, file_path.as_posix()))
-        with open(file_path, self.write_mode, **kwargs) as f:
+        with open(file_path.as_posix(), self.write_mode, **kwargs) as f:
             f.write(value)
 
 

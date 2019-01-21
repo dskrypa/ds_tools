@@ -13,7 +13,7 @@ from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 
-import acoustid
+# import acoustid
 import mutagen
 import mutagen.id3._frames
 from mutagen.id3 import ID3, TDRC, TIT2
@@ -444,10 +444,10 @@ class ExtendedMutagenFile:
         with open(self.filename, "rb") as f:
             return sha256(f.read()).hexdigest()
 
-    @cached_property
-    def acoustid_fingerprint(self):
-        """Returns the 2-tuple of this file's (duration, fingerprint)"""
-        return acoustid.fingerprint_file(self.filename)
+    # @cached_property
+    # def acoustid_fingerprint(self):
+    #     """Returns the 2-tuple of this file's (duration, fingerprint)"""
+    #     return acoustid.fingerprint_file(self.filename)
 
 
 def load_tags(paths):
@@ -501,38 +501,38 @@ def _load_tags(tag_info, file_path):
                 log.debug("Loaded pickled tag info from {}".format(file_path))
 
 
-class AcoustidDB:
-    lookup_meta = "recordings releasegroups"
-
-    def __init__(self, apikey=None, keyfile="~/acoustid_apikey.txt"):
-        if apikey is None:
-            keyfile_path = os.path.expanduser(keyfile)
-            try:
-                with open(keyfile_path, "r") as keyfile:
-                    apikey = keyfile.read()
-            except OSError as e:
-                raise ValueError("An API key is required; unable to find or read {}".format(keyfile_path))
-        self.apikey = apikey
-        self._cache = DBCache("acoustid", db_dir=get_user_cache_dir(permissions=0o1777), preserve_old=True)
-
-    @cached("_cache", lock=True, key=CacheKey.simple_noself)
-    def _lookup(self, duration, fingerprint, meta=None):
-        return acoustid.lookup(self.apikey, fingerprint, duration, meta or self.lookup_meta)
-
-    def lookup(self, emf):
-        results = self._lookup(*emf.acoustid_fingerprint)#["results"]
-
-        return results
-
-        # best = max(results, key=itemgetter("score"))
-        #
-        # return best
-
-        # best_ids = [rec["id"] for rec in best["recordings"]]
-        # if len(best_ids) > 1:
-        #     logging.warning("Found multiple recordings in best result with score {}: {}".format(best["score"], ", ".join(best_ids)))
-        #
-        # return self.get_track(best_ids[0])
+# class AcoustidDB:
+#     lookup_meta = "recordings releasegroups"
+#
+#     def __init__(self, apikey=None, keyfile="~/acoustid_apikey.txt"):
+#         if apikey is None:
+#             keyfile_path = os.path.expanduser(keyfile)
+#             try:
+#                 with open(keyfile_path, "r") as keyfile:
+#                     apikey = keyfile.read()
+#             except OSError as e:
+#                 raise ValueError("An API key is required; unable to find or read {}".format(keyfile_path))
+#         self.apikey = apikey
+#         self._cache = DBCache("acoustid", db_dir=get_user_cache_dir(permissions=0o1777), preserve_old=True)
+#
+#     @cached("_cache", lock=True, key=CacheKey.simple_noself)
+#     def _lookup(self, duration, fingerprint, meta=None):
+#         return acoustid.lookup(self.apikey, fingerprint, duration, meta or self.lookup_meta)
+#
+#     def lookup(self, emf):
+#         results = self._lookup(*emf.acoustid_fingerprint)#["results"]
+#
+#         return results
+#
+#         # best = max(results, key=itemgetter("score"))
+#         #
+#         # return best
+#
+#         # best_ids = [rec["id"] for rec in best["recordings"]]
+#         # if len(best_ids) > 1:
+#         #     logging.warning("Found multiple recordings in best result with score {}: {}".format(best["score"], ", ".join(best_ids)))
+#         #
+#         # return self.get_track(best_ids[0])
 
 
 class TagException(Exception):
