@@ -50,7 +50,7 @@ def iter_categorized_music_files(paths):
         paths = [paths]
 
     for path in paths:
-        path = os.path.abspath(path)
+        path = os.path.abspath(os.path.expanduser(path))
         if os.path.isdir(path):
             if path.endswith(("/", "\\")):
                 path = path[:-1]
@@ -72,7 +72,7 @@ def iter_music_albums(paths):
         paths = [paths]
 
     for path in paths:
-        path = os.path.abspath(path)
+        path = os.path.abspath(os.path.expanduser(path))
         if os.path.isdir(path):
             if path.endswith(("/", "\\")):
                 path = path[:-1]
@@ -90,7 +90,7 @@ def iter_music_files(paths, include_backups=False):
         paths = [paths]
 
     for path in paths:
-        path = os.path.abspath(path)
+        path = os.path.abspath(os.path.expanduser(path))
         if os.path.isdir(path):
             if path.endswith(("/", "\\")):
                 path = path[:-1]
@@ -289,8 +289,8 @@ class ExtendedMutagenFile:
 
     @cached_property
     def wiki_song(self):
-        album = self.wiki_album
-        return album.find_track(self.tag_title) if album else None
+        artist = self.wiki_artist
+        return artist.find_song(self.tag_title, album=self.wiki_album) if artist else None
 
     @cached_property
     def wiki_expected_rel_path(self):
@@ -575,4 +575,4 @@ if __name__ == "__main__":
     from ds_tools.logging import LogManager
     from .patches import apply_repr_patches
     apply_repr_patches()
-    lm = LogManager.create_default_logger(0, log_path=None, entry_fmt="%(asctime)s %(name)s %(message)s")
+    lm = LogManager.create_default_logger(2, log_path=None, entry_fmt="%(asctime)s %(name)s %(message)s")

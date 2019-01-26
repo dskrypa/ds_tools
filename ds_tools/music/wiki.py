@@ -9,11 +9,13 @@ import os
 import re
 import string
 from collections import OrderedDict
-from itertools import chain
+from functools import partial
 from urllib.parse import urlparse, quote as url_quote
 from weakref import WeakValueDictionary
 
 import bs4
+# import Levenshtein as lev
+from fuzzywuzzy import fuzz, process as fuzz_process
 
 from ..exceptions import CodeBasedRestException
 from ..http import RestClient
@@ -25,12 +27,13 @@ from ..utils import (
 __all__ = ["KpopWikiClient", "WikipediaClient", "Artist", "Album", "Song", "InvalidArtistException", "TitleParser"]
 log = logging.getLogger("ds_tools.music.wiki")
 
+JUNK_CHARS = string.whitespace + string.punctuation
 NUMS = {
     "first": "1st", "second": "2nd", "third": "3rd", "fourth": "4th", "fifth": "5th", "sixth": "6th",
     "seventh": "7th", "eighth": "8th", "ninth": "9th", "tenth": "10th", "debut": "1st"
 }
 PATH_SANITIZATION_TABLE = str.maketrans({"*": "", ";": "", "/": "_", ":": "-"})
-STRIP_TBL = str.maketrans({c: "" for c in chain(string.whitespace, string.punctuation)})
+STRIP_TBL = str.maketrans({c: "" for c in JUNK_CHARS})
 QMARKS = "\"“"
 
 
@@ -445,7 +448,10 @@ class Artist(WikiObject):
             else:
                 url = urlparse(link)
                 if url.hostname == "en.wikipedia.org":
-                    return Album(self, album, lang, album_type, year, collabs, addl_info, url.path[6:], WikipediaClient())
+                    album = Album(self, album, lang, album_type, year, collabs, addl_info, url.path[6:], WikipediaClient())
+                    # noinspection PyStatementEffect
+                    album.tracks    # process page to possibly fix title
+                    return album
                 else:
                     return Album(self, album, lang, album_type, year, collabs, addl_info, None, self._client)
         else:
@@ -478,25 +484,77 @@ class Artist(WikiObject):
                 return album
         return None
 
-    def find_album(self, title, album_type=None):
-        lc_title = title.lower()
-        for album in self:
-            if (album.title == title) and ((album_type is None) or (album_type == album._type)):
-                return album
-        log.debug("No exact {} album match found for title {!r}, trying lower case...".format(self, title))
-        # If no exact match was found, try again with lower case titles
-        for album in self:
-            if (album.title.lower() == lc_title) and ((album_type is None) or (album_type == album._type)):
-                return album
+    def find_album(self, title, album_type=None, threshold=50):
+        albums = {album: album.title for album in self if (album_type is None) or (album_type == album._type)}
+        val, score, album = fuzz_process.extractOne(title, albums, scorer=fuzz.UWRatio)
+        if score == 0:
+            log.debug("{}: No albums were found with a title similar to {!r}".format(self, title))
+            return None
+        msg = "{}: The album closest to {!r}: {} (score: {})".format(self, title, album, score)
+        if score < threshold:
+            log.debug(msg + " - not being considered a match because score < {}".format(threshold))
+            return None
+        log.debug(msg)
+        return album
 
-        # If a match still could not be found, try without any whitespace/punctuation
-        lc_ns_title = lc_title.translate(STRIP_TBL)
-        for album in self:
-            if (album.title.lower().translate(STRIP_TBL) == lc_ns_title) and ((album_type is None) or (album_type == album._type)):
-                return album
-        return None
+        # dist_func, best_func = lev.ratio, max  # best so far
+        # lc_title = title.lower()
+        # distances = {
+        #     album: best_func(
+        #         best_func(
+        #             dist_func(getattr(album, attr) or "", title),
+        #             dist_func((getattr(album, attr) or "").lower(), lc_title)
+        #         )
+        #         for attr in ("title",)
+        #     )
+        #     for album in self if (album_type is None) or (album_type == album._type)
+        # }
+        # closest = best_func(distances, key=lambda k: distances[k])
+        # closest_dist = distances[closest]
+        # if closest_dist == 0:
+        #     log.debug("{}: No albums were found with a title similar to {!r}".format(self, title))
+        #     return None
+        #
+        # fmt = "{}: The album closest to {!r}: {} (dist: {})"
+        # log.debug(fmt.format(self, title, closest, closest_dist))
+        # return closest
+
+        # lc_title = title.lower()
+        # for album in self:
+        #     if (album.title == title) and ((album_type is None) or (album_type == album._type)):
+        #         return album
+        # log.debug("No exact {} album match found for title {!r}, trying lower case...".format(self, title))
+        # # If no exact match was found, try again with lower case titles
+        # for album in self:
+        #     if (album.title.lower() == lc_title) and ((album_type is None) or (album_type == album._type)):
+        #         return album
+        #
+        # # If a match still could not be found, try without any whitespace/punctuation
+        # lc_ns_title = lc_title.translate(STRIP_TBL)
+        # for album in self:
+        #     if (album.title.lower().translate(STRIP_TBL) == lc_ns_title) and ((album_type is None) or (album_type == album._type)):
+        #         return album
+        # return None
         # err_fmt = "Unable to find an album from {} of type {!r} with title {!r}"
         # raise AlbumNotFoundException(err_fmt.format(self, album_type or "any", title))
+
+    def find_song(self, title, album=None, album_type=None, feat_only=False, threshold=50):
+        if album and not isinstance(album, Album):
+            album = self.find_album(album, album_type)
+
+        if album:
+            return album.find_track(title, threshold)
+        else:
+            closest, score = _find_song(title, [] if feat_only else self, self.feature_tracks)
+            if score == 0:
+                log.debug("{}: No songs were found with a title similar to {!r}".format(self, title))
+                return None
+            msg = "{}: The song closest to {!r}: {} (score: {})".format(self, title, closest, score)
+            if score < threshold:
+                log.debug(msg + " - not being considered a match because score < {}".format(threshold))
+                return None
+            log.debug(msg)
+            return closest
 
 
 class CollaborationSong:
@@ -711,6 +769,7 @@ class Album(WikiObject):
         # If this is using the WikipediaClient, then it's likely for a non-Korean artist
         page_content = self._page_content
         side_bar = page_content.find("table", class_=re.compile("infobox vevent.*"))
+        self.title = side_bar.find("th", class_="summary").text     # Collaborations often use song title in link
         desc = side_bar.find("th", class_="description")
         alb_type = self._type
         for ele in desc:
@@ -961,43 +1020,54 @@ class Album(WikiObject):
     def tracks(self):
         return list(self._tracks())
 
-    def find_track(self, title, track_num=None):
-        attrs = ("file_title", "title", "inverse_han_eng_title")
-        for attr in attrs:
-            for track in self:
-                if getattr(track, attr) == title:
-                    return track
+    def find_track(self, title, threshold=50):
+        closest, score = _find_song(title, [self])
+        if score == 0:
+            log.debug("{}: No songs were found with a title similar to {!r}".format(self, title))
+            return None
+        msg = "{}: The song closest to {!r}: {} (score: {})".format(self, title, closest, score)
+        if score < threshold:
+            log.debug(msg + " - not being considered a match because score < {}".format(threshold))
+            return None
+        log.debug(msg)
+        return closest
 
-        log.debug("No exact {} track match found for title {!r}, trying lower case...".format(self, title))
-        lc_title = title.lower()
-        for attr in attrs:
-            for track in self:
-                if getattr(track, attr).lower() == lc_title:
-                    return track
-
-        log.debug("No exact {} lower-case track match found for title {!r}, trying languages...".format(self, title))
-        for track in self:
-            if title in (track.english_title, track.hangul_title):
-                return track
-        for track in self:
-            if lc_title == track.english_title.lower():
-                return track
-
-        log.debug("No exact {} language-specific lower-case track match found for title {!r}, trying without punctuation...".format(self, title))
-        no_punc = strip_punctuation(lc_title)
-        for track in self:
-            track_no_punc = strip_punctuation(track.english_title + "".join(track.extras)).lower()
-            if no_punc == track_no_punc:
-                return track
-            # else:
-            #     log.debug("{!r} != {!r}".format(no_punc, track_no_punc))
-
-        if track_num:
-            for track in self:
-                if track.track == track_num:
-                    return track
-
-        return None
+        # attrs = ("file_title", "title", "inverse_han_eng_title")
+        # for attr in attrs:
+        #     for track in self:
+        #         if getattr(track, attr) == title:
+        #             return track
+        #
+        # log.debug("No exact {} track match found for title {!r}, trying lower case...".format(self, title))
+        # lc_title = title.lower()
+        # for attr in attrs:
+        #     for track in self:
+        #         if getattr(track, attr).lower() == lc_title:
+        #             return track
+        #
+        # log.debug("No exact {} lower-case track match found for title {!r}, trying languages...".format(self, title))
+        # for track in self:
+        #     if title in (track.english_title, track.hangul_title):
+        #         return track
+        # for track in self:
+        #     if lc_title == track.english_title.lower():
+        #         return track
+        #
+        # log.debug("No exact {} language-specific lower-case track match found for title {!r}, trying without punctuation...".format(self, title))
+        # no_punc = strip_punctuation(lc_title)
+        # for track in self:
+        #     track_no_punc = strip_punctuation(track.english_title + "".join(track.extras)).lower()
+        #     if no_punc == track_no_punc:
+        #         return track
+        #     # else:
+        #     #     log.debug("{!r} != {!r}".format(no_punc, track_no_punc))
+        #
+        # if track_num:
+        #     for track in self:
+        #         if track.track == track_num:
+        #             return track
+        #
+        # return None
         # raise ValueError("Unable to find a song from {} with title {!r}".format(self, title))
 
     @cached_property
@@ -1133,7 +1203,7 @@ class KpopWikiClient(RestClient):
 
     def __init__(self):
         if not getattr(self, "_KpopWikiClient__initialized", False):
-            super().__init__("kpop.wikia.com", rate_limit=1, prefix="wiki")
+            super().__init__("kpop.fandom.com", rate_limit=1, prefix="wiki")
             self._page_cache = FSCache(cache_subdir="kpop_wiki", prefix="get__", ext="html")
             self.__initialized = True
 
@@ -1231,6 +1301,74 @@ def unsurround(a_str):
         if a_str.startswith(a) and a_str.endswith(b):
             a_str = a_str[1:-1].strip()
     return a_str
+
+
+def _find_song(title, albums, features=None):
+    """
+    :param str title: The string for which the closest match should be found
+    :param iterable albums: Iterable that yields :class:`Album` instances
+    :param iterable|None features: Feature tracks
+    :return tuple: (Song|CollaborationSong, int|float)
+    """
+    # def dist_func(a, b):
+    #     return SequenceMatcher(lambda c: c in JUNK_CHARS, a, b).ratio()
+    # best_func = max
+
+    # dist_func, best_func = lev.distance, min          # did not handle hangul well
+    # dist_func, best_func = lev.jaro_winkler, max      # did not handle hangul well
+    # dist_func, best_func = lev.ratio, max               # best so far
+
+    # scorer = fuzz.UWRatio
+    scorer = partial(fuzz.token_sort_ratio, force_ascii=False)
+
+    best_score, best_song = 0, None
+    for attr in ("title", "file_title", "english_title", "hangul_title", "inverse_han_eng_title"):
+        songs = {track: getattr(track, attr) or "" for album in albums for track in album}
+        val, score, song = fuzz_process.extractOne(title, songs, scorer=scorer)
+        log.debug("Best match for {!r} based on {!r}: {} ({})".format(title, attr, song, score))
+        if score == 100:
+            return song, score
+        else:
+            if score > best_score:
+                best_score = score
+                best_song = song
+
+    if features:
+        songs = {track: track.title for track in features}
+        val, score, song = fuzz_process.extractOne(title, songs, scorer=scorer)
+        log.debug("Best match for {!r} from features: {} ({})".format(title, song, score))
+        if score == 100:
+            return song, score
+        else:
+            if score > best_score:
+                best_score = score
+                best_song = song
+
+    return best_song, best_score
+
+    #
+    # lc_title = title.lower()
+    # distances = {
+    #     track: best_func(
+    #         best_func(
+    #             dist_func(getattr(track, attr) or "", title),
+    #             dist_func((getattr(track, attr) or "").lower(), lc_title)
+    #         )
+    #         for attr in ("title", "file_title", "english_title", "hangul_title")
+    #     )
+    #     for album in albums
+    #     for track in album
+    # }
+    # if features:
+    #     for track in features:
+    #         distances[track] = best_func(
+    #             dist_func(track.title, title),
+    #             dist_func(track.title.lower(), lc_title)
+    #         )
+    #
+    # closest = best_func(distances, key=lambda k: distances[k])
+    # closest_dist = distances[closest]
+    # return closest, closest_dist
 
 
 class InvalidArtistException(Exception):
