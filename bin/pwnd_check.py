@@ -8,15 +8,9 @@ import sys
 from collections import defaultdict
 from csv import DictReader
 from hashlib import sha1
+from pathlib import Path
 
-_script_path = os.path.abspath(__file__)
-if os.path.islink(_script_path):
-    _link_path = os.readlink(_script_path)
-    if _link_path.startswith(".."):
-        _script_path = os.path.abspath(os.path.join(os.path.dirname(_script_path), _link_path))
-    else:
-        _script_path = os.path.abspath(_link_path)
-sys.path.append(os.path.dirname(os.path.dirname(_script_path)))
+sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
 from ds_tools.logging import LogManager
 from ds_tools.utils import ArgParser
 

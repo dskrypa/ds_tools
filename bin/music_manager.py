@@ -41,14 +41,7 @@ import mutagen.id3._frames
 from mutagen.id3 import ID3, TDRC, TIT2
 from mutagen.mp4 import MP4Tags
 
-_script_path = os.path.abspath(__file__)
-if os.path.islink(_script_path):
-    _link_path = os.readlink(_script_path)
-    if _link_path.startswith(".."):
-        _script_path = os.path.abspath(os.path.join(os.path.dirname(_script_path), _link_path))
-    else:
-        _script_path = os.path.abspath(_link_path)
-sys.path.append(os.path.dirname(os.path.dirname(_script_path)))
+sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
 from ds_tools.http import CodeBasedRestException
 from ds_tools.logging import LogManager
 from ds_tools.music import (
@@ -162,7 +155,7 @@ def main():
     elif args.action == "set":
         set_tags(args.path, args.tag, args.value, args.replace, args.partial, args.dry_run)
     elif args.action == "list":
-        tools_dir = os.path.dirname(os.path.dirname(_script_path))
+        tools_dir = Path(__file__).expanduser().resolve().parents[1].as_posix()
         with open(os.path.join(tools_dir, "music", "artist_dir_to_artist.json"), "r", encoding="utf-8") as f:
             dir2artist = json.load(f)
 

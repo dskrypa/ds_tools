@@ -8,11 +8,11 @@ Python 3 / Requests rewrite of an old script used to pull BLU spell info from BG
 
 import argparse
 import logging
-import os
 import sys
 from bs4 import BeautifulSoup
+from pathlib import Path
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
 from ds_tools.http import RestClient
 from ds_tools.logging import LogManager
 from ds_tools.utils import Table, SimpleColumn, Printer
