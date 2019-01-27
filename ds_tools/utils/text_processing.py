@@ -3,9 +3,16 @@
 
 import logging
 import re
+import string
 
-__all__ = ["Token", "RecursiveDescentParser", "UnexpectedTokenError"]
+__all__ = ["Token", "RecursiveDescentParser", "UnexpectedTokenError", "strip_punctuation"]
 log = logging.getLogger("ds_tools.utils.text_processing")
+
+PUNC_STRIP_TBL = str.maketrans({c: "" for c in string.punctuation})
+
+
+def strip_punctuation(a_str):
+    return re.sub("\s+", "", a_str).translate(PUNC_STRIP_TBL)
 
 
 class Token:
