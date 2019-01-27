@@ -9,6 +9,7 @@ import os
 import pickle
 import re
 import string
+import traceback
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -22,7 +23,7 @@ from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
 
 from ..http import CodeBasedRestException
 from ..utils import cached_property, DBCache, cached, get_user_cache_dir, CacheKey, format_duration, is_hangul
-from .wiki import Artist, eng_name
+from .wiki import Artist, eng_name, split_name
 
 __all__ = [
     "ExtendedMutagenFile", "FakeMusicFile", "iter_music_files", "load_tags", "iter_music_albums",
@@ -159,7 +160,7 @@ class ExtendedMutagenFile:
 
     def __repr__(self):
         ftype = "[{}]".format(self.ext) if self.ext is not None else ""
-        return "<{}{}({!r})>".format(type(self).__name__, ftype, self.filename)
+        return "<{}({!r}){}>".format(type(self).__name__, self.filename, ftype)
 
     def save(self):
         self.tags.save(self._f.filename)
@@ -221,18 +222,24 @@ class ExtendedMutagenFile:
     @cached_property
     def wiki_artist(self):
         try:
-            eng = eng_name(self, self.tag_artist, "english_artist")
-        except AttributeError as e:
-            if is_hangul(self.tag_artist):
-                try:
-                    eng = eng_name(self, self.artist_dir, "english_artist")
-                except AttributeError as e:
-                    log.error("{}: Unable to find Wiki artist - unable to parse english name from {!r}".format(self, self.tag_artist))
-                    return None
-            else:
-                log.error("{}: Unable to find Wiki artist - unable to parse english name from {!r}".format(self, self.tag_artist))
-                return None
+            eng, han = split_name(self.tag_artist)
+        except ValueError as e:
+            log.error("Error splitting into eng+han: {!r}".format(self.tag_artist))
+            return None
 
+        # try:
+        #     eng = eng_name(self, self.tag_artist, "english_artist")
+        # except AttributeError as e:
+        #     if is_hangul(self.tag_artist):
+        #         try:
+        #             eng = eng_name(self, self.artist_dir, "english_artist")
+        #         except AttributeError as e:
+        #             log.error("{}: Unable to find Wiki artist - unable to parse english name from {!r}".format(self, self.tag_artist))
+        #             return None
+        #     else:
+        #         log.error("{}: Unable to find Wiki artist - unable to parse english name from {!r}".format(self, self.tag_artist))
+        #         return None
+        #
         lc_dir = self.artist_dir.lower()
         lc_eng = eng.lower()
         if (lc_eng != lc_dir) and (lc_dir in lc_eng):
@@ -243,54 +250,85 @@ class ExtendedMutagenFile:
         try:
             return Artist(eng)
         except CodeBasedRestException as e:
+            m = re.match("^(.*?)\s*\((.*)\)$", eng)
+            if m:
+                name = m.group(1).strip().lower()
+                group_name = m.group(2).strip()
+                try:
+                    group = Artist(group_name)
+                except CodeBasedRestException as e2:
+                    log.error("Error retrieving information from wiki about artist {!r} for {}: {}".format(group_name, self, e))
+                else:
+                    for member in group.members():
+                        member_artist = member[-1]
+                        if member_artist and member_artist.english_name.lower() == name:
+                            return member_artist
+
             log.error("Error retrieving information from wiki about artist {!r} for {}: {}".format(eng, self, e))
             return None
 
     @cached_property
     def wiki_album(self):
-        artist = self.wiki_artist
-        album = artist.find_album(self.album_name_cleaned) if artist else None
-        if album:
-            return album
+        try:
+            artist = self.wiki_artist
+            album = artist.find_album(self.album_name_cleaned) if artist else None
+            if album:
+                return album
 
-        if artist:
-            album_name = self.album_name_cleaned.lower().translate(PUNC_STRIP_TBL)
-            match = self._find_album_match(album_name)
-            if not match:
-                if is_hangul(album_name):
-                    album = artist.find_album(self.album_from_dir)
-                    if album:
-                        return album
-                    album_name = self.album_from_dir.lower().translate(PUNC_STRIP_TBL)
-                    match = self._find_album_match(album_name)
+            if artist:
+                song = artist.find_song(self.tag_title)
+                if song:
+                    self.__dict__["wiki_song"] = song
+                    album = song.album
+                    log.debug("Matched {} to {} via song".format(self, album))
+                    return album
+            log.error("Unable to match album {!r} for {}".format(self.album_name_cleaned, self))
 
-            if not match:
-                for album in artist:
-                    if album.type == "Collaborations" and album.title == self.tag_title:
-                        return album
-                log.error("Unable to match album {!r} for {}".format(self.album_name_cleaned, self))
-            return match
-        return None
+            # if artist:
+            #     album_name = self.album_name_cleaned.lower().translate(PUNC_STRIP_TBL)
+            #     match = self._find_album_match(album_name)
+            #     if not match:
+            #         if is_hangul(album_name):
+            #             album = artist.find_album(self.album_from_dir)
+            #             if album:
+            #                 return album
+            #             album_name = self.album_from_dir.lower().translate(PUNC_STRIP_TBL)
+            #             match = self._find_album_match(album_name)
+            #
+            #     if not match:
+            #         for album in artist:
+            #             if album.type == "Collaborations" and album.title == self.tag_title:
+            #                 return album
+            #         log.error("Unable to match album {!r} for {}".format(self.album_name_cleaned, self))
+            #     return match
+            return None
+        except Exception as e:
+            log.error("Encountered {} while trying to find wiki album for {}: {}\n{}".format(type(e).__name__, self, e, traceback.format_exc()))
+            raise e
 
-    def _find_album_match(self, title):
-        candidates = set()
-        # noinspection PyTypeChecker
-        for artist_album in self.wiki_artist:
-            if artist_album.title.lower().translate(PUNC_STRIP_TBL) in title:
-                candidates.add(artist_album)
-        if len(candidates) == 1:
-            match = candidates.pop()
-            log.debug("Matched album {!r} to {} for {}".format(self.album_name_cleaned, match, self))
-            return match
-        elif candidates:
-            fmt = "Found too many potential album matches for {!r} for {}: {}"
-            raise WikiMatchException(fmt.format(self.album_name_cleaned, self, ", ".join(map(repr, sorted(candidates)))))
-        return None
+    # def _find_album_match(self, title):
+    #     candidates = set()
+    #     # noinspection PyTypeChecker
+    #     for artist_album in self.wiki_artist:
+    #         if artist_album.title.lower().translate(PUNC_STRIP_TBL) in title:
+    #             candidates.add(artist_album)
+    #     if len(candidates) == 1:
+    #         match = candidates.pop()
+    #         log.debug("Matched album {!r} to {} for {}".format(self.album_name_cleaned, match, self))
+    #         return match
+    #     elif candidates:
+    #         fmt = "Found too many potential album matches for {!r} for {}: {}"
+    #         raise WikiMatchException(fmt.format(self.album_name_cleaned, self, ", ".join(map(repr, sorted(candidates)))))
+    #     return None
 
     @cached_property
     def wiki_song(self):
         artist = self.wiki_artist
-        return artist.find_song(self.tag_title, album=self.wiki_album) if artist else None
+        try:
+            return artist.find_song(self.tag_title, album=self.wiki_album) if artist else None
+        except Exception as e:
+            log.error("Encountered {} while processing {}: {}".format(type(e).__name__, self, e))
+            raise e
 
     @cached_property
     def wiki_expected_rel_path(self):

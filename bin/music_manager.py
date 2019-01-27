@@ -34,12 +34,14 @@ import string
 import sys
 from collections import Counter, defaultdict
 from fnmatch import fnmatch, translate as fnpat2re
+from functools import partial
 from pathlib import Path
 
 import mutagen
 import mutagen.id3._frames
 from mutagen.id3 import ID3, TDRC, TIT2
 from mutagen.mp4 import MP4Tags
+from termcolor import colored
 
 sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
 from ds_tools.http import CodeBasedRestException
@@ -112,6 +114,9 @@ def parser():
     auto_parser = parser.add_subparser("action", "auto", help="Automatically perform the most common tasks")
     auto_parser.add_argument("path", help="A directory that contains directories that contain music files")
 
+    match_parser = parser.add_subparser("action", "match", help="Test matching files in the given directory to songs from wiki")
+    match_parser.add_argument("path", help="A directory that contains directories that contain music files")
+
     parser.include_common_args("verbosity", "dry_run")
     return parser
 
@@ -155,29 +160,63 @@ def main():
     elif args.action == "set":
         set_tags(args.path, args.tag, args.value, args.replace, args.partial, args.dry_run)
     elif args.action == "list":
-        tools_dir = Path(__file__).expanduser().resolve().parents[1].as_posix()
-        with open(os.path.join(tools_dir, "music", "artist_dir_to_artist.json"), "r", encoding="utf-8") as f:
-            dir2artist = json.load(f)
-
-        for _dir, disp_name in sorted(dir2artist.items()):
-            if not disp_name:
-                artist_dir = os.path.join(args.path, _dir)
-                if os.path.exists(artist_dir):
-                    for mfile in iter_music_files(artist_dir):
-                        try:
-                            artist = mfile.tags["TPE1"].text[0]
-                        except KeyError as e:
-                            pass
-                        else:
-                            if "," not in artist:
-                                print("\"{}\": \"{}\",".format(_dir, artist))
-                                break
-                else:
-                    print("\"{}\": \"{}\",".format(_dir, ""))
-            else:
-                print("\"{}\": \"{}\",".format(_dir, disp_name))
+        list_dir2artist(args.path)
+    elif args.action == "match":
+        match_wiki(args.path)
     else:
         log.error("Unconfigured action")
+
+
+def match_wiki(path):
+    cyan = lambda raw, pre: colored(pre, "cyan")
+    green = lambda raw, pre: colored(pre, "green")
+
+    tbl = Table(
+        SimpleColumn("File Artist", formatter=cyan), SimpleColumn("Wiki Artist", formatter=green),
+        SimpleColumn("File Album", formatter=cyan), SimpleColumn("Wiki Album", formatter=green),
+        SimpleColumn("File Alb Type", formatter=cyan), SimpleColumn("Wiki Alb Type", formatter=green),
+        SimpleColumn("File Title", formatter=cyan), SimpleColumn("Wiki Title", formatter=green),
+        sort_by=("File Artist", "File Album", "File Title"), update_width=True
+    )
+
+    rows = []
+    for music_file in iter_music_files(path):
+        rows.append({
+            "File Artist": music_file.tag_artist,
+            "File Album": music_file.album_name_cleaned,
+            "File Alb Type": music_file.album_type_dir,
+            "File Title": music_file.tag_title,
+            "Wiki Artist": music_file.wiki_artist.name if music_file.wiki_artist else "",
+            "Wiki Album": music_file.wiki_album.title if music_file.wiki_album else "",
+            "Wiki Alb Type": music_file.wiki_album.type if music_file.wiki_album else "",
+            "Wiki Title": music_file.wiki_song.file_title if music_file.wiki_song else "",
+        })
+
+    tbl.print_rows(rows)
+
+
+def list_dir2artist(path):
+    tools_dir = Path(__file__).expanduser().resolve().parents[1].as_posix()
+    with open(os.path.join(tools_dir, "music", "artist_dir_to_artist.json"), "r", encoding="utf-8") as f:
+        dir2artist = json.load(f)
+
+    for _dir, disp_name in sorted(dir2artist.items()):
+        if not disp_name:
+            artist_dir = os.path.join(path, _dir)
+            if os.path.exists(artist_dir):
+                for mfile in iter_music_files(artist_dir):
+                    try:
+                        artist = mfile.tags["TPE1"].text[0]
+                    except KeyError as e:
+                        pass
+                    else:
+                        if "," not in artist:
+                            print("\"{}\": \"{}\",".format(_dir, artist))
+                            break
+            else:
+                print("\"{}\": \"{}\",".format(_dir, ""))
+        else:
+            print("\"{}\": \"{}\",".format(_dir, disp_name))
 
 
 def path2tag(path, dry_run, incl_title):

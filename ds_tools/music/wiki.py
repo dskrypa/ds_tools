@@ -352,12 +352,20 @@ class Artist(WikiObject):
         if members_container.name == "ul":
             for li in members_container:
                 m = re.match("(.*?)\s*-\s*(.*)", li.text)
-                members.append(tuple(map(str.strip, m.groups())))
+                member = list(map(str.strip, m.groups()))
+                a = li.find("a")
+                if a:
+                    member.append(Artist(a.get("href")[6:]))
+                else:
+                    member.append(None)
+                members.append(member)
         elif members_container.name == "table":
             for tr in members_container.find_all("tr"):
                 vals = [td.text.strip() for td in tr.find_all("td")]
                 if vals:
-                    members.append(tuple(map(str.strip, vals)))
+                    member = list(map(str.strip, vals))
+                    member.append(None)
+                    members.append(member)
         return members
 
     def __iter__(self):
@@ -371,8 +379,15 @@ class Artist(WikiObject):
         last_album = None
         ele = discography_h2.next_sibling
         while True:
+            full_break = False
             while not isinstance(ele, bs4.element.Tag):     # Skip past NavigableString objects
+                if ele is None:
+                    full_break = True
+                    break
                 ele = ele.next_sibling
+            if full_break:
+                break
+
             val_type = h_levels.get(ele.name)
             if val_type == "language":                      # *almost* always h3, but sometimes type is h3
                 val = next(ele.children).get("id")
@@ -433,7 +448,7 @@ class Artist(WikiObject):
 
         first_a = ele.find("a")
         if first_a:
-            link = first_a.get("href")
+            link = first_a.get("href") or ""
             album = first_a.text
             if album_name != album:
                 if is_feature_or_collab:  # likely a feature / single with a link to a collaborator
@@ -861,18 +876,19 @@ class Album(WikiObject):
                 elif any((val in artist) and (val not in artist_eng_name) for val in ("feat", "with")):
                     return
 
-                try:
-                    self.artist = Artist(artist)
-                except AmbiguousArtistException as e:
-                    found_alt = False
-                    eng_alb_artist = self.artist.english_name.replace(" ", "_")
-                    for alt in e.alternatives:
-                        if eng_alb_artist in alt:   # Solo artist with common name + group name for disambiguation
-                            found_alt = True
-                            self.artist = Artist(alt)
-                            break
-                    if not found_alt:
-                        raise e
+                if not any(i in artist for i in "&,;+"):
+                    try:
+                        self.artist = Artist(artist)
+                    except AmbiguousArtistException as e:
+                        found_alt = False
+                        eng_alb_artist = self.artist.english_name.replace(" ", "_")
+                        for alt in e.alternatives:
+                            if eng_alb_artist in alt:   # Solo artist with common name + group name for disambiguation
+                                found_alt = True
+                                self.artist = Artist(alt)
+                                break
+                        if not found_alt:
+                            raise e
 
     def _parse_song(self, ele, song_str, track_num, common_addl_info=None, disk_num=1):
         # log.debug("Parsing song info from: {!r}".format(song_str))
@@ -916,7 +932,7 @@ class Album(WikiObject):
 
             page_content = self._page_content
             self._fix_artist(page_content)
-            track_list_span = page_content.find("span", id="Track_list")
+            track_list_span = page_content.find("span", id="Track_list") or page_content.find("span", id="Tracklist")
             if not track_list_span:
                 if ("single" in self._type) or (self._type in ("other_release", "collaboration", "feature")):
                     content = page_content.find("div", id="mw-content-text")
@@ -1258,6 +1274,42 @@ def sanitize(text):
     # return re.sub("[*;]", "", text.replace("/", "_").replace(":", "-"))
 
 
+def split_name(name):
+    """
+    :param str name: A song/album/artist title
+    :return tuple: (english, hangul)
+    """
+    name = name.strip()
+    if not contains_hangul(name):
+        return name, ""
+
+    pat1 = re.compile(r"^([^()[\]]+[([][^()[\]]+[)\]])\s*[([](.*)[)\]]$")   # name (group) [other lang name (group)]
+    m = pat1.match(name)
+    if m:
+        lang1, lang2 = map(str.strip, m.groups())
+        han1, han2 = map(contains_hangul, m.groups())
+        if han1 and han2:
+            raise ValueError("Unable to split {!r} into separate english/hangul strings".format(name))
+        elif han1:
+            return lang2, lang1
+        elif han2:
+            return lang1, lang2
+
+    pat2 = re.compile(r"^(.*)\s*[([](.*)[)\]]$")  # name (other lang name)
+    m = pat2.match(name)
+    if m:
+        lang1, lang2 = map(str.strip, m.groups())
+        han1, han2 = map(contains_hangul, m.groups())
+        if han1 and han2:
+            raise ValueError("Unable to split {!r} into separate english/hangul strings".format(name))
+        elif han1:
+            return lang2, lang1
+        elif han2:
+            return lang1, lang2
+
+    raise ValueError("Unable to split {!r} into separate english/hangul strings".format(name))
+
+
 def eng_name(obj, name, attr):
     pat = re.compile("(.*)\s*\((.*)\)")
     m = pat.match(name)
@@ -1324,25 +1376,27 @@ def _find_song(title, albums, features=None):
     best_score, best_song = 0, None
     for attr in ("title", "file_title", "english_title", "hangul_title", "inverse_han_eng_title"):
         songs = {track: getattr(track, attr) or "" for album in albums for track in album}
-        val, score, song = fuzz_process.extractOne(title, songs, scorer=scorer)
-        log.debug("Best match for {!r} based on {!r}: {} ({})".format(title, attr, song, score))
-        if score == 100:
-            return song, score
-        else:
-            if score > best_score:
-                best_score = score
-                best_song = song
+        if songs:
+            val, score, song = fuzz_process.extractOne(title, songs, scorer=scorer)
+            log.debug("Best match for {!r} based on {!r}: {} ({})".format(title, attr, song, score))
+            if score == 100:
+                return song, score
+            else:
+                if score > best_score:
+                    best_score = score
+                    best_song = song
 
     if features:
         songs = {track: track.title for track in features}
-        val, score, song = fuzz_process.extractOne(title, songs, scorer=scorer)
-        log.debug("Best match for {!r} from features: {} ({})".format(title, song, score))
-        if score == 100:
-            return song, score
-        else:
-            if score > best_score:
-                best_score = score
-                best_song = song
+        if songs:
+            val, score, song = fuzz_process.extractOne(title, songs, scorer=scorer)
+            log.debug("Best match for {!r} from features: {} ({})".format(title, song, score))
+            if score == 100:
+                return song, score
+            else:
+                if score > best_score:
+                    best_score = score
+                    best_song = song
 
     return best_song, best_score
 
