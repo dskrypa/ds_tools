@@ -28,6 +28,7 @@ __all__ = ["KpopWikiClient", "WikipediaClient", "Artist", "Album", "Song", "Inva
 log = logging.getLogger("ds_tools.music.wiki")
 
 JUNK_CHARS = string.whitespace + string.punctuation
+NUM_STRIP_TBL = str.maketrans({c: "" for c in "0123456789"})
 NUMS = {
     "first": "1st", "second": "2nd", "third": "3rd", "fourth": "4th", "fifth": "5th", "sixth": "6th",
     "seventh": "7th", "eighth": "8th", "ninth": "9th", "tenth": "10th", "debut": "1st"
@@ -342,7 +343,10 @@ class Artist(WikiObject):
         return eng, han.strip(), (stylized.strip() if stylized else stylized)
 
     def __repr__(self):
-        return "<{}({!r})>".format(type(self).__name__, self.stylized_name or self.name)
+        try:
+            return "<{}({!r})>".format(type(self).__name__, self.stylized_name or self.name)
+        except AttributeError as e:
+            return "<{}({!r})>".format(type(self).__name__, self._uri_path)
 
     def members(self):
         content = self._page_content.find("div", id="mw-content-text")
@@ -499,18 +503,30 @@ class Artist(WikiObject):
                 return album
         return None
 
-    def find_album(self, title, album_type=None, threshold=50):
+    def _find_album(self, title, album_type=None, threshold=50):
         albums = {album: album.title for album in self if (album_type is None) or (album_type == album._type)}
         val, score, album = fuzz_process.extractOne(title, albums, scorer=fuzz.UWRatio)
         if score == 0:
             log.debug("{}: No albums were found with a title similar to {!r}".format(self, title))
-            return None
+            return None, score
         msg = "{}: The album closest to {!r}: {} (score: {})".format(self, title, album, score)
+        if score < 100:
+            pat = re.compile("(?P<int>\d+)|(?P<other>\D+)")
+            title_nums = "".join(m.groups()[0] for m in iter(pat.scanner(title).match, None) if m.groups()[0])
+            album_nums = "".join(m.groups()[0] for m in iter(pat.scanner(val).match, None) if m.groups()[0])
+            if title_nums != album_nums:
+                log.debug("The numbers in {!r} != the ones in {!r} => score-40".format(title, val))
+                score -= 40
+
         if score < threshold:
             log.debug(msg + " - not being considered a match because score < {}".format(threshold))
-            return None
+            return None, score
+
         log.debug(msg)
-        return album
+        return album, score
+
+    def find_album(self, *args, **kwargs):
+        return self._find_album(*args, **kwargs)[0]
 
         # dist_func, best_func = lev.ratio, max  # best so far
         # lc_title = title.lower()
@@ -553,23 +569,35 @@ class Artist(WikiObject):
         # err_fmt = "Unable to find an album from {} of type {!r} with title {!r}"
         # raise AlbumNotFoundException(err_fmt.format(self, album_type or "any", title))
 
-    def find_song(self, title, album=None, album_type=None, feat_only=False, threshold=50):
+    def _find_song(self, title, album=None, album_type=None, feat_only=False, threshold=50):
         if album and not isinstance(album, Album):
             album = self.find_album(album, album_type)
 
         if album:
-            return album.find_track(title, threshold)
+            return album._find_track(title, threshold)
         else:
             closest, score = _find_song(title, [] if feat_only else self, self.feature_tracks)
             if score == 0:
                 log.debug("{}: No songs were found with a title similar to {!r}".format(self, title))
-                return None
+                return None, score
             msg = "{}: The song closest to {!r}: {} (score: {})".format(self, title, closest, score)
+
+            if score < 100:
+                pat = re.compile("(?P<int>\d+)|(?P<other>\D+)")
+                title_nums = "".join(m.groups()[0] for m in iter(pat.scanner(title).match, None) if m.groups()[0])
+                album_nums = "".join(m.groups()[0] for m in iter(pat.scanner(closest.file_title).match, None) if m.groups()[0])
+                if title_nums != album_nums:
+                    log.debug("The numbers in {!r} != the ones in {!r} => score-40".format(title, closest.file_title))
+                    score -= 40
+
             if score < threshold:
                 log.debug(msg + " - not being considered a match because score < {}".format(threshold))
-                return None
+                return None, score
             log.debug(msg)
-            return closest
+            return closest, score
+
+    def find_song(self, *args, **kwargs):
+        return self._find_song(*args, **kwargs)[0]
 
 
 class CollaborationSong:
@@ -1036,18 +1064,20 @@ class Album(WikiObject):
     def tracks(self):
         return list(self._tracks())
 
-    def find_track(self, title, threshold=50):
+    def _find_track(self, title, threshold=50):
         closest, score = _find_song(title, [self])
         if score == 0:
             log.debug("{}: No songs were found with a title similar to {!r}".format(self, title))
-            return None
+            return None, score
         msg = "{}: The song closest to {!r}: {} (score: {})".format(self, title, closest, score)
         if score < threshold:
             log.debug(msg + " - not being considered a match because score < {}".format(threshold))
-            return None
+            return None, score
         log.debug(msg)
-        return closest
+        return closest, score
 
+    def find_track(self, *args, **kwargs):
+        return self._find_track(*args, **kwargs)[0]
         # attrs = ("file_title", "title", "inverse_han_eng_title")
         # for attr in attrs:
         #     for track in self:
@@ -1282,6 +1312,8 @@ def split_name(name):
     name = name.strip()
     if not contains_hangul(name):
         return name, ""
+    elif is_hangul(name.translate(NUM_STRIP_TBL)):
+        return "", name
 
     pat1 = re.compile(r"^([^()[\]]+[([][^()[\]]+[)\]])\s*[([](.*)[)\]]$")   # name (group) [other lang name (group)]
     m = pat1.match(name)
@@ -1355,7 +1387,7 @@ def unsurround(a_str):
     return a_str
 
 
-def _find_song(title, albums, features=None):
+def _find_song(title, albums, features=None, try_split=True):
     """
     :param str title: The string for which the closest match should be found
     :param iterable albums: Iterable that yields :class:`Album` instances
@@ -1386,6 +1418,27 @@ def _find_song(title, albums, features=None):
                     best_score = score
                     best_song = song
 
+            if attr == "file_title":
+                _songs = {"eng": {}, "han": {}}
+                for track, file_title in songs.items():
+                    try:
+                        eng, han = split_name(file_title)
+                    except Exception as e:
+                        pass
+                    else:
+                        for lang, val in zip(("eng", "han"), (eng, han)):
+                            if val:
+                                _songs[lang][track] = val
+
+                for lang, lang_songs in _songs.items():
+                    val, score, song = fuzz_process.extractOne(title, lang_songs, scorer=scorer)
+                    log.debug("Best match for {!r} based on {!r}: {} ({})".format(title, attr, song, score))
+                    if score == 100:
+                        return song, score
+                    else:
+                        if score > best_score:
+                            best_score = score
+                            best_song = song
     if features:
         songs = {track: track.title for track in features}
         if songs:
@@ -1398,6 +1451,18 @@ def _find_song(title, albums, features=None):
                     best_score = score
                     best_song = song
 
+    if (best_score <= 70) and try_split:
+        try:
+            eng, han = split_name(title)
+        except ValueError as e:
+            pass
+        else:
+            for lang in (eng, han):
+                if lang:
+                    lang_song, lang_score = _find_song(lang, albums, features, False)
+                    if lang_score > best_score:
+                        best_score = lang_score
+                        best_song = lang_song
     return best_song, best_score
 
     #

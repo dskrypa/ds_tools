@@ -50,7 +50,7 @@ from ds_tools.music import (
     iter_music_files, load_tags, iter_music_albums, iter_categorized_music_files, TagAccessException,
     tag_repr, apply_repr_patches, TagValueException, TagException
 )
-from ds_tools.utils import Table, SimpleColumn, localize, TableBar, num_suffix, ArgParser
+from ds_tools.utils import Table, SimpleColumn, localize, TableBar, num_suffix, ArgParser, uprint
 from music.constants import tag_name_map
 
 log = logging.getLogger("ds_tools.{}".format(__name__))
@@ -170,27 +170,36 @@ def main():
 def match_wiki(path):
     cyan = lambda raw, pre: colored(pre, "cyan")
     green = lambda raw, pre: colored(pre, "green")
+    yellow = lambda raw, pre: colored(pre, "yellow")
 
     tbl = Table(
         SimpleColumn("File Artist", formatter=cyan), SimpleColumn("Wiki Artist", formatter=green),
         SimpleColumn("File Album", formatter=cyan), SimpleColumn("Wiki Album", formatter=green),
+        SimpleColumn("Album Score", formatter=yellow),
         SimpleColumn("File Alb Type", formatter=cyan), SimpleColumn("Wiki Alb Type", formatter=green),
         SimpleColumn("File Title", formatter=cyan), SimpleColumn("Wiki Title", formatter=green),
-        sort_by=("File Artist", "File Album", "File Title"), update_width=True
+        SimpleColumn("Title Score", formatter=yellow),
+        sort_by=("Wiki Artist", "Wiki Album", "File Artist", "File Album", "File Title"), update_width=True
     )
 
     rows = []
     for music_file in iter_music_files(path):
-        rows.append({
-            "File Artist": music_file.tag_artist,
-            "File Album": music_file.album_name_cleaned,
-            "File Alb Type": music_file.album_type_dir,
-            "File Title": music_file.tag_title,
-            "Wiki Artist": music_file.wiki_artist.name if music_file.wiki_artist else "",
-            "Wiki Album": music_file.wiki_album.title if music_file.wiki_album else "",
-            "Wiki Alb Type": music_file.wiki_album.type if music_file.wiki_album else "",
-            "Wiki Title": music_file.wiki_song.file_title if music_file.wiki_song else "",
-        })
+        try:
+            rows.append({
+                "File Artist": music_file.tag_artist,
+                "File Album": music_file.album_name_cleaned,
+                "File Alb Type": music_file.album_type_dir,
+                "File Title": music_file.tag_title,
+                "Wiki Artist": music_file.wiki_artist.name if music_file.wiki_artist else "",
+                "Wiki Album": music_file.wiki_album.title if music_file.wiki_album else "",
+                "Album Score": music_file.wiki_scores.get("album", -1),
+                "Wiki Alb Type": music_file.wiki_album.type if music_file.wiki_album else "",
+                "Wiki Title": music_file.wiki_song.file_title if music_file.wiki_song else "",
+                "Title Score": music_file.wiki_scores.get("song", -1),
+            })
+        except AttributeError as e:
+            log.error("Error processing {}: {}".format(music_file, e))
+            raise e
 
     tbl.print_rows(rows)
 
@@ -211,12 +220,12 @@ def list_dir2artist(path):
                         pass
                     else:
                         if "," not in artist:
-                            print("\"{}\": \"{}\",".format(_dir, artist))
+                            uprint("\"{}\": \"{}\",".format(_dir, artist))
                             break
             else:
-                print("\"{}\": \"{}\",".format(_dir, ""))
+                uprint("\"{}\": \"{}\",".format(_dir, ""))
         else:
-            print("\"{}\": \"{}\",".format(_dir, disp_name))
+            uprint("\"{}\": \"{}\",".format(_dir, disp_name))
 
 
 def path2tag(path, dry_run, incl_title):
@@ -665,9 +674,9 @@ def print_song_tags(paths, tags, meta_only=False):
             print()
 
         if isinstance(music_file.tags, MP4Tags):
-            print("{} [{}] (MP4):".format(music_file.filename, music_file.length_str))
+            uprint("{} [{}] (MP4):".format(music_file.filename, music_file.length_str))
         elif isinstance(music_file.tags, ID3):
-            print("{} [{}] (ID3v{}.{}):".format(music_file.filename, music_file.length_str, *music_file.tags.version[:2]))
+            uprint("{} [{}] (ID3v{}.{}):".format(music_file.filename, music_file.length_str, *music_file.tags.version[:2]))
         else:
             raise TypeError("Unhandled tag type: {}".format(type(music_file.tags).__name__))
 

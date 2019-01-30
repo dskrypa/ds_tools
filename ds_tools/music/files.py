@@ -17,13 +17,14 @@ from pathlib import Path
 # import acoustid
 import mutagen
 import mutagen.id3._frames
+from fuzzywuzzy import fuzz
 from mutagen.id3 import ID3, TDRC, TIT2
 from mutagen.id3._frames import Frame, TextFrame
 from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
 
 from ..http import CodeBasedRestException
 from ..utils import cached_property, DBCache, cached, get_user_cache_dir, CacheKey, format_duration, is_hangul
-from .wiki import Artist, eng_name, split_name
+from .wiki import Artist, eng_name, split_name, CollaborationSong
 
 __all__ = [
     "ExtendedMutagenFile", "FakeMusicFile", "iter_music_files", "load_tags", "iter_music_albums",
@@ -135,7 +136,7 @@ class FakeMusicFile:
 class ExtendedMutagenFile:
     """Adds some properties/methods to mutagen.File types that facilitate other functions"""
     def __new__(cls, file_path, *args, **kwargs):
-        file_path = Path(file_path).as_posix()
+        file_path = Path(file_path).expanduser().as_posix()
         try:
             music_file = mutagen.File(file_path, *args, **kwargs)
         except Exception as e:
@@ -150,7 +151,9 @@ class ExtendedMutagenFile:
             return None
 
     def __init__(self, file_path, *args, **kwargs):
-        pass
+        if not getattr(self, "_ExtendedMutagenFile__initialized", False):
+            self.wiki_scores = {}
+            self.__initialized = True
 
     def __getattr__(self, item):
         return getattr(self._f, item)
@@ -226,6 +229,9 @@ class ExtendedMutagenFile:
         except ValueError as e:
             log.error("Error splitting into eng+han: {!r}".format(self.tag_artist))
             return None
+        else:
+            if not eng:
+                return None
 
         # try:
         #     eng = eng_name(self, self.tag_artist, "english_artist")
@@ -247,6 +253,7 @@ class ExtendedMutagenFile:
             if any(i in lc_eng for i in collab_indicators):
                 log.warning("Using artist {!r} instead of {!r} for {}".format(self.artist_dir, eng, self), extra={"color": "cyan"})
                 return Artist(self.artist_dir)
+                # TODO: Don't use artist dir!
         try:
             return Artist(eng)
         except CodeBasedRestException as e:
@@ -266,19 +273,42 @@ class ExtendedMutagenFile:
 
             log.error("Error retrieving information from wiki about artist {!r} for {}: {}".format(eng, self, e))
             return None
+        except Exception as e:
+            log.error("Error processing {}: {}\n{}".format(self, e, traceback.format_exc()))
+            return None
 
     @cached_property
     def wiki_album(self):
+        self.wiki_scores["album"] = -1
         try:
             artist = self.wiki_artist
-            album = artist.find_album(self.album_name_cleaned) if artist else None
+            album, score = artist._find_album(self.album_name_cleaned) if artist else (None, -1)
             if album:
-                return album
+                if score < 100:
+                    song, song_score = artist._find_song(self.tag_title, album=album)
+                    if not song:
+                        log.debug("{} was a match for album {} with score {}, but the song title did not match a song in that album".format(self, album, score))
+                    else:
+                        self.wiki_scores["album"] = score
+                        return album
+                else:
+                    self.wiki_scores["album"] = score
+                    return album
 
             if artist:
-                song = artist.find_song(self.tag_title)
+                song, song_score = artist._find_song(self.tag_title)
                 if song:
+                    try:
+                        album_score = fuzz.token_sort_ratio(song.album.title, self.album_name_cleaned, force_ascii=False)
+                    except AttributeError as e:
+                        pass                        # If it was a CollaborationSong
+                    else:
+                        if album_score < 60:
+                            log.debug("{} was a match for song {} with score {}, but the album title did not match closely enough ({})".format(self, song, song_score, album_score))
+                            return None
+
                     self.__dict__["wiki_song"] = song
+                    self.wiki_scores["song"] = song_score
                     album = song.album
                     log.debug("Matched {} to {} via song".format(self, album))
                     return album
@@ -323,12 +353,19 @@ class ExtendedMutagenFile:
 
     @cached_property
     def wiki_song(self):
+        self.wiki_scores["song"] = -1
         artist = self.wiki_artist
         try:
-            return artist.find_song(self.tag_title, album=self.wiki_album) if artist else None
+            song, score = artist._find_song(self.tag_title, album=self.wiki_album) if artist else (None, -1)
         except Exception as e:
             log.error("Encountered {} while processing {}: {}".format(type(e).__name__, self, e))
             raise e
+        else:
+            if not self.wiki_album and not isinstance(song, CollaborationSong):
+                return None
+
+            self.wiki_scores["song"] = score
+            return song
 
     @cached_property
     def wiki_expected_rel_path(self):
