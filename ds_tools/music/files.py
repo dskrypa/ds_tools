@@ -717,15 +717,17 @@ class SongFile(ClearableCachedPropertyMixin):
     def wiki_song(self):
         self.wiki_scores["song"] = -1
         artist = self.wiki_artist
+        # noinspection PyTypeChecker
         track = self.tag_text("track", default=None)
-
         try:
             song, score = artist._find_song(self.tag_title, album=self.wiki_album, track=track) if artist else (None, -1)
         except Exception as e:
             log.error("Encountered {} while processing {}: {}".format(type(e).__name__, self, e))
             raise e
         else:
-            if not self.wiki_album and not isinstance(song, CollaborationSong):
+            if song and not self.wiki_album and not isinstance(song, CollaborationSong):
+                fmt = "Song {} on album {} was closest to {}, but it is not a CollaborationSong, and no album-level match was found"
+                log.debug(fmt.format(song, song.album, self))
                 return None
 
             self.wiki_scores["song"] = score
