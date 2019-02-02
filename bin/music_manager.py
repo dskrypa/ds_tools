@@ -48,7 +48,7 @@ from ds_tools.http import CodeBasedRestException
 from ds_tools.logging import LogManager
 from ds_tools.music import (
     iter_music_files, load_tags, iter_music_albums, iter_categorized_music_files, TagAccessException,
-    tag_repr, apply_repr_patches, TagValueException, TagException, iter_album_dirs
+    tag_repr, apply_repr_patches, TagValueException, TagException, iter_album_dirs, RM_TAGS_ID3, RM_TAGS_MP4
 )
 from ds_tools.utils import Table, SimpleColumn, localize, TableBar, num_suffix, ArgParser, uprint
 from music.constants import tag_name_map
@@ -56,9 +56,6 @@ from music.constants import tag_name_map
 log = logging.getLogger("ds_tools.{}".format(__name__))
 
 apply_repr_patches()
-
-RM_TAGS_MP4 = ["*itunes*", "??ID", "?cmt", "ownr", "xid ", "purd"]
-RM_TAGS_ID3 = ["TXXX*", "PRIV*", "WXXX*", "COMM*", "TCOP"]
 
 
 def parser():
@@ -94,8 +91,9 @@ def parser():
 
     wiki_sort_parser = parser.add_subparser("action", "wiki_sort", help="Sort music into directories based on tag info")
     wiki_sort_parser.add_argument("source", metavar="path", help="A directory that contains directories that contain music files")
-    wiki_sort_parser.add_argument("destination", metavar="path", help="The destination directory for the top-level artist directories of the sorted files")
+    wiki_sort_parser.add_argument("destination", metavar="path", nargs="?", help="The destination directory for the top-level artist directories of the sorted files")
     wiki_sort_parser.add_argument("--allow_no_dest", "-N", action="store_true", help="Allow sorting to continue even if there are some files that do not have a new destination")
+    wiki_sort_parser.add_argument("--basic_cleanup", "-B", action="store_true", help="Only run basic cleanup tasks, no wiki updates")
 
     p2t_parser = parser.add_subparser("action", "path2tag", help="Update tags based on the path to each file")
     p2t_parser.add_argument("path", help="A directory that contains directories that contain music files")
@@ -154,7 +152,7 @@ def main():
     elif args.action == "sort":
         sort_albums(args.path, args.dry_run)
     elif args.action == "wiki_sort":
-        sort_by_wiki(args.source, args.destination, args.allow_no_dest, args.dry_run)
+        sort_by_wiki(args.source, args.destination or args.source, args.allow_no_dest, args.basic_cleanup, args.dry_run)
     elif args.action == "path2tag":
         path2tag(args.path, args.dry_run, args.title)
     elif args.action == "set":
@@ -344,18 +342,24 @@ def sort_albums(path, dry_run):
                         os.rename(album_path, new_album_path)
 
 
-def sort_by_wiki(source_path, dest_dir, allow_no_dest, dry_run):
+def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, dry_run):
     # TODO: Handle sorting solo members' content under the group?
-    # TODO: Fix tags (rename title, remove junk, etc)
-    # TODO: Rename files instead of just album dirs
-    prefix = "[DRY RUN] Would move" if dry_run else "Moving"
+    mv_prefix = "[DRY RUN] Would move" if dry_run else "Moving"
+    rm_prefix = "[DRY RUN] Would remove" if dry_run else "Removing"
     dest_root = Path(dest_dir)
 
     unplaced = 0
     dests = {}
     conflicts = {}
     exists = set()
-    for album_dir in iter_album_dirs(source_path):
+    album_dirs = []
+    for i, album_dir in enumerate(iter_album_dirs(source_path)):
+        album_dirs.append(album_dir)
+        album_dir.remove_bad_tags(dry_run)
+        album_dir.fix_song_tags(dry_run)
+        if basic_cleanup:
+            continue
+
         rel_path = album_dir.expected_rel_path
         if rel_path is not None:
             dest_dir = dest_root.joinpath(rel_path)
@@ -364,7 +368,7 @@ def sort_by_wiki(source_path, dest_dir, allow_no_dest, dry_run):
                     log.warning("Dir already exists at destination for {}: {!r}".format(album_dir, dest_dir.as_posix()), extra={"color": "yellow"})
                     exists.add(dest_dir)
                 else:
-                    log.info("Album already has the correct path: {}".format(album_dir))
+                    log.log(19, "Album already has the correct path: {}".format(album_dir))
                     continue
 
             if dest_dir in dests:
@@ -377,50 +381,8 @@ def sort_by_wiki(source_path, dest_dir, allow_no_dest, dry_run):
             log.warning("Could not determine placement for {}".format(album_dir), extra={"red": True})
             unplaced += 1
 
-    #
-    # for root, album_dir, music_files in iter_music_albums(source_path):
-    #     src_dir = Path(root).joinpath(album_dir)
-    #     music_files = list(music_files)
-    #     try:
-    #         wiki_albums = {f.wiki_album for f in music_files}
-    #     except Exception as e:
-    #         log.error("Encountered {} while processing {}: {}".format(type(e).__name__, src_dir.as_posix(), e))
-    #         raise e
-    #
-    #     if len(wiki_albums) == 1:
-    #         album = wiki_albums.pop()
-    #         if album is not None:
-    #             try:
-    #                 rel_path = album.expected_rel_path
-    #             except Exception as e:
-    #                 log.error("Unable to determine destination for {}: {}".format(album, e))
-    #                 raise e
-    #
-    #             if rel_path:
-    #                 dest_dir = dest_root.joinpath(rel_path)
-    #                 if dest_dir.exists():
-    #                     if not src_dir.samefile(dest_dir):
-    #                         log.warning("Dir already exists at destination for {}: {!r}".format(album, dest_dir.as_posix()), extra={"color": "yellow"})
-    #                         exists.add(dest_dir)
-    #                     else:
-    #                         log.info("Album already has the correct path: {}".format(album))
-    #                         continue
-    #
-    #                 if dest_dir in dests:
-    #                     log.warning("Duplicate destination conflict for {}: {!r}".format(album, dest_dir.as_posix()), extra={"color": "yellow"})
-    #                     conflicts[(album, src_dir)] = dest_dir
-    #                     conflicts[dests[dest_dir]] = dest_dir
-    #                 else:
-    #                     dests[dest_dir] = (album, src_dir)
-    #             else:
-    #                 log.warning("Could not determine placement for {}".format(album), extra={"red": True})
-    #                 unplaced += 1
-    #         else:
-    #             log.warning("Could not match album for {}".format(src_dir.as_posix()), extra={"red": True})
-    #             unplaced += 1
-    #     else:
-    #         log.warning("Conflicting album matches were found for {}: {}".format(src_dir.as_posix(), ", ".join(map(str, wiki_albums))))
-    #         unplaced += 1
+    if basic_cleanup:
+        return
 
     if unplaced and not allow_no_dest:
         raise RuntimeError("Unable to determine placement for {:,d} albums - exiting".format(unplaced))
@@ -431,14 +393,22 @@ def sort_by_wiki(source_path, dest_dir, allow_no_dest, dry_run):
         raise RuntimeError("There are {:,d} duplicate destination conflicts - exiting".format(len(conflicts)))
 
     for dest_dir, album_dir in sorted(dests.items()):
-        src_dir = album_dir.path
-        log.info("{} {!r} -> {!r}".format(prefix, album_dir, dest_dir.as_posix()))
+        log.info("{} {!r} -> {!r}".format(mv_prefix, album_dir, dest_dir.as_posix()))
         if not dry_run:
-            if not dest_dir.parent.exists():
-                os.makedirs(dest_dir.parent.as_posix())
-            if dest_dir.exists():
-                raise RuntimeError("Destination for {} already exists: {!r}".format(album_dir, dest_dir.as_posix()))
-            src_dir.rename(dest_dir)
+            album_dir.move(dest_dir)
+
+    src_path = Path(source_path).expanduser().resolve()
+    if src_path.is_dir():
+        for p in src_path.iterdir():
+            if p.is_dir() and not list(p.iterdir()):
+                log.info("{} empty directory: {}".format(rm_prefix, p.as_posix()))
+                if not dry_run:
+                    p.rmdir()
+
+    for i, album_dir in enumerate(album_dirs):
+        if i:
+            print()
+        album_dir.update_song_tags_and_names(dry_run)
 
 
 def _original_sort_by_wiki(source_path, dest_dir, allow_no_dest, dry_run):

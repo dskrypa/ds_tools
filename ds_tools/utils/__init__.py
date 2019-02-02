@@ -18,3 +18,4 @@ from .decorate import *                             # Depends on .itertools
 from .output import *                               # Depends on .decorate, .operator
 
 from .diff import *                                 # Depends on .output
+from .mixins import *                               # Depends on .decorate
