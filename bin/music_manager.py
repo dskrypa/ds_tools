@@ -94,6 +94,7 @@ def parser():
     wiki_sort_parser.add_argument("destination", metavar="path", nargs="?", help="The destination directory for the top-level artist directories of the sorted files")
     wiki_sort_parser.add_argument("--allow_no_dest", "-N", action="store_true", help="Allow sorting to continue even if there are some files that do not have a new destination")
     wiki_sort_parser.add_argument("--basic_cleanup", "-B", action="store_true", help="Only run basic cleanup tasks, no wiki updates")
+    wiki_sort_parser.add_argument("--move_unknown", "-u", action="store_true", help="Move albums that would end up in the UNKNOWN_FIXME subdirectory")
 
     p2t_parser = parser.add_subparser("action", "path2tag", help="Update tags based on the path to each file")
     p2t_parser.add_argument("path", help="A directory that contains directories that contain music files")
@@ -152,7 +153,10 @@ def main():
     elif args.action == "sort":
         sort_albums(args.path, args.dry_run)
     elif args.action == "wiki_sort":
-        sort_by_wiki(args.source, args.destination or args.source, args.allow_no_dest, args.basic_cleanup, args.dry_run)
+        sort_by_wiki(
+            args.source, args.destination or args.source, args.allow_no_dest, args.basic_cleanup, args.move_unknown,
+            args.dry_run
+        )
     elif args.action == "path2tag":
         path2tag(args.path, args.dry_run, args.title)
     elif args.action == "set":
@@ -349,7 +353,7 @@ def sort_albums(path, dry_run):
                         os.rename(album_path, new_album_path)
 
 
-def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, dry_run):
+def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, move_unknown, dry_run):
     # TODO: Handle sorting solo members' content under the group?
     mv_prefix = "[DRY RUN] Would move" if dry_run else "Moving"
     rm_prefix = "[DRY RUN] Would remove" if dry_run else "Removing"
@@ -368,6 +372,10 @@ def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, dry_run):
             continue
 
         rel_path = album_dir.expected_rel_path
+        if ("UNKNOWN_FIXME" in rel_path) and not move_unknown:
+            log.log(19, "Skipping {} because a proper location could not be determined".format(album_dir))
+            continue
+
         if rel_path is not None:
             dest_dir = dest_root.joinpath(rel_path)
             if dest_dir.exists():

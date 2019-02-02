@@ -39,6 +39,56 @@ STRIP_TBL = str.maketrans({c: "" for c in JUNK_CHARS})
 QMARKS = "\"“"
 
 
+class NameParser(RecursiveDescentParser):
+    _entry_point = "name"
+    _strip = True
+    TOKENS = OrderedDict([
+        ("QUOTE", "[{}]".format(QMARKS)),
+        ("LPAREN", "[\(（]"),
+        ("RPAREN", "[\)）]"),
+        ("LBRACKET", "[\[]"),
+        ("RBRACKET", "[\]]"),
+        ("WS", "\s+"),
+        ("TEXT", "[^\"“()（）\[\]]+"),
+    ])
+
+    def extra(self, closer="RPAREN"):
+        """
+        extra ::= ( text | dash | time | quote | (extra) )
+        """
+        text = ""
+        while self.next_tok:
+            if self._accept(closer):
+                return text
+            elif self._accept("LPAREN"):
+                text += "({})".format(self.extra())
+            elif self._accept("LBRACKET"):
+                text += "[{}]".format(self.extra("RBRACKET"))
+            else:
+                self._advance()
+                text += self.tok.value
+        return text
+
+    def name(self):
+        """
+        name :: = { " }* text { (extra) }* { " }*
+        """
+        name_parts = {"name": "", "extras": []}
+        while self.next_tok:
+            if self._accept("LPAREN"):
+                name_parts["extras"].append(self.extra())
+            elif self._accept("LBRACKET"):
+                name_parts["extras"].append(self.extra("RBRACKET"))
+            elif self._accept("TEXT") or self._accept("RPAREN")  or self._accept("RBRACKET"):
+                name_parts["name"] += self.tok.value
+            elif self._accept("WS"):
+                name_parts["name"] += self.tok.value
+            else:
+                raise UnexpectedTokenError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
+        name_parts["name"] = name_parts["name"].strip()
+        return name_parts
+
+
 class TitleParser(RecursiveDescentParser):
     _entry_point = "title"
     _strip = True
@@ -1299,10 +1349,12 @@ class KpopWikiClient(RestClient):
         if not getattr(self, "_KpopWikiClient__initialized", False):
             super().__init__("kpop.fandom.com", rate_limit=1, prefix="wiki")
             self._page_cache = FSCache(cache_subdir="kpop_wiki", prefix="get__", ext="html")
+            self._artist_cache = FSCache(cache_subdir="kpop_wiki/artists", prefix="artist__")
             self.__initialized = True
 
-    @cached(FSCache(cache_subdir="kpop_wiki/artists", prefix="artist__"), lock=True, key=lambda s, a: url_quote(a, ""))
+    @cached("_artist_cache", lock=True, key=lambda s, a: url_quote(a, ""))
     def normalize_artist(self, artist):
+        _artist = artist
         artist = artist.replace(" ", "_")
         try:
             html = self.get_page(artist)
@@ -1314,6 +1366,18 @@ class KpopWikiClient(RestClient):
                     if alt.lower() == artist.lower():
                         return alt
                     raise aae from e
+                else:
+                    try:
+                        parsed = NameParser().parse(_artist)
+                    except Exception as pe:
+                        pass
+                    else:
+                        name = parsed["name"]
+                        log.debug("Checking {!r} for {}".format(name, artist))
+                        try:
+                            return self._artist_cache[url_quote(name, "")]
+                        except KeyError as ke:
+                            pass
             raise e
         else:
             if "This article is a disambiguation page" in html:
@@ -1362,6 +1426,20 @@ def split_name(name):
         return name, ""
     elif is_hangul(name.translate(NUM_STRIP_TBL)):
         return "", name
+
+    parsed = NameParser().parse(name)
+    try:
+        lang1, lang2 = parsed["name"], parsed["extras"][0]
+    except Exception as e:
+        pass
+    else:
+        han1, han2 = map(contains_hangul, (lang1, lang2))
+        if han1 and han2:
+            raise ValueError("Unable to split {!r} into separate english/hangul strings".format(name))
+        elif han1:
+            return lang2, lang1
+        elif han2:
+            return lang1, lang2
 
     pat1 = re.compile(r"^([^()[\]]+[([][^()[\]]+[)\]])\s*[([](.*)[)\]]$")   # name (group) [other lang name (group)]
     m = pat1.match(name)
