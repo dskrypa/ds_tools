@@ -505,7 +505,7 @@ class Artist(WikiObject):
                 return album
         return None
 
-    def _find_album(self, title, album_type=None, threshold=50):
+    def _find_album(self, title, album_type=None, threshold=55):
         albums = {album: album.title for album in self if (album_type is None) or (album_type == album._type)}
         val, score, album = fuzz_process.extractOne(title, albums, scorer=fuzz.UWRatio)
         if score == 0:
@@ -571,7 +571,7 @@ class Artist(WikiObject):
         # err_fmt = "Unable to find an album from {} of type {!r} with title {!r}"
         # raise AlbumNotFoundException(err_fmt.format(self, album_type or "any", title))
 
-    def _find_song(self, title, album=None, album_type=None, feat_only=False, threshold=50, track=None):
+    def _find_song(self, title, album=None, album_type=None, feat_only=False, threshold=55, track=None):
         if album and not isinstance(album, Album):
             album = self.find_album(album, album_type)
 
@@ -724,8 +724,12 @@ class Album(WikiObject):
             aside = content.find("aside")
             aside.extract()
             for i, a in enumerate(content.find_all("a")):
-                href = a.get("href")[6:]
-                if href != self.artist._uri_path:
+                try:
+                    href = a.get("href")[6:]
+                except TypeError as e:
+                    href = None
+
+                if href and (href != self.artist._uri_path):
                     self._repackage_of = self.artist.album_for_uri(href)
                     break
 
@@ -1070,7 +1074,7 @@ class Album(WikiObject):
     def tracks(self):
         return list(self._tracks())
 
-    def _find_track(self, title, threshold=50, track=None):
+    def _find_track(self, title, threshold=55, track=None):
         closest, score = _find_song(title, [self], track=track)
         if score == 0:
             log.debug("{}: No songs were found with a title similar to {!r}".format(self, title))
@@ -1394,28 +1398,74 @@ def unsurround(a_str):
     return a_str
 
 
-def process_song_match(title, choices, track=None, score_cutoff=0):
+def _normalize_title(title):
+    return re.sub("\s+", " ", fuzz_utils.full_process(title, force_ascii=False))
+
+
+def song_match_scorer(title, song, track=None):
+    if isinstance(song, Song):
+        attrs = ("title", "file_title", "english_title", "hangul_title", "inverse_han_eng_title")
+        full_title_attr = "file_title"
+    elif isinstance(song, CollaborationSong):
+        attrs = ("title",)
+        full_title_attr = "title"
+    else:
+        raise TypeError("Unexpected song type {!r} for {}".format(type(song).__name__, song))
+
+    best_score = 0
+    best_attr = None
+    score_mod = 0
+    for attr in attrs:
+        if best_score >= 100:
+            break
+
+        raw_val = getattr(song, attr) or ""
+        val = _normalize_title(raw_val)
+        if not val:
+            continue
+        score = fuzz.token_sort_ratio(title, val, force_ascii=False, full_process=False)
+        if score > best_score:
+            best_score = score
+            best_attr = attr
+        if attr == full_title_attr:
+            if ("live" in title and "live" not in val) or ("live" in val and "live" not in title):
+                score_mod -= 25
+        if attr == "file_title":
+            try:
+                eng, han = split_name(raw_val)
+            except Exception as e:
+                pass
+            else:
+                for lang_val in (eng, han):
+                    val = _normalize_title(lang_val)
+                    if not val:
+                        continue
+                    score = fuzz.token_sort_ratio(title, val, force_ascii=False, full_process=False)
+                    if score > best_score:
+                        best_score = score
+                        best_attr = attr
+
+    if track is not None:
+        other_track = getattr(song, "track", None)
+        if other_track is not None:
+            other_track = str(other_track)
+            if track != other_track:
+                score_mod -= 50
+            else:
+                score_mod += 15
+
+    return best_score + score_mod, best_attr
+
+
+def process_song_match(title, songs, track=None, score_cutoff=0):
     try:
-        if choices is None or len(choices) == 0:
+        if songs is None or len(songs) == 0:
             raise StopIteration
     except TypeError:
         pass
 
-    processor = partial(fuzz_utils.full_process, force_ascii=False)
-    if track is not None:
-        track = str(track)
-        def scorer(title, other, other_track):
-            score = fuzz.token_sort_ratio(title, other, force_ascii=False, full_process=False)
-            if other_track is not None:
-                other_track = str(other_track)
-                if track != other_track:
-                    score -= 25
-                else:
-                    score += 10
-            return score
-    else:
-        def scorer(title, other, other_track):
-            return fuzz.token_sort_ratio(title, other, force_ascii=False, full_process=False)
+    def processor(text):
+        return re.sub("\s+", " ", fuzz_utils.full_process(text, force_ascii=False))
 
     # Run the processor on the input query.
     processed_query = processor(title)
@@ -1423,21 +1473,10 @@ def process_song_match(title, choices, track=None, score_cutoff=0):
         log.warning("Processor reduced query to empty string - all comparisons will score 0 [orig: {!r}]".format(title))
         raise StopIteration
 
-    try:
-        # See if choices is a dictionary-like object.
-        for song, choice in choices.items():
-            processed_choice = processor(choice)
-            song_track = getattr(song, "track", None)
-            score = scorer(processed_query, processed_choice, song_track)
-            if score >= score_cutoff:
-                yield (choice, score, song)
-    except AttributeError:
-        # It's a list; just iterate over it.
-        for choice in choices:
-            processed_choice = processor(choice)
-            score = scorer(processed_query, processed_choice)
-            if score >= score_cutoff:
-                yield (choice, score)
+    for song in songs:
+        score, best_attr = song_match_scorer(processed_query, song, track)
+        if score >= score_cutoff:
+            yield (score, song, best_attr)
 
 
 def find_best_song_match(title, choices, track=None):
@@ -1445,7 +1484,7 @@ def find_best_song_match(title, choices, track=None):
     try:
         return max(best_list, key=lambda i: i[1])
     except ValueError:
-        return None
+        return 0, None, None
 
 
 def _find_song(title, albums, features=None, try_split=True, track=None):
@@ -1465,14 +1504,24 @@ def _find_song(title, albums, features=None, try_split=True, track=None):
     # dist_func, best_func = lev.ratio, max               # best so far
 
     # scorer = fuzz.UWRatio
-    scorer = partial(fuzz.token_sort_ratio, force_ascii=False)
+    # scorer = partial(fuzz.token_sort_ratio, force_ascii=False)
 
     best_score, best_song = 0, None
-    for attr in ("title", "file_title", "english_title", "hangul_title", "inverse_han_eng_title"):
-        songs = {s: getattr(s, attr) or "" for album in albums for s in album}
+    songs = [song for album in albums for song in album]
+    if songs:
+        score, song, attr = find_best_song_match(title, songs, track)
+        log.debug("Best match for {!r} based on {!r}: {} ({})".format(title, attr, song, score))
+        if score >= 100:
+            return song, score
+        else:
+            if score > best_score:
+                best_score = score
+                best_song = song
+
+    if features:
+        songs = {s: s.title for s in features}
         if songs:
-            val, score, song = find_best_song_match(title, songs, track)
-            # val, score, song = fuzz_process.extractOne(title, songs, scorer=scorer)
+            score, song, attr = find_best_song_match(title, features, track)
             log.debug("Best match for {!r} based on {!r}: {} ({})".format(title, attr, song, score))
             if score >= 100:
                 return song, score
@@ -1481,39 +1530,54 @@ def _find_song(title, albums, features=None, try_split=True, track=None):
                     best_score = score
                     best_song = song
 
-            if attr == "file_title":
-                _songs = {"eng": {}, "han": {}}
-                for s, file_title in songs.items():
-                    try:
-                        eng, han = split_name(file_title)
-                    except Exception as e:
-                        pass
-                    else:
-                        for lang, val in zip(("eng", "han"), (eng, han)):
-                            if val:
-                                _songs[lang][s] = val
+    # best_score, best_song = 0, None
+    # for attr in ("title", "file_title", "english_title", "hangul_title", "inverse_han_eng_title"):
+    #     songs = {s: getattr(s, attr) or "" for album in albums for s in album}
+    #     if songs:
+    #         val, score, song = find_best_song_match(title, songs, track)
+    #         # val, score, song = fuzz_process.extractOne(title, songs, scorer=scorer)
+    #         log.debug("Best match for {!r} based on {!r}: {} ({})".format(title, attr, song, score))
+    #         if score >= 100:
+    #             return song, score
+    #         else:
+    #             if score > best_score:
+    #                 best_score = score
+    #                 best_song = song
+    #
+    #         if attr == "file_title":
+    #             _songs = {"eng": {}, "han": {}}
+    #             for s, file_title in songs.items():
+    #                 try:
+    #                     eng, han = split_name(file_title)
+    #                 except Exception as e:
+    #                     pass
+    #                 else:
+    #                     for lang, val in zip(("eng", "han"), (eng, han)):
+    #                         if val:
+    #                             _songs[lang][s] = val
+    #
+    #             for lang, lang_songs in _songs.items():
+    #                 val, score, song = find_best_song_match(title, songs, track)
+    #                 # val, score, song = fuzz_process.extractOne(title, lang_songs, scorer=scorer)
+    #                 log.debug("Best match for {!r} based on {!r}[{}]: {} ({})".format(title, attr, lang, song, score))
+    #                 if score >= 100:
+    #                     return song, score
+    #                 else:
+    #                     if score > best_score:
+    #                         best_score = score
+    #                         best_song = song
 
-                for lang, lang_songs in _songs.items():
-                    val, score, song = find_best_song_match(title, songs, track)
-                    # val, score, song = fuzz_process.extractOne(title, lang_songs, scorer=scorer)
-                    log.debug("Best match for {!r} based on {!r}[{}]: {} ({})".format(title, attr, lang, song, score))
-                    if score >= 100:
-                        return song, score
-                    else:
-                        if score > best_score:
-                            best_score = score
-                            best_song = song
-    if features:
-        songs = {s: s.title for s in features}
-        if songs:
-            val, score, song = fuzz_process.extractOne(title, songs, scorer=scorer)
-            log.debug("Best match for {!r} from features: {} ({})".format(title, song, score))
-            if score >= 100:
-                return song, score
-            else:
-                if score > best_score:
-                    best_score = score
-                    best_song = song
+    # if features:
+    #     songs = {s: s.title for s in features}
+    #     if songs:
+    #         val, score, song = fuzz_process.extractOne(title, songs, scorer=scorer)
+    #         log.debug("Best match for {!r} from features: {} ({})".format(title, song, score))
+    #         if score >= 100:
+    #             return song, score
+    #         else:
+    #             if score > best_score:
+    #                 best_score = score
+    #                 best_song = song
 
     if (best_score <= 70) and try_split:
         try:

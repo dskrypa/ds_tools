@@ -175,9 +175,11 @@ def match_wiki(path):
         SimpleColumn("File Album", formatter=cyan), SimpleColumn("Wiki Album", formatter=green),
         SimpleColumn("Album Score", formatter=yellow),
         SimpleColumn("File Alb Type", formatter=cyan), SimpleColumn("Wiki Alb Type", formatter=green),
+        SimpleColumn("File Track", formatter=cyan), SimpleColumn("Wiki Track", formatter=green),
         SimpleColumn("File Title", formatter=cyan), SimpleColumn("Wiki Title", formatter=green),
         SimpleColumn("Title Score", formatter=yellow),
-        sort_by=("Wiki Artist", "Wiki Album", "File Artist", "File Album", "File Title"), update_width=True
+        sort_by=("Wiki Artist", "Wiki Album", "File Track", "File Artist", "File Album", "File Title"),
+        update_width=True
     )
 
     rows = []
@@ -185,15 +187,20 @@ def match_wiki(path):
         try:
             rows.append({
                 "File Artist": music_file.tag_artist,
-                "File Album": music_file.album_name_cleaned,
-                "File Alb Type": music_file.album_type_dir,
-                "File Title": music_file.tag_title,
                 "Wiki Artist": music_file.wiki_artist.name if music_file.wiki_artist else "",
+
+                "File Album": music_file.album_name_cleaned,
                 "Wiki Album": music_file.wiki_album.title if music_file.wiki_album else "",
-                "Album Score": music_file.wiki_scores.get("album", -1),
+                "File Alb Type": music_file.album_type_dir,
                 "Wiki Alb Type": music_file.wiki_album.type if music_file.wiki_album else "",
+                "Album Score": music_file.wiki_scores.get("album", -1),
+
+                "File Title": music_file.tag_title,
                 "Wiki Title": music_file.wiki_song.file_title if music_file.wiki_song else "",
                 "Title Score": music_file.wiki_scores.get("song", -1),
+
+                "File Track": str(music_file.tag_text("track", default="")),
+                "Wiki Track": str(getattr(music_file.wiki_song, "track", "")) if music_file.wiki_song else "",
             })
         except AttributeError as e:
             log.error("Error processing {}: {}".format(music_file, e))

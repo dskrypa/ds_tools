@@ -56,6 +56,10 @@ TYPED_TAG_MAP = {
 }
 
 
+class _NotSet:
+    pass
+
+
 def iter_categorized_music_files(paths):
     if isinstance(paths, str):
         paths = [paths]
@@ -713,10 +717,7 @@ class SongFile(ClearableCachedPropertyMixin):
     def wiki_song(self):
         self.wiki_scores["song"] = -1
         artist = self.wiki_artist
-        try:
-            track = self.tag_text("track")
-        except Exception as e:
-            track = None
+        track = self.tag_text("track", default=None)
 
         try:
             song, score = artist._find_song(self.tag_title, album=self.wiki_album, track=track) if artist else (None, -1)
@@ -849,11 +850,12 @@ class SongFile(ClearableCachedPropertyMixin):
             raise TagNotFound("No {!r} tags were found for {}".format(tag, self))
         return tags[0]
 
-    def tag_text(self, tag, strip=True, by_id=False):
+    def tag_text(self, tag, strip=True, by_id=False, default=_NotSet):
         """
         :param str tag: The name of the tag to retrieve, or the tag ID if by_id is set to True
         :param bool strip: Strip leading/trailing spaces from the value before returning it
         :param bool by_id: The provided value was a tag ID rather than a tag name
+        :param default: Default value to return when a TagValueException would otherwise be raised
         :return str: The text content of the tag with the given name if there was a single value
         :raises: :class:`TagValueException` if multiple values existed for the given tag
         """
@@ -863,9 +865,14 @@ class SongFile(ClearableCachedPropertyMixin):
             vals = [vals]
         vals = list(map(str, vals))
         if len(vals) > 1:
-            fmt = "Multiple {!r} values found for {}: {}"
-            raise TagValueException(fmt.format(tag, self, ", ".join(map(repr, vals))))
+            msg = "Multiple {!r} values found for {}: {}".format(tag, self, ", ".join(map(repr, vals)))
+            if default is not _NotSet:
+                log.warning(msg)
+                return default
+            raise TagValueException(msg)
         elif not vals:
+            if default is not _NotSet:
+                return default
             raise TagValueException("No {!r} tag values were found for {}".format(tag, self))
         return vals[0].strip() if strip else vals[0]
 
