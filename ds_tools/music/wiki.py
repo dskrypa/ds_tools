@@ -1427,8 +1427,8 @@ def split_name(name):
     elif is_hangul(name.translate(NUM_STRIP_TBL)):
         return "", name
 
-    parsed = NameParser().parse(name)
     try:
+        parsed = NameParser().parse(name)
         lang1, lang2 = parsed["name"], parsed["extras"][0]
     except Exception as e:
         pass
