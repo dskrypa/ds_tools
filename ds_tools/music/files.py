@@ -13,6 +13,7 @@ import traceback
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
+from weakref import WeakValueDictionary
 
 # import acoustid
 import mutagen
@@ -29,7 +30,7 @@ from .wiki import Artist, eng_name, split_name, CollaborationSong
 __all__ = [
     "ExtendedMutagenFile", "FakeMusicFile", "iter_music_files", "load_tags", "iter_music_albums",
     "iter_categorized_music_files", "TagException",  "TagAccessException", "UnsupportedTagForFileType",
-    "InvalidTagName", "TagValueException", "TagNotFound", "WikiMatchException"
+    "InvalidTagName", "TagValueException", "TagNotFound", "WikiMatchException", "AlbumDir", "iter_album_dirs"
 ]
 log = logging.getLogger("ds_tools.music.files")
 
@@ -124,6 +125,20 @@ def _iter_music_files(_path, include_backups=False):
                 log.debug("Not a music file: {}".format(file_path))
 
 
+def iter_album_dirs(paths):
+    if isinstance(paths, str):
+        paths = [paths]
+
+    for _path in paths:
+        path = Path(_path).expanduser().resolve()
+        if path.is_dir():
+            for root, dirs, files in os.walk(path.as_posix()):  # as_posix for 3.5 compatibility
+                if files and not dirs:
+                    yield AlbumDir(root)
+        elif path.is_file():
+            yield AlbumDir(path.parent)
+
+
 class FakeMusicFile:
     def __init__(self, sha256sum, tags):
         self.filename = sha256sum
@@ -131,6 +146,143 @@ class FakeMusicFile:
 
     def tagless_sha256sum(self):
         return self.filename
+
+
+class AlbumDir:
+    __instances = WeakValueDictionary()
+
+    def __new__(cls, path):
+        if not isinstance(path, Path):
+            path = Path(path).expanduser().resolve()
+
+        try:
+            return cls.__instances[path]
+        except KeyError as e:
+            obj = super().__new__(cls)
+            if any(p.is_dir() for p in path.iterdir()):
+                raise InvalidAlbumDir("Invalid album dir - contains directories: {}".format(path.as_posix()))
+            cls.__instances[path] = obj
+            return obj
+
+    def __init__(self, path):
+        if not getattr(self, "_AlbumDir__initialized", False):
+            if not isinstance(path, Path):
+                path = Path(path).expanduser().resolve()
+            self.path = path
+            self.__initialized = True
+
+    def __repr__(self):
+        try:
+            rel_path = self.path.relative_to(Path(".").resolve()).as_posix()
+        except Exception as e:
+            rel_path = self.path.as_posix()
+        return "<{}({!r})>".format(type(self).__name__, rel_path)
+
+    def __iter__(self):
+        yield from self.songs
+
+    @cached_property
+    def songs(self):
+        return list(_iter_music_files(self.path.as_posix()))
+
+    @cached_property
+    def name(self):
+        album = self.path.name
+        m = re.match("^\[\d{4}[0-9.]*\] (.*)$", album)  # Begins with date
+        if m:
+            album = m.group(1).strip()
+        m = re.match("(.*)\s*\[.*Album\]", album)  # Ends with Xth Album
+        if m:
+            album = m.group(1).strip()
+        return album
+
+    @cached_property
+    def artist_path(self):
+        indicators = ("album", "single", "soundtrack", "collaboration", "solo", "christmas", "download", "compilation")
+        artist_path = self.path.parent
+        lc_name = artist_path.name.lower()
+        if not any(i in lc_name for i in indicators):
+            return artist_path
+
+        artist_path = artist_path.parent
+        lc_name = artist_path.name.lower()
+        if not any(i in lc_name for i in indicators):
+            return artist_path
+        log.error("Unable to determine artist path for {}".format(self))
+        return None
+
+    @property
+    def length(self):
+        """
+        :return float: The length of this album in seconds
+        """
+        return sum(f.length for f in self.songs)
+
+    @cached_property
+    def length_str(self):
+        """
+        :return str: The length of this album in the format (HH:M)M:SS
+        """
+        length = format_duration(int(self.length))  # Most other programs seem to floor the seconds
+        if length.startswith("00:"):
+            length = length[3:]
+        if length.startswith("0"):
+            length = length[1:]
+        return length
+
+    @cached_property
+    def wiki_artist(self):
+        try:
+            artists = {f.wiki_artist for f in self.songs}
+        except Exception as e:
+            log.error("Error determining wiki_artist for one or more songs in {}: {}".format(self, e))
+            return None
+
+        if len(artists) == 1:
+            return artists.pop()
+        elif len(artists) > 1:
+            log.warning("Conflicting wiki_artist matches were found for {}: {}".format(self, ", ".join(map(str, artists))))
+        else:
+            artist_path = self.artist_path
+            if artist_path is not None:
+                try:
+                    return Artist(artist_path.name)
+                except Exception as e:
+                    log.error("Error determining artist for {} based on path {}: {}".format(self, artist_path, e))
+            else:
+                log.warning("No wiki_artist match was found for {}".format(self))
+        return None
+
+    @cached_property
+    def wiki_album(self):
+        try:
+            albums = {f.wiki_album for f in self.songs}
+        except Exception as e:
+            log.error("Error determining wiki_album for one or more songs in {}: {}".format(self, e))
+            return None
+
+        if len(albums) == 1:
+            return albums.pop()
+        elif len(albums) > 1:
+            log.warning("Conflicting wiki_album matches were found for {}: {}".format(self, ", ".join(map(str, albums))))
+        else:
+            log.warning("No wiki_album match was found for {}".format(self))
+        return None
+
+    @cached_property
+    def expected_rel_path(self):
+        if self.wiki_album:
+            return self.wiki_album.expected_rel_path
+        elif self.wiki_artist:
+            artist_dir = self.wiki_artist.expected_dirname
+            lc_name = self.path.name.lower()
+            if any(val in lc_name for val in ("ost", "soundtrack", "part", "episode")):
+                type_dir = "Soundtracks"
+            else:
+                type_dir = "UNKNOWN_FIXME"
+            return os.path.join(artist_dir, type_dir, self.path.name)
+        log.error("Unable to find an album or artist match for {}".format(self))
+        return None
 
 
 class ExtendedMutagenFile:
@@ -163,12 +315,16 @@ class ExtendedMutagenFile:
 
     def __repr__(self):
         ftype = "[{}]".format(self.ext) if self.ext is not None else ""
-        return "<{}({!r}){}>".format(type(self).__name__, self.filename, ftype)
+        try:
+            rel_path = self.path.relative_to(Path(".").resolve()).as_posix()
+        except Exception as e:
+            rel_path = self.path.as_posix()
+        return "<{}({!r}){}>".format(type(self).__name__, rel_path, ftype)
 
     def save(self):
         self.tags.save(self._f.filename)
 
-    @property
+    @cached_property
     def path(self):
         return Path(self._f.filename).resolve()
 
@@ -233,19 +389,6 @@ class ExtendedMutagenFile:
             if not eng:
                 return None
 
-        # try:
-        #     eng = eng_name(self, self.tag_artist, "english_artist")
-        # except AttributeError as e:
-        #     if is_hangul(self.tag_artist):
-        #         try:
-        #             eng = eng_name(self, self.artist_dir, "english_artist")
-        #         except AttributeError as e:
-        #             log.error("{}: Unable to find Wiki artist - unable to parse english name from {!r}".format(self, self.tag_artist))
-        #             return None
-        #     else:
-        #         log.error("{}: Unable to find Wiki artist - unable to parse english name from {!r}".format(self, self.tag_artist))
-        #         return None
-        #
         lc_dir = self.artist_dir.lower()
         lc_eng = eng.lower()
         if (lc_eng != lc_dir) and (lc_dir in lc_eng):
@@ -335,21 +478,6 @@ class ExtendedMutagenFile:
         except Exception as e:
             log.error("Encountered {} while trying to find wiki album for {}: {}\n{}".format(type(e).__name__, self, e, traceback.format_exc()))
             raise e
-
-    # def _find_album_match(self, title):
-    #     candidates = set()
-    #     # noinspection PyTypeChecker
-    #     for artist_album in self.wiki_artist:
-    #         if artist_album.title.lower().translate(PUNC_STRIP_TBL) in title:
-    #             candidates.add(artist_album)
-    #     if len(candidates) == 1:
-    #         match = candidates.pop()
-    #         log.debug("Matched album {!r} to {} for {}".format(self.album_name_cleaned, match, self))
-    #         return match
-    #     elif candidates:
-    #         fmt = "Found too many potential album matches for {!r} for {}: {}"
-    #         raise WikiMatchException(fmt.format(self.album_name_cleaned, self, ", ".join(map(repr, sorted(candidates)))))
-    #     return None
 
     @cached_property
     def wiki_song(self):
@@ -644,6 +772,10 @@ class TagValueException(TagException):
 
 class WikiMatchException(Exception):
     """Exception to be raised when unable to find a match for a given field in the wiki"""
+
+
+class InvalidAlbumDir(Exception):
+    """Exception to be raised when an AlbumDir is initialized with an invalid directory"""
 
 
 if __name__ == "__main__":

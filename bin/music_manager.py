@@ -48,7 +48,7 @@ from ds_tools.http import CodeBasedRestException
 from ds_tools.logging import LogManager
 from ds_tools.music import (
     iter_music_files, load_tags, iter_music_albums, iter_categorized_music_files, TagAccessException,
-    tag_repr, apply_repr_patches, TagValueException, TagException
+    tag_repr, apply_repr_patches, TagValueException, TagException, iter_album_dirs
 )
 from ds_tools.utils import Table, SimpleColumn, localize, TableBar, num_suffix, ArgParser, uprint
 from music.constants import tag_name_map
@@ -345,6 +345,103 @@ def sort_albums(path, dry_run):
 
 
 def sort_by_wiki(source_path, dest_dir, allow_no_dest, dry_run):
+    # TODO: Handle sorting solo members' content under the group?
+    # TODO: Fix tags (rename title, remove junk, etc)
+    # TODO: Rename files instead of just album dirs
+    prefix = "[DRY RUN] Would move" if dry_run else "Moving"
+    dest_root = Path(dest_dir)
+
+    unplaced = 0
+    dests = {}
+    conflicts = {}
+    exists = set()
+    for album_dir in iter_album_dirs(source_path):
+        rel_path = album_dir.expected_rel_path
+        if rel_path is not None:
+            dest_dir = dest_root.joinpath(rel_path)
+            if dest_dir.exists():
+                if not album_dir.path.samefile(dest_dir):
+                    log.warning("Dir already exists at destination for {}: {!r}".format(album_dir, dest_dir.as_posix()), extra={"color": "yellow"})
+                    exists.add(dest_dir)
+                else:
+                    log.info("Album already has the correct path: {}".format(album_dir))
+                    continue
+
+            if dest_dir in dests:
+                log.warning("Duplicate destination conflict for {}: {!r}".format(album_dir, dest_dir.as_posix()), extra={"color": "yellow"})
+                conflicts[album_dir] = dest_dir
+                conflicts[dests[dest_dir]] = dest_dir
+            else:
+                dests[dest_dir] = album_dir
+        else:
+            log.warning("Could not determine placement for {}".format(album_dir), extra={"red": True})
+            unplaced += 1
+
+    #
+    # for root, album_dir, music_files in iter_music_albums(source_path):
+    #     src_dir = Path(root).joinpath(album_dir)
+    #     music_files = list(music_files)
+    #     try:
+    #         wiki_albums = {f.wiki_album for f in music_files}
+    #     except Exception as e:
+    #         log.error("Encountered {} while processing {}: {}".format(type(e).__name__, src_dir.as_posix(), e))
+    #         raise e
+    #
+    #     if len(wiki_albums) == 1:
+    #         album = wiki_albums.pop()
+    #         if album is not None:
+    #             try:
+    #                 rel_path = album.expected_rel_path
+    #             except Exception as e:
+    #                 log.error("Unable to determine destination for {}: {}".format(album, e))
+    #                 raise e
+    #
+    #             if rel_path:
+    #                 dest_dir = dest_root.joinpath(rel_path)
+    #                 if dest_dir.exists():
+    #                     if not src_dir.samefile(dest_dir):
+    #                         log.warning("Dir already exists at destination for {}: {!r}".format(album, dest_dir.as_posix()), extra={"color": "yellow"})
+    #                         exists.add(dest_dir)
+    #                     else:
+    #                         log.info("Album already has the correct path: {}".format(album))
+    #                         continue
+    #
+    #                 if dest_dir in dests:
+    #                     log.warning("Duplicate destination conflict for {}: {!r}".format(album, dest_dir.as_posix()), extra={"color": "yellow"})
+    #                     conflicts[(album, src_dir)] = dest_dir
+    #                     conflicts[dests[dest_dir]] = dest_dir
+    #                 else:
+    #                     dests[dest_dir] = (album, src_dir)
+    #             else:
+    #                 log.warning("Could not determine placement for {}".format(album), extra={"red": True})
+    #                 unplaced += 1
+    #         else:
+    #             log.warning("Could not match album for {}".format(src_dir.as_posix()), extra={"red": True})
+    #             unplaced += 1
+    #     else:
+    #         log.warning("Conflicting album matches were found for {}: {}".format(src_dir.as_posix(), ", ".join(map(str, wiki_albums))))
+    #         unplaced += 1
+
+    if unplaced and not allow_no_dest:
+        raise RuntimeError("Unable to determine placement for {:,d} albums - exiting".format(unplaced))
+
+    if exists:
+        raise RuntimeError("Directories already exist in {:,d} destinations - choose another destination directory".format(len(exists)))
+    elif conflicts:
+        raise RuntimeError("There are {:,d} duplicate destination conflicts - exiting".format(len(conflicts)))
+
+    for dest_dir, album_dir in sorted(dests.items()):
+        src_dir = album_dir.path
+        log.info("{} {!r} -> {!r}".format(prefix, album_dir, dest_dir.as_posix()))
+        if not dry_run:
+            if not dest_dir.parent.exists():
+                os.makedirs(dest_dir.parent.as_posix())
+            if dest_dir.exists():
+                raise RuntimeError("Destination for {} already exists: {!r}".format(album_dir, dest_dir.as_posix()))
+            src_dir.rename(dest_dir)
+
+
+def _original_sort_by_wiki(source_path, dest_dir, allow_no_dest, dry_run):
     prefix, verb = ("[DRY RUN] ", "Would move") if dry_run else ("", "Moving")
 
     dests = {}
