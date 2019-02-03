@@ -11,6 +11,7 @@ import re
 import string
 import traceback
 from collections import OrderedDict
+from contextlib import suppress
 from pathlib import Path
 from urllib.parse import urlparse, quote as url_quote
 from weakref import WeakValueDictionary
@@ -23,7 +24,7 @@ from ..exceptions import CodeBasedRestException
 from ..http import RestClient
 from ..utils import (
     soupify, FSCache, cached, is_hangul, contains_hangul, cached_property, datetime_with_tz, now,
-    RecursiveDescentParser, UnexpectedTokenError, format_duration
+    RecursiveDescentParser, UnexpectedTokenError, format_duration, ParentheticalParser
 )
 
 __all__ = ["KpopWikiClient", "WikipediaClient", "Artist", "Album", "Song", "InvalidArtistException", "TitleParser"]
@@ -40,101 +41,6 @@ PATH_SANITIZATION_DICT.update({"/": "_", ":": "-", "\\": "_", "|": "-"})
 PATH_SANITIZATION_TABLE = str.maketrans(PATH_SANITIZATION_DICT)
 STRIP_TBL = str.maketrans({c: "" for c in JUNK_CHARS})
 QMARKS = "\"“"
-
-
-class ParentheticalParser(RecursiveDescentParser):
-    _entry_point = "content"
-    _strip = True
-    _opener2closer = {"LPAREN": "RPAREN", "LBPAREN": "RBPAREN", "LBRKT": "RBRKT", "QUOTE": "QUOTE"}
-    _nested_fmts = {"LPAREN": "({})", "LBPAREN": "({})", "LBRKT": "[{}]", "QUOTE": "{!r}"}
-    _content_tokens = ["TEXT", "WS"] + list(_opener2closer.values())
-    TOKENS = OrderedDict([
-        ("QUOTE", "[{}]".format(QMARKS)),
-        ("LPAREN", "\("),
-        ("RPAREN", "\)"),
-        ("LBPAREN", "（"),
-        ("RBPAREN", "）"),
-        ("LBRKT", "\["),
-        ("RBRKT", "\]"),
-        ("WS", "\s+"),
-        ("TEXT", "[^\"“()（）\[\]]+"),
-    ])
-
-    def parenthetical(self, closer="RPAREN"):
-        """
-        parenthetical ::= ( { text | WS | ( parenthetical ) }* )
-        """
-        text = ""
-        nested = False
-        while self.next_tok:
-            if self._accept(closer):
-                return text, nested
-            elif any(self._accept(tok_type) for tok_type in self._opener2closer):
-                tok_type = self.tok.type
-                text += self._nested_fmts[tok_type].format(self.parenthetical(self._opener2closer[tok_type])[0])
-                nested = True
-            else:
-                self._advance()
-                text += self.tok.value
-        return text, nested
-
-    def content(self):
-        """
-        content :: = text { (parenthetical) }* { text }*
-        """
-        text = ""
-        parts = []
-        while self.next_tok:
-            if any(self._accept(tok_type) for tok_type in self._opener2closer):
-                tok_type = self.tok.type
-                if tok_type == "QUOTE":
-                    if any((c not in self._remaining) and (self._full.count(c) % 2 == 1) for c in QMARKS):
-                        log.debug("Unpaired quote found in {!r}".format(self._full))
-                        continue
-
-                if text:
-                    parts.append(text)
-                    text = ""
-                parenthetical, nested = self.parenthetical(self._opener2closer[tok_type])
-                if not parts and not nested and not self._peek("WS"):
-                    text += self._nested_fmts[tok_type].format(parenthetical)
-                else:
-                    parts.append((parenthetical, nested, tok_type))
-            elif any(self._accept(tok_type) for tok_type in self._content_tokens):
-                text += self.tok.value
-            else:
-                raise UnexpectedTokenError("Unexpected {!r} token {!r} in {!r}".format(
-                    self.next_tok.type, self.next_tok.value, self._full
-                ))
-
-        if text:
-            parts.append(text)
-
-        single_idxs = set()
-        had_nested = False
-        for i, part in enumerate(parts):
-            if isinstance(part, tuple):
-                nested = part[1]
-                had_nested = had_nested or nested
-                if not nested:
-                    single_idxs.add(i)
-
-        if had_nested and single_idxs:
-            single_idxs = sorted(single_idxs)
-            while single_idxs:
-                i = single_idxs.pop(0)
-                for ti in (i - 1, i + 1):
-                    if ti < 0:
-                        continue
-                    if isinstance(parts[ti], str):
-                        parenthetical, nested, tok_type = parts[i]
-                        formatted = self._nested_fmts[tok_type].format(parenthetical)
-                        parts[ti] = (formatted + parts[ti]) if ti > i else (parts[ti] + formatted)
-                        parts.pop(i)
-                        single_idxs = [idx - 1 for idx in single_idxs]
-                        break
-
-        return [part for part in map(str.strip, (p[0] if isinstance(p, tuple) else p for p in parts)) if part]
 
 
 class TitleParser(RecursiveDescentParser):
@@ -1535,7 +1441,44 @@ def sanitize(text):
     return text.translate(PATH_SANITIZATION_TABLE)
 
 
-def split_name(name, is_artist=False):
+def _classify(original, text1, text2, is_artist=False):
+    parts = (text1.strip(), text2.strip())
+    han1, han2 = map(contains_hangul, parts)
+    if han1 and han2:
+        try:
+            (eng_a, han_a), (eng_b, han_b) = map(split_name, parts)
+        except Exception:
+            pass
+        else:
+            if is_artist:
+                with suppress(Exception):
+                    if Artist(eng_a).member_of == Artist(eng_b):
+                        return eng_a, han_a
+            else:
+                log.debug("Assuming format 'eng_name (han_name) [group_eng (group_han)]' for {!r}".format(original))
+                return eng_a, han_a
+        raise ValueError("Unable to split {!r} into separate english/hangul strings".format(original))
+    elif han1:
+        return parts[1], parts[0]
+    elif han2:
+        return parts[0], parts[1]
+
+
+def split_name(name, is_artist=False, extra=False):
+    result = _split_name(name, is_artist, extra)
+    if extra:
+        if len(result) != 3:
+            eng, han = result
+            extra_val = None
+        else:
+            eng, han, extra_val = result
+        if extra_val is None and eng.lower().startswith(("feat.", "featuring", "inst.", "instrumental")):
+            return "", han, eng
+        return eng, han, extra_val
+    return result
+
+
+def _split_name(name, is_artist=False, extra=False):
     """
     :param str name: A song/album/artist title
     :return tuple: (english, hangul)
@@ -1563,28 +1506,12 @@ def split_name(name, is_artist=False):
             else:
                 log.debug("ParentheticalParser().parse({!r}) returned only {!r}, and it was mixed".format(name, part))
         elif len(parts) == 2:
-            han1, han2 = map(contains_hangul, parts)
-            if han1 and han2:
-                try:
-                    (eng_a, han_a), (eng_b, han_b) = map(split_name, parts)
-                except Exception:
-                    pass
-                else:
-                    if is_artist:
-                        try:
-                            if Artist(eng_a).member_of == Artist(eng_b):
-                                return eng_a, han_a
-                        except Exception:
-                            pass
-                    else:
-                        log.debug("Assuming format 'eng_name (han_name) [group_eng (group_han)]' for {!r}".format(name))
-                        return eng_a, han_a
-                # raise ValueError("Unable to split {!r} into separate english/hangul strings".format(name))
-                # fall back to old method
-            elif han1:
-                return parts[1], parts[0]
-            elif han2:
-                return parts[0], parts[1]
+            with suppress(ValueError):
+                return _classify(name, *parts, is_artist=is_artist)
+        elif len(parts) == 3 and extra:
+            with suppress(ValueError):
+                eng, han = _classify(name, *parts[:2], is_artist=is_artist)
+                return eng, han, parts[2]
         else:
             # p_too_many = True
             # log.debug("ParentheticalParser().parse({!r}) returned too many parts: {}".format(name, parts))
@@ -1594,36 +1521,14 @@ def split_name(name, is_artist=False):
     pat1 = re.compile(r"^([^()[\]]+[([][^()[\]]+[)\]])\s*[([](.*)[)\]]$")   # name (group) [other lang name (group)]
     m = pat1.match(name)
     if m:
-        lang1, lang2 = map(str.strip, m.groups())
-        han1, han2 = map(contains_hangul, m.groups())
-        if han1 and han2:
-            raise ValueError("Unable to split {!r} into separate english/hangul strings".format(name))
-        elif han1:
-            # if p_too_many:
-            #     log.debug("ParentheticalParser=>too many; pat1=> eng={!r}, han={!r}".format(lang2, lang1), extra={"color": "yellow"})
-            return lang2, lang1
-        elif han2:
-            # if p_too_many:
-            #     log.debug("ParentheticalParser=>too many; pat1=> eng={!r}, han={!r}".format(lang1, lang2), extra={"color": "yellow"})
-            return lang1, lang2
+        return _classify(name, *m.groups(), is_artist=is_artist)
 
     pat2 = re.compile(r"^(.*)\s*[([](.*)[)\]]$")  # name (other lang name)
     m = pat2.match(name)
     if m:
-        lang1, lang2 = map(str.strip, m.groups())
-        han1, han2 = map(contains_hangul, m.groups())
-        if han1 and han2:
-            raise ValueError("Unable to split {!r} into separate english/hangul strings".format(name))
-        elif han1:
-            # if p_too_many:
-            #     log.debug("ParentheticalParser=>too many; pat2=> eng={!r}, han={!r}".format(lang2, lang1), extra={"color": "yellow"})
-            return lang2, lang1
-        elif han2:
-            # if p_too_many:
-            #     log.debug("ParentheticalParser=>too many; pat2=> eng={!r}, han={!r}".format(lang1, lang2), extra={"color": "yellow"})
-            return lang1, lang2
+        return _classify(name, *m.groups(), is_artist=is_artist)
 
-    raise ValueError("Unable to split {!r} into separate english/hangul strings".format(name))
+    raise ValueError("Unable to split {!r} into separate english/hangul strings (no pattern matches)".format(name))
 
 
 def eng_name(obj, name, attr):
