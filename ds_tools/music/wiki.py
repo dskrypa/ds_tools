@@ -393,8 +393,12 @@ class Artist(WikiObject):
 
         if not getattr(self, "_Artist__initialized", False):
             super().__init__(artist_uri_path, client)
-            self.english_name, self.hangul_name, self.stylized_name = self._find_name()
-            self.name = "{} ({})".format(self.english_name, self.hangul_name)
+            _intro = self._process_intro()
+            self.english_name, self.hangul_name, self.stylized_name, self.subunit_of, self.member_of = _intro
+            if self.english_name and self.hangul_name:
+                self.name = "{} ({})".format(self.english_name, self.hangul_name)
+            else:
+                self.name = self.english_name or self.hangul_name
             self.feature_tracks = set()
             self._album_parser = AlbumParser()
             if isinstance(self._client, KpopWikiClient):
@@ -429,7 +433,7 @@ class Artist(WikiObject):
     def expected_dirname(self):
         return sanitize(self.english_name)
 
-    def _find_name(self):
+    def _process_intro(self):
         if (self._raw_content is not None) and ("This article is a disambiguation page" in self._raw_content):
             raise AmbiguousArtistException(self._uri_path, self._raw_content)
 
@@ -467,7 +471,33 @@ class Artist(WikiObject):
                     msg = "Unexpected hangul name format for {!r}/{!r} in: {}".format(eng, han, intro[:200])
                     raise ValueError(msg)
 
-        return eng, han.strip(), (stylized.strip() if stylized else stylized)
+        subunit_of = None
+        if re.search("^.* is (?:a|the) .*?sub-?unit of .*?group", intro):
+            for i, a in enumerate(self._intro.find_all("a")):
+                try:
+                    href = a.get("href")[6:]
+                except TypeError as e:
+                    href = None
+                if href and (href != self._uri_path):
+                    subunit_of = Artist(href)
+                    break
+
+        member_of = None
+        mem_pat = r"^.* is (?:a|the) .*?(?:member|vocalist|rapper|dancer|leader|visual|maknae) of .*?group (.*)\."
+        mem_match = re.search(mem_pat, intro)
+        if mem_match:
+            group_name_text = mem_match.group(1)
+            for i, a in enumerate(self._intro.find_all("a")):
+                if a.text in group_name_text:
+                    try:
+                        href = a.get("href")[6:]
+                    except TypeError as e:
+                        href = None
+                    if href and (href != self._uri_path):
+                        member_of = Artist(href)
+                        break
+
+        return eng, han.strip(), (stylized.strip() if stylized else stylized), subunit_of, member_of
 
     def __repr__(self):
         try:
@@ -475,6 +505,15 @@ class Artist(WikiObject):
         except AttributeError as e:
             return "<{}({!r})>".format(type(self).__name__, self._uri_path)
 
+    @cached_property
+    def name_with_context(self):
+        if self.member_of:
+            return "{} [{}]".format(self.name, self.member_of.name)
+        elif self.subunit_of:
+            pass
+        return self.name
+
+    @cached_property
     def members(self):
         content = self._page_content.find("div", id="mw-content-text")
         members_h2 = content.find("span", id="Members").parent
@@ -482,20 +521,22 @@ class Artist(WikiObject):
         members = []
         if members_container.name == "ul":
             for li in members_container:
-                m = re.match("(.*?)\s*-\s*(.*)", li.text)
-                member = list(map(str.strip, m.groups()))
                 a = li.find("a")
                 if a:
-                    member.append(Artist(a.get("href")[6:]))
+                    members.append(Artist(a.get("href")[6:]))
                 else:
-                    member.append(None)
-                members.append(member)
+                    m = re.match("(.*?)\s*-\s*(.*)", li.text)
+                    member = list(map(str.strip, m.groups()))[0]
+                    members.append(member)
         elif members_container.name == "table":
             for tr in members_container.find_all("tr"):
-                vals = [td.text.strip() for td in tr.find_all("td")]
-                if vals:
-                    member = list(map(str.strip, vals))
-                    member.append(None)
+                if tr.find("th"):
+                    continue
+                a = tr.find("a")
+                if a:
+                    members.append(Artist(a.get("href")[6:]))
+                else:
+                    member = list(map(str.strip, (td.text.strip() for td in tr.find_all("td"))))[0]
                     members.append(member)
         return members
 

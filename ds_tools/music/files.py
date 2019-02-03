@@ -345,7 +345,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
             if (lc_f_title != lc_w_title) and not lc_f_title.startswith(lc_w_title):
                 to_update["title"] = (music_file.tag_title, wiki_song.file_title)
 
-            for field, attr in (("artist", "name"), ("album", "name")):
+            for field, attr in (("artist", "name_with_context"), ("album", "name")):
                 file_value = music_file.tag_text(field)
                 wiki_value = getattr(getattr(wiki_song, field), attr)
                 if file_value != wiki_value:
@@ -649,10 +649,9 @@ class SongFile(ClearableCachedPropertyMixin):
                 except CodeBasedRestException as e2:
                     log.error("Error retrieving information from wiki about artist {!r} for {}: {}".format(group_name, self, e))
                 else:
-                    for member in group.members():
-                        member_artist = member[-1]
-                        if member_artist and member_artist.english_name.lower() == name:
-                            return member_artist
+                    for member in group.members:
+                        if isinstance(member, Artist) and member.english_name.lower() == name:
+                            return member
 
             log.error("Error retrieving information from wiki about artist {!r} for {}: {}".format(eng, self, e))
             return None
