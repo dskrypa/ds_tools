@@ -315,20 +315,20 @@ class AlbumDir(ClearableCachedPropertyMixin):
         log.error("Unable to find an album or artist match for {}".format(self))
         return None
 
-    def update_song_tags_and_names(self, dry_run):
+    def update_song_tags_and_names(self, allow_incomplete, dry_run):
         logged_messages = 0
         if not self.wiki_artist:
-            log.error("Unable to find wiki artist for {} - skipping tag updates".format(self), extra={"red": True})
+            log.error("Unable to find wiki artist match for {} - skipping tag updates".format(self), extra={"red": True})
             return 1
         elif not self.wiki_album:
-            # logged_messages += 1
-            log.error("Unable to find wiki album for {} - skipping tag updates".format(self), extra={"red": True})
-            # log.warning("Unable to find wiki album for {} - will only consider updating artist tag".format(self), extra={"color": "red"})
-            # updatable = (("artist", "name_with_context"),)
-            return 1
-        else:
-            updatable = (("title", "file_title"), ("artist", "name_with_context"), ("album", "name"))
+            if allow_incomplete:
+                logged_messages += 1
+                log.warning("Unable to find wiki album match for {} - will only consider updating artist tag".format(self), extra={"color": "red"})
+            else:
+                log.error("Unable to find wiki album match for {} - skipping tag updates".format(self), extra={"red": True})
+                return 1
 
+        updatable = (("title", "file_title"), ("artist", "name_with_context"), ("album", "name"))
         upd_prefix = "[DRY RUN] Would update" if dry_run else "Updating"
         rnm_prefix = "[DRY RUN] Would rename" if dry_run else "Renaming"
         cwd = Path(".").resolve()
@@ -338,18 +338,26 @@ class AlbumDir(ClearableCachedPropertyMixin):
         exists = set()
 
         for music_file in self.songs:
+            to_update = {}
             wiki_song = music_file.wiki_song
             if wiki_song is None:
                 logged_messages += 1
-                log.error("Unable to find song for {} in wiki".format(music_file), extra={"red": True})
-                continue
+                log.error("Unable to find wiki song match for {}".format(music_file), extra={"red": True})
+                if not allow_incomplete:
+                    continue
 
-            to_update = {}
-            for field, attr in updatable:
-                file_value = music_file.tag_text(field)
-                wiki_value = getattr(wiki_song if field == "title" else getattr(wiki_song, field), attr)
-                if file_value != wiki_value:
-                    to_update[field] = (file_value, wiki_value)
+                file_value = music_file.tag_text("artist")
+                wiki_artist = music_file.wiki_artist
+                if wiki_artist:
+                    wiki_value = wiki_artist.name_with_context
+                    if file_value != wiki_value:
+                        to_update["artist"] = (file_value, wiki_value)
+            else:
+                for field, attr in updatable:
+                    file_value = music_file.tag_text(field)
+                    wiki_value = getattr(wiki_song if field == "title" else getattr(wiki_song, field), attr)
+                    if file_value != wiki_value:
+                        to_update[field] = (file_value, wiki_value)
 
             if to_update:
                 logged_messages += 1
@@ -367,6 +375,9 @@ class AlbumDir(ClearableCachedPropertyMixin):
                         music_file.save()
             else:
                 log.log(19, "No changes necessary for {} == {}".format(music_file.extended_repr, wiki_song))
+
+            if wiki_song is None:
+                continue
 
             expected_filename = wiki_song.expected_filename(music_file.ext)
             current_filename = music_file.path.name
