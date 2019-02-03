@@ -702,6 +702,7 @@ class Album(WikiObject):
         "Albums", "Mini Albums", "Special Albums", "Japanese Albums", "Japanese Mini Albums", "Single Albums",
         "Remake Albums", "Repackage Albums"
     )
+    dated_types = ("Singles", )
     multi_disk_types = ("Albums", "Special Albums", "Japanese Albums", "Remake Albums", "Repackage Albums")
     # raw_track_names = set()
 
@@ -755,6 +756,7 @@ class Album(WikiObject):
         nums = []
         num_match = re.search("^(.*) is the (.*)(?:album|single).+by", self._intro.text.strip())
         if num_match:
+            nums = num_match.group(2).lower().split()
             alb_name = num_match.group(1)
             try:
                 eng, han = map(unsurround, split_name(alb_name))
@@ -773,7 +775,6 @@ class Album(WikiObject):
                 else:
                     self._name = eng or han
 
-            nums = num_match.group(2).lower().split()
             repkg_match = re.search("A repackage titled (.*) (?:was|will be) released", self._raw_content)
             if repkg_match:
                 for aside in self._page_content.find_all("aside"):
@@ -805,6 +806,11 @@ class Album(WikiObject):
                 if i > 2:
                     raise ValueError("Unable to determine album number for {}".format(self))
             else:
+                try:
+                    if nums[i+1] in ("summer",):
+                        self.__num = (self.__num, nums[i+1])
+                except Exception as e:
+                    pass
                 break
 
         if self.__is_repackage:
@@ -860,6 +866,8 @@ class Album(WikiObject):
     def _num(self):
         if not self._processed_intro:
             self._process_intro()
+        if isinstance(self.__num, tuple):
+            return self.__num[0]
         return self.__num
 
     @cached_property
@@ -880,17 +888,27 @@ class Album(WikiObject):
 
         if _type not in self.type_map:
             log.warning("{}: Unhandled type: {!r}".format(self, _type), extra={"red": True})
-        return "{}{}".format(lang, self.type_map.get(_type, "SORT_ME") + "s")
+
+        _type = "{}{}".format(lang, self.type_map.get(_type, "SORT_ME") + "s")
+        if not self._processed_intro:
+            self._process_intro()
+        extra_type = self.__num[1] if isinstance(self.__num, tuple) else None
+        if extra_type:
+            _type = "{} {}".format(extra_type.title(), _type)
+        return _type
 
     @cached_property
     def expected_dirname(self):
         title = self.title
-        if self.type in self.numbered_types:
+        if self.type in self.numbered_types or self.type in self.dated_types:
             try:
                 rel_date = self.release_date.strftime("%Y.%m.%d")
             except AttributeError as e:
-                rel_date = None
+                pass
+            else:
+                title = "[{}] {}".format(rel_date, title)
 
+        if self.type in self.numbered_types:
             num = self._num
             if not num:
                 if self._raw_content:
@@ -899,10 +917,7 @@ class Album(WikiObject):
                 _type = self.type[:-1] if self.type.endswith("s") else self.type
                 if self.is_repackage:
                     _type += " Repackage"
-                if rel_date:
-                    title = "[{}] {} [{} {}]".format(rel_date, title, num, _type)
-                else:
-                    title = "{} [{} {}]".format(title, num, _type)
+                title = "{} [{} {}]".format(title, num, _type)
         return os.path.join(self.type, sanitize(title))
 
     @cached_property

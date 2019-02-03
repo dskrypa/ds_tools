@@ -536,7 +536,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
                         to_update["artist"] = (file_value, wiki_value)
             else:
                 for field, attr in updatable:
-                    file_value = music_file.tag_text(field)
+                    file_value = music_file.tag_text(field, default=None)
                     wiki_field = "artist" if field == "album_artist" else field
                     wiki_value = getattr(wiki_song if field == "title" else getattr(wiki_song, wiki_field), attr)
                     if file_value != wiki_value:
