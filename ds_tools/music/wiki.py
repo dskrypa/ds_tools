@@ -1455,6 +1455,7 @@ class KpopWikiClient(RestClient):
             super().__init__("kpop.fandom.com", rate_limit=1, prefix="wiki")
             self._page_cache = FSCache(cache_subdir="kpop_wiki", prefix="get__", ext="html")
             self._artist_cache = FSCache(cache_subdir="kpop_wiki/artists", prefix="artist__")
+            self._error_cache = {}      # Prevent repeated attempts with a bad url within a session
             self.__initialized = True
 
     @cached("_artist_cache", lock=True, key=lambda s, a: url_quote(a, ""))
@@ -1491,7 +1492,14 @@ class KpopWikiClient(RestClient):
 
     @cached("_page_cache", lock=True, key=FSCache.dated_html_key_func("%Y-%m"))
     def get_page(self, endpoint, **kwargs):
-        return self.get(endpoint, **kwargs).text
+        if endpoint in self._error_cache:
+            raise self._error_cache[endpoint]
+        try:
+            return self.get(endpoint, **kwargs).text
+        except CodeBasedRestException as e:
+            log.debug(e)
+            self._error_cache[endpoint] = e
+            raise e
 
     def get_artist(self, artist):
         return Artist(self.normalize_artist(artist), self)
@@ -1520,7 +1528,7 @@ def sanitize(text):
     return text.translate(PATH_SANITIZATION_TABLE)
 
 
-def split_name(name):
+def split_name(name, is_artist=False):
     """
     :param str name: A song/album/artist title
     :return tuple: (english, hangul)
@@ -1550,8 +1558,22 @@ def split_name(name):
         elif len(parts) == 2:
             han1, han2 = map(contains_hangul, parts)
             if han1 and han2:
+                try:
+                    (eng_a, han_a), (eng_b, han_b) = map(split_name, parts)
+                except Exception:
+                    pass
+                else:
+                    if is_artist:
+                        try:
+                            if Artist(eng_a).member_of == Artist(eng_b):
+                                return eng_a, han_a
+                        except Exception:
+                            pass
+                    else:
+                        log.debug("Assuming format 'eng_name (han_name) [group_eng (group_han)]' for {!r}".format(name))
+                        return eng_a, han_a
                 # raise ValueError("Unable to split {!r} into separate english/hangul strings".format(name))
-                pass  # fall back to old method
+                # fall back to old method
             elif han1:
                 return parts[1], parts[0]
             elif han2:

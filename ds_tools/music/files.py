@@ -316,13 +316,18 @@ class AlbumDir(ClearableCachedPropertyMixin):
         return None
 
     def update_song_tags_and_names(self, dry_run):
+        logged_messages = 0
         if not self.wiki_artist:
             log.error("Unable to find wiki artist for {} - skipping tag updates".format(self), extra={"red": True})
             return 1
-
         elif not self.wiki_album:
+            # logged_messages += 1
             log.error("Unable to find wiki album for {} - skipping tag updates".format(self), extra={"red": True})
+            # log.warning("Unable to find wiki album for {} - will only consider updating artist tag".format(self), extra={"color": "red"})
+            # updatable = (("artist", "name_with_context"),)
             return 1
+        else:
+            updatable = (("title", "file_title"), ("artist", "name_with_context"), ("album", "name"))
 
         upd_prefix = "[DRY RUN] Would update" if dry_run else "Updating"
         rnm_prefix = "[DRY RUN] Would rename" if dry_run else "Renaming"
@@ -331,7 +336,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
         dests = {}
         conflicts = {}
         exists = set()
-        logged_messages = 0
+
         for music_file in self.songs:
             wiki_song = music_file.wiki_song
             if wiki_song is None:
@@ -340,14 +345,9 @@ class AlbumDir(ClearableCachedPropertyMixin):
                 continue
 
             to_update = {}
-            lc_f_title = music_file.tag_title.lower()
-            lc_w_title = wiki_song.file_title.lower()
-            if (lc_f_title != lc_w_title) and not lc_f_title.startswith(lc_w_title):
-                to_update["title"] = (music_file.tag_title, wiki_song.file_title)
-
-            for field, attr in (("artist", "name_with_context"), ("album", "name")):
+            for field, attr in updatable:
                 file_value = music_file.tag_text(field)
-                wiki_value = getattr(getattr(wiki_song, field), attr)
+                wiki_value = getattr(wiki_song if field == "title" else getattr(wiki_song, field), attr)
                 if file_value != wiki_value:
                     to_update[field] = (file_value, wiki_value)
 
@@ -621,7 +621,7 @@ class SongFile(ClearableCachedPropertyMixin):
     @cached_property
     def wiki_artist(self):
         try:
-            eng, han = split_name(self.tag_artist)
+            eng, han = split_name(self.tag_artist, is_artist=True)
         except ValueError as e:
             log.error("Error splitting into eng+han: {!r}".format(self.tag_artist))
             return None
