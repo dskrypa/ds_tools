@@ -246,6 +246,11 @@ class AlbumDir(ClearableCachedPropertyMixin):
         log.error("Unable to determine artist path for {}".format(self))
         return None
 
+    @cached_property
+    def _type_path(self):
+        """Not accurate if not already sorted"""
+        return self.path.parent
+
     @property
     def length(self):
         """

@@ -118,6 +118,9 @@ def parser():
     match_parser = parser.add_subparser("action", "match", help="Test matching files in the given directory to songs from wiki")
     match_parser.add_argument("path", help="A directory that contains directories that contain music files")
 
+    wiki_list_parser = parser.add_subparser("action", "wiki_list", help="List album/song metadata in the format expected in the wiki")
+    wiki_list_parser.add_argument("path", help="A directory that contains directories that contain music files")
+
     parser.include_common_args("verbosity", "dry_run")
     return parser
 
@@ -167,6 +170,8 @@ def main():
         list_dir2artist(args.path)
     elif args.action == "match":
         match_wiki(args.path)
+    elif args.action == "wiki_list":
+        wiki_list(args.path)
     else:
         log.error("Unconfigured action")
 
@@ -353,6 +358,19 @@ def sort_albums(path, dry_run):
                     log.info("[Remove artist from album dir name] {}{} '{}' -> '{}'".format(prefix, verb, album_path, new_album_path))
                     if not dry_run:
                         os.rename(album_path, new_album_path)
+
+
+def wiki_list(path):
+    for i, album_dir in enumerate(iter_album_dirs(path)):
+        if i:
+            print("\n")
+
+        log.info("{} - {} - {} - Length: {}".format(
+            album_dir.artist_path.name, album_dir._type_path.name, album_dir.name, album_dir.length_str
+        ))
+        log.info("=" * 120)
+        for song in album_dir:
+            log.info("#\"{}\" - {}".format(song.tag_title, song.length_str))
 
 
 def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, move_unknown, allow_incomplete, unmatched_cleanup, dry_run):

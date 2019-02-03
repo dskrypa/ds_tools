@@ -373,7 +373,7 @@ class Artist(WikiObject):
                             msg = "Unexpected hangul name format for {!r}/{!r} in: {}".format(eng, han, intro[:200])
                             raise ValueError(msg)
             else:
-                if eng not in ("yyxy", "iKON"):
+                if eng not in ("yyxy", "iKON", "AOA Cream"):
                     msg = "Unexpected hangul name format for {!r}/{!r} in: {}".format(eng, han, intro[:200])
                     raise ValueError(msg)
 
@@ -389,19 +389,20 @@ class Artist(WikiObject):
                     break
 
         member_of = None
-        mem_pat = r"^.* is (?:a|the) .*?(?:member|vocalist|rapper|dancer|leader|visual|maknae) of .*?group (.*)\."
+        mem_pat = r"^.* is (?:a|the) (.*?)(?:member|vocalist|rapper|dancer|leader|visual|maknae) of .*?group (.*)\."
         mem_match = re.search(mem_pat, intro)
         if mem_match:
-            group_name_text = mem_match.group(1)
-            for i, a in enumerate(self._intro.find_all("a")):
-                if a.text in group_name_text:
-                    try:
-                        href = a.get("href")[6:]
-                    except TypeError as e:
-                        href = None
-                    if href and (href != self._uri_path):
-                        member_of = Artist(href)
-                        break
+            if "former" not in mem_match.group(1):
+                group_name_text = mem_match.group(2)
+                for i, a in enumerate(self._intro.find_all("a")):
+                    if a.text in group_name_text:
+                        try:
+                            href = a.get("href")[6:]
+                        except TypeError as e:
+                            href = None
+                        if href and (href != self._uri_path):
+                            member_of = Artist(href)
+                            break
 
         return eng, han.strip(), (stylized.strip() if stylized else stylized), subunit_of, member_of
 
@@ -450,7 +451,12 @@ class Artist(WikiObject):
         yield from sorted(self.albums)
 
     def _albums(self):
-        discography_h2 = self._page_content.find("span", id="Discography").parent
+        try:
+            discography_h2 = self._page_content.find("span", id="Discography").parent
+        except AttributeError as e:
+            log.error("No page content / discography was found for {}".format(self))
+            return
+
         h_levels = {"h3": "language", "h4": "type"}
         lang = "Korean"
         album_type = "Unknown"
@@ -989,7 +995,7 @@ class Album(WikiObject):
         if page_content is None:
             page_content = self._page_content
         aside = page_content.find("aside")
-        artist_h3 = aside.find("h3", text="Artist")
+        artist_h3 = aside.find("h3", text="Artist") if aside else None
         if artist_h3:
             artist_div = artist_h3.next_sibling.next_sibling
             artists = list(artist_div)                      # will be a single str or multiple html elements
@@ -1062,10 +1068,11 @@ class Album(WikiObject):
                 if ("single" in self._type) or (self._type in ("other_release", "collaboration", "feature")):
                     content = page_content.find("div", id="mw-content-text")
                     aside = content.find("aside")
-                    aside.extract()
+                    if aside:
+                        aside.extract()
                     m = re.match("^\"?(.*?)\"?\s*\((.*?)\)", content.text.strip())
                     title = "{} ({})".format(*m.groups()) if m else self.title
-                    len_h3 = aside.find("h3", text="Length")
+                    len_h3 = aside.find("h3", text="Length") if aside else None
                     if len_h3:
                         runtime = len_h3.next_sibling.next_sibling.text
                     else:
@@ -1382,7 +1389,7 @@ class KpopWikiClient(RestClient):
                 aae = AmbiguousArtistException(artist, e.resp.text)
                 alt = aae.alternative
                 if alt:
-                    if alt.lower() == artist.lower():
+                    if alt.lower() in (artist.lower(), _artist.lower()):
                         return alt
                     raise aae from e
                 else:
@@ -1508,10 +1515,16 @@ def _split_name(name, is_artist=False, extra=False):
         elif len(parts) == 2:
             with suppress(ValueError):
                 return _classify(name, *parts, is_artist=is_artist)
-        elif len(parts) == 3 and extra:
-            with suppress(ValueError):
-                eng, han = _classify(name, *parts[:2], is_artist=is_artist)
-                return eng, han, parts[2]
+        elif len(parts) == 3:
+            if is_artist:
+                with suppress(Exception):
+                    eng, han = _classify(name, *parts[:2])
+                    if Artist(eng).member_of == Artist(parts[2]):
+                        return eng, han
+            if extra:
+                with suppress(ValueError):
+                    eng, han = _classify(name, *parts[:2], is_artist=is_artist)
+                    return eng, han, parts[2]
         else:
             # p_too_many = True
             # log.debug("ParentheticalParser().parse({!r}) returned too many parts: {}".format(name, parts))
