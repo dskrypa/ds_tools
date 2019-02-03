@@ -96,6 +96,7 @@ def parser():
     wiki_sort_parser.add_argument("--basic_cleanup", "-B", action="store_true", help="Only run basic cleanup tasks, no wiki updates")
     wiki_sort_parser.add_argument("--move_unknown", "-u", action="store_true", help="Move albums that would end up in the UNKNOWN_FIXME subdirectory")
     wiki_sort_parser.add_argument("--allow_incomplete", "-i", action="store_true", help="Allow updating tags when there is an incomplete match (such as artist but no album/song)")
+    wiki_sort_parser.add_argument("--unmatched_cleanup", "-C", action="store_true", help="Run cleanup tasks for unmatched files (commonly OSTs/collaborations)")
 
     p2t_parser = parser.add_subparser("action", "path2tag", help="Update tags based on the path to each file")
     p2t_parser.add_argument("path", help="A directory that contains directories that contain music files")
@@ -156,7 +157,7 @@ def main():
     elif args.action == "wiki_sort":
         sort_by_wiki(
             args.source, args.destination or args.source, args.allow_no_dest, args.basic_cleanup, args.move_unknown,
-            args.allow_incomplete, args.dry_run
+            args.allow_incomplete, args.unmatched_cleanup, args.dry_run
         )
     elif args.action == "path2tag":
         path2tag(args.path, args.dry_run, args.title)
@@ -354,7 +355,7 @@ def sort_albums(path, dry_run):
                         os.rename(album_path, new_album_path)
 
 
-def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, move_unknown, allow_incomplete, dry_run):
+def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, move_unknown, allow_incomplete, unmatched_cleanup, dry_run):
     mv_prefix = "[DRY RUN] Would move" if dry_run else "Moving"
     rm_prefix = "[DRY RUN] Would remove" if dry_run else "Removing"
     dest_root = Path(dest_dir)
@@ -425,6 +426,10 @@ def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, move_unkno
         if i and logged_messages:
             print()
         logged_messages = album_dir.update_song_tags_and_names(allow_incomplete, dry_run)
+        if unmatched_cleanup and not album_dir.wiki_album:
+            if logged_messages:
+                print()
+            logged_messages = album_dir.cleanup_partial_matches(dry_run)
 
 
 def _original_sort_by_wiki(source_path, dest_dir, allow_no_dest, dry_run):

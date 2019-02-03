@@ -10,6 +10,7 @@ import pickle
 import re
 import string
 import traceback
+from contextlib import suppress
 from fnmatch import fnmatch
 from hashlib import sha256
 from io import BytesIO
@@ -27,7 +28,7 @@ from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
 from ..http import CodeBasedRestException
 from ..utils import (
     cached_property, DBCache, cached, get_user_cache_dir, CacheKey, format_duration, is_hangul,
-    ClearableCachedPropertyMixin
+    ClearableCachedPropertyMixin, contains_hangul, ParentheticalParser
 )
 from .patches import tag_repr
 from .wiki import Artist, eng_name, split_name, CollaborationSong
@@ -318,6 +319,173 @@ class AlbumDir(ClearableCachedPropertyMixin):
         log.error("Unable to find an album or artist match for {}".format(self))
         return None
 
+    def cleanup_partial_matches(self, dry_run):
+        logged_messages = 0
+        upd_prefix = "[DRY RUN] Would update" if dry_run else "Updating"
+        rnm_prefix = "[DRY RUN] Would rename" if dry_run else "Renaming"
+        cwd = Path(".").resolve()
+
+        artist_dir = self.artist_path.name.lower() if self.artist_path else None
+        if artist_dir:
+            m = re.match(r"^{}\s*-?\s*(.*)$".format(artist_dir), self.path.name, re.IGNORECASE)
+            if m:
+                alb_dir = m.group(1).strip()
+                if alb_dir and alb_dir != self.path.name:
+                    new_alb_path = self.path.parent.joinpath(alb_dir)
+                    try:
+                        rel_path = new_alb_path.relative_to(cwd).as_posix()
+                    except Exception as e:
+                        rel_path = new_alb_path.as_posix()
+                    logged_messages += 1
+                    log.info("{} {} -> {}".format(rnm_prefix, self, rel_path))
+                    if not dry_run:
+                        self.move(new_alb_path)
+
+        try:
+            eng_dir, han_dir = split_name(self.name)
+        except Exception as e:
+            eng_dir, han_dir = None, None
+
+        dests = {}
+        conflicts = {}
+        exists = set()
+        for music_file in self.songs:
+            to_update, orig, extras, eng, han = {}, {}, {}, {}, {}
+            orig["file"] = filename_stripped = music_file.basename(True, True)
+            orig["title"] = title = music_file.tag_text("title")
+            orig["album"] = album = music_file.tag_text("album")
+
+            new_filename = None
+            with suppress(Exception):
+                eng["file"], han["file"], extras["file"] = split_name(filename_stripped, extra=True)
+                eng["title"], han["title"], extras["title"] = split_name(title, extra=True)
+                eng["album"], han["album"], extras["album"] = split_name(album, extra=True)
+                eng["dir"], han["dir"] = eng_dir, han_dir
+                # log.info("{} => eng={}, han={}, extras={}".format(music_file, eng, han, extras), extra={"color": "magenta"})
+
+                eng_vals = {val for val in eng.values() if val}
+                han_vals = {val for val in han.values() if val}
+                if all(len(lang_vals) == 1 for lang_vals in (eng_vals, han_vals)):
+                    eng, han = eng_vals.pop(), han_vals.pop()
+                    expected_base = "{} ({})".format(eng, han) if eng and han else eng or han
+                    for field in ("file", "title", "album"):
+                        expected = expected_base
+                        if extras.get(field):
+                            expected = "{} ({})".format(expected, extras[field])
+                        if orig[field] != expected:
+                            if field == "file":
+                                new_filename = expected
+                            else:
+                                to_update[field] = (orig[field], expected)
+
+            if artist_dir:
+                for field in ("artist", "album_artist"):
+                    original = music_file.tag_text(field)
+                    artists = []
+                    try:
+                        eng, han = split_name(original)
+                    except Exception as e:
+                        if "," in original:
+                            with suppress(Exception):
+                                for orig in map(str.strip, original.split(",")):
+                                    e, h = split_name(orig)
+                                    if any("&" in lang for lang in (e, h)) and not all("&" in lang for lang in (e, h)):
+                                        artists.append(orig)
+                                    else:
+                                        artists.append("{} ({})".format(e, h) if e and h else e or h)
+                    else:
+                        artists.append("{} ({})".format(eng, han) if eng and han else eng or han)
+
+                    if len(artists) == 1 and self.wiki_artist:
+                        file_artist = artists[0]
+                        wiki_artist_name = self.wiki_artist.name_with_context
+                        if wiki_artist_name.lower() == file_artist.lower():
+                            new_artist = wiki_artist_name
+                        else:
+                            new_artist = file_artist
+
+                        if original != new_artist:
+                            to_update[field] = (original, new_artist)
+                    elif artists:
+                        artists = sorted(artists)
+                        primary = None
+                        for artist in artists:
+                            if artist.lower().startswith(artist_dir):
+                                primary = artist
+                                break
+                        if primary:
+                            artists.remove(primary)
+                            artists.insert(0, primary)
+
+                        artist_str = ", ".join(artists)
+                        if original != artist_str:
+                            to_update[field] = (original, artist_str)
+
+            file_genre = music_file.tag_text("genre", default=None)
+            if any(contains_hangul(music_file.tag_text(f)) for f in ("title", "album")) and file_genre != "K-pop":
+                to_update["genre"] = (file_genre, "K-pop")
+
+            if to_update:
+                logged_messages += 1
+                msg = "{} {} by changing...".format(upd_prefix, music_file)
+                for tag, (old_val, new_val) in sorted(to_update.items()):
+                    msg += "\n   - {} from {!r} to {!r}".format(tag, old_val, new_val)
+                log.info(msg)
+                if not dry_run:
+                    try:
+                        for tag, (old_val, new_val) in sorted(to_update.items()):
+                            music_file.set_text_tag(tag, new_val, by_id=False)
+                    except TagException as e:
+                        log.error(e)
+                    else:
+                        music_file.save()
+            else:
+                log.log(19, "No tag changes necessary for {}".format(music_file.extended_repr))
+
+            if new_filename:
+                final_filename = "{}.{}".format(new_filename, music_file.ext)
+                track = music_file.tag_text("track")
+                if track:
+                    final_filename = "{:02d}. {}".format(int(track), final_filename)
+
+                if music_file.path.name != final_filename:
+                    dest_path = music_file.path.parent.joinpath(final_filename)
+                    if dest_path.exists():
+                        if not music_file.path.samefile(dest_path):
+                            logged_messages += 1
+                            log.warning("File already exists at destination for {}: {!r}".format(music_file, dest_path.as_posix()), extra={"color": "yellow"})
+                            exists.add(dest_path)
+                        else:
+                            log.log(19, "File already has the correct path: {}".format(music_file))
+                            continue
+
+                    if dest_path in dests:
+                        logged_messages += 1
+                        log.warning("Duplicate destination conflict for {}: {!r}".format(music_file, dest_path.as_posix()), extra={"color": "yellow"})
+                        conflicts[music_file] = dest_path
+                        conflicts[dests[dest_path]] = dest_path
+                    else:
+                        dests[dest_path] = music_file
+
+        if exists:
+            raise RuntimeError("Files already exist in {:,d} destinations for {} songs".format(len(exists), self))
+        elif conflicts:
+            raise RuntimeError("There are {:,d} duplicate destination conflicts for {} songs".format(len(conflicts), self))
+
+        for dest_path, music_file in sorted(dests.items()):
+            logged_messages += 1
+            try:
+                rel_path = dest_path.relative_to(cwd).as_posix()
+            except Exception as e:
+                rel_path = dest_path.as_posix()
+            log.info("{} {!r} -> {!r}".format(rnm_prefix, music_file.rel_path, rel_path))
+            if not dry_run:
+                music_file.rename(dest_path)
+
+        if not dests and not logged_messages:
+            log.log(19, "No changes necessary for {}".format(self))
+        return logged_messages
+
     def update_song_tags_and_names(self, allow_incomplete, dry_run):
         logged_messages = 0
         if not self.wiki_artist:
@@ -388,7 +556,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
                     else:
                         music_file.save()
             else:
-                log.log(19, "No changes necessary for {} == {}".format(music_file.extended_repr, wiki_song))
+                log.log(19, "No tag changes necessary for {} == {}".format(music_file.extended_repr, wiki_song))
 
             if wiki_song is None:
                 continue
@@ -834,7 +1002,7 @@ class SongFile(ClearableCachedPropertyMixin):
         if no_ext:
             basename = os.path.splitext(basename)[0]
         if trim_prefix:
-            m = re.match("\d+\.?\s+(.*)", basename)
+            m = re.match("\d+\.?\s*(.*)", basename)
             if m:
                 basename = m.group(1)
         return basename
@@ -904,11 +1072,16 @@ class SongFile(ClearableCachedPropertyMixin):
         :param str tag: The name of the tag to retrieve, or the tag ID if by_id is set to True
         :param bool strip: Strip leading/trailing spaces from the value before returning it
         :param bool by_id: The provided value was a tag ID rather than a tag name
-        :param default: Default value to return when a TagValueException would otherwise be raised
+        :param None|Str default: Default value to return when a TagValueException would otherwise be raised
         :return str: The text content of the tag with the given name if there was a single value
         :raises: :class:`TagValueException` if multiple values existed for the given tag
         """
-        _tag = self.get_tag(tag, by_id)
+        try:
+            _tag = self.get_tag(tag, by_id)
+        except TagNotFound as e:
+            if default is not _NotSet:
+                return default
+            raise e
         vals = getattr(_tag, "text", _tag)
         if not isinstance(vals, list):
             vals = [vals]
