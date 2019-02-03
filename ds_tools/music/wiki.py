@@ -913,6 +913,13 @@ class Album(WikiObject):
                         self._repackage_of = album
                         break
 
+        if "single" in self._type and not self._hangul_name:
+            for song in self:
+                if (song.english_title == self.english_name) and song.hangul_title:
+                    self._hangul_name = song.hangul_title
+                    self._name = "{} ({})".format(self.english_name, song.hangul_title)
+                    break
+
     @cached_property
     def is_repackage(self):
         if not self._processed_intro:

@@ -229,15 +229,18 @@ class AlbumDir(ClearableCachedPropertyMixin):
 
     @cached_property
     def artist_path(self):
-        indicators = ("album", "single", "soundtrack", "collaboration", "solo", "christmas", "download", "compilation")
+        bad = (
+            "album", "single", "soundtrack", "collaboration", "solo", "christmas", "download", "compilation",
+            "unknown_fixme"
+        )
         artist_path = self.path.parent
         lc_name = artist_path.name.lower()
-        if not any(i in lc_name for i in indicators):
+        if not any(i in lc_name for i in bad):
             return artist_path
 
         artist_path = artist_path.parent
         lc_name = artist_path.name.lower()
-        if not any(i in lc_name for i in indicators):
+        if not any(i in lc_name for i in bad):
             return artist_path
         log.error("Unable to determine artist path for {}".format(self))
         return None
@@ -328,15 +331,21 @@ class AlbumDir(ClearableCachedPropertyMixin):
                 log.error("Unable to find wiki album match for {} - skipping tag updates".format(self), extra={"red": True})
                 return 1
 
-        updatable = (("title", "file_title"), ("artist", "name_with_context"), ("album", "name"))
+        updatable = [
+            ("title", "file_title"), ("artist", "name_with_context"), ("album_artist", "name_with_context"),
+            ("album", "name")
+        ]
         upd_prefix = "[DRY RUN] Would update" if dry_run else "Updating"
         rnm_prefix = "[DRY RUN] Would rename" if dry_run else "Renaming"
         cwd = Path(".").resolve()
 
+        genre = None
+        if self.wiki_album and (self.wiki_album.language in ("Korean", "Japanese", "Chinese")):
+            genre = "{}-pop".format(self.wiki_album.language[0])
+
         dests = {}
         conflicts = {}
         exists = set()
-
         for music_file in self.songs:
             to_update = {}
             wiki_song = music_file.wiki_song
@@ -350,14 +359,19 @@ class AlbumDir(ClearableCachedPropertyMixin):
                 wiki_artist = music_file.wiki_artist
                 if wiki_artist:
                     wiki_value = wiki_artist.name_with_context
-                    if file_value != wiki_value:
+                    if (file_value != wiki_value) and (file_value.count(",") == wiki_value.count(",")):
                         to_update["artist"] = (file_value, wiki_value)
             else:
                 for field, attr in updatable:
                     file_value = music_file.tag_text(field)
-                    wiki_value = getattr(wiki_song if field == "title" else getattr(wiki_song, field), attr)
+                    wiki_field = "artist" if field == "album_artist" else field
+                    wiki_value = getattr(wiki_song if field == "title" else getattr(wiki_song, wiki_field), attr)
                     if file_value != wiki_value:
                         to_update[field] = (file_value, wiki_value)
+
+                file_genre = music_file.tag_text("genre")
+                if genre and file_genre != genre:
+                    to_update["genre"] = (file_genre, genre)
 
             if to_update:
                 logged_messages += 1
@@ -611,8 +625,6 @@ class SongFile(ClearableCachedPropertyMixin):
 
     def set_title(self, title):
         self.set_text_tag("title", title, by_id=False)
-        # title_key = self.tag_name_to_id("title")
-        # self.tags[title_key] = title if (self.ext == "mp4") else TIT2(text=title)
 
     @cached_property
     def tag_artist(self):
@@ -620,8 +632,6 @@ class SongFile(ClearableCachedPropertyMixin):
 
     def set_artist(self, artist):
         self.set_text_tag("artist", artist, by_id=False)
-        # artist_key = self.tag_name_to_id("artist")
-        # self.tags[artist_key] = artist if (self.ext == "mp4") else TPE1(text=artist)
 
     def set_album_artist(self, artist):
         self.set_text_tag("album_artist", artist, by_id=False)
@@ -631,11 +641,26 @@ class SongFile(ClearableCachedPropertyMixin):
 
     @cached_property
     def wiki_artist(self):
+        eng, han = None, None
         try:
             eng, han = split_name(self.tag_artist, is_artist=True)
         except ValueError as e:
-            log.error("Error splitting into eng+han: {!r}".format(self.tag_artist))
-            return None
+            ap = self._artist_path
+            if ap and "," in self.tag_artist:
+                try:
+                    artists = map(split_name, map(str.strip, self.tag_artist.split(",")))
+                except Exception as e1:
+                    pass
+                else:
+                    lc_artist_dir = ap.name.lower()
+                    for _eng, _han in artists:
+                        if _eng.lower() in lc_artist_dir:
+                            eng, han = _eng, _han
+                            log.warning("Using artist {!r} instead of {!r} for {}".format(eng, self.tag_artist, self), extra={"color": "cyan"})
+                            break
+            if not eng:
+                log.error("Error splitting into eng+han: {!r} [for {}]".format(self.tag_artist, self))
+                return None
         else:
             if not eng:
                 return None
@@ -643,10 +668,10 @@ class SongFile(ClearableCachedPropertyMixin):
         lc_eng = eng.lower()
         collab_indicators = ("and", "&", "feat", ",")
         if any(i in lc_eng for i in collab_indicators):
-            for lc_artist in sorted(Artist.known_artist_names):
+            for lc_artist in sorted(Artist.known_artist_names()):
                 if lc_artist in lc_eng:
-                    log.warning("Using artist {!r} instead of {!r} for {}".format(self.artist_dir, eng, self), extra={"color": "cyan"})
-                    return Artist(self.artist_dir)
+                    log.warning("Using artist {!r} instead of {!r} for {}".format(lc_artist, eng, self), extra={"color": "cyan"})
+                    return Artist(lc_artist)
 
         try:
             return Artist(eng)
@@ -765,6 +790,24 @@ class SongFile(ClearableCachedPropertyMixin):
     def artist_path(self):
         """The directory containing this file's album type dir"""
         return os.path.dirname(self.album_type_path)
+
+    @cached_property
+    def _artist_path(self):
+        bad = (
+            "album", "single", "soundtrack", "collaboration", "solo", "christmas", "download", "compilation",
+            "unknown_fixme"
+        )
+        artist_path = self.path.parents[1]
+        lc_name = artist_path.name.lower()
+        if not any(i in lc_name for i in bad):
+            return artist_path
+
+        artist_path = artist_path.parent
+        lc_name = artist_path.name.lower()
+        if not any(i in lc_name for i in bad):
+            return artist_path
+        log.error("Unable to determine artist path for {}".format(self))
+        return None
 
     @cached_property
     def album_dir(self):

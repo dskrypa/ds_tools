@@ -355,7 +355,6 @@ def sort_albums(path, dry_run):
 
 
 def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, move_unknown, allow_incomplete, dry_run):
-    # TODO: Handle sorting solo members' content under the group?
     mv_prefix = "[DRY RUN] Would move" if dry_run else "Moving"
     rm_prefix = "[DRY RUN] Would remove" if dry_run else "Removing"
     dest_root = Path(dest_dir)
@@ -373,7 +372,7 @@ def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, move_unkno
             continue
 
         rel_path = album_dir.expected_rel_path
-        if ("UNKNOWN_FIXME" in rel_path) and not move_unknown:
+        if rel_path and ("UNKNOWN_FIXME" in rel_path) and not move_unknown:
             log.log(19, "Skipping {} because a proper location could not be determined".format(album_dir))
             continue
 
