@@ -318,10 +318,11 @@ class AlbumDir(ClearableCachedPropertyMixin):
     def update_song_tags_and_names(self, dry_run):
         if not self.wiki_artist:
             log.error("Unable to find wiki artist for {} - skipping tag updates".format(self), extra={"red": True})
-            return
+            return 1
+
         elif not self.wiki_album:
             log.error("Unable to find wiki album for {} - skipping tag updates".format(self), extra={"red": True})
-            return
+            return 1
 
         upd_prefix = "[DRY RUN] Would update" if dry_run else "Updating"
         rnm_prefix = "[DRY RUN] Would rename" if dry_run else "Renaming"
@@ -330,10 +331,11 @@ class AlbumDir(ClearableCachedPropertyMixin):
         dests = {}
         conflicts = {}
         exists = set()
-        changes = 0
+        logged_messages = 0
         for music_file in self.songs:
             wiki_song = music_file.wiki_song
             if wiki_song is None:
+                logged_messages += 1
                 log.error("Unable to find song for {} in wiki".format(music_file), extra={"red": True})
                 continue
 
@@ -343,14 +345,14 @@ class AlbumDir(ClearableCachedPropertyMixin):
             if (lc_f_title != lc_w_title) and not lc_f_title.startswith(lc_w_title):
                 to_update["title"] = (music_file.tag_title, wiki_song.file_title)
 
-            for field, attr in (("artist", "name"), ("album", "title")):
+            for field, attr in (("artist", "name"), ("album", "name")):
                 file_value = music_file.tag_text(field)
                 wiki_value = getattr(getattr(wiki_song, field), attr)
                 if file_value != wiki_value:
                     to_update[field] = (file_value, wiki_value)
 
             if to_update:
-                changes += 1
+                logged_messages += 1
                 msg = "{} {} to match {} by changing...".format(upd_prefix, music_file, wiki_song)
                 for tag, (old_val, new_val) in sorted(to_update.items()):
                     msg += "\n   - {} from {!r} to {!r}".format(tag, old_val, new_val)
@@ -372,6 +374,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
                 dest_path = music_file.path.parent.joinpath(expected_filename)
                 if dest_path.exists():
                     if not music_file.path.samefile(dest_path):
+                        logged_messages += 1
                         log.warning("File already exists at destination for {}: {!r}".format(music_file, dest_path.as_posix()), extra={"color": "yellow"})
                         exists.add(dest_path)
                     else:
@@ -379,6 +382,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
                         continue
 
                 if dest_path in dests:
+                    logged_messages += 1
                     log.warning("Duplicate destination conflict for {}: {!r}".format(music_file, dest_path.as_posix()), extra={"color": "yellow"})
                     conflicts[music_file] = dest_path
                     conflicts[dests[dest_path]] = dest_path
@@ -391,6 +395,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
             raise RuntimeError("There are {:,d} duplicate destination conflicts for {} songs".format(len(conflicts), self))
 
         for dest_path, music_file in sorted(dests.items()):
+            logged_messages += 1
             try:
                 rel_path = dest_path.relative_to(cwd).as_posix()
             except Exception as e:
@@ -399,8 +404,9 @@ class AlbumDir(ClearableCachedPropertyMixin):
             if not dry_run:
                 music_file.rename(dest_path)
 
-        if not dests and not changes:
-            log.info("No changes necessary for {}".format(self))
+        if not dests and not logged_messages:
+            log.log(19, "No changes necessary for {}".format(self))
+        return logged_messages
 
     def fix_song_tags(self, dry_run):
         prefix, add_msg, rmv_msg = ("[DRY RUN] ", "Would add", "remove") if dry_run else ("", "Adding", "removing")
@@ -689,25 +695,13 @@ class SongFile(ClearableCachedPropertyMixin):
                     album = song.album
                     log.debug("Matched {} to {} via song".format(self, album))
                     return album
-            log.warning("Unable to match album {!r} for {}".format(self.album_name_cleaned, self))
 
-            # if artist:
-            #     album_name = self.album_name_cleaned.lower().translate(PUNC_STRIP_TBL)
-            #     match = self._find_album_match(album_name)
-            #     if not match:
-            #         if is_hangul(album_name):
-            #             album = artist.find_album(self.album_from_dir)
-            #             if album:
-            #                 return album
-            #             album_name = self.album_from_dir.lower().translate(PUNC_STRIP_TBL)
-            #             match = self._find_album_match(album_name)
-            #
-            #     if not match:
-            #         for album in artist:
-            #             if album.type == "Collaborations" and album.title == self.tag_title:
-            #                 return album
-            #         log.error("Unable to match album {!r} for {}".format(self.album_name_cleaned, self))
-            #     return match
+            msg = "Unable to match album {!r} for {}".format(self.album_name_cleaned, self)
+            lc_name = self.album_name_cleaned.lower()
+            if any(val in lc_name for val in ("ost", "soundtrack", "part", "episode")):
+                log.debug(msg)
+            else:
+                log.warning(msg)
             return None
         except Exception as e:
             log.error("Encountered {} while trying to find wiki album for {}: {}\n{}".format(type(e).__name__, self, e, traceback.format_exc()))

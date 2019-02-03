@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import string
+import traceback
 from collections import OrderedDict
 from pathlib import Path
 from urllib.parse import urlparse, quote as url_quote
@@ -86,6 +87,11 @@ class ParentheticalParser(RecursiveDescentParser):
         while self.next_tok:
             if any(self._accept(tok_type) for tok_type in self._opener2closer):
                 tok_type = self.tok.type
+                if tok_type == "QUOTE":
+                    if any((c not in self._remaining) and (self._full.count(c) % 2 == 1) for c in QMARKS):
+                        log.debug("Unpaired quote found in {!r}".format(self._full))
+                        continue
+
                 if text:
                     parts.append(text)
                     text = ""
@@ -624,9 +630,8 @@ class Artist(WikiObject):
                 return album
         return None
 
-    def _find_album(self, title, album_type=None, threshold=55):
+    def __find_album(self, title, album_type=None, threshold=55):
         albums = [album for album in self if (album_type is None) or (album_type == album._type)]
-
         closest, score = _find_album(title, albums)
         if score == 0:
             log.debug("{}: No albums were found with a title similar to {!r}".format(self, title))
@@ -639,49 +644,43 @@ class Artist(WikiObject):
         log.debug(msg)
         return closest, score
 
+    def _find_album(self, title, *args, **kwargs):
+        return self.__find_album(title, *args, **kwargs)
+        # try_again = True
+        # while try_again:
+        #     try_again = False
+        #     closest, score = self.__find_album(title, *args, **kwargs)
+        #     if closest is not None:
+        #         return closest, score
+        #
+        #     lc_title = title.lower()
+        #     if title.lower().startswith("jelly box"):
+        #         title = title[9:].strip()
+        #         try_again = True
+        #     elif any(title.endswith(val) for val in (self.english_name, self.hangul_name)):
+        #         for val in (self.english_name, self.hangul_name):
+        #             if title.endswith(val):
+        #                 title = title[:-len(val)].strip()
+        #                 try_again = True
+        #                 break
+        #     elif re.search("prod\.? by", lc_title):
+        #         try:
+        #             parts = ParentheticalParser().parse(title)
+        #         except Exception as e:
+        #             pass
+        #         else:
+        #             for i, part in enumerate(parts):
+        #                 if all(val in part.lower() for val in ("prod", "by")):
+        #                     parts.pop(i)
+        #                     break
+        #             title = " ".join(parts)
+        #             try_again = bool(title)
+        #
+        #     if not try_again:
+        #         return closest, score
+
     def find_album(self, *args, **kwargs):
         return self._find_album(*args, **kwargs)[0]
-
-        # dist_func, best_func = lev.ratio, max  # best so far
-        # lc_title = title.lower()
-        # distances = {
-        #     album: best_func(
-        #         best_func(
-        #             dist_func(getattr(album, attr) or "", title),
-        #             dist_func((getattr(album, attr) or "").lower(), lc_title)
-        #         )
-        #         for attr in ("title",)
-        #     )
-        #     for album in self if (album_type is None) or (album_type == album._type)
-        # }
-        # closest = best_func(distances, key=lambda k: distances[k])
-        # closest_dist = distances[closest]
-        # if closest_dist == 0:
-        #     log.debug("{}: No albums were found with a title similar to {!r}".format(self, title))
-        #     return None
-        #
-        # fmt = "{}: The album closest to {!r}: {} (dist: {})"
-        # log.debug(fmt.format(self, title, closest, closest_dist))
-        # return closest
-
-        # lc_title = title.lower()
-        # for album in self:
-        #     if (album.title == title) and ((album_type is None) or (album_type == album._type)):
-        #         return album
-        # log.debug("No exact {} album match found for title {!r}, trying lower case...".format(self, title))
-        # # If no exact match was found, try again with lower case titles
-        # for album in self:
-        #     if (album.title.lower() == lc_title) and ((album_type is None) or (album_type == album._type)):
-        #         return album
-        #
-        # # If a match still could not be found, try without any whitespace/punctuation
-        # lc_ns_title = lc_title.translate(STRIP_TBL)
-        # for album in self:
-        #     if (album.title.lower().translate(STRIP_TBL) == lc_ns_title) and ((album_type is None) or (album_type == album._type)):
-        #         return album
-        # return None
-        # err_fmt = "Unable to find an album from {} of type {!r} with title {!r}"
-        # raise AlbumNotFoundException(err_fmt.format(self, album_type or "any", title))
 
     def _find_song(self, title, album=None, album_type=None, feat_only=False, threshold=55, track=None):
         if album and not isinstance(album, Album):
@@ -800,19 +799,12 @@ class Album(WikiObject):
             self.__is_repackage = False
             return
 
-        content = self._page_content.find("div", id="mw-content-text")
-        to_remove = ("center", "aside")
-        for ele_name in to_remove:
-            rm_ele = content.find(ele_name)
-            if rm_ele:
-                rm_ele.extract()
-
         nums = []
-        num_match = re.search("^(.*) is the (.*)album.+by", content.text.strip())
+        num_match = re.search("^(.*) is the (.*)(?:album|single).+by", self._intro.text.strip())
         if num_match:
             alb_name = num_match.group(1)
             try:
-                eng, han = split_name(alb_name)
+                eng, han = map(unsurround, split_name(alb_name))
             except ValueError as e:
                 pass
             else:
@@ -823,7 +815,10 @@ class Album(WikiObject):
                             han = val
                             break
                 self._hangul_name = han
-                self._name = "{} ({})".format(eng, han)
+                if eng and han:
+                    self._name = "{} ({})".format(eng, han)
+                else:
+                    self._name = eng or han
 
             nums = num_match.group(2).lower().split()
             repkg_match = re.search("A repackage titled (.*) (?:was|will be) released", self._raw_content)
@@ -861,10 +856,7 @@ class Album(WikiObject):
 
         if self.__is_repackage:
             self.__repackage_name = self.title
-            content = self._page_content.find("div", id="mw-content-text")
-            aside = content.find("aside")
-            aside.extract()
-            for i, a in enumerate(content.find_all("a")):
+            for i, a in enumerate(self._intro.find_all("a")):
                 try:
                     href = a.get("href")[6:]
                 except TypeError as e:
@@ -1324,7 +1316,7 @@ class Album(WikiObject):
     def name(self):
         if not self._processed_intro:
             self._process_intro()
-        return self._name
+        return self._name or self.title
 
     @cached_property
     def english_name(self):
@@ -1498,6 +1490,7 @@ def split_name(name):
     elif is_hangul(name.translate(NUM_STRIP_TBL)):
         return "", name
 
+    # p_too_many = False
     try:
         parts = ParentheticalParser().parse(name)
     except Exception as e:
@@ -1523,7 +1516,10 @@ def split_name(name):
             elif han2:
                 return parts[0], parts[1]
         else:
-            log.debug("ParentheticalParser().parse({!r}) returned too many parts: {}".format(name, parts))
+            # p_too_many = True
+            # log.debug("ParentheticalParser().parse({!r}) returned too many parts: {}".format(name, parts))
+            # traceback.print_stack()
+            raise ValueError("Unable to split {!r} into separate english/hangul strings".format(name))
 
     pat1 = re.compile(r"^([^()[\]]+[([][^()[\]]+[)\]])\s*[([](.*)[)\]]$")   # name (group) [other lang name (group)]
     m = pat1.match(name)
@@ -1533,8 +1529,12 @@ def split_name(name):
         if han1 and han2:
             raise ValueError("Unable to split {!r} into separate english/hangul strings".format(name))
         elif han1:
+            # if p_too_many:
+            #     log.debug("ParentheticalParser=>too many; pat1=> eng={!r}, han={!r}".format(lang2, lang1), extra={"color": "yellow"})
             return lang2, lang1
         elif han2:
+            # if p_too_many:
+            #     log.debug("ParentheticalParser=>too many; pat1=> eng={!r}, han={!r}".format(lang1, lang2), extra={"color": "yellow"})
             return lang1, lang2
 
     pat2 = re.compile(r"^(.*)\s*[([](.*)[)\]]$")  # name (other lang name)
@@ -1545,8 +1545,12 @@ def split_name(name):
         if han1 and han2:
             raise ValueError("Unable to split {!r} into separate english/hangul strings".format(name))
         elif han1:
+            # if p_too_many:
+            #     log.debug("ParentheticalParser=>too many; pat2=> eng={!r}, han={!r}".format(lang2, lang1), extra={"color": "yellow"})
             return lang2, lang1
         elif han2:
+            # if p_too_many:
+            #     log.debug("ParentheticalParser=>too many; pat2=> eng={!r}, han={!r}".format(lang1, lang2), extra={"color": "yellow"})
             return lang1, lang2
 
     raise ValueError("Unable to split {!r} into separate english/hangul strings".format(name))
@@ -1710,7 +1714,7 @@ def find_best_wiki_obj_match(title, objs, track=None):
 def _find_album(title, albums, try_split=True):
     best_score, best_album = 0, None
     score, album, attr = find_best_wiki_obj_match(title, albums)
-    log.debug("Best match for {!r} based on {!r}: {} ({})".format(title, attr, album, score))
+    log.debug("Best match for album {!r} based on {!r}: {} ({})".format(title, attr, album, score))
     if score >= 100:
         return album, score
     else:
@@ -1745,7 +1749,7 @@ def _find_song(title, albums, features=None, try_split=True, track=None):
     songs = [song for album in albums for song in album]
     if songs:
         score, song, attr = find_best_wiki_obj_match(title, songs, track)
-        log.debug("Best match for {!r} based on {!r}: {} ({})".format(title, attr, song, score))
+        log.debug("Best match for song {!r} based on {!r}: {} ({})".format(title, attr, song, score))
         if score >= 100:
             return song, score
         else:

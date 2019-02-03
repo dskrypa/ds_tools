@@ -420,10 +420,11 @@ def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, move_unkno
                 if not dry_run:
                     p.rmdir()
 
+    logged_messages = 0
     for i, album_dir in enumerate(album_dirs):
-        if i:
+        if i and logged_messages:
             print()
-        album_dir.update_song_tags_and_names(dry_run)
+        logged_messages = album_dir.update_song_tags_and_names(dry_run)
 
 
 def _original_sort_by_wiki(source_path, dest_dir, allow_no_dest, dry_run):
