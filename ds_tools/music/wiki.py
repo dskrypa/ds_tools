@@ -4,11 +4,13 @@
 :author: Doug Skrypa
 """
 
+import json
 import logging
 import os
 import re
 import string
 from collections import OrderedDict
+from pathlib import Path
 from urllib.parse import urlparse, quote as url_quote
 from weakref import WeakValueDictionary
 
@@ -39,54 +41,94 @@ STRIP_TBL = str.maketrans({c: "" for c in JUNK_CHARS})
 QMARKS = "\"“"
 
 
-class NameParser(RecursiveDescentParser):
-    _entry_point = "name"
+class ParentheticalParser(RecursiveDescentParser):
+    _entry_point = "content"
     _strip = True
+    _opener2closer = {"LPAREN": "RPAREN", "LBPAREN": "RBPAREN", "LBRKT": "RBRKT", "QUOTE": "QUOTE"}
+    _nested_fmts = {"LPAREN": "({})", "LBPAREN": "({})", "LBRKT": "[{}]", "QUOTE": "{!r}"}
+    _content_tokens = ["TEXT", "WS"] + list(_opener2closer.values())
     TOKENS = OrderedDict([
         ("QUOTE", "[{}]".format(QMARKS)),
-        ("LPAREN", "[\(（]"),
-        ("RPAREN", "[\)）]"),
-        ("LBRACKET", "[\[]"),
-        ("RBRACKET", "[\]]"),
+        ("LPAREN", "\("),
+        ("RPAREN", "\)"),
+        ("LBPAREN", "（"),
+        ("RBPAREN", "）"),
+        ("LBRKT", "\["),
+        ("RBRKT", "\]"),
         ("WS", "\s+"),
         ("TEXT", "[^\"“()（）\[\]]+"),
     ])
 
-    def extra(self, closer="RPAREN"):
+    def parenthetical(self, closer="RPAREN"):
         """
-        extra ::= ( text | dash | time | quote | (extra) )
+        parenthetical ::= ( { text | WS | ( parenthetical ) }* )
         """
         text = ""
+        nested = False
         while self.next_tok:
             if self._accept(closer):
-                return text
-            elif self._accept("LPAREN"):
-                text += "({})".format(self.extra())
-            elif self._accept("LBRACKET"):
-                text += "[{}]".format(self.extra("RBRACKET"))
+                return text, nested
+            elif any(self._accept(tok_type) for tok_type in self._opener2closer):
+                tok_type = self.tok.type
+                text += self._nested_fmts[tok_type].format(self.parenthetical(self._opener2closer[tok_type])[0])
+                nested = True
             else:
                 self._advance()
                 text += self.tok.value
-        return text
+        return text, nested
 
-    def name(self):
+    def content(self):
         """
-        name :: = { " }* text { (extra) }* { " }*
+        content :: = text { (parenthetical) }* { text }*
         """
-        name_parts = {"name": "", "extras": []}
+        text = ""
+        parts = []
         while self.next_tok:
-            if self._accept("LPAREN"):
-                name_parts["extras"].append(self.extra())
-            elif self._accept("LBRACKET"):
-                name_parts["extras"].append(self.extra("RBRACKET"))
-            elif self._accept("TEXT") or self._accept("RPAREN")  or self._accept("RBRACKET"):
-                name_parts["name"] += self.tok.value
-            elif self._accept("WS"):
-                name_parts["name"] += self.tok.value
+            if any(self._accept(tok_type) for tok_type in self._opener2closer):
+                tok_type = self.tok.type
+                if text:
+                    parts.append(text)
+                    text = ""
+                parenthetical, nested = self.parenthetical(self._opener2closer[tok_type])
+                if not parts and not nested and not self._peek("WS"):
+                    text += self._nested_fmts[tok_type].format(parenthetical)
+                else:
+                    parts.append((parenthetical, nested, tok_type))
+            elif any(self._accept(tok_type) for tok_type in self._content_tokens):
+                text += self.tok.value
             else:
-                raise UnexpectedTokenError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
-        name_parts["name"] = name_parts["name"].strip()
-        return name_parts
+                raise UnexpectedTokenError("Unexpected {!r} token {!r} in {!r}".format(
+                    self.next_tok.type, self.next_tok.value, self._full
+                ))
+
+        if text:
+            parts.append(text)
+
+        single_idxs = set()
+        had_nested = False
+        for i, part in enumerate(parts):
+            if isinstance(part, tuple):
+                nested = part[1]
+                had_nested = had_nested or nested
+                if not nested:
+                    single_idxs.add(i)
+
+        if had_nested and single_idxs:
+            single_idxs = sorted(single_idxs)
+            while single_idxs:
+                i = single_idxs.pop(0)
+                for ti in (i - 1, i + 1):
+                    if ti < 0:
+                        continue
+                    if isinstance(parts[ti], str):
+                        parenthetical, nested, tok_type = parts[i]
+                        formatted = self._nested_fmts[tok_type].format(parenthetical)
+                        parts[ti] = (formatted + parts[ti]) if ti > i else (parts[ti] + formatted)
+                        parts.pop(i)
+                        single_idxs = [idx - 1 for idx in single_idxs]
+                        break
+
+        return [part for part in map(str.strip, (p[0] if isinstance(p, tuple) else p for p in parts)) if part]
 
 
 class TitleParser(RecursiveDescentParser):
@@ -289,6 +331,26 @@ class WikiObject:
         # soupify every time so that elements may be modified/removed without affecting other functions
         return soupify(self._raw_content)
 
+    @property
+    def _intro(self):
+        try:
+            content = self._page_content.find("div", id="mw-content-text")
+        except AttributeError as e:
+            log.warning(e)
+            return None
+
+        to_remove = ("center", "aside")
+        for ele_name in to_remove:
+            rm_ele = content.find(ele_name)
+            if rm_ele:
+                rm_ele.extract()
+
+        rm_ele = content.find(class_="dablink")     # disambiguation link
+        if rm_ele:
+            rm_ele.extract()
+
+        return content
+
 
 class Artist(WikiObject):
     """
@@ -302,6 +364,8 @@ class Artist(WikiObject):
       this should not be provided by users.
     """
     __instances = WeakValueDictionary()
+    __known_artists_loaded = False
+    _known_artists = set()
     # raw_album_names = set()
 
     def __new__(cls, artist_uri_path, client=None):
@@ -326,8 +390,20 @@ class Artist(WikiObject):
             self.english_name, self.hangul_name, self.stylized_name = self._find_name()
             self.name = "{} ({})".format(self.english_name, self.hangul_name)
             self.feature_tracks = set()
-            self.album_parser = AlbumParser()
+            self._album_parser = AlbumParser()
+            if isinstance(self._client, KpopWikiClient):
+                type(self)._known_artists.add(self.english_name.lower())
             self.__initialized = True
+
+    @classmethod
+    def known_artist_names(cls):
+        if not cls.__known_artists_loaded:
+            cls.__known_artists_loaded = True
+            known_artists_path = Path(__file__).resolve().parents[2].joinpath("music/artist_dir_to_artist.json")
+            with open(known_artists_path.as_posix(), "r", encoding="utf-8") as f:
+                artists = json.load(f)
+            cls._known_artists.update(map(str.lower, artists.keys()))
+        return cls._known_artists
 
     def __lt__(self, other):
         if isinstance(other, str):
@@ -348,16 +424,10 @@ class Artist(WikiObject):
         return sanitize(self.english_name)
 
     def _find_name(self):
-        content = self._page_content.find("div", id="mw-content-text")
-        if "This article is a disambiguation page" in self._raw_content:
+        if (self._raw_content is not None) and ("This article is a disambiguation page" in self._raw_content):
             raise AmbiguousArtistException(self._uri_path, self._raw_content)
-        to_remove = ("center", "aside")
-        for ele_name in to_remove:
-            rm_ele = content.find(ele_name)
-            if rm_ele:
-                rm_ele.extract()
 
-        intro = content.text.strip()
+        intro = self._intro.text.strip()
         m = re.match("^(.*?)\s+\((.*?)\)", intro)
         if not m:
             raise ValueError("Unexpected intro format: {}".format(intro))
@@ -488,7 +558,7 @@ class Artist(WikiObject):
                 # log.debug("{!r} by {} appears to be a collaboration with {!r}".format(ele_text, self, collabs))
 
         try:
-            parsed = self.album_parser.parse(ele_text)
+            parsed = self._album_parser.parse(ele_text)
         except UnexpectedTokenError as e:
             log.warning("Unhandled album text format {!r} for {}".format(ele_text, self), extra={"red": True})
             return None
@@ -628,7 +698,9 @@ class Artist(WikiObject):
 
             if score < 100:
                 pat = re.compile("(?P<int>\d+)|(?P<other>\D+)")
+                # noinspection PyUnresolvedReferences
                 title_nums = "".join(m.groups()[0] for m in iter(pat.scanner(title).match, None) if m.groups()[0])
+                # noinspection PyUnresolvedReferences
                 album_nums = "".join(m.groups()[0] for m in iter(pat.scanner(closest.file_title).match, None) if m.groups()[0])
                 if title_nums != album_nums:
                     log.debug("The numbers in {!r} != the ones in {!r} => score-40".format(title, closest.file_title))
@@ -1368,12 +1440,12 @@ class KpopWikiClient(RestClient):
                     raise aae from e
                 else:
                     try:
-                        parsed = NameParser().parse(_artist)
+                        parts = ParentheticalParser().parse(_artist)
+                        name = parts[0]
                     except Exception as pe:
                         pass
                     else:
-                        name = parsed["name"]
-                        log.debug("Checking {!r} for {}".format(name, artist))
+                        log.debug("Checking {!r} for {}".format(name, _artist))
                         try:
                             return self._artist_cache[url_quote(name, "")]
                         except KeyError as ke:
@@ -1413,7 +1485,6 @@ class WikipediaClient(RestClient):
 
 def sanitize(text):
     return text.translate(PATH_SANITIZATION_TABLE)
-    # return re.sub("[*;]", "", text.replace("/", "_").replace(":", "-"))
 
 
 def split_name(name):
@@ -1428,18 +1499,31 @@ def split_name(name):
         return "", name
 
     try:
-        parsed = NameParser().parse(name)
-        lang1, lang2 = parsed["name"], parsed["extras"][0]
+        parts = ParentheticalParser().parse(name)
     except Exception as e:
         pass
     else:
-        han1, han2 = map(contains_hangul, (lang1, lang2))
-        if han1 and han2:
-            raise ValueError("Unable to split {!r} into separate english/hangul strings".format(name))
-        elif han1:
-            return lang2, lang1
-        elif han2:
-            return lang1, lang2
+        if not parts:
+            log.debug("ParentheticalParser().parse({!r}) returned nothing".format(name))
+        elif len(parts) == 1:     # Not expected to happen
+            part = parts[0]
+            if not contains_hangul(part):
+                return name, ""
+            elif is_hangul(part.translate(NUM_STRIP_TBL)):
+                return "", part
+            else:
+                log.debug("ParentheticalParser().parse({!r}) returned only {!r}, and it was mixed".format(name, part))
+        elif len(parts) == 2:
+            han1, han2 = map(contains_hangul, parts)
+            if han1 and han2:
+                # raise ValueError("Unable to split {!r} into separate english/hangul strings".format(name))
+                pass  # fall back to old method
+            elif han1:
+                return parts[1], parts[0]
+            elif han2:
+                return parts[0], parts[1]
+        else:
+            log.debug("ParentheticalParser().parse({!r}) returned too many parts: {}".format(name, parts))
 
     pat1 = re.compile(r"^([^()[\]]+[([][^()[\]]+[)\]])\s*[([](.*)[)\]]$")   # name (group) [other lang name (group)]
     m = pat1.match(name)

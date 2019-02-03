@@ -623,14 +623,14 @@ class SongFile(ClearableCachedPropertyMixin):
             if not eng:
                 return None
 
-        lc_dir = self.artist_dir.lower()
         lc_eng = eng.lower()
-        if (lc_eng != lc_dir) and (lc_dir in lc_eng):
-            collab_indicators = ("and", "&", "feat", ",")
-            if any(i in lc_eng for i in collab_indicators):
-                log.warning("Using artist {!r} instead of {!r} for {}".format(self.artist_dir, eng, self), extra={"color": "cyan"})
-                return Artist(self.artist_dir)
-                # TODO: Don't use artist dir!
+        collab_indicators = ("and", "&", "feat", ",")
+        if any(i in lc_eng for i in collab_indicators):
+            for lc_artist in sorted(Artist.known_artist_names):
+                if lc_artist in lc_eng:
+                    log.warning("Using artist {!r} instead of {!r} for {}".format(self.artist_dir, eng, self), extra={"color": "cyan"})
+                    return Artist(self.artist_dir)
+
         try:
             return Artist(eng)
         except CodeBasedRestException as e:
