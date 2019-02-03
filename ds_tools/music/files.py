@@ -900,7 +900,10 @@ class SongFile(ClearableCachedPropertyMixin):
 
                     self.__dict__["wiki_song"] = song
                     self.wiki_scores["song"] = song_score
-                    album = song.album
+                    try:
+                        album = song.album
+                    except AttributeError as e:
+                        return None                 # It's a CollaborationSong
                     log.debug("Matched {} to {} via song".format(self, album))
                     return album
 

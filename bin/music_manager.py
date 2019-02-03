@@ -363,7 +363,7 @@ def sort_albums(path, dry_run):
 def wiki_list(path):
     for i, album_dir in enumerate(iter_album_dirs(path)):
         if i:
-            print("\n")
+            log.info("\n")
 
         log.info("{} - {} - {} - Length: {}".format(
             album_dir.artist_path.name, album_dir._type_path.name, album_dir.name, album_dir.length_str
@@ -374,9 +374,11 @@ def wiki_list(path):
 
 
 def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, move_unknown, allow_incomplete, unmatched_cleanup, dry_run):
+    _dest_dir = dest_dir
     mv_prefix = "[DRY RUN] Would move" if dry_run else "Moving"
     rm_prefix = "[DRY RUN] Would remove" if dry_run else "Removing"
     dest_root = Path(dest_dir)
+    cwd = Path(".").resolve()
 
     unplaced = 0
     dests = {}
@@ -396,7 +398,10 @@ def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, move_unkno
             continue
 
         if rel_path is not None:
-            dest_dir = dest_root.joinpath(rel_path)
+            if source_path == _dest_dir:
+                dest_dir = album_dir.artist_path.parent.joinpath(rel_path)
+            else:
+                dest_dir = dest_root.joinpath(rel_path)
             if dest_dir.exists():
                 if not album_dir.path.samefile(dest_dir):
                     log.warning("Dir already exists at destination for {}: {!r}".format(album_dir, dest_dir.as_posix()), extra={"color": "yellow"})
@@ -427,7 +432,11 @@ def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, move_unkno
         raise RuntimeError("There are {:,d} duplicate destination conflicts - exiting".format(len(conflicts)))
 
     for dest_dir, album_dir in sorted(dests.items()):
-        log.info("{} {!r} -> {!r}".format(mv_prefix, album_dir, dest_dir.as_posix()))
+        try:
+            rel_path = dest_dir.relative_to(cwd).as_posix()
+        except Exception as e:
+            rel_path = dest_dir.as_posix()
+        log.info("{} {!r} -> {!r}".format(mv_prefix, album_dir, rel_path))
         if not dry_run:
             album_dir.move(dest_dir)
 
