@@ -36,11 +36,31 @@ NUMS = {
     "first": "1st", "second": "2nd", "third": "3rd", "fourth": "4th", "fifth": "5th", "sixth": "6th",
     "seventh": "7th", "eighth": "8th", "ninth": "9th", "tenth": "10th", "debut": "1st"
 }
-PATH_SANITIZATION_DICT = {c: "" for c in "*;?<>"}
+PATH_SANITIZATION_DICT = {c: "" for c in "*;?<>\""}
 PATH_SANITIZATION_DICT.update({"/": "_", ":": "-", "\\": "_", "|": "-"})
 PATH_SANITIZATION_TABLE = str.maketrans(PATH_SANITIZATION_DICT)
 STRIP_TBL = str.maketrans({c: "" for c in JUNK_CHARS})
 QMARKS = "\"“"
+
+
+"""
+TODO:
+Fix:
+[DRY RUN] Would update <SongFile('Albums/[2013.06.24] Female President [1st Album Repackage]/02 여자 대통령.mp3')> to match <<Artist("Girl's Day (걸스데이)")>'s Song('Female President (여자 대통령)')[3:32, track 2, disk 1]> by changing
+...
+   - album from 'Female President (여자 대통령)' to 'Expectation (기대)'
+   - title from '여자 대통령' to 'Female President (여자 대통령)'
+   
+[DRY RUN] Would update <SongFile('Mini Albums/[2014.11.21] Piano Man [2nd Mini Album]/03. Piano Man (Piano Ver.).mp3')> to match <<Artist('MAMAMOO (마마무)')>'s Song('Love Lane')[3:21, track 3, disk 1][(CD only)]> by changing...
+   - title from 'Piano Man (Piano Ver.)' to 'Love Lane (CD only)'
+
+[DRY RUN] Would update <SongFile('Mini Albums/[2015.06.19] Pink Funky [3rd Mini Album]/07. 음오아예 (Um Oh Ah Yeh) (Inst.).mp3')> to match <<Artist('MAMAMOO (마마무)')>'s Song('Um Oh Ah Yeh')[1:33, track 7, disk 1][(음오아예)(Acapella
+ver.)]> by changing...
+   - title from '음오아예 (Um Oh Ah Yeh) (Inst.)' to 'Um Oh Ah Yeh (음오아예) (Acapella ver.)'
+[DRY RUN] Would update <SongFile('Mini Albums/[2015.06.19] Pink Funky [3rd Mini Album]/08. 따끔 (Inst.).mp3')> to match <<Artist('MAMAMOO (마마무)')>'s Song('Um Oh Ah Yeh')[3:33, track 8, disk 1][(음오아예)(Inst.)]> by changing...
+   - title from '따끔 (Inst.)' to 'Um Oh Ah Yeh (음오아예) (Inst.)'
+
+"""
 
 
 class TitleParser(RecursiveDescentParser):
@@ -700,7 +720,7 @@ class Album(WikiObject):
     }
     numbered_types = (
         "Albums", "Mini Albums", "Special Albums", "Japanese Albums", "Japanese Mini Albums", "Single Albums",
-        "Remake Albums", "Repackage Albums"
+        "Remake Albums", "Repackage Albums", "Summer Mini Albums"
     )
     dated_types = ("Singles", )
     multi_disk_types = ("Albums", "Special Albums", "Japanese Albums", "Remake Albums", "Repackage Albums")
@@ -742,7 +762,10 @@ class Album(WikiObject):
         raise TypeError("'>' not supported for {!r} > {!r}".format(self, other))
 
     def __repr__(self):
-        return "<{}'s {}({!r})[{}]>".format(self.artist, type(self).__name__, self.title, self.year)
+        try:
+            return "<{}'s {}({!r})[{}]>".format(self.artist, type(self).__name__, self.name, self.year)
+        except Exception as e:
+            return "<{}'s {}({!r})[{}]>".format(self.artist, type(self).__name__, self.title, self.year)
 
     def __iter__(self):
         yield from sorted(self.tracks)
@@ -754,10 +777,10 @@ class Album(WikiObject):
             return
 
         nums = []
-        num_match = re.search("^(.*) is the (.*)(?:album|single).+by", self._intro.text.strip())
+        num_match = re.search("^(.*)\s*is the (.*)(?:album|single).+by", self._intro.text.strip())
         if num_match:
             nums = num_match.group(2).lower().split()
-            alb_name = num_match.group(1)
+            alb_name = num_match.group(1).strip()
             try:
                 eng, han = map(unsurround, split_name(alb_name))
             except ValueError as e:
@@ -1292,7 +1315,12 @@ class Album(WikiObject):
     def name(self):
         if not self._processed_intro:
             self._process_intro()
-        return self._name or self.title
+        name = self._name or self.title
+        if self.addl_info:
+            parts = ["({})".format(part) for part in self.addl_info]
+            parts.insert(0, name)
+            return " ".join(parts)
+        return name
 
     @cached_property
     def english_name(self):
@@ -1404,7 +1432,7 @@ class KpopWikiClient(RestClient):
                 aae = AmbiguousArtistException(artist, e.resp.text)
                 alt = aae.alternative
                 if alt:
-                    if alt.lower() in (artist.lower(), _artist.lower()):
+                    if alt.translate(STRIP_TBL).lower() == _artist.translate(STRIP_TBL).lower():
                         return alt
                     raise aae from e
                 else:

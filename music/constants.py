@@ -30,6 +30,8 @@ tag_name_map = {
     "PCST": "Podcast Flag",
 
     #General Fields
+    "POPM": "Popularimeter",                            # See https://en.wikipedia.org/wiki/ID3#ID3v2_rating_tag_issue
+
     "AENC": "Audio encryption",
     "APIC": "Album Cover",
     "ASPI": "Audio seek point index",
@@ -47,7 +49,6 @@ tag_name_map = {
     "OWNE": "Ownership frame",
     "PRIV": "Private frame",
     "PCNT": "Play counter",
-    "POPM": "Popularimeter",
     "POSS": "Position synchronisation frame",
     "RBUF": "Recommended buffer size",
     "RVAD": "Relative volume adjustment",                                       #V2.3

@@ -201,7 +201,7 @@ def match_wiki(path):
                 "Wiki Artist": music_file.wiki_artist.name if music_file.wiki_artist else "",
 
                 "File Album": music_file.album_name_cleaned,
-                "Wiki Album": music_file.wiki_album.title if music_file.wiki_album else "",
+                "Wiki Album": music_file.wiki_album.name if music_file.wiki_album else "",
                 "File Alb Type": music_file.album_type_dir,
                 "Wiki Alb Type": music_file.wiki_album.type if music_file.wiki_album else "",
                 "Album Score": music_file.wiki_scores.get("album", -1),
@@ -377,7 +377,7 @@ def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, move_unkno
     _dest_dir = dest_dir
     mv_prefix = "[DRY RUN] Would move" if dry_run else "Moving"
     rm_prefix = "[DRY RUN] Would remove" if dry_run else "Removing"
-    dest_root = Path(dest_dir)
+    dest_root = Path(dest_dir).expanduser().resolve()
     cwd = Path(".").resolve()
 
     unplaced = 0
@@ -402,6 +402,7 @@ def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, move_unkno
                 dest_dir = album_dir.artist_path.parent.joinpath(rel_path)
             else:
                 dest_dir = dest_root.joinpath(rel_path)
+
             if dest_dir.exists():
                 if not album_dir.path.samefile(dest_dir):
                     log.warning("Dir already exists at destination for {}: {!r}".format(album_dir, dest_dir.as_posix()), extra={"color": "yellow"})

@@ -202,7 +202,8 @@ class AlbumDir(ClearableCachedPropertyMixin):
 
     def move(self, dest_path):
         if not isinstance(dest_path, Path):
-            dest_path = Path(dest_path).expanduser().resolve()
+            dest_path = Path(dest_path)
+        dest_path = dest_path.expanduser().resolve()
 
         if not dest_path.parent.exists():
             os.makedirs(dest_path.parent.as_posix())
@@ -779,6 +780,23 @@ class SongFile(ClearableCachedPropertyMixin):
         m = re.match("(.*)\s*\[.*Album\]", album)
         if m:
             album = m.group(1).strip()
+
+        m = re.match("^(.*?)\s*(?:the)?\s*[0-9](?:st|nd|rd|th)\s+\S*\s*album\s*(?:repackage)?\s*(.*)$", album, re.I)
+        if m:
+            album = " ".join(map(str.strip, m.groups())).strip()
+
+        # m = re.search("(?:the)?\s*[0-9](?:st|nd|rd|th)\s+\S*\s*album(.*)$", album, re.IGNORECASE)
+        # if m:
+        #     group = m.group(1).strip()
+        #     if group:
+        #         album = group
+        #
+        # m = re.match("^(.*?)\s*[-:] (?:the)?\s*[0-9](?:st|nd|rd|th)\s+\S*\s*album\s*(?:repackage)?$", album, re.IGNORECASE)
+        # if m:
+        #     group = m.group(1).strip()
+        #     if group:
+        #         album = group
+
         return album
 
     @cached_property
@@ -924,6 +942,13 @@ class SongFile(ClearableCachedPropertyMixin):
         artist = self.wiki_artist
         # noinspection PyTypeChecker
         track = self.tag_text("track", default=None)
+        if track:
+            if "/" in track:
+                track = track.split("/")[0].strip()
+            if "," in track:
+                track = track.split(",")[0].strip()
+            if track.startswith("("):
+                track = track[1:].strip()
         try:
             song, score = artist._find_song(self.tag_title, album=self.wiki_album, track=track) if artist else (None, -1)
         except Exception as e:
