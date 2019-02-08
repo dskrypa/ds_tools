@@ -27,11 +27,11 @@ from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
 
 from ..http import CodeBasedRestException
 from ..utils import (
-    cached_property, DBCache, cached, get_user_cache_dir, CacheKey, format_duration, is_hangul,
+    cached_property, DBCache, cached, get_user_cache_dir, CacheKey, format_duration,
     ClearableCachedPropertyMixin, contains_hangul, ParentheticalParser
 )
 from .patches import tag_repr
-from .wiki import Artist, eng_name, split_name, CollaborationSong
+from .wiki import Artist, split_name, CollaborationSong
 
 __all__ = [
     "SongFile", "FakeMusicFile", "iter_music_files", "load_tags", "iter_music_albums",

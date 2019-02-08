@@ -9,25 +9,23 @@ import logging
 import os
 import re
 import string
-import traceback
-from collections import OrderedDict
 from contextlib import suppress
 from pathlib import Path
-from urllib.parse import urlparse, quote as url_quote
+from urllib.parse import urlparse
 from weakref import WeakValueDictionary
 
 import bs4
-# import Levenshtein as lev
 from fuzzywuzzy import fuzz, utils as fuzz_utils
 
-from ..exceptions import CodeBasedRestException
-from ..http import RestClient
 from ..utils import (
-    soupify, FSCache, cached, is_hangul, contains_hangul, cached_property, datetime_with_tz, now,
-    RecursiveDescentParser, UnexpectedTokenError, format_duration, ParentheticalParser
+    soupify, is_hangul, contains_hangul, cached_property, datetime_with_tz, now, UnexpectedTokenError, format_duration,
+    ParentheticalParser
 )
+from .exceptions import *
+from .utils import *
+from .wiki_rest import KpopWikiClient, WikipediaClient
 
-__all__ = ["KpopWikiClient", "WikipediaClient", "Artist", "Album", "Song", "InvalidArtistException", "TitleParser"]
+__all__ = ["Artist", "Album", "Song", "CollaborationSong", "split_name"]
 log = logging.getLogger("ds_tools.music.wiki")
 
 JUNK_CHARS = string.whitespace + string.punctuation
@@ -36,11 +34,7 @@ NUMS = {
     "first": "1st", "second": "2nd", "third": "3rd", "fourth": "4th", "fifth": "5th", "sixth": "6th",
     "seventh": "7th", "eighth": "8th", "ninth": "9th", "tenth": "10th", "debut": "1st"
 }
-PATH_SANITIZATION_DICT = {c: "" for c in "*;?<>\""}
-PATH_SANITIZATION_DICT.update({"/": "_", ":": "-", "\\": "_", "|": "-"})
-PATH_SANITIZATION_TABLE = str.maketrans(PATH_SANITIZATION_DICT)
 STRIP_TBL = str.maketrans({c: "" for c in JUNK_CHARS})
-QMARKS = "\"“"
 
 
 """
@@ -63,184 +57,6 @@ ver.)]> by changing...
 """
 
 
-class TitleParser(RecursiveDescentParser):
-    _entry_point = "title"
-    _strip = True
-    TOKENS = OrderedDict([
-        ("QUOTE", "[{}]".format(QMARKS)),
-        ("LPAREN", "[\(（]"),
-        ("RPAREN", "[\)）]"),
-        ("DASH", "\s*[-–]\s*"),
-        ("TIME", "\d+:\d{2}"),
-        ("WS", "\s+"),
-        ("TEXT", "[^\"“()（）]+"),
-    ])
-
-    def title(self):
-        """
-        title ::= name { (extra) }* { dash }* { time }* { (extra) }*
-        """
-        title = {"name": self.name().strip(), "duration": None, "extras": []}
-        while self.next_tok:
-            if self._accept("LPAREN"):
-                title["extras"].append(self.extra())
-            elif self._accept("DASH"):
-                if self._peek("TIME"):
-                    pass
-                elif self.tok.value.strip() in self._remaining:
-                    title["extras"].append(self.extra("DASH"))
-                else:
-                    raise UnexpectedTokenError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
-            elif self._accept("WS"):
-                pass
-            elif self._accept("TIME"):
-                title["duration"] = self.tok.value
-            elif self._accept("QUOTE") and any(self._full.count(c) % 2 == 1 for c in QMARKS):
-                log.warning("Unpaired quote found in {!r}".format(self._full), extra={"red": True})
-                pass
-            else:
-                raise UnexpectedTokenError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
-        return title
-
-    def extra(self, closer="RPAREN"):
-        """
-        extra ::= ( text | dash | time | quote | (extra) )
-        """
-        text = ""
-        while self.next_tok:
-            if self._accept(closer):
-                return text
-            elif self._accept("LPAREN"):
-                text += "({})".format(self.extra())
-            else:
-                self._advance()
-                text += self.tok.value
-        return text
-
-    def name(self):
-        """
-        name :: = { " }* text { (extra) }* { " }*
-        """
-        had_extra = False
-        name = ""
-        first_char_was_quote = False
-        # quotes = 0
-        while self.next_tok:
-            if self._peek("TIME") and name:
-                return name
-            elif self._peek("LPAREN") and name and all(c not in self._full for c in QMARKS):
-                return name
-
-            if self._accept("QUOTE"):
-                # quotes += 1
-                if not name:
-                    first_char_was_quote = True
-                else:
-                    return name
-            elif self._accept("DASH"):
-                if self._peek("TIME"):
-                    return name
-                elif self.tok.value.strip() in self._remaining:
-                    name += "({})".format(self.extra("DASH"))
-                else:
-                    name += self.tok.value
-            elif self._accept("LPAREN"):
-                name += "({})".format(self.extra())
-                had_extra = True
-            elif self._accept("TEXT") or self._accept("RPAREN"):
-                name += self.tok.value
-            elif self._accept("WS"):
-                if had_extra and not (first_char_was_quote and any(c in self._remaining for c in QMARKS)):
-                # if had_extra and not any(self._full.startswith(c) and (self._full.count(c) > 1) for c in QMARKS):
-                    return name
-                name += self.tok.value
-            elif self._accept("TIME"):
-                name += self.tok.value
-            else:
-                raise UnexpectedTokenError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
-        return name
-
-
-class AlbumParser(TitleParser):
-    _entry_point = "title"
-    _strip = True
-    TOKENS = OrderedDict([
-        ("YEAR", "\(\d{4}\)"),
-        ("QUOTE", "[{}]".format(QMARKS)),
-        ("LPAREN", "[\(（]"),
-        ("RPAREN", "[\)）]"),
-        ("DASH", "\s*[-–]\s*"),
-        ("WS", "\s+"),
-        ("TEXT", "[^\"“()（）]+"),
-    ])
-
-    def title(self):
-        """
-        title ::= name { (extra) }* { dash }* { (time) }* { (extra) }*
-        """
-        title = {"name": self.name().strip(), "year": None, "extras": []}
-        while self.next_tok:
-            if self._accept("LPAREN"):
-                title["extras"].append(self.extra())
-            elif self._accept("DASH"):
-                if self.tok.value.strip() in self._remaining:
-                    title["extras"].append(self.extra("DASH"))
-                else:
-                    raise UnexpectedTokenError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
-            elif self._accept("WS"):
-                pass
-            elif self._accept("YEAR"):
-                title["year"] = self.tok.value[1:-1]
-            elif self._accept("QUOTE"):
-                if any((c not in self._remaining) and (self._full.count(c) % 2 == 1) for c in QMARKS):
-                    log.warning("Unpaired quote found in {!r}".format(self._full), extra={"red": True})
-                else:
-                    raise UnexpectedTokenError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
-            else:
-                raise UnexpectedTokenError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
-        return title
-
-    def name(self):
-        """
-        name :: = { " }* text { (extra) }* { " }*
-        """
-        had_extra = False
-        name = ""
-        first_char_was_quote = False
-        quotes = 0
-        while self.next_tok:
-            if self._peek("YEAR"):
-                return name
-            elif self._peek("LPAREN") and name and (quotes % 2 == 0):
-                return name
-
-            if self._accept("QUOTE"):
-                quotes += 1
-                if not name:
-                    first_char_was_quote = True
-                elif first_char_was_quote:
-                    return name
-                else:
-                    name += self.tok.value
-            elif self._accept("DASH"):
-                if self.tok.value.strip() in self._remaining:
-                    name += "({})".format(self.extra("DASH"))
-                else:
-                    name += self.tok.value
-            elif self._accept("LPAREN"):
-                name += "({})".format(self.extra())
-                had_extra = True
-            elif self._accept("TEXT") or self._accept("RPAREN"):
-                name += self.tok.value
-            elif self._accept("WS"):
-                if had_extra and not (first_char_was_quote and any(c in self._remaining for c in QMARKS)):
-                    return name
-                name += self.tok.value
-            else:
-                raise UnexpectedTokenError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
-        return name
-
-
 class WikiObject:
     def __init__(self, uri_path, client):
         if not getattr(self, "_WikiObject__initialized", False):
@@ -248,6 +64,10 @@ class WikiObject:
             self._uri_path = uri_path
             self.__raw_content = None
             self.__initialized = True
+
+    @cached_property
+    def _url(self):
+        return self._client.url_for(self._uri_path)
 
     @cached_property
     def _raw_content(self):
@@ -1405,92 +1225,6 @@ class Song:
         return os.path.join(self.album.expected_rel_path, self.expected_filename(ext))
 
 
-class KpopWikiClient(RestClient):
-    __instance = None
-
-    def __new__(cls, *args, **kwargs):
-        if cls.__instance is None:
-            cls.__instance = super().__new__(cls)
-        return cls.__instance
-
-    def __init__(self):
-        if not getattr(self, "_KpopWikiClient__initialized", False):
-            super().__init__("kpop.fandom.com", rate_limit=1, prefix="wiki")
-            self._page_cache = FSCache(cache_subdir="kpop_wiki", prefix="get__", ext="html")
-            self._artist_cache = FSCache(cache_subdir="kpop_wiki/artists", prefix="artist__")
-            self._error_cache = {}      # Prevent repeated attempts with a bad url within a session
-            self.__initialized = True
-
-    @cached("_artist_cache", lock=True, key=lambda s, a: url_quote(a, ""))
-    def normalize_artist(self, artist):
-        _artist = artist
-        artist = artist.replace(" ", "_")
-        try:
-            html = self.get_page(artist)
-        except CodeBasedRestException as e:
-            if e.code == 404:
-                aae = AmbiguousArtistException(artist, e.resp.text)
-                alt = aae.alternative
-                if alt:
-                    if alt.translate(STRIP_TBL).lower() == _artist.translate(STRIP_TBL).lower():
-                        return alt
-                    raise aae from e
-                else:
-                    try:
-                        parts = ParentheticalParser().parse(_artist)
-                        name = parts[0]
-                    except Exception as pe:
-                        pass
-                    else:
-                        log.debug("Checking {!r} for {}".format(name, _artist))
-                        try:
-                            return self._artist_cache[url_quote(name, "")]
-                        except KeyError as ke:
-                            pass
-            raise e
-        else:
-            if "This article is a disambiguation page" in html:
-                raise AmbiguousArtistException(artist, html)
-            return artist
-
-    @cached("_page_cache", lock=True, key=FSCache.dated_html_key_func("%Y-%m"))
-    def get_page(self, endpoint, **kwargs):
-        if endpoint in self._error_cache:
-            raise self._error_cache[endpoint]
-        try:
-            return self.get(endpoint, **kwargs).text
-        except CodeBasedRestException as e:
-            log.debug(e)
-            self._error_cache[endpoint] = e
-            raise e
-
-    def get_artist(self, artist):
-        return Artist(self.normalize_artist(artist), self)
-
-
-class WikipediaClient(RestClient):
-    __instance = None
-
-    def __new__(cls, *args, **kwargs):
-        if cls.__instance is None:
-            cls.__instance = super().__new__(cls)
-        return cls.__instance
-
-    def __init__(self):
-        if not getattr(self, "_WikipediaClient__initialized", False):
-            super().__init__("en.wikipedia.org", rate_limit=1, prefix="wiki", proto="https")
-            self._page_cache = FSCache(cache_subdir="kpop_wiki/wikipedia", prefix="get__", ext="html")
-            self.__initialized = True
-
-    @cached("_page_cache", lock=True, key=FSCache.dated_html_key_func("%Y-%m"))
-    def get_page(self, endpoint, **kwargs):
-        return self.get(endpoint, **kwargs).text
-
-
-def sanitize(text):
-    return text.translate(PATH_SANITIZATION_TABLE)
-
-
 def _classify(original, text1, text2, is_artist=False):
     parts = (text1.strip(), text2.strip())
     han1, han2 = map(contains_hangul, parts)
@@ -1585,55 +1319,6 @@ def _split_name(name, is_artist=False, extra=False):
         return _classify(name, *m.groups(), is_artist=is_artist)
 
     raise ValueError("Unable to split {!r} into separate english/hangul strings (no pattern matches)".format(name))
-
-
-def eng_name(obj, name, attr):
-    pat = re.compile("(.*)\s*\((.*)\)")
-    m = pat.match(name)
-    if m:
-        eng, han = map(str.strip, m.groups())
-        if contains_hangul(eng):
-            if contains_hangul(han):
-                raise AttributeError("{} Does not have an {}".format(obj, attr))
-            m = pat.match(eng)
-            if m:                                       # Use case: 'soloist (as hangul) (group name)'
-                eng, han = map(str.strip, m.groups())
-                if contains_hangul(eng):
-                    if contains_hangul(han):
-                        raise AttributeError("{} Does not have an {}".format(obj, attr))
-                    return han
-                return eng
-            return han
-        return eng
-    if contains_hangul(name):
-        raise AttributeError("{} Does not have an {}".format(obj, attr))
-    return name.strip()
-
-
-def han_name(obj, name, attr):
-    m = re.match("(.*)\s*\((.*)\)", name)
-    if m:
-        eng, han = m.groups()
-        if contains_hangul(han):
-            if contains_hangul(eng):
-                return name.strip()
-            return han.strip()
-        if contains_hangul(eng):
-            return eng.strip()
-    if contains_hangul(name):
-        return name.strip()
-    raise AttributeError("{} Does not have a {}".format(obj, attr))
-
-
-def unsurround(a_str):
-    for a, b in (("\"", "\""), ("(", ")"), ("“", "“")):
-        if a_str.startswith(a) and a_str.endswith(b):
-            a_str = a_str[1:-1].strip()
-    return a_str
-
-
-def _normalize_title(title):
-    return re.sub("\s+", " ", fuzz_utils.full_process(title, force_ascii=False))
 
 
 def wiki_obj_match_scorer(title, obj, track=None):
@@ -1813,51 +1498,6 @@ def _find_song(title, albums, features=None, try_split=True, track=None):
                         best_score = lang_score
                         best_song = lang_song
     return best_song, best_score
-
-
-class InvalidArtistException(Exception):
-    pass
-
-
-class AlbumNotFoundException(Exception):
-    pass
-
-
-class TrackDiscoveryException(Exception):
-    pass
-
-
-class AmbiguousArtistException(Exception):
-    def __init__(self, artist, html):
-        self.artist = artist
-        self.html = html
-
-    @cached_property
-    def alternative(self):
-        alts = self.alternatives
-        return alts[0] if len(alts) == 1 else None
-
-    @cached_property
-    def alternatives(self):
-        soup = soupify(self.html)
-        try:
-            return [soup.find("span", class_="alternative-suggestion").find("a").text]
-        except Exception as e:
-            pass
-
-        disambig_div = soup.find("div", id="disambig")
-        if disambig_div:
-            return [li.find("a").get("href")[6:] for li in disambig_div.parent.find("ul")]
-        return []
-
-    def __str__(self):
-        alts = self.alternatives
-        if len(alts) == 1:
-            return "Artist {!r} doesn't exist - did you mean {!r}?".format(self.artist, alts[0])
-        elif alts:
-            return "Artist {!r} doesn't exist - did you mean one of these? {}".format(self.artist, " | ".join(alts))
-        else:
-            return "Artist {!r} doesn't exist and no suggestions could be found."
 
 
 if __name__ == "__main__":
