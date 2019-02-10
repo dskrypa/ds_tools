@@ -32,8 +32,8 @@ class RecursiveDescentParser:
     _strip = False
     TOKENS = {}
 
-    def __init__(self):
-        self.pattern = re.compile("|".join("(?P<{}>{})".format(k, v) for k, v in self.TOKENS.items()))
+    def __init_subclass__(cls, **kwargs):                                                               # Python 3.6+
+        cls.pattern = re.compile("|".join("(?P<{}>{})".format(k, v) for k, v in cls.TOKENS.items()))
 
     def tokenize(self, text):
         # noinspection PyUnresolvedReferences
@@ -130,7 +130,9 @@ class ParentheticalParser(RecursiveDescentParser):
                     parts.append(text)
                     text = ""
                 parenthetical, nested = self.parenthetical(self._opener2closer[tok_type])
-                if not parts and not nested and not self._peek("WS"):
+                log.debug("Parsed {!r} (nested={}); next token={!r}".format(parenthetical, nested, self.next_tok))
+                # if not parts and not nested and not self._peek("WS"):
+                if not nested and not self._peek("WS") and self.next_tok is not None:
                     text += self._nested_fmts[tok_type].format(parenthetical)
                 else:
                     parts.append((parenthetical, nested, tok_type))
@@ -141,8 +143,8 @@ class ParentheticalParser(RecursiveDescentParser):
                     self.next_tok.type, self.next_tok.value, self._full
                 ))
 
-        if text:
-            parts.append(text)
+        if text.strip():
+            parts.append(text.strip())
 
         single_idxs = set()
         had_nested = False
@@ -153,14 +155,15 @@ class ParentheticalParser(RecursiveDescentParser):
                 if not nested:
                     single_idxs.add(i)
 
+        # log.debug("{!r} => {} [nested: {}][singles: {}]".format(self._full, parts, had_nested, sorted(single_idxs)))
         if had_nested and single_idxs:
             single_idxs = sorted(single_idxs)
             while single_idxs:
                 i = single_idxs.pop(0)
                 for ti in (i - 1, i + 1):
-                    if ti < 0:
+                    if (ti < 0) or (ti > (len(parts) - 1)):
                         continue
-                    if isinstance(parts[ti], str):
+                    if isinstance(parts[ti], str) and parts[ti].strip():
                         parenthetical, nested, tok_type = parts[i]
                         formatted = self._nested_fmts[tok_type].format(parenthetical)
                         parts[ti] = (formatted + parts[ti]) if ti > i else (parts[ti] + formatted)
@@ -168,7 +171,8 @@ class ParentheticalParser(RecursiveDescentParser):
                         single_idxs = [idx - 1 for idx in single_idxs]
                         break
 
-        return [part for part in map(str.strip, (p[0] if isinstance(p, tuple) else p for p in parts)) if part]
+        cleaned = (part for part in map(str.strip, (p[0] if isinstance(p, tuple) else p for p in parts)) if part)
+        return [part for part in cleaned if part not in "\"“()（）[]"]
 
 
 class UnexpectedTokenError(SyntaxError):

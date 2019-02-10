@@ -1,7 +1,7 @@
 
 from .argparsing import *
 from .filesystem import *
-from .hangul import *
+from .cjk import *
 from .input import *
 from .introspection import *
 from .itertools import *

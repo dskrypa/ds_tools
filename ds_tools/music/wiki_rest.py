@@ -32,9 +32,43 @@ class KpopWikiClient(RestClient):
         if not getattr(self, "_KpopWikiClient__initialized", False):
             super().__init__("kpop.fandom.com", rate_limit=1, prefix="wiki")
             self._page_cache = FSCache(cache_subdir="kpop_wiki", prefix="get__", ext="html")
+            self._name_cache = FSCache(cache_subdir="kpop_wiki/names", prefix="name__")
             self._artist_cache = FSCache(cache_subdir="kpop_wiki/artists", prefix="artist__")
             self._error_cache = {}      # Prevent repeated attempts with a bad url within a session
             self.__initialized = True
+
+    @cached("_name_cache", lock=True, key=lambda s, a: url_quote(a, ""))
+    def normalize_name(self, name):
+        name = name.strip()
+        _name = name
+        name = name.replace(" ", "_")
+        try:
+            html = self.get_page(name)
+        except CodeBasedRestException as e:
+            if e.code == 404:
+                aae = AmbiguousEntityException(name, e.resp.text)
+                alt = aae.alternative
+                if alt:
+                    if alt.translate(STRIP_TBL).lower() == _name.translate(STRIP_TBL).lower():
+                        return alt
+                    raise aae from e
+                else:
+                    try:
+                        parts = ParentheticalParser().parse(_name)
+                        name = parts[0]
+                    except Exception as pe:
+                        pass
+                    else:
+                        log.debug("Checking {!r} for {}".format(name, _name))
+                        try:
+                            return self._artist_cache[url_quote(name, "")]
+                        except KeyError as ke:
+                            pass
+            raise e
+        else:
+            if "This article is a disambiguation page" in html:
+                raise AmbiguousEntityException(name, html)
+            return name
 
     @cached("_artist_cache", lock=True, key=lambda s, a: url_quote(a, ""))
     def normalize_artist(self, artist):
@@ -44,7 +78,7 @@ class KpopWikiClient(RestClient):
             html = self.get_page(artist)
         except CodeBasedRestException as e:
             if e.code == 404:
-                aae = AmbiguousArtistException(artist, e.resp.text)
+                aae = AmbiguousEntityException(artist, e.resp.text, "Artist")
                 alt = aae.alternative
                 if alt:
                     if alt.translate(STRIP_TBL).lower() == _artist.translate(STRIP_TBL).lower():
@@ -65,7 +99,7 @@ class KpopWikiClient(RestClient):
             raise e
         else:
             if "This article is a disambiguation page" in html:
-                raise AmbiguousArtistException(artist, html)
+                raise AmbiguousEntityException(artist, html, "Artist")
             return artist
 
     @cached("_page_cache", lock=True, key=FSCache.dated_html_key_func("%Y-%m"))
@@ -80,8 +114,11 @@ class KpopWikiClient(RestClient):
             raise e
 
     @cached(True)
-    def parse_categories(self, uri_path):
-        page_content = soupify(self.get_page(uri_path))
+    def parse_categories(self, uri_path, obj_type=None):
+        raw = self.get_page(uri_path)
+        if "This article is a disambiguation page" in raw:
+            raise AmbiguousEntityException(uri_path, raw, obj_type)
+        page_content = soupify(raw)
         cat_ul = page_content.find("ul", class_="categories")
         return {li.text.lower() for li in cat_ul.find_all("li")} if cat_ul else set()
 
@@ -105,8 +142,11 @@ class WikipediaClient(RestClient):
         return self.get(endpoint, **kwargs).text
 
     @cached(True)
-    def parse_categories(self, uri_path):
-        page_content = soupify(self.get_page(uri_path))
+    def parse_categories(self, uri_path, obj_type=None):
+        raw = self.get_page(uri_path)
+        if "This article is a disambiguation page" in raw:
+            raise AmbiguousEntityException(uri_path, raw, obj_type)
+        page_content = soupify(raw)
         cat_links = page_content.find("div", id="mw-normal-catlinks")
         cat_ul = cat_links.find("ul") if cat_links else None
         return {li.text.lower() for li in cat_ul.find_all("li")} if cat_ul else set()

@@ -6,7 +6,7 @@
 
 from ..utils import soupify, cached_property
 
-__all__ = ["InvalidArtistException", "AlbumNotFoundException", "TrackDiscoveryException", "AmbiguousArtistException"]
+__all__ = ["InvalidArtistException", "AlbumNotFoundException", "TrackDiscoveryException", "AmbiguousEntityException"]
 
 
 class InvalidArtistException(Exception):
@@ -21,10 +21,11 @@ class TrackDiscoveryException(Exception):
     pass
 
 
-class AmbiguousArtistException(Exception):
-    def __init__(self, artist, html):
-        self.artist = artist
+class AmbiguousEntityException(Exception):
+    def __init__(self, uri_path, html, obj_type=None):
+        self.uri_path = uri_path
         self.html = html
+        self.obj_type = obj_type or "Page"
 
     @cached_property
     def alternative(self):
@@ -46,9 +47,10 @@ class AmbiguousArtistException(Exception):
 
     def __str__(self):
         alts = self.alternatives
+        base = "{} {!r} doesn't exist".format(self.obj_type, self.uri_path)
         if len(alts) == 1:
-            return "Artist {!r} doesn't exist - did you mean {!r}?".format(self.artist, alts[0])
+            return "{} - did you mean {!r}?".format(base, alts[0])
         elif alts:
-            return "Artist {!r} doesn't exist - did you mean one of these? {}".format(self.artist, " | ".join(alts))
+            return "{} - did you mean one of these? {}".format(base, " | ".join(alts))
         else:
-            return "Artist {!r} doesn't exist and no suggestions could be found."
+            return "{} and no suggestions could be found.".format(base)

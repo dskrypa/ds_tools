@@ -181,7 +181,7 @@ class Artist(WikiObject):
 
     def _process_intro(self):
         if (self._raw_content is not None) and ("This article is a disambiguation page" in self._raw_content):
-            raise AmbiguousArtistException(self._uri_path, self._raw_content)
+            raise AmbiguousEntityException(self._uri_path, self._raw_content, "Artist")
 
         intro = self._intro.text.strip()
         m = re.match("^(.*?)\s+\((.*?)\)", intro)
@@ -868,7 +868,7 @@ class Album(WikiObject):
                 if not any(i in artist for i in "&,;+"):
                     try:
                         self.artist = Artist(artist)
-                    except AmbiguousArtistException as e:
+                    except AmbiguousEntityException as e:
                         found_alt = False
                         eng_alb_artist = self.artist.english_name.replace(" ", "_")
                         for alt in e.alternatives:
@@ -1290,9 +1290,11 @@ def _split_name(name, is_artist=False, extra=False):
             else:
                 log.debug("ParentheticalParser().parse({!r}) returned only {!r}, and it was mixed".format(name, part))
         elif len(parts) == 2:
+            log.debug("ParentheticalParser().parse({!r}) returned 2 parts: {}".format(name, parts))
             with suppress(ValueError):
                 return _classify(name, *parts, is_artist=is_artist)
         elif len(parts) == 3:
+            log.debug("ParentheticalParser().parse({!r}) returned 3 parts: {}".format(name, parts))
             if is_artist:
                 with suppress(Exception):
                     eng, han = _classify(name, *parts[:2])
@@ -1303,6 +1305,7 @@ def _split_name(name, is_artist=False, extra=False):
                     eng, han = _classify(name, *parts[:2], is_artist=is_artist)
                     return eng, han, parts[2]
         else:
+            log.debug("ParentheticalParser().parse({!r}) returned >3 parts: {}".format(name, parts))
             # p_too_many = True
             # log.debug("ParentheticalParser().parse({!r}) returned too many parts: {}".format(name, parts))
             # traceback.print_stack()
@@ -1311,11 +1314,13 @@ def _split_name(name, is_artist=False, extra=False):
     pat1 = re.compile(r"^([^()[\]]+[([][^()[\]]+[)\]])\s*[([](.*)[)\]]$")   # name (group) [other lang name (group)]
     m = pat1.match(name)
     if m:
+        log.debug("pat1 match for {!r}".format(name))
         return _classify(name, *m.groups(), is_artist=is_artist)
 
     pat2 = re.compile(r"^(.*)\s*[([](.*)[)\]]$")  # name (other lang name)
     m = pat2.match(name)
     if m:
+        log.debug("pat2 match for {!r}".format(name))
         return _classify(name, *m.groups(), is_artist=is_artist)
 
     raise ValueError("Unable to split {!r} into separate english/hangul strings (no pattern matches)".format(name))
@@ -1498,6 +1503,44 @@ def _find_song(title, albums, features=None, try_split=True, track=None):
                         best_score = lang_score
                         best_song = lang_song
     return best_song, best_score
+
+
+def eng_name(obj, name, attr):
+    pat = re.compile("(.*)\s*\((.*)\)")
+    m = pat.match(name)
+    if m:
+        eng, han = map(str.strip, m.groups())
+        if contains_hangul(eng):
+            if contains_hangul(han):
+                raise AttributeError("{} Does not have an {}".format(obj, attr))
+            m = pat.match(eng)
+            if m:                                       # Use case: 'soloist (as hangul) (group name)'
+                eng, han = map(str.strip, m.groups())
+                if contains_hangul(eng):
+                    if contains_hangul(han):
+                        raise AttributeError("{} Does not have an {}".format(obj, attr))
+                    return han
+                return eng
+            return han
+        return eng
+    if contains_hangul(name):
+        raise AttributeError("{} Does not have an {}".format(obj, attr))
+    return name.strip()
+
+
+def han_name(obj, name, attr):
+    m = re.match("(.*)\s*\((.*)\)", name)
+    if m:
+        eng, han = m.groups()
+        if contains_hangul(han):
+            if contains_hangul(eng):
+                return name.strip()
+            return han.strip()
+        if contains_hangul(eng):
+            return eng.strip()
+    if contains_hangul(name):
+        return name.strip()
+    raise AttributeError("{} Does not have a {}".format(obj, attr))
 
 
 if __name__ == "__main__":
