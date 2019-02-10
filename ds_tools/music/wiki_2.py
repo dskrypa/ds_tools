@@ -176,6 +176,7 @@ class WikiArtist(WikiEntity):
         else:
             self.name = self.english_name or self.cjk_name
 
+        self.aliases = [a for a in (self.english_name, self.cjk_name, self.stylized_name, self.aka, self.name) if a]
         if self.english_name and isinstance(self._client, KpopWikiClient):
             type(self)._known_artists.add(self.english_name.lower())
 
@@ -248,6 +249,25 @@ class WikiGroup(WikiArtist):
                     member = list(map(str.strip, (td.text.strip() for td in tr.find_all("td"))))[0]
                     members.append(member)
         return members
+
+    @cached_property
+    def sub_units(self):
+        content = self._soup.find("div", id="mw-content-text")
+        su_ele = content.find(id=re.compile("sub[-_]?units", re.IGNORECASE))
+        if not su_ele:
+            return []
+        sub_units = []
+        while su_ele and not su_ele.name.startswith("h"):
+            su_ele = su_ele.parent
+        ul = su_ele.next_sibling.next_sibling
+        if not ul or ul.name != "ul":
+            raise RuntimeError("Unexpected sibling element for sub-units")
+
+        for li in ul.find_all("li"):
+            a = li.find("a")
+            if a and a.get("href"):
+                sub_units.append(WikiGroup(a.get("href")[6:]))
+        return sub_units
 
 
 class WikiSinger(WikiArtist):
