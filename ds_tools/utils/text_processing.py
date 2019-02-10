@@ -130,7 +130,7 @@ class ParentheticalParser(RecursiveDescentParser):
                     parts.append(text)
                     text = ""
                 parenthetical, nested = self.parenthetical(self._opener2closer[tok_type])
-                log.debug("Parsed {!r} (nested={}); next token={!r}".format(parenthetical, nested, self.next_tok))
+                # log.debug("Parsed {!r} (nested={}); next token={!r}".format(parenthetical, nested, self.next_tok))
                 # if not parts and not nested and not self._peek("WS"):
                 if not nested and not self._peek("WS") and self.next_tok is not None:
                     text += self._nested_fmts[tok_type].format(parenthetical)

@@ -32,6 +32,15 @@ class AmbiguousEntityException(Exception):
         alts = self.alternatives
         return alts[0] if len(alts) == 1 else None
 
+    @property
+    def potential_alternatives(self):
+        alts = []
+        for func in ("title", "upper"):
+            val = getattr(self.uri_path, func)()
+            if val != self.uri_path:
+                alts.append(val)
+        return alts
+
     @cached_property
     def alternatives(self):
         soup = soupify(self.html)
@@ -42,7 +51,11 @@ class AmbiguousEntityException(Exception):
 
         disambig_div = soup.find("div", id="disambig")
         if disambig_div:
-            return [li.find("a").get("href")[6:] for li in disambig_div.parent.find("ul")]
+            return [
+                a.get("href")[6:] if a.get("href") else a.text.strip()
+                for li in disambig_div.parent.find("ul")
+                for a in li.find_all("a", limit=1)
+            ]
         return []
 
     def __str__(self):

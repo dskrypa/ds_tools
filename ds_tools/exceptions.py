@@ -129,6 +129,16 @@ class CodeBasedRestException(Exception, metaclass=CodeBasedRestExceptionMeta):
                     self.msg = self.resp.text
         super(CodeBasedRestException, self).__init__(*args)
 
+    def __reduce__(self):
+        """Makes pickle work properly; implementing __getnewargs__ was not working"""
+        new_args = (self.exception or self.resp, self.endpoint)
+        state = self.__dict__.copy()
+        state["args"] = self.args       # args does not seem to show up in __dict__ for exceptions...
+        return CodeBasedRestException, new_args, state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
     def __str__(self):
         if self.msg:
             return "{} [{}] {} on {}: {}".format(type(self).__name__, self.code, self.reason, self.endpoint, self.msg)

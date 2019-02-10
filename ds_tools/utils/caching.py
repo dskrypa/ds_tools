@@ -450,23 +450,33 @@ class DBCache:
       :func:`get_user_cache_dir<ds_tools.utils.filesystem.get_user_cache_dir>`
     :param bool preserve_old: True to preserve old cache files, False (default) to delete them
     """
-    def __init__(self, file_prefix, time_fmt="%Y-%m", db_dir=None, preserve_old=False):
-        db_file_prefix = "{}.{}.".format(file_prefix, getuser())
-        current_db = "{}{}.db".format(db_file_prefix, now(time_fmt))
-        db_dir = validate_or_make_dir(db_dir, permissions=0o1777) if db_dir else get_user_cache_dir(permissions=0o1777)
+    def __init__(self, prefix, cache_dir=None, cache_subdir=None, time_fmt="%Y-%m", preserve_old=False, db_path=None):
+        if not db_path:
+            if cache_dir:
+                self.cache_dir = os.path.join(cache_dir, cache_subdir) if cache_subdir else cache_dir
+                validate_or_make_dir(self.cache_dir)
+            else:
+                self.cache_dir = get_user_cache_dir(cache_subdir)
+            db_file_prefix = "{}.".format(prefix)
+            current_db = "{}{}.db".format(db_file_prefix, now(time_fmt))
 
-        if not preserve_old:
-            for fname in os.listdir(db_dir):
-                if fname.startswith(db_file_prefix) and fname.endswith(".db") and fname != current_db:
-                    file_path = os.path.join(db_dir, fname)
-                    try:
-                        if os.path.isfile(file_path):
-                            log.debug("Deleting old cache file: {}".format(file_path))
-                            os.remove(file_path)
-                    except OSError as e:
-                        log.debug("Error deleting old cache file {}: [{}] {}".format(file_path, type(e).__name__, e))
+            if not preserve_old:
+                for fname in os.listdir(self.cache_dir):
+                    if fname.startswith(db_file_prefix) and fname.endswith(".db") and fname != current_db:
+                        file_path = os.path.join(self.cache_dir, fname)
+                        try:
+                            if os.path.isfile(file_path):
+                                log.debug("Deleting old cache file: {}".format(file_path))
+                                os.remove(file_path)
+                        except OSError as e:
+                            log.debug("{} while deleting old cache file {}: {}".format(type(e).__name__, file_path, e))
 
-        db_path = os.path.join(db_dir, current_db)
+            db_path = os.path.join(self.cache_dir, current_db)
+        else:
+            _path = Path(db_path).expanduser().resolve()
+            if not _path.exists():
+                os.makedirs(_path.parent.as_posix())
+
         self.engine = create_engine("sqlite:///{}".format(db_path), echo=False)
         self.meta = MetaData(self.engine)
         try:
@@ -491,6 +501,12 @@ class DBCache:
             for entry in session.query(DBCacheEntry):
                 yield entry.key, entry.value
 
+    def get(self, item, default=None):
+        try:
+            return self[item]
+        except KeyError:
+            return default
+
     def __getitem__(self, item):
         with synchronized(self):
             with self.db_session as session:
@@ -505,6 +521,16 @@ class DBCache:
                 entry = DBCacheEntry(key=key, value=value)
                 session.merge(entry)
                 session.commit()
+
+    def __delitem__(self, key):
+        with synchronized(self):
+            with self.db_session as session:
+                try:
+                    session.query(DBCacheEntry).filter_by(key=key).delete()
+                except (NoResultFound, OperationalError) as e:
+                    raise KeyError(key) from e
+                else:
+                    session.commit()
 
 
 def disk_cached(prefix="/var/tmp/script_cache/", ext=None, date_fmt="%Y-%m-%d", compress=True):

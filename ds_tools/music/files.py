@@ -1227,7 +1227,7 @@ def _load_tags(tag_info, file_path):
 #             except OSError as e:
 #                 raise ValueError("An API key is required; unable to find or read {}".format(keyfile_path))
 #         self.apikey = apikey
-#         self._cache = DBCache("acoustid", db_dir=get_user_cache_dir(permissions=0o1777), preserve_old=True)
+#         self._cache = DBCache("acoustid", cache_subdir="acoustid", preserve_old=True)
 #
 #     @cached("_cache", lock=True, key=CacheKey.simple_noself)
 #     def _lookup(self, duration, fingerprint, meta=None):
