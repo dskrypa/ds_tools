@@ -161,6 +161,11 @@ class Artist(WikiObject):
             cls._known_artists.update(map(str.lower, artists.keys()))
         return cls._known_artists
 
+    @classmethod
+    def known_artists(cls):
+        for name in sorted(cls.known_artist_names()):
+            yield Artist(name)
+
     def __lt__(self, other):
         if isinstance(other, str):
             return self.name < other

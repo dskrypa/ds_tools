@@ -54,19 +54,20 @@ class WikiEntityMeta(type):
 
         super().__init__(name, bases, attr_dict)
 
-    def __call__(cls, uri_path=None, client=None, *, name=None):
+    def __call__(cls, uri_path=None, client=None, *, name=None, **kwargs):
         if client is None:
             client = KpopWikiClient()
 
-        if name and not uri_path and isinstance(client, KpopWikiClient):
+        if name and not uri_path:
             uri_path = client.normalize_name(name)
 
         if uri_path:
             if " " in uri_path:
                 uri_path = client.normalize_name(uri_path)
+            url = client.url_for(uri_path)
+            # log.debug("Using url: {}".format(url))
             # noinspection PyUnresolvedReferences
             expected_cat = cls._category
-            url = client.url_for(uri_path)
             # Note: client.parse_categories caches args->return vals
             categories = client.parse_categories(uri_path, expected_cat.title() if isinstance(expected_cat, str) else None)
             if any(i in cat for i in ("albums", "discography article stubs", "singles") for cat in categories):
@@ -93,7 +94,8 @@ class WikiEntityMeta(type):
         key = (uri_path, client, name)
         if key not in WikiEntityMeta._instances:
             obj = expected_cls.__new__(expected_cls, uri_path, client)
-            obj.__init__(uri_path, client)
+            # noinspection PyArgumentList
+            obj.__init__(uri_path, client, name=name, **kwargs)
             WikiEntityMeta._instances[key] = obj
         return WikiEntityMeta._instances[key]
 
@@ -103,7 +105,7 @@ class WikiEntity(metaclass=WikiEntityMeta):
     _categories = {}
     _category = None
 
-    def __init__(self, uri_path=None, client=None, *, name=None):
+    def __init__(self, uri_path=None, client=None, *, name=None, **kwargs):
         # if not getattr(self, "_WikiEntity__initialized", False):
         self._client = client
         self._uri_path = uri_path
@@ -133,8 +135,12 @@ class WikiEntity(metaclass=WikiEntityMeta):
             if rm_ele:
                 rm_ele.extract()
 
-        rm_ele = content.find(class_="dablink")  # disambiguation link
-        if rm_ele:
+        for clz in ("dablink", "hatnote", "shortdescription", "infobox"):
+            rm_ele = content.find(class_=clz)
+            if rm_ele:
+                rm_ele.extract()
+
+        for rm_ele in content.find_all(class_="mw-empty-elt"):
             rm_ele.extract()
 
         return content
@@ -143,19 +149,26 @@ class WikiEntity(metaclass=WikiEntityMeta):
 class WikiAlbum(WikiEntity):
     _category = "album"
 
-    def __init__(self, uri_path=None, client=None):
+    def __init__(self, uri_path=None, client=None, **kwargs):
         super().__init__(uri_path, client)
 
 
 class WikiArtist(WikiEntity):
     _category = ("group", "singer")
+    _known_artists = set()
+    __known_artists_loaded = False
 
-    def __init__(self, uri_path=None, client=None, *, name=None):
+    def __init__(self, uri_path=None, client=None, *, name=None, strict=True):
         super().__init__(uri_path, client)
+        self.english_name, self.cjk_name, self.stylized_name, self.aka = None, None, None, None
         if self._raw:
-            self.english_name, self.cjk_name, self.stylized_name = parse_artist_name(self._intro.text.strip())
-        elif name:
-            self.stylized_name = None
+            try:
+                self.english_name, self.cjk_name, self.stylized_name, self.aka = parse_artist_name(self._intro.text)
+            except Exception as e:
+                if strict:
+                    raise e
+                log.warning("{} while processing intro for {}: {}".format(type(e).__name__, name or uri_path, e))
+        if name and not any(val for val in (self.english_name, self.cjk_name, self.stylized_name)):
             self.english_name, self.cjk_name = split_name(name)
 
         if self.english_name and self.cjk_name:
@@ -163,18 +176,37 @@ class WikiArtist(WikiEntity):
         else:
             self.name = self.english_name or self.cjk_name
 
+        if self.english_name and isinstance(self._client, KpopWikiClient):
+            type(self)._known_artists.add(self.english_name.lower())
+
     def __repr__(self):
         try:
             return "<{}({!r})>".format(type(self).__name__, self.stylized_name or self.name)
         except AttributeError as e:
             return "<{}({!r})>".format(type(self).__name__, self._uri_path)
 
+    @classmethod
+    def known_artist_eng_names(cls):
+        if not cls.__known_artists_loaded:
+            cls.__known_artists_loaded = True
+            known_artists_path = Path(__file__).resolve().parents[2].joinpath("music/artist_dir_to_artist.json")
+            with open(known_artists_path.as_posix(), "r", encoding="utf-8") as f:
+                artists = json.load(f)
+            cls._known_artists.update((split_name(artist)[0].lower() for artist in artists.values()))
+            # cls._known_artists.update(map(str.lower, artists.keys()))
+        return cls._known_artists
+
+    @classmethod
+    def known_artists(cls):
+        for name in sorted(cls.known_artist_eng_names()):
+            yield WikiArtist(name=name)
+
 
 class WikiGroup(WikiArtist):
     _category = "group"
 
-    def __init__(self, uri_path=None, client=None, *, name=None):
-        super().__init__(uri_path, client, name=name)
+    def __init__(self, uri_path=None, client=None, **kwargs):
+        super().__init__(uri_path, client, **kwargs)
         self.subunit_of = None
 
         intro_soup = self._intro
@@ -187,6 +219,8 @@ class WikiGroup(WikiArtist):
                 if href and (href != self._uri_path):
                     self.subunit_of = WikiGroup(href)
                     break
+
+        del self.__dict__["_intro"]
 
     @cached_property
     def members(self):
@@ -219,8 +253,8 @@ class WikiGroup(WikiArtist):
 class WikiSinger(WikiArtist):
     _category = "singer"
 
-    def __init__(self, uri_path=None, client=None, *, name=None):
-        super().__init__(uri_path, client, name=name)
+    def __init__(self, uri_path=None, client=None, **kwargs):
+        super().__init__(uri_path, client, **kwargs)
         self.member_of = None
 
         intro_soup = self._intro
@@ -239,11 +273,13 @@ class WikiSinger(WikiArtist):
                             self.member_of = WikiGroup(href)
                             break
 
+        del self.__dict__["_intro"]
+
 
 class WikiSoundtrack(WikiEntity):
     _category = "soundtrack"
 
-    def __init__(self, uri_path=None, client=None):
+    def __init__(self, uri_path=None, client=None, **kwargs):
         super().__init__(uri_path, client)
 
 
