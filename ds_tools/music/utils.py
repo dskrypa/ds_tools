@@ -12,11 +12,13 @@ from enum import Enum
 # import Levenshtein as lev
 from fuzzywuzzy import utils as fuzz_utils
 
-from ..utils import RecursiveDescentParser, UnexpectedTokenError, is_any_cjk, ParentheticalParser, contains_any_cjk
+from ..utils import (
+    RecursiveDescentParser, UnexpectedTokenError, is_any_cjk, ParentheticalParser, contains_any_cjk, is_hangul
+)
 
 __all__ = [
     "TitleParser", "AlbumParser", "sanitize", "unsurround", "_normalize_title", "parse_artist_name", "split_name",
-    "eng_cjk_sort"
+    "eng_cjk_sort", "categorize_langs", "LangCat"
 ]
 log = logging.getLogger("ds_tools.music.utils")
 
@@ -221,9 +223,54 @@ def _normalize_title(title):
 
 
 def parse_artist_name(intro_text):
+    intro_text = intro_text.strip()
+    first_sentence = intro_text[:intro_text.index(". ") + 1].strip()    # Note: space is intentional
+    parser = ParentheticalParser()
+    try:
+        parts = parser.parse(first_sentence)    # Note: returned strs already stripped of leading/trailing spaces
+    except Exception as e:
+        raise ValueError("Unable to parse artist name from intro: {}".format(first_sentence)) from e
+
+    base, details = parts[:2]
+    if " is " in base:
+        base = base[:base.index(" is ")].strip()
+        eng, cjk = eng_cjk_sort(base)
+        return eng, cjk, None, None
+    elif is_any_cjk(details):
+        return base, details, None, None
+    elif not contains_any_cjk(details):
+        eng, cjk = eng_cjk_sort(base)
+        return eng, cjk, None, None
+
+    cjk = ""
+    found_hangul = False
+    stylized = None
+    aka = None
+    aka_leads = ("aka", "a.k.a.", "also known as")
+    for part in map(str.strip, re.split("[;,]", details)):
+    # for part in map(str.strip, details.split(";")):
+        lc_part = part.lower()
+        if lc_part.startswith("stylized as"):
+            stylized = part[11:].strip()
+        elif is_any_cjk(part) and not found_hangul:
+            found_hangul = is_hangul(part)
+            cjk = part
+        elif ":" in part and not found_hangul:
+            _lang_name, cjk = eng_cjk_sort(tuple(map(str.strip, part.split(":", 1))))
+            found_hangul = is_hangul(cjk)
+        elif not aka:
+            for lead in aka_leads:
+                if lc_part.startswith(lead):
+                    aka = part[len(lead):].strip()
+                    break
+
+    return base, cjk, stylized, aka
+
+
+def parse_artist_name1(intro_text):
     m = re.match("^(.*?)\s+\((.*?)\)", intro_text)
     if not m:
-        raise ValueError("Unexpected intro format: {}".format(intro_text))
+        raise ValueError("Unexpected intro format: {}".format(intro_text[:200]))
     stylized = None
     eng, cjk = map(str.strip, m.groups())
     # log.debug("Processing name {!r}/{!r}".format(eng, cjk))
@@ -275,34 +322,34 @@ def split_name(name, unused=False, check_keywords=True):
         raise ValueError("Unable to split {!r} into separate English/CJK strings (nothing was parsed)".format(name))
 
     eng, cjk, not_used = None, None, None
-    langs = _langs(parts)
+    langs = categorize_langs(parts)
     s = "s" if len(parts) > 1 else ""
-    log.debug("ParentheticalParser().parse({!r}) => {} part{}: {} ({})".format(name, len(parts), s, parts, langs))
+    log.log(9, "ParentheticalParser().parse({!r}) => {} part{}: {} ({})".format(name, len(parts), s, parts, langs))
     if len(parts) == 1:
         try:
             eng, cjk = eng_cjk_sort(parts[0], langs[0])
         except ValueError as e:
             raise ValueError("Unable to split {!r} into separate English/CJK strings".format(name)) from e
     elif len(parts) == 2:
-        if Langs.MIX not in langs and len(set(langs)) == 2:
+        if LangCat.MIX not in langs and len(set(langs)) == 2:
             eng, cjk = eng_cjk_sort(parts, langs)           # Name (other lang)
-        elif langs[0] == Langs.MIX and langs[1] != Langs.MIX and has_parens(parts[0]):
+        elif langs[0] == LangCat.MIX and langs[1] != LangCat.MIX and has_parens(parts[0]):
             eng, cjk = split_name(parts[0])                 # Soloist (other lang) (Group single lang)
             not_used = parts[1]
-        elif langs[0] != Langs.MIX and langs[1] == Langs.MIX and has_parens(parts[1]):
+        elif langs[0] != LangCat.MIX and langs[1] == LangCat.MIX and has_parens(parts[1]):
             eng, cjk = eng_cjk_sort(parts[0], langs[0])     # Soloist single lang (Group (group other lang))
             try:
                 not_used = split_name(parts[1])
             except Exception:
                 not_used = parts[1]
-        elif langs == (Langs.MIX, Langs.MIX) and all(has_parens(p) for p in parts):
+        elif langs == (LangCat.MIX, LangCat.MIX) and all(has_parens(p) for p in parts):
             eng, cjk = split_name(parts[0])                 # Soloist (other lang) [Group (group other lang)]
             try:
                 not_used = split_name(parts[1])
             except Exception:
                 not_used = parts[1]
     elif len(parts) == 3:
-        if Langs.MIX not in langs and len(set(langs)) == 2:
+        if LangCat.MIX not in langs and len(set(langs)) == 2:
             if langs[0] == langs[1] != langs[2]:
                 try:
                     soloist_b, group_b = parser.parse(parts[2])
@@ -339,22 +386,22 @@ def split_name(name, unused=False, check_keywords=True):
 
 def eng_cjk_sort(strs, langs=None):
     """
-    :param str|tuple|list strs: A single string or a tuple/list with 2 elements
-    :param Langs|tuple|None langs: A single Langs value or a 2-tuple of Langs (ENG/CJK only) or None
+    :param str|tuple|list|iterator strs: A single string or a tuple/list with 2 elements
+    :param LangCat|tuple|None langs: A single Langs value or a 2-tuple of Langs (ENG/CJK only) or None
     :return tuple: (str(eng), str(cjk))
     """
     if langs is None:
-        langs = _langs([strs] if isinstance(strs, str) else strs)
+        langs = categorize_langs([strs] if isinstance(strs, str) else strs)
         if isinstance(strs, str):
             langs = langs[0]
-    if langs == (Langs.ENG, Langs.CJK):
+    if langs == (LangCat.ENG, LangCat.CJK):
         return strs
-    elif langs == (Langs.CJK, Langs.ENG):
-        return strs[::-1]
+    elif langs == (LangCat.CJK, LangCat.ENG):
+        return reversed(strs)
     elif isinstance(strs, str):
-        if langs == Langs.ENG:
+        if langs == LangCat.ENG:
             return strs, ""
-        elif langs == Langs.CJK:
+        elif langs == LangCat.CJK:
             return "", strs
     raise ValueError("Unexpected values: strs={!r}, langs={!r}".format(strs, langs))
 
@@ -363,14 +410,14 @@ def has_parens(text):
     return any(c in text for c in "()[]")
 
 
-class Langs(Enum):
+class LangCat(Enum):
     ENG = 1
     CJK = 2
     MIX = 3
 
 
-def _langs(strs):
-    return tuple(Langs.CJK if is_any_cjk(s) else Langs.MIX if contains_any_cjk(s) else Langs.ENG for s in strs)
+def categorize_langs(strs):
+    return tuple(LangCat.CJK if is_any_cjk(s) else LangCat.MIX if contains_any_cjk(s) else LangCat.ENG for s in strs)
 
 
 if __name__ == "__main__":
