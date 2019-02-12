@@ -79,8 +79,8 @@ class RecursiveDescentParser:
 class ParentheticalParser(RecursiveDescentParser):
     _entry_point = "content"
     _strip = True
-    _opener2closer = {"LPAREN": "RPAREN", "LBPAREN": "RBPAREN", "LBRKT": "RBRKT", "QUOTE": "QUOTE"}
-    _nested_fmts = {"LPAREN": "({})", "LBPAREN": "({})", "LBRKT": "[{}]", "QUOTE": "{!r}"}
+    _opener2closer = {"LPAREN": "RPAREN", "LBPAREN": "RBPAREN", "LBRKT": "RBRKT", "QUOTE": "QUOTE", "DASH": "DASH"}
+    _nested_fmts = {"LPAREN": "({})", "LBPAREN": "({})", "LBRKT": "[{}]", "QUOTE": "{!r}", "DASH": "({})"}
     _content_tokens = ["TEXT", "WS"] + list(_opener2closer.values())
     TOKENS = OrderedDict([
         ("QUOTE", "[{}]".format(QMARKS)),
@@ -91,7 +91,8 @@ class ParentheticalParser(RecursiveDescentParser):
         ("LBRKT", "\["),
         ("RBRKT", "\]"),
         ("WS", "\s+"),
-        ("TEXT", "[^\"“()（）\[\]]+"),
+        ("DASH", "[-~]"),
+        ("TEXT", "[^\"“()（）\[\]-]+"),
     ])
 
     def parenthetical(self, closer="RPAREN"):
@@ -125,6 +126,9 @@ class ParentheticalParser(RecursiveDescentParser):
                     if any((c not in self._remaining) and (self._full.count(c) % 2 == 1) for c in QMARKS):
                         log.debug("Unpaired quote found in {!r}".format(self._full))
                         continue
+                elif tok_type == "DASH" and (self._peek("WS") or self.tok.value not in self._remaining):
+                    text += self.tok.value
+                    continue
 
                 if text:
                     parts.append(text)

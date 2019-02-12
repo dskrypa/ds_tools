@@ -6,7 +6,6 @@
 
 import logging
 import string
-from urllib.parse import quote as url_quote
 
 from ..exceptions import CodeBasedRestException
 from ..http import RestClient
@@ -97,17 +96,15 @@ class KpopWikiClient(WikiClient):
     def __init__(self):
         if not getattr(self, "_KpopWikiClient__initialized", False):
             super().__init__("kpop.fandom.com")
-            self._artist_cache = FSCache(cache_subdir="kpop_wiki/artists", prefix="artist__")
             self.__initialized = True
 
     @cached(True)
-    def parse_categories(self, uri_path, obj_type=None):
+    def get_entity_base(self, uri_path, obj_type=None):
         raw = self.get_page(uri_path)
         # if "This article is a disambiguation page" in raw:
         #     raise AmbiguousEntityException(uri_path, raw, obj_type)
-        page_content = soupify(raw)
-        cat_ul = page_content.find("ul", class_="categories")
-        return {li.text.lower() for li in cat_ul.find_all("li")} if cat_ul else set()
+        cat_ul = soupify(raw).find("ul", class_="categories")
+        return raw, {li.text.lower() for li in cat_ul.find_all("li")} if cat_ul else set()
 
 
 class WikipediaClient(WikiClient):
@@ -117,11 +114,24 @@ class WikipediaClient(WikiClient):
             self.__initialized = True
 
     @cached(True)
-    def parse_categories(self, uri_path, obj_type=None):
+    def get_entity_base(self, uri_path, obj_type=None):
         raw = self.get_page(uri_path)
         if "Wikipedia does not have an article with this exact name." in raw:
             raise AmbiguousEntityException(uri_path, raw, obj_type)
-        page_content = soupify(raw)
-        cat_links = page_content.find("div", id="mw-normal-catlinks")
+        cat_links = soupify(raw).find("div", id="mw-normal-catlinks")
         cat_ul = cat_links.find("ul") if cat_links else None
-        return {li.text.lower() for li in cat_ul.find_all("li")} if cat_ul else set()
+        return raw, {li.text.lower() for li in cat_ul.find_all("li")} if cat_ul else set()
+
+
+class DramaWikiClient(WikiClient):
+    def __init__(self):
+        if not getattr(self, "_DramaWikiClient__initialized", False):
+            super().__init__("wiki.d-addicts.com", prefix="")
+            self.__initialized = True
+
+    @cached(True)
+    def get_entity_base(self, uri_path, obj_type=None):
+        raw = self.get_page(uri_path)
+        cat_links = soupify(raw).find("div", id="mw-normal-catlinks")
+        cat_ul = cat_links.find("ul") if cat_links else None
+        return raw, {li.text.lower() for li in cat_ul.find_all("li")} if cat_ul else set()

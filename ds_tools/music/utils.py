@@ -8,6 +8,7 @@ import logging
 import re
 from collections import OrderedDict
 from enum import Enum
+from urllib.parse import urlparse
 
 # import Levenshtein as lev
 from fuzzywuzzy import utils as fuzz_utils
@@ -17,8 +18,8 @@ from ..utils import (
 )
 
 __all__ = [
-    "TitleParser", "AlbumParser", "sanitize", "unsurround", "_normalize_title", "parse_artist_name", "split_name",
-    "eng_cjk_sort", "categorize_langs", "LangCat"
+    "SongTitleParser", "DiscographyEntryParser", "sanitize", "unsurround", "_normalize_title", "parse_artist_name",
+    "split_name", "eng_cjk_sort", "categorize_langs", "LangCat", "parse_discography_entry"
 ]
 log = logging.getLogger("ds_tools.music.utils")
 
@@ -29,7 +30,7 @@ PATH_SANITIZATION_TABLE = str.maketrans(PATH_SANITIZATION_DICT)
 QMARKS = "\"“"
 
 
-class TitleParser(RecursiveDescentParser):
+class SongTitleParser(RecursiveDescentParser):
     _entry_point = "title"
     _strip = True
     TOKENS = OrderedDict([
@@ -127,7 +128,7 @@ class TitleParser(RecursiveDescentParser):
         return name
 
 
-class AlbumParser(TitleParser):
+class DiscographyEntryParser(SongTitleParser):
     _entry_point = "title"
     _strip = True
     TOKENS = OrderedDict([
@@ -418,6 +419,76 @@ class LangCat(Enum):
 
 def categorize_langs(strs):
     return tuple(LangCat.CJK if is_any_cjk(s) else LangCat.MIX if contains_any_cjk(s) else LangCat.ENG for s in strs)
+
+
+def parse_discography_entry(artist, ele, album_type, lang):
+    ele_text = ele.text.strip()
+    try:
+        parsed = ParentheticalParser().parse(ele_text)
+    except Exception as e:
+        log.warning("Unhandled discography entry format {!r} for {}".format(ele_text, artist), extra={"red": True})
+        return None
+
+    base_type = album_type and (album_type[:-2] if re.search(r"_\d$", album_type) else album_type).lower() or ""
+    primary = parsed.pop(0)[:-1].strip() if base_type == "feature" and parsed[0].endswith("-") else artist._uri_path
+    year = int(parsed.pop()) if len(parsed[-1]) == 4 and parsed[-1].isdigit() else None
+    title = parsed.pop(0)
+    collaborators, misc_info = [], []
+    for item in parsed:
+        if item.lower().startswith(("with", "feat")):
+            item = item.split(maxsplit=1)[1]    # remove the with/feat prefix
+            collaborators.extend(re.split("(?: and |,|;)", item))
+        else:
+            misc_info.append(item)
+
+    is_feature_or_collab = base_type in ("features", "collaborations")
+    is_ost = base_type in ("ost", "osts")
+
+    first_a = ele.find("a")
+    if first_a:
+        link_href = first_a.get("href") or ""
+        link_text = first_a.text
+        if title != link_text and not is_feature_or_collab:
+            # if is_feature_or_collab: likely a feature / single with a link to a collaborator
+            if not any(title.replace("(", c).replace(")", c) == link_text for c in "-~"):
+                log.debug("Unexpected first link text {!r} for album {!r}".format(link_text, title))
+
+        if not link_href.startswith("http"):  # If it starts with http, then it is an external link
+            uri_path = link_href[6:] or None
+            wiki = "kpop.fandom.com"
+        else:
+            url = urlparse(link_href)
+            if url.hostname == "en.wikipedia.org":
+                uri_path = url.path[6:]
+                wiki = "en.wikipedia.org"
+                # Probably a collaboration song, so title is likely a song and not the album title
+            else:
+                uri_path = None
+                wiki = "kpop.fandom.com"
+    else:
+        if is_ost:
+            m = re.match("(.*? OST).*", title)
+            if m:
+                non_part_title = m.group(1).strip()
+                uri_path = non_part_title.replace(" ", "_")
+            else:
+                uri_path = title.replace(" ", "_")
+            wiki = "wiki.d-addicts.com"
+        elif is_feature_or_collab:
+            uri_path = None
+            wiki = "kpop.fandom.com"
+            # Probably a collaboration song, so title is likely a song and not the album title
+        else:
+            uri_path = None
+            wiki = "kpop.fandom.com"
+            # May be an album without a link, or a repackage detailed on the same page as the original
+
+    info = {
+        "title": title, "primary_artist": primary, "type": album_type, "base_type": base_type, "year": year,
+        "collaborators": collaborators, "misc_info": misc_info, "language": lang, "uri_path": uri_path, "wiki": wiki,
+        "is_feature_or_collab": is_feature_or_collab, "is_ost": is_ost
+    }
+    return info
 
 
 if __name__ == "__main__":

@@ -64,12 +64,20 @@ class WikiEntityMeta(type):
         if uri_path:
             if " " in uri_path:
                 uri_path = client.normalize_name(uri_path)
+
+            key = (uri_path, client, name)
+            if key in WikiEntityMeta._instances:
+                inst = WikiEntityMeta._instances[key]
+                # noinspection PyUnresolvedReferences
+                if cls._category and ((inst._category == cls._category) or (inst._category in cls._category)):
+                    return inst
+
             url = client.url_for(uri_path)
             # log.debug("Using url: {}".format(url))
             # noinspection PyUnresolvedReferences
-            expected_cat = cls._category
-            # Note: client.parse_categories caches args->return vals
-            categories = client.parse_categories(uri_path, expected_cat.title() if isinstance(expected_cat, str) else None)
+            cls_cat = cls._category
+            # Note: client.get_entity_base caches args->return vals
+            raw, categories = client.get_entity_base(uri_path, cls_cat.title() if isinstance(cls_cat, str) else None)
             if any(i in cat for i in ("albums", "discography article stubs", "singles") for cat in categories):
                 category = "album"
             elif any(i in cat for i in ("groups", "group article stubs") for cat in categories):
@@ -90,12 +98,13 @@ class WikiEntityMeta(type):
                 raise TypeError("{} is {} {} page (expected: {})".format(url, article, category, cls._category))
         else:
             expected_cls = cls
+            raw = None
+            key = (uri_path, client, name)
 
-        key = (uri_path, client, name)
         if key not in WikiEntityMeta._instances:
             obj = expected_cls.__new__(expected_cls, uri_path, client)
             # noinspection PyArgumentList
-            obj.__init__(uri_path, client, name=name, **kwargs)
+            obj.__init__(uri_path, client, name=name, raw=raw, **kwargs)
             WikiEntityMeta._instances[key] = obj
         return WikiEntityMeta._instances[key]
 
@@ -105,11 +114,11 @@ class WikiEntity(metaclass=WikiEntityMeta):
     _categories = {}
     _category = None
 
-    def __init__(self, uri_path=None, client=None, *, name=None, **kwargs):
+    def __init__(self, uri_path=None, client=None, *, name=None, raw=None, **kwargs):
         # if not getattr(self, "_WikiEntity__initialized", False):
         self._client = client
         self._uri_path = uri_path
-        self._raw = client.get_page(uri_path) if uri_path else None
+        self._raw = raw if raw is not None else client.get_page(uri_path) if uri_path else None
         self.name = name or uri_path
         self.aliases = [self.name]
             # self.__initialized = True
@@ -150,7 +159,7 @@ class WikiAlbum(WikiEntity):
     _category = "album"
 
     def __init__(self, uri_path=None, client=None, **kwargs):
-        super().__init__(uri_path, client)
+        super().__init__(uri_path, client, **kwargs)
 
 
 class WikiArtist(WikiEntity):
@@ -158,8 +167,8 @@ class WikiArtist(WikiEntity):
     _known_artists = set()
     __known_artists_loaded = False
 
-    def __init__(self, uri_path=None, client=None, *, name=None, strict=True):
-        super().__init__(uri_path, client)
+    def __init__(self, uri_path=None, client=None, *, name=None, strict=True, **kwargs):
+        super().__init__(uri_path, client, **kwargs)
         self.english_name, self.cjk_name, self.stylized_name, self.aka = None, None, None, None
         if self._raw:
             try:
@@ -201,6 +210,57 @@ class WikiArtist(WikiEntity):
     def known_artists(cls):
         for name in sorted(cls.known_artist_eng_names()):
             yield WikiArtist(name=name)
+
+    @property
+    def _discography(self):
+        try:
+            discography_h2 = self._soup.find("span", id="Discography").parent
+        except AttributeError as e:
+            log.error("No page content / discography was found for {}".format(self))
+            return []
+
+        entries = []
+        h_levels = {"h3": "language", "h4": "type"}
+        lang = "Korean"
+        album_type = "Unknown"
+        previous_entry = None
+        ele = discography_h2.next_sibling
+        while True:
+            while not isinstance(ele, bs4.element.Tag):     # Skip past NavigableString objects
+                if ele is None:
+                    return entries
+                ele = ele.next_sibling
+
+            val_type = h_levels.get(ele.name)
+            if val_type == "language":                      # *almost* always h3, but sometimes type is h3
+                val = next(ele.children).get("id")
+                val_lc = val.lower()
+                if any(v in val_lc for v in ("album", "single", "collaboration", "feature")):
+                    h_levels[ele.name] = "type"
+                    album_type = val
+                else:
+                    lang = val
+            elif val_type == "type":
+                album_type = next(ele.children).get("id")
+            elif ele.name == "ul":
+                li_eles = list(ele.children)
+                while li_eles:
+                    li = li_eles.pop(0)
+                    ul = li.find("ul")
+                    if ul:
+                        ul.extract()                            # remove nested list from tree
+                        li_eles = list(ul.children) + li_eles   # insert elements from the nested list at top
+
+                    # entry = parse_discography_entry(self, li, album_type, lang, previous_entry)
+                    entry = parse_discography_entry(self, li, album_type, lang)
+                    if entry:
+                        entries.append(entry)
+                    previous_entry = entry
+
+            elif ele.name in ("h2", "div"):
+                break
+            ele = ele.next_sibling
+        return entries
 
 
 class WikiGroup(WikiArtist):
@@ -300,7 +360,7 @@ class WikiSoundtrack(WikiEntity):
     _category = "soundtrack"
 
     def __init__(self, uri_path=None, client=None, **kwargs):
-        super().__init__(uri_path, client)
+        super().__init__(uri_path, client, **kwargs)
 
 
 if __name__ == "__main__":

@@ -146,7 +146,7 @@ class Artist(WikiObject):
             else:
                 self.name = self.english_name or self.hangul_name
             self.feature_tracks = set()
-            self._album_parser = AlbumParser()
+            self._album_parser = DiscographyEntryParser()
             if isinstance(self._client, KpopWikiClient):
                 type(self)._known_artists.add(self.english_name.lower())
             self.__initialized = True
@@ -570,7 +570,7 @@ class Album(WikiObject):
         self._repackage_of = None
         self.__repackage_double_page = False
         self.__repackage_name = None
-        self.title_parser = TitleParser()
+        self.title_parser = SongTitleParser()
         self._processed_intro = False
         self._english_name = None
         self._hangul_name = None
