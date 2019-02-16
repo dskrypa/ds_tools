@@ -41,7 +41,6 @@ import mutagen
 import mutagen.id3._frames
 from mutagen.id3 import ID3, TDRC, TIT2
 from mutagen.mp4 import MP4Tags
-from termcolor import colored
 
 sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
 from ds_tools.http import CodeBasedRestException
@@ -50,7 +49,7 @@ from ds_tools.music import (
     iter_music_files, load_tags, iter_music_albums, iter_categorized_music_files, TagAccessException,
     tag_repr, apply_repr_patches, TagValueException, TagException, iter_album_dirs, RM_TAGS_ID3, RM_TAGS_MP4
 )
-from ds_tools.utils import Table, SimpleColumn, localize, TableBar, num_suffix, ArgParser, uprint
+from ds_tools.utils import Table, SimpleColumn, localize, TableBar, num_suffix, ArgParser, uprint, colored
 from music.constants import tag_name_map
 
 log = logging.getLogger("ds_tools.{}".format(__name__))

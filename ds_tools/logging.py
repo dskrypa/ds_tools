@@ -17,9 +17,7 @@ from contextlib import suppress
 from datetime import datetime
 from logging import handlers
 
-from termcolor import colored
-
-from .utils import validate_or_make_dir, TZ_LOCAL
+from .utils import validate_or_make_dir, TZ_LOCAL, colored
 
 __all__ = ["LogManager", "add_context_filter"]
 log = logging.getLogger("ds_tools.logging")

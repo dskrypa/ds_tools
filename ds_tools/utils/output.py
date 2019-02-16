@@ -15,7 +15,7 @@ from io import StringIO
 from unicodedata import normalize
 
 import yaml
-from termcolor import colored
+from colored import fg as _col_fg, bg as _col_bg, attr as _col_attr
 from wcwidth import wcswidth
 
 from .decorate import cached_property
@@ -23,11 +23,12 @@ from .operator import replacement_itemgetter
 
 __all__ = [
     "uprint", "uerror", "Column", "SimpleColumn", "Table", "readable_bytes", "format_output", "format_percent",
-    "format_tiered", "print_tiered", "Printer", "to_bytes", "to_str", "TableBar", "num_suffix", "mono_width"
+    "format_tiered", "print_tiered", "Printer", "to_bytes", "to_str", "TableBar", "num_suffix", "mono_width", "colored"
 ]
 log = logging.getLogger("ds_tools.utils.output")
 
-ANSI_COLOR_RX = re.compile("(\033\[\d+m)(.*)(\033\[\d+m)")
+ANSI_COLOR_RX = re.compile("(\033\[\d+;?\d*;?\d*m)(.*)(\033\[\d+;?\d*;?\d*m)")
+COLOR_RESET = _col_attr("reset")
 _uout = open(sys.stdout.fileno(), mode="w", encoding="utf-8", buffering=1)
 _uerr = open(sys.stderr.fileno(), mode="w", encoding="utf-8", buffering=1)
 
@@ -54,9 +55,17 @@ def uprint(msg):
     _uout.write(msg + "\n")
     _uout.flush()
 
+
 def uerror(msg):
     _uerr.write(msg + "\n")
     _uerr.flush()
+
+
+def colored(text, color=None, bg_color=None, attrs=None):
+    color = _col_fg(color) if color is not None else ""
+    bg_color = _col_bg(bg_color) if bg_color is not None else ""
+    attrs = _col_attr(attrs) if attrs is not None else ""
+    return "{}{}{}{}{}".format(color, bg_color, attrs, text, COLOR_RESET)
 
 
 def num_suffix(num):
@@ -139,7 +148,7 @@ class Column:
         test_val = self._test_fmt.format(value)
         char_count = len(test_val)
         str_width = mono_width(test_val)
-        if char_count != str_width:
+        if char_count != str_width and str_width > 0:
             diff = str_width - char_count
             self._width -= diff
 
@@ -349,13 +358,13 @@ class Table:
             else:
                 try:
                     row_str = self.row_fmt.format(row)
-                    if self.fix_ansi_width and ANSI_COLOR_RX.match(row_str):
+                    if self.fix_ansi_width and ANSI_COLOR_RX.search(row_str):
                         row_str = "  ".join(c.format(row[c.key]) for c in self.columns)
                 except TypeError as e:
                     raise TableFormatException("row", self.row_fmt, row, e) from e
                 except ValueError:
                     row_str = self.header_fmt.format(row)
-                    if self.fix_ansi_width and ANSI_COLOR_RX.match(row_str):
+                    if self.fix_ansi_width and ANSI_COLOR_RX.search(row_str):
                         row_str = "  ".join(c.format(row[c.key]) for c in self.columns)
             return row_str.rstrip()
 
