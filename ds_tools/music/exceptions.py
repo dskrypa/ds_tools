@@ -6,22 +6,50 @@
 
 from ..utils import soupify, cached_property
 
-__all__ = ["InvalidArtistException", "AlbumNotFoundException", "TrackDiscoveryException", "AmbiguousEntityException"]
+__all__ = [
+    "MusicException", "InvalidArtistException", "AlbumNotFoundException", "TrackDiscoveryException",
+    "AmbiguousEntityException", "WikiEntityParseException", "TrackInfoParseException", "WikiEntityInitException",
+    "WikiEntityIdentificationException", "NoTrackListException"
+]
 
 
-class InvalidArtistException(Exception):
+class MusicException(Exception):
+    """Base Exception class for the music package"""
+
+
+class InvalidArtistException(MusicException):
     pass
 
 
-class AlbumNotFoundException(Exception):
+class AlbumNotFoundException(MusicException):
     pass
 
 
-class TrackDiscoveryException(Exception):
+class TrackDiscoveryException(MusicException):
     pass
 
 
-class AmbiguousEntityException(Exception):
+class WikiEntityParseException(MusicException):
+    """Exception to be raised when unable to parse expected content from a WikiEntity's page"""
+
+
+class NoTrackListException(WikiEntityParseException):
+    """Exceptionto be raised when no track list can be found on an album page"""
+
+
+class TrackInfoParseException(MusicException):
+    """Exception to be raised when unable to parse expected content from a WikiEntity track list item, or track title"""
+
+
+class WikiEntityInitException(MusicException):
+    """Exception to be raised when unable to initialize a WikiEntity"""
+
+
+class WikiEntityIdentificationException(WikiEntityInitException):
+    """Exception to be raised when unable to identify a WikiEntity definitively"""
+
+
+class AmbiguousEntityException(MusicException):
     def __init__(self, uri_path, html, obj_type=None):
         self.uri_path = uri_path
         self.html = html
