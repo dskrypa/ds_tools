@@ -23,20 +23,33 @@ STRIP_TBL = str.maketrans({c: "" for c in JUNK_CHARS})
 
 
 class WikiClient(RestClient):
+    _site = None
+    _sites = {}
     __instances = {}
+
+    def __init_subclass__(cls, **kwargs):  # Python 3.6+
+        if cls._site:
+            WikiClient._sites[cls._site] = cls
 
     def __new__(cls, *args, **kwargs):
         if cls.__instances.get(cls) is None:
             cls.__instances[cls] = super().__new__(cls)
         return cls.__instances[cls]
 
-    def __init__(self, host, prefix="wiki", proto="https"):
+    def __init__(self, host=None, prefix="wiki", proto="https"):
         if not getattr(self, "_WikiClient__initialized", False):
-            super().__init__(host, rate_limit=1, prefix=prefix, proto=proto)
+            super().__init__(host or self._site, rate_limit=1, prefix=prefix, proto=proto)
             self._resp_cache = DBCache("responses", cache_subdir="kpop_wiki")
             self._name_cache = DBCache("names", cache_subdir="kpop_wiki")
             self._bad_name_cache = DBCache("invalid_names", cache_subdir="kpop_wiki")
             self.__initialized = True
+
+    @classmethod
+    def for_site(cls, site):
+        try:
+            return cls._sites[site]()
+        except KeyError as e:
+            raise ValueError("No WikiClient class exists for site {!r}".format(site)) from e
 
     @cached("_resp_cache", lock=True, key=lambda s, e, *a, **kw: s.url_for(e), exc=True)
     def get(self, *args, **kwargs):
@@ -93,10 +106,7 @@ class WikiClient(RestClient):
 
 
 class KpopWikiClient(WikiClient):
-    def __init__(self):
-        if not getattr(self, "_KpopWikiClient__initialized", False):
-            super().__init__("kpop.fandom.com")
-            self.__initialized = True
+    _site = "kpop.fandom.com"
 
     @cached(True)
     def get_entity_base(self, uri_path, obj_type=None):
@@ -108,10 +118,7 @@ class KpopWikiClient(WikiClient):
 
 
 class WikipediaClient(WikiClient):
-    def __init__(self):
-        if not getattr(self, "_WikipediaClient__initialized", False):
-            super().__init__("en.wikipedia.org")
-            self.__initialized = True
+    _site = "en.wikipedia.org"
 
     @cached(True)
     def get_entity_base(self, uri_path, obj_type=None):
@@ -124,9 +131,11 @@ class WikipediaClient(WikiClient):
 
 
 class DramaWikiClient(WikiClient):
+    _site = "wiki.d-addicts.com"
+
     def __init__(self):
         if not getattr(self, "_DramaWikiClient__initialized", False):
-            super().__init__("wiki.d-addicts.com", prefix="")
+            super().__init__(prefix="")
             self.__initialized = True
 
     @cached(True)
