@@ -47,7 +47,8 @@ class RecursiveDescentParser:
         self._pos = 0
         self._full = text
         self.tokens = self.tokenize(text)
-        self.tok = None                     # Last symbol consumed
+        self.prev_tok = None                # Previous symbol consumed
+        self.tok = None                     # Current / most recently consumed symbol
         self.next_tok = None                # Next symbol tokenized
         self._advance()                     # Load first lookahead taken
         try:
@@ -60,13 +61,22 @@ class RecursiveDescentParser:
         return self._full[self._pos:]
 
     def _advance(self):
-        self.tok, self.next_tok = self.next_tok, next(self.tokens, None)
+        self.prev_tok, self.tok, self.next_tok = self.tok, self.next_tok, next(self.tokens, None)
 
     def _peek(self, token_type):
         return self.next_tok and self.next_tok.type == token_type
 
+    def _peek_any(self, token_types):
+        return self.next_tok and self.next_tok.type in token_types
+
     def _accept(self, token_type):
         if self.next_tok and self.next_tok.type == token_type:
+            self._advance()
+            return True
+        return False
+
+    def _accept_any(self, token_types):
+        if self.next_tok and self.next_tok.type in token_types:
             self._advance()
             return True
         return False
@@ -95,6 +105,9 @@ class ParentheticalParser(RecursiveDescentParser):
         ("TEXT", "[^\"“()（）\[\]-]+"),
     ])
 
+    def __init__(self, selective_recombine=True):
+        self._selective_recombine = selective_recombine
+
     def parenthetical(self, closer="RPAREN"):
         """
         parenthetical ::= ( { text | WS | ( parenthetical ) }* )
@@ -104,7 +117,7 @@ class ParentheticalParser(RecursiveDescentParser):
         while self.next_tok:
             if self._accept(closer):
                 return text, nested
-            elif any(self._accept(tok_type) for tok_type in self._opener2closer):
+            elif self._accept_any(self._opener2closer):
                 tok_type = self.tok.type
                 text += self._nested_fmts[tok_type].format(self.parenthetical(self._opener2closer[tok_type])[0])
                 nested = True
@@ -120,15 +133,19 @@ class ParentheticalParser(RecursiveDescentParser):
         text = ""
         parts = []
         while self.next_tok:
-            if any(self._accept(tok_type) for tok_type in self._opener2closer):
+            if self._accept_any(self._opener2closer):
                 tok_type = self.tok.type
                 if tok_type == "QUOTE":
                     if any((c not in self._remaining) and (self._full.count(c) % 2 == 1) for c in QMARKS):
                         log.debug("Unpaired quote found in {!r}".format(self._full))
                         continue
-                elif tok_type == "DASH" and (self._peek("WS") or self.tok.value not in self._remaining):
-                    text += self.tok.value
-                    continue
+                elif tok_type == "DASH":
+                    if self._peek("WS") or self.tok.value not in self._remaining:
+                        text += self.tok.value
+                        continue
+                    elif text and not self.prev_tok.type == "WS" and self._peek("TEXT"):
+                        text += self.tok.value
+                        continue
 
                 if text:
                     parts.append(text)
@@ -140,7 +157,7 @@ class ParentheticalParser(RecursiveDescentParser):
                     text += self._nested_fmts[tok_type].format(parenthetical)
                 else:
                     parts.append((parenthetical, nested, tok_type))
-            elif any(self._accept(tok_type) for tok_type in self._content_tokens):
+            elif self._accept_any(self._content_tokens):
                 text += self.tok.value
             else:
                 raise UnexpectedTokenError("Unexpected {!r} token {!r} in {!r}".format(
@@ -150,30 +167,31 @@ class ParentheticalParser(RecursiveDescentParser):
         if text.strip():
             parts.append(text.strip())
 
-        single_idxs = set()
-        had_nested = False
-        for i, part in enumerate(parts):
-            if isinstance(part, tuple):
-                nested = part[1]
-                had_nested = had_nested or nested
-                if not nested:
-                    single_idxs.add(i)
+        if self._selective_recombine:
+            single_idxs = set()
+            had_nested = False
+            for i, part in enumerate(parts):
+                if isinstance(part, tuple):
+                    nested = part[1]
+                    had_nested = had_nested or nested
+                    if not nested:
+                        single_idxs.add(i)
 
-        # log.debug("{!r} => {} [nested: {}][singles: {}]".format(self._full, parts, had_nested, sorted(single_idxs)))
-        if had_nested and single_idxs:
-            single_idxs = sorted(single_idxs)
-            while single_idxs:
-                i = single_idxs.pop(0)
-                for ti in (i - 1, i + 1):
-                    if (ti < 0) or (ti > (len(parts) - 1)):
-                        continue
-                    if isinstance(parts[ti], str) and parts[ti].strip():
-                        parenthetical, nested, tok_type = parts[i]
-                        formatted = self._nested_fmts[tok_type].format(parenthetical)
-                        parts[ti] = (formatted + parts[ti]) if ti > i else (parts[ti] + formatted)
-                        parts.pop(i)
-                        single_idxs = [idx - 1 for idx in single_idxs]
-                        break
+            # log.debug("{!r} => {} [nested: {}][singles: {}]".format(self._full, parts, had_nested, sorted(single_idxs)))
+            if had_nested and single_idxs:
+                single_idxs = sorted(single_idxs)
+                while single_idxs:
+                    i = single_idxs.pop(0)
+                    for ti in (i - 1, i + 1):
+                        if (ti < 0) or (ti > (len(parts) - 1)):
+                            continue
+                        if isinstance(parts[ti], str) and parts[ti].strip():
+                            parenthetical, nested, tok_type = parts[i]
+                            formatted = self._nested_fmts[tok_type].format(parenthetical)
+                            parts[ti] = (formatted + parts[ti]) if ti > i else (parts[ti] + formatted)
+                            parts.pop(i)
+                            single_idxs = [idx - 1 for idx in single_idxs]
+                            break
 
         cleaned = (part for part in map(str.strip, (p[0] if isinstance(p, tuple) else p for p in parts)) if part)
         return [part for part in cleaned if part not in "\"“()（）[]"]
