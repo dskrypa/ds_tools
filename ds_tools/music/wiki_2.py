@@ -715,7 +715,30 @@ class WikiTrack(DictAttrPropertyMixin):
             self.name = self.english_name or self.cjk_name
 
     def __repr__(self):
-        return "<{}[{!r}]>".format(type(self).__name__, self.name)
+        return self._repr
+
+    @cached_property
+    def _repr(self):
+        name = "{}[{!r}]".format(type(self).__name__, self.name)
+        for val in (self.version, self.misc):
+            if val:
+                name = "{}({})".format(name, val)
+        if self.language:
+            name = "{}({} ver.)".format(name, self.language)
+
+        if self.length_str != "-1:00":
+            name = "{}[{}]".format(name, self.length_str)
+        return "<{}>".format(name)
+
+    @cached_property
+    def long_name(self):
+        name = self.name
+        for val in (self.version, self.misc):
+            if val:
+                name = "{} ({})".format(name, val)
+        if self.language:
+            name = "{} ({} ver.)".format(name, self.language)
+        return name
 
     @property
     def seconds(self):

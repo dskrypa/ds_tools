@@ -17,7 +17,7 @@ from fuzzywuzzy import utils as fuzz_utils
 
 from ..utils import (
     RecursiveDescentParser, UnexpectedTokenError, is_any_cjk, ParentheticalParser, contains_any_cjk, is_hangul,
-    datetime_with_tz
+    datetime_with_tz, DASH_CHARS, QMARKS
 )
 from .exceptions import *
 
@@ -36,7 +36,6 @@ NUMS = {
 PATH_SANITIZATION_DICT = {c: "" for c in "*;?<>\""}
 PATH_SANITIZATION_DICT.update({"/": "_", ":": "-", "\\": "_", "|": "-"})
 PATH_SANITIZATION_TABLE = str.maketrans(PATH_SANITIZATION_DICT)
-QMARKS = "\"“"
 QMARK_STRIP_TBL = str.maketrans({c: "" for c in QMARKS})
 
 
@@ -222,8 +221,9 @@ def sanitize(text):
     return text.translate(PATH_SANITIZATION_TABLE)
 
 
-def unsurround(a_str):
-    for a, b in (("\"", "\""), ("(", ")"), ("“", "“")):
+def unsurround(a_str, *chars):
+    chars = chars or (("\"", "\""), ("(", ")"), ("“", "“"))
+    for a, b in chars:
         if a_str.startswith(a) and a_str.endswith(b):
             a_str = a_str[1:-1].strip()
     return a_str
@@ -779,6 +779,7 @@ def _combine_name_parts(name_parts):
 
 
 def parse_track_info(idx, text, source):
+    text = unsurround(text.strip(), *(c*2 for c in QMARKS))
     track = {"num": idx}
     parser = ParentheticalParser(False)
     try:
@@ -786,13 +787,21 @@ def parse_track_info(idx, text, source):
     except Exception as e:
         raise TrackInfoParseException("Error parsing track from {}: {!r}".format(source, text)) from e
     else:
-        if len(parsed) == 1 and ("(" in parsed[0] or parsed[0].count("-") > 1):
+        # if len(parsed) == 1 and (has_parens(parsed[0]) or any(parsed[0].count(d) > 1 for d in DASH_CHARS)):
+        #     try:
+        #         parsed = parser.parse(parsed[0].translate(QMARK_STRIP_TBL))
+        #     except Exception as e:
+        #         raise TrackInfoParseException("Error parsing track from {}: {!r}".format(source, parsed[0])) from e
+        if len(parsed) == 2 and any(parsed[1].startswith(d) for d in DASH_CHARS) and has_parens(parsed[0]):
+            _length = parsed[1]
             try:
-                parsed = parser.parse(parsed[0].translate(QMARK_STRIP_TBL))
+                parsed = parser.parse(parsed[0])
             except Exception as e:
                 raise TrackInfoParseException("Error parsing track from {}: {!r}".format(source, parsed[0])) from e
+            else:
+                parsed.append(_length)
 
-        m = re.match("^-\s*(\d+:\d{2})$", parsed[-1])
+        m = re.match("^[{}]\s*(\d+:\d{{2}})$".format(DASH_CHARS), parsed[-1])
         if m:
             parsed.pop()
             track["length"] = m.group(1)
@@ -820,7 +829,7 @@ def parse_track_info(idx, text, source):
                 name_parts.append(part)
 
         if len(name_parts) > 2:
-            log.warning("High name part count in {} [{!r} =>]: {}".format(source, text, name_parts))
+            log.debug("High name part count in {} [{!r} =>]: {}".format(source, text, name_parts))
             while len(name_parts) > 2:
                 name_parts = _combine_name_parts(name_parts)
 
@@ -896,7 +905,11 @@ def parse_ost_page(uri_path, clean_soup):
                 track_num = int(tds[0].text.strip()[:-1])
                 track_name = eng_cjk_sort(tds[1].stripped_strings, permissive=True)
                 track_artist = tds[2].text.strip()
-                tracks.append({"name_parts": track_name, "length": "-1:00", "num": track_num, "artist": track_artist})
+
+                track = parse_track_info(track_num, "{} ({})".format(*track_name), uri_path)
+                track["artist"] = track_artist
+                tracks.append(track)
+                # tracks.append({"name_parts": track_name, "length": "-1:00", "num": track_num, "artist": track_artist})
 
         track_lists.append({"section": section, "tracks": tracks, "info": info})
         h2 = h2.find_next_sibling("h2")

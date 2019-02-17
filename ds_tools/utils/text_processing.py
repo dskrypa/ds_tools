@@ -4,11 +4,17 @@
 import logging
 import re
 import string
+import sys
 from collections import OrderedDict
 
-__all__ = ["Token", "RecursiveDescentParser", "UnexpectedTokenError", "strip_punctuation", "ParentheticalParser"]
+__all__ = [
+    "Token", "RecursiveDescentParser", "UnexpectedTokenError", "strip_punctuation", "ParentheticalParser", "DASH_CHARS",
+    "QMARKS", "ALL_WHITESPACE"
+]
 log = logging.getLogger("ds_tools.utils.text_processing")
 
+ALL_WHITESPACE = "".join(re.findall("\s", "".join(chr(c) for c in range(sys.maxunicode + 1))))
+DASH_CHARS = "-–~"
 PUNC_STRIP_TBL = str.maketrans({c: "" for c in string.punctuation})
 QMARKS = "\"“"
 
@@ -101,8 +107,8 @@ class ParentheticalParser(RecursiveDescentParser):
         ("LBRKT", "\["),
         ("RBRKT", "\]"),
         ("WS", "\s+"),
-        ("DASH", "[-~]"),
-        ("TEXT", "[^\"“()（）\[\]-]+"),
+        ("DASH", "[{}]".format(DASH_CHARS)),
+        ("TEXT", "[^\"“()（）\[\]{}-]+".format(ALL_WHITESPACE)),
     ])
 
     def __init__(self, selective_recombine=True):
@@ -147,10 +153,13 @@ class ParentheticalParser(RecursiveDescentParser):
                         log.debug("Unpaired quote found in {!r}".format(self._full))
                         continue
                 elif tok_type == "DASH":
+                    # log.debug("Found DASH ({!r}={}); remaining: {!r}".format(self.tok.value, ord(self.tok.value), self._remaining))
                     if self._peek("WS") or self.tok.value not in self._remaining:
+                        # log.debug("Appending DASH because WS did not follow it or the value does not occur again")
                         text += self.tok.value
                         continue
-                    elif text and not self.prev_tok.type == "WS" and self._peek("TEXT"):
+                    elif text and self.prev_tok.type != "WS" and self._peek("TEXT"):
+                        # log.debug("Appending DASH because text, previous token was {}={!r}, and the next token is TEXT".format(self.prev_tok.type, self.prev_tok.value))
                         text += self.tok.value
                         continue
 
