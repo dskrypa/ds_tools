@@ -228,7 +228,20 @@ class WikiEntity(metaclass=WikiEntityMeta):
                 for rm_ele in content.find_all(class_=clz):
                     rm_ele.extract()
         elif isinstance(self._client, WikipediaClient):
-            pass
+            aside = content.find("table", class_=re.compile("infobox vevent.*"))
+            self.__aside = aside.extract() if aside else None
+
+            for rm_ele in content.find_all(class_="mw-empty-elt"):
+                rm_ele.extract()
+
+            for clz in ("toc", "mw-editsection"):
+                for rm_ele in content.find_all(class_=clz):
+                    rm_ele.extract()
+
+            for clz in ("shortdescription",):
+                rm_ele = content.find(class_=clz)
+                if rm_ele:
+                    rm_ele.extract()
         else:
             log.debug("No sanitization configured for soup objects from {}".format(type(self._client).__name__))
         return content
@@ -565,11 +578,15 @@ class WikiSongCollection(WikiEntity):
                 raise InvalidTrackListException("{} has no part/edition called {!r}".format(self, edition_or_part)) from e
 
             # noinspection PyUnresolvedReferences
-            lc_edition_or_part = edition_or_part.lower()
-            is_part = lc_edition_or_part.startswith("part")
+            lc_ed_or_part = edition_or_part.lower()
+            is_part = lc_ed_or_part.startswith("part")
+            part_rx = re.compile("part\.?\s*")
+            if is_part:
+                lc_ed_or_part = part_rx.sub("part ", lc_ed_or_part)
+
             for track_section in self._track_lists:
                 section = track_section.get("section", "")
-                if section == edition_or_part or (is_part and lc_edition_or_part in section.lower()):
+                if section == edition_or_part or (is_part and lc_ed_or_part in part_rx.sub("part ", section.lower())):
                     return track_section
 
             raise InvalidTrackListException("{} has no part/edition called {!r}".format(self, edition_or_part))

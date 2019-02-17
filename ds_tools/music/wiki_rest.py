@@ -6,6 +6,7 @@
 
 import logging
 import string
+from urllib.parse import urlparse
 
 from ..exceptions import CodeBasedRestException
 from ..http import RestClient
@@ -36,9 +37,9 @@ class WikiClient(RestClient):
             cls.__instances[cls] = super().__new__(cls)
         return cls.__instances[cls]
 
-    def __init__(self, host=None, prefix="wiki", proto="https"):
+    def __init__(self, host=None, prefix="wiki", proto="https", **kwargs):
         if not getattr(self, "_WikiClient__initialized", False):
-            super().__init__(host or self._site, rate_limit=1, prefix=prefix, proto=proto)
+            super().__init__(host or self._site, rate_limit=1, prefix=prefix, proto=proto, **kwargs)
             self._resp_cache = DBCache("responses", cache_subdir="kpop_wiki")
             self._name_cache = DBCache("names", cache_subdir="kpop_wiki")
             self._bad_name_cache = DBCache("invalid_names", cache_subdir="kpop_wiki")
@@ -135,7 +136,7 @@ class DramaWikiClient(WikiClient):
 
     def __init__(self):
         if not getattr(self, "_DramaWikiClient__initialized", False):
-            super().__init__(prefix="")
+            super().__init__(prefix="", log_params=True)
             self.__initialized = True
 
     @cached(True)
@@ -151,6 +152,11 @@ class DramaWikiClient(WikiClient):
         except CodeBasedRestException as e:
             log.debug("Error searching for OST {!r}: {}".format(title, e))
             raise e
+
+        url = urlparse(resp.url)
+        if url.path != "/index.php":    # If there's an exact match, it redirects to that page
+            return url.path[1:]
+
         soup = soupify(resp.text)
         clean_title = title.translate(STRIP_TBL).lower()
         for a in soup.find(class_="searchresults").find_all("a"):

@@ -429,7 +429,7 @@ def parse_discography_entry(artist, ele, album_type, lang):
     title = parsed.pop(0)
     collabs, misc_info = {}, []
     for item in parsed:
-        if item.lower().startswith(("with", "feat")):
+        if item.lower().startswith(("with ", "feat. ", "feat ", "as ")):
             item = item.split(maxsplit=1)[1]    # remove the with/feat prefix
             item_collabs = set(str2list(item))
             if links:
@@ -640,7 +640,6 @@ def parse_album_page(uri_path, clean_soup, aside):
                 break
         else:
             raise WikiEntityParseException("Unable to find link to repackaged version of {}".format(uri_path))
-
     elif (details[0] == "original" and details[1] == "soundtrack") or (details[0].lower() in ("ost", "soundtrack")):
         album0["num"] = None
         album0["type"] = "OST"
@@ -650,7 +649,10 @@ def parse_album_page(uri_path, clean_soup, aside):
         try:
             album0["num"], album0["type"] = _album_num_type(details)
         except ValueError:
-            raise WikiEntityParseException(bad_intro_fmt.format(uri_path, intro_text[:200]))
+            if details_str.startswith("song by"):
+                album0["num"], album0["type"] = None, "single"
+            else:
+                raise WikiEntityParseException(bad_intro_fmt.format(uri_path, intro_text[:200]))
 
         repkg_match = re.search("A repackage titled (.*) (?:was|will be) released", intro_text)
         if repkg_match:
@@ -854,7 +856,8 @@ def parse_ost_page(uri_path, clean_soup):
     track_lists = []
     h2 = first_h2
     while True:
-        if not h2 or h2.next_element.get("id") == "See_Also":
+        # log.debug("Processing section: {}".format(h2))
+        if not h2 or h2.next_element.get("id", "").lower() == "see_also":
             break
 
         section = h2.text

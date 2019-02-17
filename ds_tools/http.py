@@ -76,7 +76,10 @@ class RestClient:
     :param str imitate: A browser to imitate.  Valid values are keys of :data:`IMITATE_HEADERS` (default: None)
     :param float rate_limit: A rate limit (in seconds) for all requests made by this object (default: no limit)
     """
-    def __init__(self, host, port=None, *, prefix=None, proto="http", verify=None, exc=None, session_factory=None, imitate=None, rate_limit=0):
+    def __init__(
+            self, host, port=None, *, prefix=None, proto="http", verify=None, exc=None, session_factory=None,
+            imitate=None, rate_limit=0, log_params=False
+    ):
         if imitate and (imitate not in IMITATE_HEADERS):
             err_fmt = "Invalid imitate value ({!r}) - must be one of: {}"
             raise ValueError(err_fmt.format(imitate, ", ".join(sorted(IMITATE_HEADERS.keys()))))
@@ -89,6 +92,7 @@ class RestClient:
         self._session_factory = session_factory or requests_session
         self.__session = None
         self._imitate = imitate
+        self._log_params = log_params
         if rate_limit:
             self.request = rate_limited(rate_limit)(self.request)
 
@@ -181,7 +185,12 @@ class RestClient:
         """
         url = self.url_for(endpoint)
         if not no_log:
-            log.debug("{} -> {}".format(method, url))
+            suffix = ""
+            if self._log_params:
+                params = kwargs.get("params")
+                if params:
+                    suffix = "?" + urlencode(params, True)
+            log.debug("{} -> {}{}".format(method, url, suffix))
         kwargs.setdefault("verify", self._verify_ssl)
         try:
             resp = self.session.request(method, url, **kwargs)
