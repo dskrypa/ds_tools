@@ -17,13 +17,10 @@ from urllib.parse import urlparse
 import bs4
 from fuzzywuzzy import fuzz, utils as fuzz_utils
 
-from ..utils import (
-    soupify, cached_property, datetime_with_tz, now, UnexpectedTokenError, format_duration,
-    ParentheticalParser, is_any_cjk, contains_any_cjk, CacheKey, flatten_mapping
-)
+from ..utils import soupify, cached_property, DictAttrPropertyMixin, DictAttrProperty, cached
 from .exceptions import *
 from .utils import *
-from .wiki_rest import WikiClient, KpopWikiClient, WikipediaClient
+from .wiki_rest import WikiClient, KpopWikiClient, WikipediaClient, DramaWikiClient
 
 __all__ = []
 log = logging.getLogger("ds_tools.music.wiki_2")
@@ -52,11 +49,6 @@ NUMS = {
 STRIP_TBL = str.maketrans({c: "" for c in JUNK_CHARS})
 
 
-def sanitize_dict(a_dict):
-    a_dict = flatten_mapping(a_dict)
-    return {key: tuple(value) if isinstance(value, list) else value for key, value in a_dict.items()}
-
-
 class WikiEntityMeta(type):
     _category_classes = {}
     _category_bases = {}
@@ -75,26 +67,45 @@ class WikiEntityMeta(type):
         super().__init__(name, bases, attr_dict)
 
     def __call__(cls, uri_path=None, client=None, *, name=None, disco_entry=None, **kwargs):
-        disco_entry = disco_entry or {}
-        if client is None:
-            if uri_path and uri_path.startswith(("http://", "https://")):
-                _url = urlparse(uri_path)
+        """
+        :param str|None uri_path: The uri path for a page on a wiki
+        :param WikiClient|None client: The WikiClient object to use to retrieve the wiki page
+        :param str|None name: The name of a WikiEntity to lookup if the uri_path is unknown
+        :param dict|None disco_entry: A dict containing information about an album from an Artist's discography section
+        :param kwargs: Additional keyword arguments to pass to the WikiEntity when initializing it
+        :return WikiEntity: A WikiEntity (or subclass thereof) based on the provided information
+        """
+        if disco_entry:
+            uri_path = uri_path or disco_entry.get("uri_path")
+            name = name or disco_entry.get("title")
+            disco_site = disco_entry.get("wiki")
+            if disco_site and not client:
+                client = WikiClient.for_site(disco_site)
+        else:
+            if name and not uri_path:
+                if client is None:
+                    client = KpopWikiClient()
+                uri_path = client.normalize_name(name)
+            elif name and uri_path and uri_path.startswith("//"):   # Alternate subdomain of fandom.com
+                uri_path = None
+
+        if uri_path and uri_path.startswith(("http://", "https://")):
+            _url = urlparse(uri_path)
+            if client is None:
                 client = WikiClient.for_site(_url.hostname)
-                uri_path = _url.path[6:] if _url.path.startswith("/wiki/") else _url.path
-            else:
-                client = KpopWikiClient()
+            elif client and client._site != _url.hostname:
+                fmt = "The provided client is for {!r}, but the URL requires a client for {!r}: {}"
+                raise ValueError(fmt.format(client._site, _url.hostname, uri_path))
+            uri_path = _url.path[6:] if _url.path.startswith("/wiki/") else _url.path
+        elif client is None:
+            client = KpopWikiClient()
 
-        if name and not uri_path:
-            uri_path = client.normalize_name(name)
-        elif name and uri_path and uri_path.startswith("//"):
-            uri_path = None
-
-        is_feature = disco_entry and disco_entry.get("base_type") == "features"
-        if uri_path or is_feature:
+        is_feat_collab = disco_entry and disco_entry.get("base_type") in ("features", "collaborations")
+        if uri_path or is_feat_collab:
             if uri_path and " " in uri_path:
                 uri_path = client.normalize_name(uri_path)
 
-            key = CacheKey.simple(uri_path, client, name, **sanitize_dict(disco_entry))
+            key = (uri_path, client, name)
             if key in WikiEntityMeta._instances:
                 inst = WikiEntityMeta._instances[key]
                 # noinspection PyUnresolvedReferences
@@ -103,8 +114,8 @@ class WikiEntityMeta(type):
 
             # noinspection PyUnresolvedReferences
             cls_cat = cls._category
-            if not uri_path and (disco_entry and disco_entry.get("base_type") == "features"):
-                category = "feature"
+            if not uri_path and is_feat_collab:
+                category = "collab/feature"
                 url, raw = None, None
             else:
                 url = client.url_for(uri_path)
@@ -117,7 +128,7 @@ class WikiEntityMeta(type):
                     category = "group"
                 elif any(i in cat for i in ("singers", "person article stubs") for cat in cats):
                     category = "singer"
-                elif any(i in cat for i in ("osts",) for cat in cats):
+                elif any(i in cat for i in ("osts", "kost", "jost", "cost") for cat in cats):
                     category = "soundtrack"
                 else:
                     log.debug("Unable to determine category for {}".format(url))
@@ -131,7 +142,7 @@ class WikiEntityMeta(type):
         else:
             exp_cls = cls
             raw = None
-            key = CacheKey.simple(uri_path, client, name, **sanitize_dict(disco_entry))
+            key = (uri_path, client, name)
 
         if key not in WikiEntityMeta._instances:
             obj = exp_cls.__new__(exp_cls, uri_path, client)
@@ -186,26 +197,40 @@ class WikiEntity(metaclass=WikiEntityMeta):
             log.warning(e)
             return None
 
-        aside = content.find("aside")
-        self.__aside = aside.extract() if aside else None
+        if isinstance(self._client, KpopWikiClient):
+            aside = content.find("aside")
+            self.__aside = aside.extract() if aside else None
 
-        for ele_name in ("center",):
-            rm_ele = content.find(ele_name)
-            if rm_ele:
+            for ele_name in ("center",):
+                rm_ele = content.find(ele_name)
+                if rm_ele:
+                    rm_ele.extract()
+
+            for clz in ("dablink", "hatnote", "shortdescription", "infobox"):
+                rm_ele = content.find(class_=clz)
+                if rm_ele:
+                    rm_ele.extract()
+
+            for rm_ele in content.find_all(class_="mw-empty-elt"):
                 rm_ele.extract()
 
-        for clz in ("dablink", "hatnote", "shortdescription", "infobox"):
-            rm_ele = content.find(class_=clz)
-            if rm_ele:
-                rm_ele.extract()
+            first_ele = content.next_element
+            if getattr(first_ele, "name", None) == "dl":
+                first_ele.extract()
+        elif isinstance(self._client, DramaWikiClient):
+            self.__aside = None
+            for clz in ("toc",):
+                rm_ele = content.find(class_=clz)
+                if rm_ele:
+                    rm_ele.extract()
 
-        for rm_ele in content.find_all(class_="mw-empty-elt"):
-            rm_ele.extract()
-
-        first_ele = content.next_element
-        if getattr(first_ele, "name", None) == "dl":
-            first_ele.extract()
-
+            for clz in ("toc", "mw-editsection"):
+                for rm_ele in content.find_all(class_=clz):
+                    rm_ele.extract()
+        elif isinstance(self._client, WikipediaClient):
+            pass
+        else:
+            log.debug("No sanitization configured for soup objects from {}".format(type(self._client).__name__))
         return content
 
 
@@ -321,8 +346,19 @@ class WikiArtist(WikiEntity):
     def discography(self):
         discography = []
         for entry in self._discography:
+            if entry["is_ost"]:
+                client = WikiClient.for_site("wiki.d-addicts.com")
+                title = entry["title"]
+                m = re.match("^(.*)\s+Part.\d+$", title, re.IGNORECASE)
+                if m:
+                    title = m.group(1).strip()
+                uri_path = client.normalize_name(title)
+            else:
+                client = WikiClient.for_site(entry["wiki"])
+                uri_path = entry["uri_path"]
+
             try:
-                obj = WikiSongCollection(entry["uri_path"], WikiClient.for_site(entry["wiki"]), disco_entry=entry)
+                obj = WikiSongCollection(uri_path, client, disco_entry=entry)
                 discography.append(obj)
             except MusicException as e:
                 fmt = "{}: Error processing discography entry for {!r} / {!r}: {}"
@@ -429,8 +465,10 @@ class WikiSongCollection(WikiEntity):
         self._discography_entry = disco_entry or {}
         self.english_name, self.cjk_name, self.stylized_name, self.aka = None, None, None, None
         self._album_info = {}
-        if self._raw:
-            albums = parse_album_page(self._clean_soup, self._aside)
+        if isinstance(self._client, DramaWikiClient):
+            return
+        elif self._raw:
+            albums = parse_album_page(self._uri_path, self._clean_soup, self._aside)
             if len(albums) > 1:
                 err_base = "{} contains both original+repackaged album info on the same page".format(uri_path)
                 if not disco_entry:
@@ -458,10 +496,30 @@ class WikiSongCollection(WikiEntity):
             msg = "A valid uri_path / discography entry are required to initialize a {}".format(type(self).__name__)
             raise WikiEntityInitException(msg)
 
+        self._track_lists = self._album_info.get("track_lists")
+        if self._track_lists is None:
+            self._track_lists = [self._album_info.get("tracks")]
+
         if self.english_name and self.cjk_name:
             self.name = "{} ({})".format(self.english_name, self.cjk_name)
         else:
             self.name = self.english_name or self.cjk_name
+
+    def __lt__(self, other):
+        if not isinstance(other, WikiSongCollection):
+            fmt = "'<' not supported between instances of {!r} and {!r}"
+            raise TypeError(fmt.format(type(self).__name__, type(other).__name__))
+        return self.name < other.name
+
+    def __gt__(self, other):
+        if not isinstance(other, WikiSongCollection):
+            fmt = "'>' not supported between instances of {!r} and {!r}"
+            raise TypeError(fmt.format(type(self).__name__, type(other).__name__))
+        return self.name > other.name
+
+    @cached_property
+    def album_type(self):
+        return self._album_info.get("type") or self._discography_entry.get("base_type")
 
     @cached_property
     def _artists(self):
@@ -495,6 +553,39 @@ class WikiSongCollection(WikiEntity):
             return artists[0]
         raise AttributeError("{} has multiple contributing artists".format(self))
 
+    def _get_tracks(self, edition_or_part=None):
+        if self._raw:
+            # log.debug("{}: Retrieving tracks for edition_or_part={!r}".format(self, edition_or_part))
+            try:
+                if edition_or_part is None:
+                    return self._track_lists[0]
+                elif isinstance(edition_or_part, int):
+                    return self._track_lists[edition_or_part]
+            except IndexError as e:
+                raise InvalidTrackListException("{} has no part/edition called {!r}".format(self, edition_or_part)) from e
+
+            # noinspection PyUnresolvedReferences
+            lc_edition_or_part = edition_or_part.lower()
+            is_part = lc_edition_or_part.startswith("part")
+            for track_section in self._track_lists:
+                section = track_section.get("section", "")
+                if section == edition_or_part or (is_part and lc_edition_or_part in section.lower()):
+                    return track_section
+
+            raise InvalidTrackListException("{} has no part/edition called {!r}".format(self, edition_or_part))
+        else:
+            if "single" in self.album_type.lower():
+                return {"tracks": [{"name_parts": (self.english_name, self.cjk_name)}]}
+            else:
+                log.debug("No page content found for {} - returning empty track list".format(self))
+                return {"tracks": []}
+
+    @cached(True)
+    def get_tracks(self, edition_or_part=None):
+        #{"section": section, "tracks": tracks, "links": links}
+        _tracks = self._get_tracks(edition_or_part)["tracks"]
+        return [WikiTrack(info, self) for info in _tracks]
+
 
 class WikiAlbum(WikiSongCollection):
     _category = "album"
@@ -519,12 +610,117 @@ class WikiSoundtrack(WikiSongCollection):
 
     def __init__(self, uri_path=None, client=None, **kwargs):
         super().__init__(uri_path, client, **kwargs)
+        if isinstance(self._client, DramaWikiClient):
+            self._track_lists = parse_ost_page(self._uri_path, self._clean_soup)
+            self._album_info = {
+                "track_lists": self._track_lists, "num": None, "type": "OST", "repackage": False, "length": None,
+                "released": None, "links": []
+            }
+            part_1 = self._track_lists[0]
+            eng, cjk = part_1["info"]["title"]
+            if not all(val.lower().endswith(("part 1", "part.1")) for val in (eng, cjk)):
+                raise WikiEntityInitException("Unexpected OST name for {}".format(self._uri_path))
+
+            self.english_name, self.cjk_name = eng[:-6].strip(), cjk[:-6].strip()
+            if self.english_name and self.cjk_name:
+                self.name = "{} ({})".format(self.english_name, self.cjk_name)
+            else:
+                self.name = self.english_name or self.cjk_name
+
+            self._part = None
+            if "part" in self._discography_entry.get("title", "").lower():
+                m = re.match("^.*\s+(Part.\d+)$", self._discography_entry["title"], re.IGNORECASE)
+                if m:
+                    self._part = m.group(1).strip()
+
+    @cached_property
+    def _artists(self):
+        if not isinstance(self._client, DramaWikiClient):
+            return super()._artists
+
+        artists = []
+        for track_section in self._track_lists:
+            for _artist in track_section["info"]["artist"]:
+                eng, cjk = _artist["artist"]
+                try:
+                    group_eng, group_cjk = _artist["of_group"]
+                except KeyError:
+                    group_eng, group_cjk = None, None
+                artists.append((eng, cjk, group_eng, group_cjk))
+        return artists
+
+    @cached_property
+    def artists(self):
+        if not isinstance(self._client, DramaWikiClient):
+            return super().artists
+
+        artists = set()
+        for eng, cjk, group_eng, group_cjk in self._artists:
+            if eng.lower() == "various artists":
+                continue
+            try:
+                artist = WikiArtist(name=eng)
+            except AmbiguousEntityException as e:
+                if not group_eng:
+                    raise e
+                for alt_href in e.alternatives:
+                    tmp_artist = WikiArtist(alt_href)
+                    try:
+                        if isinstance(tmp_artist, WikiSinger) and tmp_artist.member_of.english_name == group_eng:
+                            artists.add(tmp_artist)
+                            break
+                    except AttributeError:
+                        pass
+                else:
+                    raise e
+            else:
+                artists.add(artist)
+        return sorted(artists)
+
+    def _get_tracks(self, edition_or_part=None):
+        return super()._get_tracks(edition_or_part or self._part)
 
 
 class WikiFeatureSingle(WikiSongCollection):
-    _category = "feature"
+    _category = "collab/feature"
+
+    def _get_tracks(self, edition_or_part=None):
+        if self._raw:
+            log.debug("Skipping WikiFeatureSingle _get_tracks()")
+            return super()._get_tracks(edition_or_part)
+
+        single = {
+            "name_parts": (self.english_name, self.cjk_name),
+            "collaborators": list(self._discography_entry.get("collaborators", {}))
+        }
+        return {"tracks": [single]}
 
 
+class WikiTrack(DictAttrPropertyMixin):
+    num = DictAttrProperty("_info", "num", default=None)
+    length_str = DictAttrProperty("_info", "length", default="-1:00")
+    language = DictAttrProperty("_info", "language", default=None)
+    version = DictAttrProperty("_info", "version", default=None)
+    misc = DictAttrProperty("_info", "misc", default=None)
+    _collaborators = DictAttrProperty("_info", "collaborators", default_factory=list)
+    _artist = DictAttrProperty("_info", "artist", default=None)
+
+    def __init__(self, info, collection):
+        self._info = info   # num, length, language, version, name_parts, collaborators, misc, artist
+        self._collection = collection
+        self.english_name, self.cjk_name = self._info["name_parts"]
+        if self.english_name and self.cjk_name:
+            self.name = "{} ({})".format(self.english_name, self.cjk_name)
+        else:
+            self.name = self.english_name or self.cjk_name
+
+    def __repr__(self):
+        return "<{}[{!r}]>".format(type(self).__name__, self.name)
+
+    @property
+    def seconds(self):
+        m, s = map(int, self.length_str.split(":"))
+        return (s + (m * 60)) if m > -1 else 0
 
 
 if __name__ == "__main__":

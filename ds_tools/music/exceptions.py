@@ -9,7 +9,7 @@ from ..utils import soupify, cached_property
 __all__ = [
     "MusicException", "InvalidArtistException", "AlbumNotFoundException", "TrackDiscoveryException",
     "AmbiguousEntityException", "WikiEntityParseException", "TrackInfoParseException", "WikiEntityInitException",
-    "WikiEntityIdentificationException", "NoTrackListException"
+    "WikiEntityIdentificationException", "NoTrackListException", "InvalidTrackListException"
 ]
 
 
@@ -34,7 +34,7 @@ class WikiEntityParseException(MusicException):
 
 
 class NoTrackListException(WikiEntityParseException):
-    """Exceptionto be raised when no track list can be found on an album page"""
+    """Exception to be raised when no track list can be found on an album page"""
 
 
 class TrackInfoParseException(MusicException):
@@ -47,6 +47,10 @@ class WikiEntityInitException(MusicException):
 
 class WikiEntityIdentificationException(WikiEntityInitException):
     """Exception to be raised when unable to identify a WikiEntity definitively"""
+
+
+class InvalidTrackListException(MusicException):
+    """Exception to be raised when an invalid track list name was provided"""
 
 
 class AmbiguousEntityException(MusicException):

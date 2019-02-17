@@ -6,6 +6,7 @@
 
 import logging
 import re
+import types
 from collections import OrderedDict
 from enum import Enum
 from urllib.parse import urlparse
@@ -23,7 +24,7 @@ from .exceptions import *
 __all__ = [
     "SongTitleParser", "DiscographyEntryParser", "sanitize", "unsurround", "_normalize_title", "parse_intro_name",
     "split_name", "eng_cjk_sort", "categorize_langs", "LangCat", "parse_discography_entry", "parse_aside",
-    "parse_album_page", "parse_track_info"
+    "parse_album_page", "parse_track_info", "parse_ost_page"
 ]
 log = logging.getLogger("ds_tools.music.utils")
 
@@ -359,19 +360,26 @@ def split_name(name, unused=False, check_keywords=True):
     return (eng, cjk, not_used) if unused else (eng, cjk)
 
 
-def eng_cjk_sort(strs, langs=None):
+def eng_cjk_sort(strs, langs=None, permissive=False):
     """
     :param str|tuple|list|iterator strs: A single string or a tuple/list with 2 elements
     :param LangCat|tuple|None langs: A single Langs value or a 2-tuple of Langs (ENG/CJK only) or None
+    :param bool permissive: Allow a 2-tuple of english and mixed rather than requiring no english in the second str
     :return tuple: (str(eng), str(cjk))
     """
+    # noinspection PyTypeChecker
+    if isinstance(strs, (types.GeneratorType, map)):
+        strs = list(strs)
     if langs is None:
         langs = categorize_langs([strs] if isinstance(strs, str) else strs)
         if isinstance(strs, str):
             langs = langs[0]
-    if langs == (LangCat.ENG, LangCat.CJK):
+    if not isinstance(strs, str) and len(strs) == 1:
+        langs = langs[0]
+        strs = strs[0]
+    if langs == (LangCat.ENG, LangCat.CJK) or (permissive and langs == (LangCat.ENG, LangCat.MIX)):
         return strs
-    elif langs == (LangCat.CJK, LangCat.ENG):
+    elif langs == (LangCat.CJK, LangCat.ENG) or (permissive and langs == (LangCat.MIX, LangCat.ENG)):
         return reversed(strs)
     elif isinstance(strs, str):
         if langs == LangCat.ENG:
@@ -402,10 +410,14 @@ def parse_discography_entry(artist, ele, album_type, lang):
     except Exception as e:
         log.warning("Unhandled discography entry format {!r} for {}".format(ele_text, artist), extra={"red": True})
         return None
+    # else:
+    #     log.debug("Parsed {!r} => {}".format(ele_text, parsed))
 
-    links = [(a.text, a.get("href")) for a in ele.find_all("a")]
+    links = [
+        (t, h[6:] if h.startswith("/wiki/") else h)
+        for t, h in ((a.text, a.get("href") or "") for a in ele.find_all("a"))
+    ]
     base_type = album_type and (album_type[:-2] if re.search(r"_\d$", album_type) else album_type).lower() or ""
-
     if base_type == "features" and parsed[0].endswith("-"):
         primary_artist = parsed.pop(0)[:-1].strip()
         primary_uri = links[0][1] if links and links[0][0] == primary_artist else None
@@ -420,15 +432,14 @@ def parse_discography_entry(artist, ele, album_type, lang):
         if item.lower().startswith(("with", "feat")):
             item = item.split(maxsplit=1)[1]    # remove the with/feat prefix
             item_collabs = set(str2list(item))
-            anchors = list(ele.find_all("a"))
-            if anchors:
-                collabs.update({a.text: a.get("href") for a in anchors if a.text in item_collabs})
+            if links:
+                collabs.update({text: href for text, href in links if text in item_collabs})
             else:
                 collabs.update({name: None for name in item_collabs})
         else:
             misc_info.append(item)
 
-    if artist.english_name not in collabs or "/wiki/{}".format(artist._uri_path) not in collabs.values():
+    if artist.english_name not in collabs or artist._uri_path not in collabs.values():
         if primary_artist != artist.english_name:
             collabs[artist.english_name] = artist._uri_path
 
@@ -438,7 +449,8 @@ def parse_discography_entry(artist, ele, album_type, lang):
     non_artist_links = [lnk for lnk in links if lnk[1] and lnk[1] != primary_uri and lnk[1] not in collabs.values()]
     if non_artist_links:
         if len(non_artist_links) > 1:
-            raise WikiEntityParseException("Too many non-artist links found: {}".format(non_artist_links))
+            fmt = "Too many non-artist links found: {}\nFrom li: {}\nParsed parts: {}"
+            raise WikiEntityParseException(fmt.format(non_artist_links, ele, parsed))
 
         link_text, link_href = non_artist_links[0]
         if title != link_text and not is_feature_or_collab:
@@ -446,19 +458,19 @@ def parse_discography_entry(artist, ele, album_type, lang):
             if not any(title.replace("(", c).replace(")", c) == link_text for c in "-~"):
                 log.debug("Unexpected first link text {!r} for album {!r}".format(link_text, title))
 
-        link_href = link_href or ""
-        if not link_href.startswith("http"):  # If it starts with http, then it is an external link
-            uri_path = link_href[6:] or None
-            wiki = "kpop.fandom.com"
-        else:
+        if link_href.startswith(("http://", "https://")):
             url = urlparse(link_href)
             if url.hostname == "en.wikipedia.org":
                 uri_path = url.path[6:]
                 wiki = "en.wikipedia.org"
                 # Probably a collaboration song, so title is likely a song and not the album title
             else:
+                log.debug("Found link from {}'s discography to unexpected site: {}".format(artist, link_href))
                 uri_path = None
                 wiki = "kpop.fandom.com"
+        else:
+            uri_path = link_href or None
+            wiki = "kpop.fandom.com"
     else:
         if is_ost:
             m = re.match("(.*? OST).*", title)
@@ -485,22 +497,9 @@ def parse_discography_entry(artist, ele, album_type, lang):
     return info
 
 
-def str2list(text): # , delim=",", check_and=True):
-    """Convert a delimited string list to a proper list, optionally splitting the final element on a form of 'and'"""
-    return list(map(str.strip, re.split("(?: and |,|;|&)", text)))
-
-    # split = list(map(str.strip, text.split(delim)))
-    # if check_and:
-    #     last = split[-1]
-    #     for val in (" & ", " and "):
-    #         if last.startswith(val.lstrip()):
-    #             split[-1] = last.partition(val.lstrip())[-1]
-    #             break
-    #         elif val in last:
-    #             split.pop()
-    #             split.extend(s for s in map(str.strip, last.split(val)) if s)
-    #             break
-    # return split
+def str2list(text, pat="(?: and |,|;|&)"):
+    """Convert a string list to a proper list"""
+    return list(map(str.strip, re.split(pat, text)))
 
 
 def parse_aside(aside):
@@ -600,18 +599,19 @@ def _first_aside_val(aside, key):
         return None
 
 
-def parse_album_page(clean_soup, aside):
+def parse_album_page(uri_path, clean_soup, aside):
     """
     :param clean_soup: The :attr:`WikiEntity._clean_soup` value for an album
     :param dict aside: Parsed 'aside' element contents
     :return list: List of dicts representing the albums found on the given page
     """
+    bad_intro_fmt = "Unexpected album intro sentence format in {}: {!r}"
     album0 = {}
     album1 = {}
     intro_text = clean_soup.text.strip()
-    intro_match = re.match("^(.*?) is (?:a|the) (.*?)\.\s", intro_text)
+    intro_match = re.match("^(.*?)\s+is\s+(?:a|the)\s+(.*?)\.\s", intro_text)
     if not intro_match:
-        raise WikiEntityParseException("Unexpected album intro sentence format: {!r}".format(intro_text[:200]))
+        raise WikiEntityParseException(bad_intro_fmt.format(uri_path, intro_text[:200]))
 
     album0["title_parts"] = parse_intro_name(intro_match.group(1))  # base, cjk, stylized, aka
 
@@ -625,12 +625,12 @@ def parse_album_page(clean_soup, aside):
                 artist_idx = i
                 break
         else:
-            raise WikiEntityParseException("Unexpected album intro sentence format: {!r}".format(intro_text[:200]))
+            raise WikiEntityParseException(bad_intro_fmt.format(uri_path, intro_text[:200]))
 
         try:
             album0["num"], album0["type"] = _album_num_type(details[artist_idx:])
         except ValueError:
-            raise WikiEntityParseException("Unexpected album intro sentence format: {!r}".format(intro_text[:200]))
+            raise WikiEntityParseException(bad_intro_fmt.format(uri_path, intro_text[:200]))
 
         for a in clean_soup.find_all("a"):
             if details_str.endswith(a.text):
@@ -639,7 +639,7 @@ def parse_album_page(clean_soup, aside):
                     album0["repackage_of_href"] = href[6:]
                 break
         else:
-            raise WikiEntityParseException("Unable to find link to repackaged version")
+            raise WikiEntityParseException("Unable to find link to repackaged version of {}".format(uri_path))
 
     elif (details[0] == "original" and details[1] == "soundtrack") or (details[0].lower() in ("ost", "soundtrack")):
         album0["num"] = None
@@ -650,7 +650,7 @@ def parse_album_page(clean_soup, aside):
         try:
             album0["num"], album0["type"] = _album_num_type(details)
         except ValueError:
-            raise WikiEntityParseException("Unexpected album intro sentence format: {!r}".format(intro_text[:200]))
+            raise WikiEntityParseException(bad_intro_fmt.format(uri_path, intro_text[:200]))
 
         repkg_match = re.search("A repackage titled (.*) (?:was|will be) released", intro_text)
         if repkg_match:
@@ -672,7 +672,7 @@ def parse_album_page(clean_soup, aside):
                             album0["repackage_href"] = href[6:]
                         break
                 else:
-                    raise WikiEntityParseException("Unable to find link to repackaged version")
+                    raise WikiEntityParseException("Unable to find link to repackaged version of {}".format(uri_path))
 
     links = []
     for ele in clean_soup.children:
@@ -691,20 +691,20 @@ def parse_album_page(clean_soup, aside):
         album["artists"] = aside.get("artist", {})
 
     try:
-        track_lists = parse_album_tracks(clean_soup)
+        track_lists = parse_album_tracks(uri_path, clean_soup)
     except NoTrackListException as e:
         if not album1 and "single" in album0["type"].lower():
             eng, cjk = album0["title_parts"][:2]
-            entry = "{} ({})".format(eng, cjk) if eng and cjk else (eng or cjk)
-            if album0["length"]:
-                entry = "{} - {}".format(entry, album0["length"])
-            album0["tracks"] = [{"section": None, "tracks": [parse_track_info(1, entry)], "links": []}]
+            album0["tracks"] = {
+                "section": None, "tracks": [{"name_parts": (eng, cjk), "num": 1, "length": album0["length"] or "-1:00"}]
+            }
         else:
             raise e
     else:
         if album1:
             if len(track_lists) != 2:
-                raise WikiEntityParseException("Unexpected track section count for original+repackage combined page")
+                err_msg = "Unexpected track section count for original+repackage combined page {}".format(uri_path)
+                raise WikiEntityParseException(err_msg)
             for i, album in enumerate(albums):
                 album["tracks"] = track_lists[i]
         else:
@@ -716,14 +716,14 @@ def parse_album_page(clean_soup, aside):
     return albums
 
 
-def parse_album_tracks(clean_soup):
+def parse_album_tracks(uri_path, clean_soup):
     track_list_span = clean_soup.find("span", id="Track_list") or clean_soup.find("span", id="Tracklist")
     if not track_list_span:
-        raise NoTrackListException("Unable to find track list for album")
+        raise NoTrackListException("Unable to find track list for album {}".format(uri_path))
 
     h2 = track_list_span.find_parent("h2")
     if not h2:
-        raise WikiEntityParseException("Unable to find track list header for album")
+        raise WikiEntityParseException("Unable to find track list header for album {}".format(uri_path))
 
     parser = ParentheticalParser(False)
     track_lists = []
@@ -742,7 +742,7 @@ def parse_album_tracks(clean_soup):
 
             tracks = []
             for i, li in enumerate(ele.find_all("li")):
-                track = parse_track_info(i, li.text)
+                track = parse_track_info(i, li.text, uri_path)
                 track_links = [(a.text, a.get("href")) for a in li.find_all("a")]
                 if track_links:
                     track["links"] = track_links
@@ -778,19 +778,19 @@ def _combine_name_parts(name_parts):
     return [combined] + name_parts[2:]
 
 
-def parse_track_info(idx, text):
+def parse_track_info(idx, text, source):
     track = {"num": idx}
     parser = ParentheticalParser(False)
     try:
         parsed = parser.parse(text)
     except Exception as e:
-        raise TrackInfoParseException("Error parsing track: {!r}".format(text)) from e
+        raise TrackInfoParseException("Error parsing track from {}: {!r}".format(source, text)) from e
     else:
         if len(parsed) == 1 and ("(" in parsed[0] or parsed[0].count("-") > 1):
             try:
                 parsed = parser.parse(parsed[0].translate(QMARK_STRIP_TBL))
             except Exception as e:
-                raise TrackInfoParseException("Error parsing track: {!r}".format(parsed[0])) from e
+                raise TrackInfoParseException("Error parsing track from {}: {!r}".format(source, parsed[0])) from e
 
         m = re.match("^-\s*(\d+:\d{2})$", parsed[-1])
         if m:
@@ -820,7 +820,7 @@ def parse_track_info(idx, text):
                 name_parts.append(part)
 
         if len(name_parts) > 2:
-            log.warning("High name part count: {}".format(name_parts))
+            log.warning("High name part count in {} [{!r} =>]: {}".format(source, text, name_parts))
             while len(name_parts) > 2:
                 name_parts = _combine_name_parts(name_parts)
 
@@ -835,6 +835,73 @@ def parse_track_info(idx, text):
             track["misc"] = misc
 
         return track
+
+
+def parse_ost_page(uri_path, clean_soup):
+    first_h2 = clean_soup.find("h2")
+    if not first_h2:
+        raise WikiEntityParseException("Unable to find first OST part section in {}".format(uri_path))
+
+    track_lists = []
+    h2 = first_h2
+    while True:
+        if not h2 or h2.next_element.get("id") == "See_Also":
+            break
+
+        section = h2.text
+        info_ul = h2.find_next_sibling("ul")
+        if not info_ul:
+            break
+        info = {}
+        for i, li in enumerate(info_ul.find_all("li")):
+            try:
+                key, value = map(str.strip, li.text.strip().split(":", 1))
+            except ValueError as e:
+                fmt = "Error splitting key:value pair {!r} from {}: {}"
+                raise WikiEntityParseException(fmt.format(li.text.strip(), uri_path, e)) from e
+            key = key.lower()
+            if i == 0 and key != "title":
+                return track_lists
+            elif key == "title":
+                try:
+                    value = eng_cjk_sort(map(str.strip, value.split("/")), permissive=True)
+                except Exception as e:
+                    pass
+            elif key == "release date":
+                try:
+                    value = datetime_with_tz(value, "%Y-%b-%d")
+                except Exception as e:
+                    log.debug("Error parsing release date {!r} for {}: {}".format(value, uri_path, e))
+                    pass
+            elif key == "language":
+                value = str2list(value)
+            elif key == "artist":
+                artists = str2list(value, pat="(?: and |,|;|&| feat\.? )")
+                value = []
+                for artist in artists:
+                    try:
+                        soloist, of_group = artist.split(" of ")
+                    except Exception as e:
+                        value.append({"artist": split_name(artist)})
+                    else:
+                        value.append({"artist": split_name(soloist), "of_group": split_name(of_group)})
+
+            info[key] = value
+
+        tracks = []
+        track_table = info_ul.find_next_sibling("table")
+        for tr in track_table.find_all("tr"):
+            tds = tr.find_all("td")
+            if tds:
+                track_num = int(tds[0].text.strip()[:-1])
+                track_name = eng_cjk_sort(tds[1].stripped_strings, permissive=True)
+                track_artist = tds[2].text.strip()
+                tracks.append({"name_parts": track_name, "length": "-1:00", "num": track_num, "artist": track_artist})
+
+        track_lists.append({"section": section, "tracks": tracks, "info": info})
+        h2 = h2.find_next_sibling("h2")
+
+    return track_lists
 
 
 if __name__ == "__main__":

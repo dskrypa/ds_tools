@@ -9,7 +9,7 @@ import string
 
 from ..exceptions import CodeBasedRestException
 from ..http import RestClient
-from ..utils import soupify, FSCache, cached, ParentheticalParser, DBCache
+from ..utils import soupify, cached, ParentheticalParser, DBCache
 from .exceptions import *
 
 __all__ = ["KpopWikiClient", "WikipediaClient"]
@@ -51,7 +51,7 @@ class WikiClient(RestClient):
         except KeyError as e:
             raise ValueError("No WikiClient class exists for site {!r}".format(site)) from e
 
-    @cached("_resp_cache", lock=True, key=lambda s, e, *a, **kw: s.url_for(e), exc=True)
+    @cached("_resp_cache", lock=True, key=lambda s, e, *a, **kw: s.url_for(e), exc=True, optional=True)
     def get(self, *args, **kwargs):
         return super().get(*args, **kwargs)
 
@@ -144,3 +144,22 @@ class DramaWikiClient(WikiClient):
         cat_links = soupify(raw).find("div", id="mw-normal-catlinks")
         cat_ul = cat_links.find("ul") if cat_links else None
         return raw, {li.text.lower() for li in cat_ul.find_all("li")} if cat_ul else set()
+
+    def title_search(self, title):
+        try:
+            resp = self.get("index.php", params={"search": title, "title": "Special:Search"}, use_cached=False)
+        except CodeBasedRestException as e:
+            log.debug("Error searching for OST {!r}: {}".format(title, e))
+            raise e
+        soup = soupify(resp.text)
+        clean_title = title.translate(STRIP_TBL).lower()
+        for a in soup.find(class_="searchresults").find_all("a"):
+            if a.text.translate(STRIP_TBL).lower() == clean_title:
+                href = a.get("href") or ""
+                if href and "redlink=1" not in href:
+                    return href
+        return None
+
+    @cached("_name_cache", lock=True, key=lambda s, a: "{}: {}".format(s.host, a))
+    def normalize_name(self, name):
+        return self.title_search(name)

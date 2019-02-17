@@ -34,6 +34,7 @@ from wrapt import synchronized
 
 from .filesystem import validate_or_make_dir, get_user_cache_dir
 from .introspection import split_arg_vals_with_defaults, insert_kwonly_arg
+from .itertools import flatten_mapping
 from .output import to_str, to_bytes, JSONSetEncoder
 from .sql import ScopedSession
 from .time import now
@@ -88,6 +89,11 @@ class CacheKey:
     def simple_noself(cls, *args, **kwargs):
         """Return a cache key for the specified hashable arguments, omitting the first positional argument."""
         return cls(cls._to_tuple(*args[1:], **kwargs))
+
+    @classmethod
+    def _sanitize_dict(cls, a_dict):
+        a_dict = flatten_mapping(a_dict)
+        return {key: tuple(value) if isinstance(value, list) else value for key, value in a_dict.items()}
 
     @classmethod
     def typed(cls, *args, **kwargs):

@@ -119,6 +119,13 @@ class ParentheticalParser(RecursiveDescentParser):
                 return text, nested
             elif self._accept_any(self._opener2closer):
                 tok_type = self.tok.type
+                if tok_type == "DASH":
+                    if self.tok.value not in self._remaining:
+                        text += self.tok.value
+                        continue
+                    elif text and not self.prev_tok.type == "WS" and self._peek("TEXT"):
+                        text += self.tok.value
+                        continue
                 text += self._nested_fmts[tok_type].format(self.parenthetical(self._opener2closer[tok_type])[0])
                 nested = True
             else:
