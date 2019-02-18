@@ -12,6 +12,7 @@ from ..exceptions import CodeBasedRestException
 from ..http import RestClient
 from ..utils import soupify, cached, ParentheticalParser, DBCache
 from .exceptions import *
+from .utils import parse_aside, parse_infobox, parse_album_page, parse_wikipedia_album_page
 
 __all__ = ["KpopWikiClient", "WikipediaClient"]
 log = logging.getLogger("ds_tools.music.wiki_rest")
@@ -105,6 +106,12 @@ class WikiClient(RestClient):
 
     normalize_artist = normalize_name
 
+    def parse_side_info(self, soup):
+        return {}
+
+    def parse_album_page(self, uri_path, clean_soup, side_info):
+        return []
+
 
 class KpopWikiClient(WikiClient):
     _site = "kpop.fandom.com"
@@ -116,6 +123,12 @@ class KpopWikiClient(WikiClient):
         #     raise AmbiguousEntityException(uri_path, raw, obj_type)
         cat_ul = soupify(raw).find("ul", class_="categories")
         return raw, {li.text.lower() for li in cat_ul.find_all("li")} if cat_ul else set()
+
+    def parse_side_info(self, soup):
+        return parse_aside(soup)
+
+    def parse_album_page(self, uri_path, clean_soup, side_info):
+        return parse_album_page(uri_path, clean_soup, side_info)
 
 
 class WikipediaClient(WikiClient):
@@ -129,6 +142,12 @@ class WikipediaClient(WikiClient):
         cat_links = soupify(raw).find("div", id="mw-normal-catlinks")
         cat_ul = cat_links.find("ul") if cat_links else None
         return raw, {li.text.lower() for li in cat_ul.find_all("li")} if cat_ul else set()
+
+    def parse_side_info(self, soup):
+        return parse_infobox(soup)
+
+    def parse_album_page(self, uri_path, clean_soup, side_info):
+        return parse_wikipedia_album_page(uri_path, clean_soup, side_info)
 
 
 class DramaWikiClient(WikiClient):

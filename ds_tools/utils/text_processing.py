@@ -5,22 +5,32 @@ import logging
 import re
 import string
 import sys
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
+from unicodedata import category as unicode_cat
 
 __all__ = [
     "Token", "RecursiveDescentParser", "UnexpectedTokenError", "strip_punctuation", "ParentheticalParser", "DASH_CHARS",
-    "QMARKS", "ALL_WHITESPACE"
+    "QMARKS", "ALL_WHITESPACE", "CHARS_BY_CATEGORY"
 ]
 log = logging.getLogger("ds_tools.utils.text_processing")
 
-ALL_WHITESPACE = "".join(re.findall("\s", "".join(chr(c) for c in range(sys.maxunicode + 1))))
-DASH_CHARS = "-–~"
+
+def _chars_by_category():
+    chars_by_cat = defaultdict(list)
+    for c in map(chr, range(sys.maxunicode + 1)):
+        chars_by_cat[unicode_cat(c)].append(c)
+    return {cat: "".join(chars) for cat, chars in chars_by_cat.items()}
+
+
+ALL_WHITESPACE = "".join(re.findall(r"\s", "".join(chr(c) for c in range(sys.maxunicode + 1))))
+CHARS_BY_CATEGORY = _chars_by_category()    # Note: ALL_WHITESPACE is a superset of CHARS_BY_CATEGORY["Zs"]
+DASH_CHARS = CHARS_BY_CATEGORY["Pd"] + "~"
 PUNC_STRIP_TBL = str.maketrans({c: "" for c in string.punctuation})
 QMARKS = "\"“"
 
 
 def strip_punctuation(a_str):
-    return re.sub("\s+", "", a_str).translate(PUNC_STRIP_TBL)
+    return re.sub(r"\s+", "", a_str).translate(PUNC_STRIP_TBL)
 
 
 class Token:
