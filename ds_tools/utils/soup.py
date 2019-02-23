@@ -96,13 +96,13 @@ log = logging.getLogger("ds_tools.utils.soup")
 _regex_pattern_type = type(re.compile(""))
 
 
-def soupify(html, mode="html.parser"):
+def soupify(html, mode="lxml", *args, **kwargs):
     if not isinstance(html, str):
         try:
             html = html.text
         except AttributeError as e:
             raise TypeError("Only strings or Requests library response objects are supported") from e
-    return BeautifulSoup(html, mode)
+    return BeautifulSoup(html, mode, *args, **kwargs)
 
 
 def fix_html_prettify():

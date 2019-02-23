@@ -108,6 +108,7 @@ class ParentheticalParser(RecursiveDescentParser):
     _opener2closer = {"LPAREN": "RPAREN", "LBPAREN": "RBPAREN", "LBRKT": "RBRKT", "QUOTE": "QUOTE", "DASH": "DASH"}
     _nested_fmts = {"LPAREN": "({})", "LBPAREN": "({})", "LBRKT": "[{}]", "QUOTE": "{!r}", "DASH": "({})"}
     _content_tokens = ["TEXT", "WS"] + list(_opener2closer.values())
+    _req_preceders = ["WS"] + list(_opener2closer.values())
     TOKENS = OrderedDict([
         ("QUOTE", "[{}]".format(QMARKS)),
         ("LPAREN", "\("),
@@ -158,7 +159,10 @@ class ParentheticalParser(RecursiveDescentParser):
         while self.next_tok:
             if self._accept_any(self._opener2closer):
                 tok_type = self.tok.type
-                if tok_type == "QUOTE":
+                if text and self.prev_tok.type not in self._req_preceders and self._peek("TEXT"):
+                    text += self.tok.value
+                    continue
+                elif tok_type == "QUOTE":
                     if any((c not in self._remaining) and (self._full.count(c) % 2 == 1) for c in QMARKS):
                         log.debug("Unpaired quote found in {!r}".format(self._full))
                         continue
@@ -168,10 +172,10 @@ class ParentheticalParser(RecursiveDescentParser):
                         # log.debug("Appending DASH because WS did not follow it or the value does not occur again")
                         text += self.tok.value
                         continue
-                    elif text and self.prev_tok.type != "WS" and self._peek("TEXT"):
-                        # log.debug("Appending DASH because text, previous token was {}={!r}, and the next token is TEXT".format(self.prev_tok.type, self.prev_tok.value))
-                        text += self.tok.value
-                        continue
+                    # elif text and self.prev_tok.type != "WS" and self._peek("TEXT"):
+                    #     # log.debug("Appending DASH because text, previous token was {}={!r}, and the next token is TEXT".format(self.prev_tok.type, self.prev_tok.value))
+                    #     text += self.tok.value
+                    #     continue
 
                 if text:
                     parts.append(text)

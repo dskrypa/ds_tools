@@ -8,6 +8,8 @@ import logging
 import string
 from urllib.parse import urlparse
 
+import bs4
+
 from ..exceptions import CodeBasedRestException
 from ..http import RestClient
 from ..utils import soupify, cached, ParentheticalParser, DBCache
@@ -22,6 +24,14 @@ AMBIGUOUS_URI_PATH_TEXT = [
 ]
 JUNK_CHARS = string.whitespace + string.punctuation
 STRIP_TBL = str.maketrans({c: "" for c in JUNK_CHARS})
+
+
+def http_req_cache_key(self, endpoint, *args, **kwargs):
+    params = kwargs.get("params")
+    url = self.url_for(endpoint)
+    if params:
+        return url, tuple(sorted(params.items()))
+    return url
 
 
 class WikiClient(RestClient):
@@ -40,7 +50,7 @@ class WikiClient(RestClient):
 
     def __init__(self, host=None, prefix="wiki", proto="https", **kwargs):
         if not getattr(self, "_WikiClient__initialized", False):
-            super().__init__(host or self._site, rate_limit=1, prefix=prefix, proto=proto, **kwargs)
+            super().__init__(host or self._site, rate_limit=1, prefix=prefix, proto=proto, log_params=True, **kwargs)
             self._resp_cache = DBCache("responses", cache_subdir="kpop_wiki")
             self._name_cache = DBCache("names", cache_subdir="kpop_wiki")
             self._bad_name_cache = DBCache("invalid_names", cache_subdir="kpop_wiki")
@@ -53,7 +63,8 @@ class WikiClient(RestClient):
         except KeyError as e:
             raise ValueError("No WikiClient class exists for site {!r}".format(site)) from e
 
-    @cached("_resp_cache", lock=True, key=lambda s, e, *a, **kw: s.url_for(e), exc=True, optional=True)
+    # @cached("_resp_cache", lock=True, key=lambda s, e, *a, **kw: s.url_for(e), exc=True, optional=True)
+    @cached("_resp_cache", lock=True, key=http_req_cache_key, exc=True, optional=True)
     def get(self, *args, **kwargs):
         return super().get(*args, **kwargs)
 
@@ -121,7 +132,8 @@ class KpopWikiClient(WikiClient):
         raw = self.get_page(uri_path)
         # if "This article is a disambiguation page" in raw:
         #     raise AmbiguousEntityException(uri_path, raw, obj_type)
-        cat_ul = soupify(raw).find("ul", class_="categories")
+        cat_ul = soupify(raw, parse_only=bs4.SoupStrainer("ul", class_="categories"))
+        # cat_ul = soupify(raw).find("ul", class_="categories")
         return raw, {li.text.lower() for li in cat_ul.find_all("li")} if cat_ul else set()
 
     def parse_side_info(self, soup):
@@ -139,7 +151,8 @@ class WikipediaClient(WikiClient):
         raw = self.get_page(uri_path)
         if "Wikipedia does not have an article with this exact name." in raw:
             raise AmbiguousEntityException(uri_path, raw, obj_type)
-        cat_links = soupify(raw).find("div", id="mw-normal-catlinks")
+        cat_links = soupify(raw, parse_only=bs4.SoupStrainer("div", id="mw-normal-catlinks"))
+        # cat_links = soupify(raw).find("div", id="mw-normal-catlinks")
         cat_ul = cat_links.find("ul") if cat_links else None
         return raw, {li.text.lower() for li in cat_ul.find_all("li")} if cat_ul else set()
 
@@ -149,25 +162,44 @@ class WikipediaClient(WikiClient):
     def parse_album_page(self, uri_path, clean_soup, side_info):
         return parse_wikipedia_album_page(uri_path, clean_soup, side_info)
 
+    def title_search(self, title):
+        #https://en.wikipedia.org/w/index.php?search=My+Lovely+Girl+OST&title=Special%3ASearch&fulltext=Search
+        params = {"search": title, "title": "Special:Search", "fulltext": "Search"}
+        try:
+            resp = self.get("index.php", params=params)#, use_cached=False)
+        except CodeBasedRestException as e:
+            log.debug("Error searching for title {!r}: {}".format(title, e))
+            raise e
+
+        clean_title = title.translate(STRIP_TBL).lower()
+        soup = soupify(resp.text, parse_only=bs4.SoupStrainer("ul", class_="mw-search-results"))
+        for a in soup.find_all("a"):
+            if a.text.translate(STRIP_TBL).lower() == clean_title:
+                href = a.get("href") or ""
+                if href and "redlink=1" not in href:
+                    return href[6:] if href.startswith("/wiki/") else href
+        return None
+
 
 class DramaWikiClient(WikiClient):
     _site = "wiki.d-addicts.com"
 
     def __init__(self):
         if not getattr(self, "_DramaWikiClient__initialized", False):
-            super().__init__(prefix="", log_params=True)
+            super().__init__(prefix="")
             self.__initialized = True
 
     @cached(True)
     def get_entity_base(self, uri_path, obj_type=None):
         raw = self.get_page(uri_path)
-        cat_links = soupify(raw).find("div", id="mw-normal-catlinks")
+        cat_links = soupify(raw, parse_only=bs4.SoupStrainer("div", id="mw-normal-catlinks"))
+        # cat_links = soupify(raw).find("div", id="mw-normal-catlinks")
         cat_ul = cat_links.find("ul") if cat_links else None
         return raw, {li.text.lower() for li in cat_ul.find_all("li")} if cat_ul else set()
 
     def title_search(self, title):
         try:
-            resp = self.get("index.php", params={"search": title, "title": "Special:Search"}, use_cached=False)
+            resp = self.get("index.php", params={"search": title, "title": "Special:Search"})#, use_cached=False)
         except CodeBasedRestException as e:
             log.debug("Error searching for OST {!r}: {}".format(title, e))
             raise e
@@ -176,9 +208,10 @@ class DramaWikiClient(WikiClient):
         if url.path != "/index.php":    # If there's an exact match, it redirects to that page
             return url.path[1:]
 
-        soup = soupify(resp.text)
         clean_title = title.translate(STRIP_TBL).lower()
-        for a in soup.find(class_="searchresults").find_all("a"):
+        soup = soupify(resp.text, parse_only=bs4.SoupStrainer(class_="searchresults"))
+        # for a in soup.find(class_="searchresults").find_all("a"):
+        for a in soup.find_all("a"):
             if a.text.translate(STRIP_TBL).lower() == clean_title:
                 href = a.get("href") or ""
                 if href and "redlink=1" not in href:
