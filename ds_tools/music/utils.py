@@ -26,7 +26,7 @@ __all__ = [
     "SongTitleParser", "DiscographyEntryParser", "sanitize", "unsurround", "_normalize_title", "parse_intro_name",
     "split_name", "eng_cjk_sort", "categorize_langs", "LangCat", "parse_discography_entry", "parse_aside",
     "parse_album_page", "parse_track_info", "parse_ost_page", "parse_wikipedia_album_page", "parse_infobox",
-    "edition_combinations"
+    "edition_combinations", "multi_lang_name", "comparison_type_check"
 ]
 log = logging.getLogger("ds_tools.music.utils")
 
@@ -844,7 +844,7 @@ def parse_track_info(idx, text, source, length=None):
     # log.debug("{!r} => {}".format(text, parsed))
     if length:
         track["length"] = length
-        
+
     if has_parens(parsed[0]):   #.count("(") > 1:
         to_re_parse = parsed.pop(0)
         _parsed = parsed
@@ -1132,6 +1132,19 @@ def edition_combinations(editions, next_track):
                 candidates.append([edition])
 
     return list({tuple(e.get("section") or "" for e in combo): combo for combo in candidates}.values())
+
+
+def multi_lang_name(eng_name, cjk_name):
+    if eng_name and cjk_name:
+        return "{} ({})".format(eng_name, cjk_name)
+    else:
+        return eng_name or cjk_name
+
+
+def comparison_type_check(obj, other, req_type, op):
+    if not isinstance(other, req_type):
+        fmt = "{!r} is not supported between instances of {!r} and {!r}"
+        raise TypeError(fmt.format(op, type(obj).__name__, type(other).__name__))
 
 
 if __name__ == "__main__":

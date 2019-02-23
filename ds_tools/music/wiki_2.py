@@ -66,12 +66,13 @@ class WikiEntityMeta(type):
 
         super().__init__(name, bases, attr_dict)
 
-    def __call__(cls, uri_path=None, client=None, *, name=None, disco_entry=None, basic=False, **kwargs):
+    def __call__(cls, uri_path=None, client=None, *, name=None, disco_entry=None, no_type_check=False, **kwargs):
         """
         :param str|None uri_path: The uri path for a page on a wiki
         :param WikiClient|None client: The WikiClient object to use to retrieve the wiki page
         :param str|None name: The name of a WikiEntity to lookup if the uri_path is unknown
         :param dict|None disco_entry: A dict containing information about an album from an Artist's discography section
+        :param bool no_type_check: Skip type checks and do not cache the returned object
         :param kwargs: Additional keyword arguments to pass to the WikiEntity when initializing it
         :return WikiEntity: A WikiEntity (or subclass thereof) based on the provided information
         """
@@ -100,7 +101,7 @@ class WikiEntityMeta(type):
         elif client is None:
             client = KpopWikiClient()
 
-        if basic:
+        if no_type_check:
             obj = cls.__new__(cls, uri_path, client)
             # noinspection PyArgumentList
             obj.__init__(uri_path, client, name=name, disco_entry=disco_entry, **kwargs)
@@ -275,11 +276,7 @@ class WikiArtist(WikiEntity):
         if name and not any(val for val in (self.english_name, self.cjk_name, self.stylized_name)):
             self.english_name, self.cjk_name = split_name(name)
 
-        if self.english_name and self.cjk_name:
-            self.name = "{} ({})".format(self.english_name, self.cjk_name)
-        else:
-            self.name = self.english_name or self.cjk_name
-
+        self.name = multi_lang_name(self.english_name, self.cjk_name)
         self.aliases = [a for a in (self.english_name, self.cjk_name, self.stylized_name, self.aka, self.name) if a]
         if self.english_name and isinstance(self._client, KpopWikiClient):
             type(self)._known_artists.add(self.english_name.lower())
@@ -291,15 +288,11 @@ class WikiArtist(WikiEntity):
             return "<{}({!r})>".format(type(self).__name__, self._uri_path)
 
     def __lt__(self, other):
-        if not isinstance(other, (WikiArtist, str)):
-            fmt = "'<' not supported between instances of {!r} and {!r}"
-            raise TypeError(fmt.format(type(self).__name__, type(other).__name__))
+        comparison_type_check(self, other, (WikiArtist, str), "<")
         return (self.name < other.name) if isinstance(other, WikiArtist) else (self.name < other)
 
     def __gt__(self, other):
-        if not isinstance(other, (WikiArtist, str)):
-            fmt = "'>' not supported between instances of {!r} and {!r}"
-            raise TypeError(fmt.format(type(self).__name__, type(other).__name__))
+        comparison_type_check(self, other, (WikiArtist, str), ">")
         return (self.name > other.name) if isinstance(other, WikiArtist) else (self.name > other)
 
     @classmethod
@@ -310,7 +303,6 @@ class WikiArtist(WikiEntity):
             with open(known_artists_path.as_posix(), "r", encoding="utf-8") as f:
                 artists = json.load(f)
             cls._known_artists.update((split_name(artist)[0].lower() for artist in artists.values()))
-            # cls._known_artists.update(map(str.lower, artists.keys()))
         return cls._known_artists
 
     @classmethod
@@ -321,7 +313,7 @@ class WikiArtist(WikiEntity):
     @property
     def _discography(self):
         try:
-            discography_h2 = self._soup.find("span", id="Discography").parent
+            discography_h2 = self._clean_soup.find("span", id="Discography").parent
         except AttributeError as e:
             log.error("No page content / discography was found for {}".format(self))
             return []
@@ -385,8 +377,7 @@ class WikiArtist(WikiEntity):
                 uri_path = entry["uri_path"]
 
             try:
-                obj = WikiSongCollection(uri_path, client, disco_entry=entry)
-                discography.append(obj)
+                discography.append(WikiSongCollection(uri_path, client, disco_entry=entry))
             except MusicException as e:
                 fmt = "{}: Error processing discography entry for {!r} / {!r}: {}"
                 log.error(fmt.format(self, entry["uri_path"], entry["title"], e), extra={"color": 13})
@@ -405,25 +396,23 @@ class WikiGroup(WikiArtist):
         clean_soup = self._clean_soup
         if re.search("^.* is (?:a|the) .*?sub-?unit of .*?group", clean_soup.text.strip()):
             for i, a in enumerate(clean_soup.find_all("a")):
-                try:
-                    href = a.get("href")[6:]
-                except TypeError as e:
-                    href = None
+                href = a.get("href") or ""
+                href = href[6:] if href.startswith("/wiki/") else href
                 if href and (href != self._uri_path):
                     self.subunit_of = WikiGroup(href)
                     break
 
     @cached_property
     def members(self):
-        content = self._soup.find("div", id="mw-content-text")
-        members_h2 = content.find("span", id="Members").parent
+        members_h2 = self._clean_soup.find("span", id="Members").parent
         members_container = members_h2.next_sibling.next_sibling
         members = []
         if members_container.name == "ul":
-            for li in members_container:
+            for li in members_container.find_all("li"):
                 a = li.find("a")
-                if a:
-                    members.append(WikiSinger(a.get("href")[6:]))
+                href = a.get("href") if a else None
+                if href:
+                    members.append(WikiSinger(href[6:] if href.startswith("/wiki/") else href))
                 else:
                     m = re.match("(.*?)\s*-\s*(.*)", li.text)
                     member = list(map(str.strip, m.groups()))[0]
@@ -433,8 +422,9 @@ class WikiGroup(WikiArtist):
                 if tr.find("th"):
                     continue
                 a = tr.find("a")
-                if a:
-                    members.append(WikiSinger(a.get("href")[6:]))
+                href = a.get("href") if a else None
+                if href:
+                    members.append(WikiSinger(href[6:] if href.startswith("/wiki/") else href))
                 else:
                     member = list(map(str.strip, (td.text.strip() for td in tr.find_all("td"))))[0]
                     members.append(member)
@@ -442,21 +432,22 @@ class WikiGroup(WikiArtist):
 
     @cached_property
     def sub_units(self):
-        content = self._soup.find("div", id="mw-content-text")
-        su_ele = content.find(id=re.compile("sub[-_]?units", re.IGNORECASE))
+        su_ele = self._clean_soup.find(id=re.compile("sub[-_]?units", re.IGNORECASE))
         if not su_ele:
             return []
-        sub_units = []
+
         while su_ele and not su_ele.name.startswith("h"):
             su_ele = su_ele.parent
         ul = su_ele.next_sibling.next_sibling
         if not ul or ul.name != "ul":
             raise RuntimeError("Unexpected sibling element for sub-units")
 
+        sub_units = []
         for li in ul.find_all("li"):
             a = li.find("a")
-            if a and a.get("href"):
-                sub_units.append(WikiGroup(a.get("href")[6:]))
+            href = a.get("href") if a else None
+            if href:
+                sub_units.append(WikiGroup(href[6:] if href.startswith("/wiki/") else href))
         return sub_units
 
 
@@ -557,21 +548,14 @@ class WikiSongCollection(WikiEntity):
         if self._track_lists is None:
             self._track_lists = [self._album_info.get("tracks")]
 
-        if self.english_name and self.cjk_name:
-            self.name = "{} ({})".format(self.english_name, self.cjk_name)
-        else:
-            self.name = self.english_name or self.cjk_name
+        self.name = multi_lang_name(self.english_name, self.cjk_name)
 
     def __lt__(self, other):
-        if not isinstance(other, WikiSongCollection):
-            fmt = "'<' not supported between instances of {!r} and {!r}"
-            raise TypeError(fmt.format(type(self).__name__, type(other).__name__))
+        comparison_type_check(self, other, WikiSongCollection, "<")
         return self.name < other.name
 
     def __gt__(self, other):
-        if not isinstance(other, WikiSongCollection):
-            fmt = "'>' not supported between instances of {!r} and {!r}"
-            raise TypeError(fmt.format(type(self).__name__, type(other).__name__))
+        comparison_type_check(self, other, WikiSongCollection, ">")
         return self.name > other.name
 
     @cached_property
@@ -580,17 +564,14 @@ class WikiSongCollection(WikiEntity):
 
     @cached_property
     def _artists(self):
+        """dict(artist.lower(): uri_path)"""
         artists = {self._primary_artist[0].lower(): self._primary_artist[1]} if self._primary_artist else {}
         d_collabs = self._discography_entry.get("collaborators", {})
         a_artists = self._album_info.get("artists", {})
         for artist, href in chain(d_collabs.items(), a_artists.items()):
-            if href:
-                if href.startswith("/wiki"):
-                    href = href[6:]
             artist = artist.lower()
             if not artists.get(artist):
-                artists[artist] = href
-
+                artists[artist] = href[6:] if href and href.startswith("/wiki/") else href
         return artists
 
     @cached_property
@@ -693,6 +674,7 @@ class WikiSongCollection(WikiEntity):
             if len(self._intended) == 3:
                 return [WikiTrack(self._intended[2]._info, self)]
             elif len(self._intended) == 2:
+                # noinspection PyTupleAssignmentBalance
                 edition_or_part, disk = self._intended
         _tracks = self._get_tracks(edition_or_part, disk)
         return [WikiTrack(info, self) for info in _tracks["tracks"]]
@@ -766,11 +748,7 @@ class WikiSoundtrack(WikiSongCollection):
                 raise WikiEntityInitException("Unexpected OST name for {}".format(self._uri_path))
 
             self.english_name, self.cjk_name = eng[:-6].strip(), cjk[:-6].strip()
-            if self.english_name and self.cjk_name:
-                self.name = "{} ({})".format(self.english_name, self.cjk_name)
-            else:
-                self.name = self.english_name or self.cjk_name
-
+            self.name = multi_lang_name(self.english_name, self.cjk_name)
             # self._part = None
             if "part" in self._discography_entry.get("title", "").lower():
                 # self._intended = self._discography_entry.get("title"), None
@@ -855,62 +833,44 @@ class WikiTrack(DictAttrPropertyMixin):
         self._info = info   # num, length, language, version, name_parts, collaborators, misc, artist
         self._collection = collection
         self.english_name, self.cjk_name = self._info["name_parts"]
-        if self.english_name and self.cjk_name:
-            self.name = "{} ({})".format(self.english_name, self.cjk_name)
-        else:
-            self.name = self.english_name or self.cjk_name
+        self.name = multi_lang_name(self.english_name, self.cjk_name)
 
     def __repr__(self):
-        return self._repr
-
-    def __lt__(self, other):
-        if not isinstance(other, WikiTrack):
-            fmt = "'<' not supported between instances of {!r} and {!r}"
-            raise TypeError(fmt.format(type(self).__name__, type(other).__name__))
-        return (self._collection, self.disk, self.num, self.long_name) < (other._collection, other.disk, other.num, other.long_name)
-
-    def __gt__(self, other):
-        if not isinstance(other, WikiTrack):
-            fmt = "'>' not supported between instances of {!r} and {!r}"
-            raise TypeError(fmt.format(type(self).__name__, type(other).__name__))
-        return (self._collection, self.disk, self.num, self.long_name) > (other._collection, other.disk, other.num, other.long_name)
-
-    @cached_property
-    def _repr(self):
         if self.num is not None:
             name = "{}[{:2d}][{!r}]".format(type(self).__name__, self.num, self.name)
         else:
             name = "{}[??][{!r}]".format(type(self).__name__, self.name)
+        len_str = "[{}]".format(self.length_str) if self.length_str != "-1:00" else ""
+        return "<{}{}{}>".format(name, "".join(self._formatted_name_parts), len_str)
+
+    @property
+    def _cmp_attrs(self):
+        return self._collection, self.disk, self.num, self.long_name
+
+    def __lt__(self, other):
+        comparison_type_check(self, other, WikiTrack, "<")
+        return self._cmp_attrs < other._cmp_attrs
+
+    def __gt__(self, other):
+        comparison_type_check(self, other, WikiTrack, ">")
+        return self._cmp_attrs > other._cmp_attrs
+
+    @cached_property
+    def _formatted_name_parts(self):
+        parts = []
         if self.version:
-            if self.version.lower() == "acoustic":
-                name = "{}({} ver.)".format(name, self.version)
-            else:
-                name = "{}({})".format(name, self.version)
+            parts.append("{} ver.".format(self.version) if self.version.lower() == "acoustic" else self.version)
         if self.language:
-            name = "{}({} ver.)".format(name, self.language)
+            parts.append("{} ver.".format(self.language))
         if self.misc:
-            name = "{}{}".format(name, "".join(map("({})".format, self.misc)))
+            parts.extend(self.misc)
         if self._collaborators:
-            name = "{}(with {})".format(name, ", ".join(self._collaborators))
-        if self.length_str != "-1:00":
-            name = "{}[{}]".format(name, self.length_str)
-        return "<{}>".format(name)
+            parts.append("with {}".format(", ".join(self._collaborators)))
+        return tuple(map("({})".format, parts))
 
     @cached_property
     def long_name(self):
-        name = self.name
-        if self.version:
-            if self.version.lower() == "acoustic":
-                name = "{} ({} ver.)".format(name, self.version)
-            else:
-                name = "{} ({})".format(name, self.version)
-        if self.language:
-            name = "{} ({} ver.)".format(name, self.language)
-        if self.misc:
-            name = "{} {}".format(name, " ".join(map("({})".format, self.misc)))
-        if self._collaborators:
-            name = "{} (with {})".format(name, ", ".join(self._collaborators))
-        return name
+        return " ".join(chain((self.name,), self._formatted_name_parts))
 
     @property
     def seconds(self):
