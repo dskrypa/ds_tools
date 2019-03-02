@@ -90,6 +90,9 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
         parenthetical ::= ( { text | WS | ( parenthetical ) }* )
         """
         # log.debug("Opening {}".format(closer))
+        if not hasattr(self, "_parenthetical_count"):
+            self._parenthetical_count = 0
+        self._parenthetical_count += 1
         text = ""
         parts = []
         nested = False
@@ -120,13 +123,11 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
                     text = ""
 
                 parentheticals, _nested, unpaired = self.parenthetical(self._opener2closer[tok_type])
-                if len(parts) == len(parentheticals) == 1 and parts[0].lower().startswith(FEAT_ARTIST_INDICATORS):
+                if len(parts) == len(parentheticals) == 1 and parts[0].lower().startswith(FEAT_ARTIST_INDICATORS) and self._parenthetical_count > 2:
                     parts[0] = "{} of {}".format(parts[0].strip(), parentheticals[0])
                 else:
                     parts.extend(parentheticals)
 
-                # parts.extend(_parts)
-                # text += self._nested_fmts[tok_type].format(self.parenthetical(self._opener2closer[tok_type])[0])
                 nested = True
             else:
                 self._advance()
