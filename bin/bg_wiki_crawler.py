@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
 from ds_tools.http import RestClient
 from ds_tools.logging import LogManager
-from ds_tools.utils import Table, SimpleColumn, Printer
+from ds_tools.output import Table, SimpleColumn, Printer
 
 log = logging.getLogger("ds_tools.{}".format(__name__))
 

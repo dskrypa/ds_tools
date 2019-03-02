@@ -13,7 +13,8 @@ from pathlib import Path
 
 sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
 from ds_tools.logging import LogManager
-from ds_tools.utils import ArgParser, DBCache, uprint
+from ds_tools.output import uprint
+from ds_tools.utils import ArgParser, DBCache
 
 log = logging.getLogger("ds_tools.{}".format(__name__))
 

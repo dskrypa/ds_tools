@@ -49,7 +49,8 @@ from ds_tools.music import (
     iter_music_files, load_tags, iter_music_albums, iter_categorized_music_files, TagAccessException,
     tag_repr, apply_repr_patches, TagValueException, TagException, iter_album_dirs, RM_TAGS_ID3, RM_TAGS_MP4
 )
-from ds_tools.utils import Table, SimpleColumn, localize, TableBar, num_suffix, ArgParser, uprint, colored
+from ds_tools.output import colored, uprint, Table, SimpleColumn, TableBar
+from ds_tools.utils import  localize, num_suffix, ArgParser
 from music.constants import tag_name_map
 
 log = logging.getLogger("ds_tools.{}".format(__name__))
