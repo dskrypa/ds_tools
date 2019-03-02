@@ -11,9 +11,9 @@ import sys
 from pathlib import Path
 
 sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
+from ds_tools.argparsing import ArgParser
 from ds_tools.logging import LogManager
 from ds_tools.lyric_fetcher import SITE_CLASS_MAPPING, HybridLyricFetcher
-from ds_tools.utils import ArgParser
 
 log = logging.getLogger("ds_tools.{}".format(__name__))
 

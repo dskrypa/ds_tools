@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
+Functions that expand upon those in the built-in itertools module.
+
 :author: Doug Skrypa
 """
 
@@ -8,7 +8,7 @@ from collections.abc import Mapping, MutableMapping
 from copy import deepcopy
 from itertools import chain
 
-__all__ = ["itemfinder", "chunked", "partitioned", "kwmerge", "merge", "flatten_mapping"]
+__all__ = ['chunked', 'flatten_mapping', 'itemfinder', 'kwmerge', 'merge', 'partitioned']
 
 
 def itemfinder(iterable, func):
@@ -114,12 +114,12 @@ def vmap(func, mapping):
     return obj
 
 
-def flatten_mapping(mapping, delimiter="."):
+def flatten_mapping(mapping, delimiter='.'):
     flattened = type(mapping)()
     for key, val in mapping.items():
         if isinstance(val, Mapping):
             for subkey, subval in flatten_mapping(val).items():
-                flattened["{}{}{}".format(key, delimiter, subkey)] = subval
+                flattened['{}{}{}'.format(key, delimiter, subkey)] = subval
         else:
             flattened[key] = val
     return flattened

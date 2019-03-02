@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Mixins
 
@@ -9,13 +7,13 @@ Mixins
 import logging
 from contextlib import suppress
 
-from .decorate import cached_property
+from ..core import cached_property
 
 __all__ = [
-    "ClearableCachedPropertyMixin", "DictAttrProperty", "DictAttrPropertyMixin", "DictAttrPropertyMeta",
-    "DictAttrFieldNotFoundError"
+    'ClearableCachedPropertyMixin', 'DictAttrProperty', 'DictAttrPropertyMixin', 'DictAttrPropertyMeta',
+    'DictAttrFieldNotFoundError'
 ]
-log = logging.getLogger("ds_tools.utils.mixins")
+log = logging.getLogger(__name__)
 
 
 class _NotSet:
@@ -43,7 +41,7 @@ class ClearableCachedPropertyMixin:
 
 
 class DictAttrProperty:
-    def __init__(self, attr, path, type=_NotSet, default=_NotSet, default_factory=_NotSet, delim="."):
+    def __init__(self, attr, path, type=_NotSet, default=_NotSet, default_factory=_NotSet, delim='.'):
         """
         Descriptor that acts as a cached property for retrieving values nested in a dict stored in an attribute of the
         object that this :class:`DictAttrProperty` is a member of.  The value is not accessed or stored until the first
@@ -75,7 +73,7 @@ class DictAttrProperty:
         self.path_repr = delim.join(self.path)
         self.attr = attr
         self.type = type
-        self.name = "_{}#{}".format(self.__class__.__name__, self.path_repr)
+        self.name = '_{}#{}'.format(self.__class__.__name__, self.path_repr)
         self.default = default
         self.default_factory = default_factory
 
@@ -99,7 +97,7 @@ class DictAttrProperty:
         if self.type is not _NotSet:
             # noinspection PyArgumentList
             value = self.type(value)
-        if "#" not in self.name:
+        if '#' not in self.name:
             obj.__dict__[self.name] = value
         return value
 
@@ -111,8 +109,8 @@ class DictAttrPropertyMeta(type):
             if isinstance(attr, DictAttrProperty):
                 attr.name = key
                 attr.__doc__ = """
-                A :class:`DictAttrProperty<ds_tools.utils.mixins.DictAttrProperty>` that references this {}
-                instance's {}{}""".format(name, attr.attr, "".join("[{!r}]".format(p) for p in attr.path))
+                A :class:`DictAttrProperty<ds_tools.caching.mixins.DictAttrProperty>` that references this {}
+                instance's {}{}""".format(name, attr.attr, ''.join('[{!r}]'.format(p) for p in attr.path))
 
         super().__init__(name, bases, attr_dict)
 
@@ -129,5 +127,5 @@ class DictAttrFieldNotFoundError(Exception):
         self.path_repr = path_repr
 
     def __str__(self):
-        fmt = "{!r} object has no attribute {!r} ({} not found in {!r}.{})"
+        fmt = '{!r} object has no attribute {!r} ({} not found in {!r}.{})'
         return fmt.format(type(self.obj).__name__, self.prop_name, self.path_repr, self.obj, self.attr)

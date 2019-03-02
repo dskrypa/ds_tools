@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 :author: Doug Skrypa
 """
@@ -13,8 +11,8 @@ from threading import Lock
 
 from .itertools import partitioned
 
-__all__ = ["cached_property", "classproperty", "partitioned_exec", "trace_entry", "timed", "rate_limited"]
-log = logging.getLogger("ds_tools.utils.decorate")
+__all__ = ['cached_property', 'classproperty', 'partitioned_exec', 'rate_limited', 'timed', 'trace_entry']
+log = logging.getLogger(__name__)
 
 
 class cached_property:
@@ -91,7 +89,7 @@ def partitioned_exec(n, container_factory, merge_fn=None, pos=0):
         elif issubclass(container_factory, list):
             merge_fn = lambda a, b: a.extend(b)
         else:
-            raise ValueError("partitioned_exec only provides merge_fn defaults for dict, set, and list types")
+            raise ValueError('partitioned_exec only provides merge_fn defaults for dict, set, and list types')
 
     def decorator(func):
         if isinstance(n, attrgetter):
@@ -129,9 +127,9 @@ def partitioned_exec(n, container_factory, merge_fn=None, pos=0):
 def trace_entry(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        arg_str = ", ".join("\"{}\"".format(v) if isinstance(v, str) else str(v) for v in args)
-        kwarg_str = ", ".join("{}={}".format(k, "\"{}\"".format(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
-        print("{}({}, {})".format(func.__name__, arg_str, kwarg_str))
+        arg_str = ', '.join('{!r}'.format(v) if isinstance(v, str) else str(v) for v in args)
+        kwarg_str = ', '.join('{}={}'.format(k, '{!r}'.format(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
+        print('{}({}, {})'.format(func.__name__, arg_str, kwarg_str))
         return func(*args, **kwargs)
     return wrapper
 
@@ -142,7 +140,7 @@ def timed(func):
         start = time.time()
         r = func(*args, **kwargs)
         end = time.time()
-        print("{} ran in {} s".format(func.__name__, end - start))
+        print('{} ran in {} s'.format(func.__name__, end - start))
         return r
     return wrapper
 
@@ -167,7 +165,7 @@ def rate_limited(interval=0):
                     elapsed = time.time() - last_call
                     if elapsed < obj_interval:
                         wait = obj_interval - elapsed
-                        log.debug("Rate limited method '{}' is being delayed {:,.3f} seconds".format(func.__name__, wait))
+                        log.debug('Rate limited method {!r} is being delayed {:,.3f} seconds'.format(func.__name__, wait))
                         time.sleep(wait)
                     last_call = time.time()
                     return func(*args, **kwargs)
@@ -179,7 +177,7 @@ def rate_limited(interval=0):
                     elapsed = time.time() - last_call
                     if elapsed < interval:
                         wait = interval - elapsed
-                        log.debug("Rate limited function '{}' is being delayed {:,.3f} seconds".format(func.__name__, wait))
+                        log.debug('Rate limited function {!r} is being delayed {:,.3f} seconds'.format(func.__name__, wait))
                         time.sleep(wait)
                     last_call = time.time()
                     return func(*args, **kwargs)
@@ -213,13 +211,13 @@ def retry_on_exception(retries=0, delay=0, *exception_classes, warn=True):
                 except exception_classes as e:
                     if retries >= 0:
                         if warn:
-                            fn_args = ", ".join(map(str, args)) if args else ""
+                            fn_args = ', '.join(map(str, args)) if args else ''
                             if kwargs:
                                 if fn_args:
-                                    fn_args += ", "
-                                fn_args += ", ".join("{}={}".format(k, v) for k, v in OrderedDict(kwargs).items())
-                            fn_str = "{}({}".format(func.__name__, fn_args)
-                            log.warning("Error calling {}: {}; retrying in {}s".format(fn_str, e, delay))
+                                    fn_args += ', '
+                                fn_args += ', '.join('{}={}'.format(k, v) for k, v in OrderedDict(kwargs).items())
+                            fn_str = '{}({}'.format(func.__name__, fn_args)
+                            log.warning('Error calling {}: {}; retrying in {}s'.format(fn_str, e, delay))
                     else:
                         raise e
         return wrapper

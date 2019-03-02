@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 :author: Doug Skrypa
 """
@@ -14,7 +12,8 @@ from subprocess import Popen, PIPE, STDOUT
 from threading import Thread
 from io import StringIO
 
-from .utils import kwmerge, to_str
+from .core import kwmerge
+from .output import to_str
 
 __all__ = ["exec_local", "exec_via_ssh", "tee", "psg", "ExternalProcessException"]
 log = logging.getLogger("ds_tools.shell")

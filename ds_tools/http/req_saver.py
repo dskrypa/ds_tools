@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+"""
+SQLite3 DB cache for Requests response objects based on the HTTP method and URL + query string used to request it
+
+:author: Doug Skrypa
+"""
 
 import json
 import logging
@@ -12,16 +16,16 @@ from sqlalchemy.orm import mapper, sessionmaker, scoped_session
 from sqlalchemy.orm.exc import NoResultFound, MultipleResultsFound
 from sqlalchemy.exc import NoSuchTableError, OperationalError
 
-__all__ = ["RequestSaver"]
-log = logging.getLogger("ds_tools.utils.req_saver")
+__all__ = ['RequestSaver']
+log = logging.getLogger(__name__)
 
-METHODS = ["get", "head", "post", "put", "patch", "delete"]
+METHODS = ['get', 'head', 'post', 'put', 'patch', 'delete']
 
 Base = declarative_base()
 
 
 class SavedResponse(Base):
-    __tablename__ = "responses"
+    __tablename__ = 'responses'
 
     id = Column(Integer, primary_key=True)
     method = Column(String)
@@ -34,8 +38,8 @@ class SavedResponse(Base):
 
     def __repr__(self):
         if self.qs:
-            return "<{}({} {}?{})>".format(type(self).__name__, self.method, self.url, self.qs)
-        return "<{}({} {})>".format(type(self).__name__, self.method, self.url)
+            return '<{}({} {}?{})>'.format(type(self).__name__, self.method, self.url, self.qs)
+        return '<{}({} {})>'.format(type(self).__name__, self.method, self.url)
 
 
 class NoSavedResponseException(Exception):
@@ -54,12 +58,12 @@ class RequestSaver:
         self.session = session
         self.mock = mock
         self.sanitize = sanitize
-        self.db_path = os.path.expanduser(db_path if db_path else ":memory:")
-        if self.db_path != ":memory:":
+        self.db_path = os.path.expanduser(db_path if db_path else ':memory:')
+        if self.db_path != ':memory:':
             db_dir = os.path.dirname(self.db_path)
             if not os.path.exists(db_dir):
                 os.makedirs(db_dir)
-        self.engine = create_engine("sqlite:///{}".format(self.db_path), echo=echo)
+        self.engine = create_engine('sqlite:///{}'.format(self.db_path), echo=echo)
         self.meta = MetaData(self.engine)
         try:
             self.table = Table(SavedResponse.__tablename__, self.meta, autoload=True)
@@ -83,46 +87,46 @@ class RequestSaver:
         yield from self.db_session.query(SavedResponse)
 
     def request(self, method, url, *args, **kwargs):
-        params = kwargs.get("params", {})
+        params = kwargs.get('params', {})
         if params:
             params = OrderedDict([(k, params[k]) for k in sorted(params.keys())])
         qs = urllib_parse.urlencode(params, 1)
 
-        data_key = json.dumps({k: kwargs.get(k, None) for k in ("data", "json")}, sort_keys=True)
-        req_args = {"method": method, "url": url, "qs": qs, "data_key": data_key}
+        data_key = json.dumps({k: kwargs.get(k, None) for k in ('data', 'json')}, sort_keys=True)
+        req_args = {'method': method, 'url': url, 'qs': qs, 'data_key': data_key}
         try:
             saved = self.db_session.query(SavedResponse).filter_by(**req_args).one()
         except (NoResultFound, OperationalError) as e:
-            # log.debug("No saved response found for {}".format(req_args))
+            # log.debug('No saved response found for {}'.format(req_args))
             saved = None
         except MultipleResultsFound as e:
-            log.debug("MultipleResultsFound for {} -> {}?{} w/ data: {}".format(method, url, qs, data_key))
+            log.debug('MultipleResultsFound for {} -> {}?{} w/ data: {}'.format(method, url, qs, data_key))
             raise e
 
         if self.mock and saved:
-            log.debug("\nReturning saved response for {} {}?{}".format(method, url, qs))
+            log.debug('\nReturning saved response for {} {}?{}'.format(method, url, qs))
             if isinstance(saved.response, Exception):
                 raise saved.response
             return saved.response
 
         if self.saved_only:
-            raise NoSavedResponseException("No response saved for: {}".format(req_args))
+            raise NoSavedResponseException('No response saved for: {}'.format(req_args))
 
         try:
             resp = self.session.request(method, url, *args, **kwargs)
         except Exception as e:
             resp = e
         if not saved:
-            log.debug("\nSaving response for {} {}?{}".format(method, url, qs))
+            log.debug('\nSaving response for {} {}?{}'.format(method, url, qs))
             if self.sanitize:
                 try:
                     orig = {}
-                    for field, repl in {"request": None, "history": [], "cookies": {}, "headers": {}}.items():
+                    for field, repl in {'request': None, 'history': [], 'cookies': {}, 'headers': {}}.items():
                         orig[field] = getattr(resp, field)
                         setattr(resp, field, repl)
 
                     db_resp = SavedResponse(response=resp, **req_args)
-                    # log.debug("Saving: {!r}".format(db_resp))
+                    # log.debug('Saving: {!r}'.format(db_resp))
                     self.db_session.add(db_resp)
                     self.db_session.commit()                    # Pickling happens at commit time
                     for field, orig_content in orig.items():
@@ -131,31 +135,9 @@ class RequestSaver:
                     pass
             else:
                 db_resp = SavedResponse(response=resp, **req_args)
-                # log.debug("Saving: {!r}".format(db_resp))
+                # log.debug('Saving: {!r}'.format(db_resp))
                 self.db_session.add(db_resp)
                 self.db_session.commit()
         if isinstance(resp, Exception):
             raise resp
         return resp
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

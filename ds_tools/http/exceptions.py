@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
+HTTP / REST Exceptions
+
 :author: Doug Skrypa
 """
 
@@ -10,11 +10,11 @@ from contextlib import suppress
 from requests.status_codes import codes
 
 __all__ = [
-    "http_code_and_reason", "SimpleRestException", "CodeBasedRestException", "CodeBasedRestExceptionMeta",
-    "UnauthorizedRestException", "UnavailableRestException"
+    'CodeBasedRestException', 'CodeBasedRestExceptionMeta', 'http_code_and_reason', 'SimpleRestException',
+    'UnauthorizedRestException', 'UnavailableRestException'
 ]
 
-lc_codes = {"{} {}".format(c, reason.lower().replace("_", " ")): c for reason, c in codes.__dict__.items()}
+lc_codes = {'{} {}'.format(c, reason.lower().replace('_', ' ')): c for reason, c in codes.__dict__.items()}
 
 
 def http_code_and_reason(cause):
@@ -43,7 +43,7 @@ class SimpleRestException(Exception):
 
     If the cause is a Response object from a requests lib Request, then the code and reason are extracted from it.  If
     the cause is an exception, then the str representation of the exception is examined fro HTTP status codes.  If a
-    match for "{code} {reason}" is found, then that code + reason are assumed to be the root cause.
+    match for '{code} {reason}' is found, then that code + reason are assumed to be the root cause.
 
     :param cause: An Exception or a :class:`requests.Response` object
     :param str endpoint: The REST endpoint that was called and generated the response that prompted this Exception
@@ -70,8 +70,8 @@ class SimpleRestException(Exception):
 
     def __str__(self):
         if self.msg:
-            return "{} [{}] {} on {}: {}".format(type(self).__name__, self.code, self.reason, self.endpoint, self.msg)
-        return "{} [{}] {} on {}".format(type(self).__name__, self.code, self.reason, self.endpoint)
+            return '{} [{}] {} on {}: {}'.format(type(self).__name__, self.code, self.reason, self.endpoint, self.msg)
+        return '{} [{}] {} on {}'.format(type(self).__name__, self.code, self.reason, self.endpoint)
 
     __repr__ = __str__
 
@@ -89,7 +89,7 @@ class CodeBasedRestException(Exception, metaclass=CodeBasedRestExceptionMeta):
 
     If the cause is a Response object from a requests lib Request, then the code and reason are extracted from it.  If
     the cause is an exception, then the str representation of the exception is examined fro HTTP status codes.  If a
-    match for "{code} {reason}" is found, then that code + reason are assumed to be the root cause.
+    match for '{code} {reason}' is found, then that code + reason are assumed to be the root cause.
 
     If a CodeBasedRestException is raised when a more specific exception (that is a subclass of CodeBasedRestException)
     exists for the given cause's status code, then the more specific subclass will be returned by __new__.  Subclasses
@@ -133,7 +133,7 @@ class CodeBasedRestException(Exception, metaclass=CodeBasedRestExceptionMeta):
         """Makes pickle work properly; implementing __getnewargs__ was not working"""
         new_args = (self.exception or self.resp, self.endpoint)
         state = self.__dict__.copy()
-        state["args"] = self.args       # args does not seem to show up in __dict__ for exceptions...
+        state['args'] = self.args       # args does not seem to show up in __dict__ for exceptions...
         return CodeBasedRestException, new_args, state
 
     def __setstate__(self, state):
@@ -141,8 +141,8 @@ class CodeBasedRestException(Exception, metaclass=CodeBasedRestExceptionMeta):
 
     def __str__(self):
         if self.msg:
-            return "{} [{}] {} on {}: {}".format(type(self).__name__, self.code, self.reason, self.endpoint, self.msg)
-        return "{} [{}] {} on {}".format(type(self).__name__, self.code, self.reason, self.endpoint)
+            return '{} [{}] {} on {}: {}'.format(type(self).__name__, self.code, self.reason, self.endpoint, self.msg)
+        return '{} [{}] {} on {}'.format(type(self).__name__, self.code, self.reason, self.endpoint)
 
     __repr__ = __str__
 

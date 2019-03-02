@@ -11,8 +11,8 @@ from hashlib import sha1
 from pathlib import Path
 
 sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
+from ds_tools.argparsing import ArgParser
 from ds_tools.logging import LogManager
-from ds_tools.utils import ArgParser
 
 log = logging.getLogger("ds_tools.{}".format(__name__))
 LIST_PATH = os.path.expanduser("~/etc/pwned-passwords-sha1-ordered-by-count-v4.txt")

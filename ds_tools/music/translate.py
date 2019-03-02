@@ -9,8 +9,9 @@ import re
 import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from ds_tools.caching import cached, FSCache
+from ds_tools.core import now
 from ds_tools.http import RestClient
-from ds_tools.utils import now, FSCache, cached
 from ds_tools.utils.soup import soupify, fix_html_prettify
 
 __all__ = []

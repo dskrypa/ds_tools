@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 :author: Doug Skrypa
 """
@@ -25,11 +23,10 @@ from mutagen.id3 import ID3, TDRC, TIT2, TALB, TPE1
 from mutagen.id3._frames import Frame, TextFrame
 from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
 
+from ..caching import cached, DBCache, CacheKey, ClearableCachedPropertyMixin
+from ..core import cached_property, get_user_cache_dir, format_duration
 from ..http import CodeBasedRestException
-from ..utils import (
-    cached_property, DBCache, cached, get_user_cache_dir, CacheKey, format_duration,
-    ClearableCachedPropertyMixin, contains_hangul, ParentheticalParser
-)
+from ..utils import contains_hangul, ParentheticalParser
 from .patches import tag_repr
 from .wiki import Artist, split_name, CollaborationSong
 

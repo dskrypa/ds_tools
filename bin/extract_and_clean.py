@@ -8,9 +8,10 @@ import sys
 from pathlib import Path
 
 sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
+from ds_tools.argparsing import ArgParser
+from ds_tools.core import now, DATE_FMT
 from ds_tools.logging import LogManager
 from ds_tools.shell import exec_local
-from ds_tools.utils import ArgParser, now, DATE_FMT
 
 log = logging.getLogger("ds_tools.{}".format(__name__))
 

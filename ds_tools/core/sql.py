@@ -1,11 +1,15 @@
-#!/usr/bin/env python3
+"""
+ScopedSession for using SqlAlchemy in a multithreaded application
+
+:author: Doug Skrypa
+"""
 
 import logging
 
 from sqlalchemy.orm import mapper, sessionmaker, scoped_session
 
-__all__ = ["ScopedSession"]
-log = logging.getLogger("ds_tools.utils.sql")
+__all__ = ['ScopedSession']
+log = logging.getLogger(__name__)
 
 
 class ScopedSession:

@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Fetch Korean lyrics and fix the html to make them easier to print
 
@@ -16,10 +14,11 @@ from urllib.parse import urlsplit
 
 from jinja2 import Environment as JinjaEnv, FileSystemLoader as JinjaFSLoader
 
+from ..caching import cached, FSCache
+from ..core import validate_or_make_dir, get_user_cache_dir
 from ..http import RestClient
-from ..utils import (
-    Table, SimpleColumn, validate_or_make_dir, soupify, fix_html_prettify, FSCache, cached, get_user_cache_dir, to_str
-)
+from ..output import to_str, Table, SimpleColumn
+from ..utils import soupify, fix_html_prettify
 
 __all__ = [
     "normalize_lyrics", "LyricFetcher", "HybridLyricFetcher", "TextFileLyricFetcher", "LyricsTranslateLyricFetcher",

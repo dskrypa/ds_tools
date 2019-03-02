@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
+Helpers for working with Requests sessions.
+
 :author: Doug Skrypa
 """
 
@@ -15,47 +15,47 @@ import requests
 # from urllib3 import disable_warnings as disable_urllib3_warnings
 from wrapt import synchronized
 
+from ..core import rate_limited
 from .exceptions import CodeBasedRestException
-from .utils.decorate import rate_limited
 
-__all__ = ["proxy_bypass_append", "requests_session", "http_cleanup", "RestClient"]
-log = logging.getLogger("ds_tools.http")
+__all__ = ['proxy_bypass_append', 'requests_session', 'http_cleanup', 'RestClient']
+log = logging.getLogger(__name__)
 __instances = WeakSet()
 
 # disable_urllib3_warnings()    # Mostly needed for dealing with un-verified SSL connections
 
 IMITATE_HEADERS = {
-    "firefox@win10": {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-        "Upgrade-Insecure-Requests": "1",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:62.0) Gecko/20100101 Firefox/62.0"
+    'firefox@win10': {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Upgrade-Insecure-Requests': '1',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:62.0) Gecko/20100101 Firefox/62.0'
     }
 }
 
 
 def proxy_bypass_append(host):
     """
-    Adds the given host to os.environ["no_proxy"] if it was not already present.  This environment variable is used by
+    Adds the given host to os.environ['no_proxy'] if it was not already present.  This environment variable is used by
     the Requests library to disable proxies for requests to particular hosts.
 
-    :param str host: A host to add to os.environ["no_proxy"]
+    :param str host: A host to add to os.environ['no_proxy']
     """
-    if "no_proxy" not in os.environ:
-        os.environ["no_proxy"] = host
-    elif host not in os.environ["no_proxy"]:
-        os.environ["no_proxy"] += "," + host
+    if 'no_proxy' not in os.environ:
+        os.environ['no_proxy'] = host
+    elif host not in os.environ['no_proxy']:
+        os.environ['no_proxy'] += ',' + host
 
 
 def requests_session(http_proxy=None, https_proxy=None):
     session = requests.Session()
 
     if http_proxy:
-        session.proxies["http"] = http_proxy
+        session.proxies['http'] = http_proxy
     if https_proxy:
-        session.proxies["https"] = https_proxy
+        session.proxies['https'] = https_proxy
 
     with synchronized(__instances):
         __instances.add(session)
@@ -77,12 +77,12 @@ class RestClient:
     :param float rate_limit: A rate limit (in seconds) for all requests made by this object (default: no limit)
     """
     def __init__(
-            self, host, port=None, *, prefix=None, proto="http", verify=None, exc=None, session_factory=None,
+            self, host, port=None, *, prefix=None, proto='http', verify=None, exc=None, session_factory=None,
             imitate=None, rate_limit=0, log_params=False
     ):
         if imitate and (imitate not in IMITATE_HEADERS):
-            err_fmt = "Invalid imitate value ({!r}) - must be one of: {}"
-            raise ValueError(err_fmt.format(imitate, ", ".join(sorted(IMITATE_HEADERS.keys()))))
+            err_fmt = 'Invalid imitate value ({!r}) - must be one of: {}'
+            raise ValueError(err_fmt.format(imitate, ', '.join(sorted(IMITATE_HEADERS.keys()))))
         self.host = host
         self.port = port
         self.proto = proto
@@ -113,24 +113,24 @@ class RestClient:
     @path_prefix.setter
     def path_prefix(self, value):
         if value:
-            value = value if not value.startswith("/") else value[1:]
-            self._path_prefix = value if value.endswith("/") else value + "/"
+            value = value if not value.startswith('/') else value[1:]
+            self._path_prefix = value if value.endswith('/') else value + '/'
         else:
-            self._path_prefix = ""
+            self._path_prefix = ''
 
     @property
     def _url_fmt(self):
         """The format string to be used by this REST client object for URLs"""
-        host_port = "{}:{}".format(self.host, self.port) if self.port else self.host
-        return "{}://{}/{}{{}}".format(self.proto, host_port, self.path_prefix)
+        host_port = '{}:{}'.format(self.host, self.port) if self.port else self.host
+        return '{}://{}/{}{{}}'.format(self.proto, host_port, self.path_prefix)
 
     def url_for(self, endpoint):
-        return self._url_fmt.format(endpoint if not endpoint.startswith("/") else endpoint[1:])
+        return self._url_fmt.format(endpoint if not endpoint.startswith('/') else endpoint[1:])
 
     def url_for_params(self, endpoint, params):
         url = self.url_for(endpoint)
         if params:
-            url += "?" + urlencode(params, True)
+            url += '?' + urlencode(params, True)
         return url
 
     @synchronized
@@ -161,7 +161,7 @@ class RestClient:
                 try:
                     self.__session.close()
                 except Exception as e:
-                    log.debug("Encountered {} while closing {}: {}".format(type(e).__name__, self, e))
+                    log.debug('Encountered {} while closing {}: {}'.format(type(e).__name__, self, e))
                 self.__session = None
 
     def request(self, method, endpoint, *, raise_non_200=True, no_log=False, **kwargs):
@@ -185,13 +185,13 @@ class RestClient:
         """
         url = self.url_for(endpoint)
         if not no_log:
-            suffix = ""
+            suffix = ''
             if self._log_params:
-                params = kwargs.get("params")
+                params = kwargs.get('params')
                 if params:
-                    suffix = "?" + urlencode(params, True)
-            log.debug("{} -> {}{}".format(method, url, suffix))
-        kwargs.setdefault("verify", self._verify_ssl)
+                    suffix = '?' + urlencode(params, True)
+            log.debug('{} -> {}{}'.format(method, url, suffix))
+        kwargs.setdefault('verify', self._verify_ssl)
         try:
             resp = self.session.request(method, url, **kwargs)
         except requests.RequestException as e:
@@ -201,16 +201,16 @@ class RestClient:
         return resp
 
     def get(self, endpoint, **kwargs):
-        return self.request("GET", endpoint, **kwargs)
+        return self.request('GET', endpoint, **kwargs)
 
     def put(self, endpoint, **kwargs):
-        return self.request("PUT", endpoint, **kwargs)
+        return self.request('PUT', endpoint, **kwargs)
 
     def post(self, endpoint, **kwargs):
-        return self.request("POST", endpoint, **kwargs)
+        return self.request('POST', endpoint, **kwargs)
 
     def delete(self, endpoint, **kwargs):
-        return self.request("DELETE", endpoint, **kwargs)
+        return self.request('DELETE', endpoint, **kwargs)
 
 
 @atexit_register

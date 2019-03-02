@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 :author: Doug Skrypa
 """
@@ -9,10 +7,10 @@ import logging
 import platform
 from getpass import getuser
 
-__all__ = ["validate_or_make_dir", "get_user_cache_dir"]
-log = logging.getLogger("ds_tools.utils.filesystem")
+__all__ = ['validate_or_make_dir', 'get_user_cache_dir']
+log = logging.getLogger(__name__)
 
-ON_WINDOWS = platform.system().lower() == "windows"
+ON_WINDOWS = platform.system().lower() == 'windows'
 
 
 def validate_or_make_dir(dir_path, permissions=None, suppress_perm_change_exc=True):
@@ -29,21 +27,21 @@ def validate_or_make_dir(dir_path, permissions=None, suppress_perm_change_exc=Tr
     """
     if os.path.exists(dir_path):
         if not os.path.isdir(dir_path):
-            raise ValueError("Invalid path - not a directory: {}".format(dir_path))
+            raise ValueError('Invalid path - not a directory: {}'.format(dir_path))
     else:
         os.makedirs(dir_path)
         if permissions is not None:
             try:
                 os.chmod(dir_path, permissions)
             except OSError as e:
-                log.error("Error changing permissions of path '{}' to 0o{:o}: {}".format(dir_path, permissions, e))
+                log.error('Error changing permissions of path {!r} to 0o{:o}: {}'.format(dir_path, permissions, e))
                 if not suppress_perm_change_exc:
                     raise e
     return dir_path
 
 
 def get_user_cache_dir(subdir=None, permissions=None):
-    cache_dir = os.path.join("C:/var/tmp" if ON_WINDOWS else "/var/tmp", getuser(), "ds_tools_cache")
+    cache_dir = os.path.join('C:/var/tmp' if ON_WINDOWS else '/var/tmp', getuser(), 'ds_tools_cache')
     if subdir:
         cache_dir = os.path.join(cache_dir, subdir)
     validate_or_make_dir(cache_dir, permissions=permissions)

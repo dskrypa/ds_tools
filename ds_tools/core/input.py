@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Input Handling
 
@@ -8,8 +6,10 @@ Input Handling
 
 import logging
 
-__all__ = ["get_input", "parse_yes_no", "parse_full_yes_no", "InputValidationException"]
-log = logging.getLogger("ds_tools.utils.input")
+from .exceptions import InputValidationException
+
+__all__ = ['get_input', 'parse_yes_no', 'parse_full_yes_no']
+log = logging.getLogger(__name__)
 
 
 class _NotSet:
@@ -28,11 +28,11 @@ def parse_yes_no(user_input):
     try:
         first_char = user_input[0].upper()
     except IndexError as e:
-        raise InputValidationException("No input was provided") from e
+        raise InputValidationException('No input was provided') from e
 
-    if first_char in ("Y", "N"):
-        return first_char == "Y"
-    raise InputValidationException("Expected 'yes'/'y' or 'no'/'n'")
+    if first_char in ('Y', 'N'):
+        return first_char == 'Y'
+    raise InputValidationException('Expected "yes"/"y" or "no"/"n"')
 
 
 def parse_full_yes_no(user_input):
@@ -45,12 +45,12 @@ def parse_full_yes_no(user_input):
     """
     user_input = user_input.strip().lower()
     if not user_input:
-        raise InputValidationException("No input was provided.")
+        raise InputValidationException('No input was provided.')
 
-    if user_input == "yes":
+    if user_input == 'yes':
         return True
-    elif user_input == "y":
-        raise InputValidationException("You must fully type 'yes'")
+    elif user_input == 'y':
+        raise InputValidationException('You must fully type "yes"')
     return False
 
 
@@ -69,15 +69,15 @@ def get_input(prompt, skip=False, retry=0, parser=parse_yes_no, *, default=_NotS
     """
     if skip:
         if default is _NotSet:
-            raise ValueError("Unable to skip user prompt without a default value: {!r}".format(prompt))
+            raise ValueError('Unable to skip user prompt without a default value: {!r}'.format(prompt))
         return default
-    suffix = " " if not prompt.endswith(" ") else ""
+    suffix = ' ' if not prompt.endswith(' ') else ""
 
     while retry >=0:
         try:
             user_input = input(prompt + suffix)
         except EOFError as e:
-            raise InputValidationException("Unable to read stdin (this is often caused by piped input)") from e
+            raise InputValidationException('Unable to read stdin (this is often caused by piped input)') from e
 
         try:
             return parser(user_input)
@@ -86,8 +86,4 @@ def get_input(prompt, skip=False, retry=0, parser=parse_yes_no, *, default=_NotS
             if retry < 0:
                 raise e
             log.error(e)
-    raise InputValidationException("Unable to get user input")
-
-
-class InputValidationException(Exception):
-    """Exception to be raised when input does not pass validation"""
+    raise InputValidationException('Unable to get user input')

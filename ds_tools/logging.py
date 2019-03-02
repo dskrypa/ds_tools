@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Facilitates preparation of log directories and configuring loggers with custom settings
 
@@ -17,8 +15,8 @@ from contextlib import suppress
 from datetime import datetime
 from logging import handlers
 
+from .core import validate_or_make_dir, TZ_LOCAL
 from .output import colored
-from .utils import validate_or_make_dir, TZ_LOCAL
 
 __all__ = ["LogManager", "add_context_filter"]
 log = logging.getLogger("ds_tools.logging")

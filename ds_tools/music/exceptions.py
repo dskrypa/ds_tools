@@ -1,10 +1,9 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 :author: Doug Skrypa
 """
 
-from ..utils import soupify, cached_property
+from ..core import cached_property
+from ..utils import soupify
 
 __all__ = [
     "MusicException", "InvalidArtistException", "AlbumNotFoundException", "TrackDiscoveryException",

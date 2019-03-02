@@ -10,9 +10,9 @@ from urllib.parse import urlparse
 
 import bs4
 
-from ..exceptions import CodeBasedRestException
-from ..http import RestClient
-from ..utils import soupify, cached, ParentheticalParser, DBCache
+from ..caching import cached, DBCache
+from ..http import CodeBasedRestException, RestClient
+from ..utils import soupify, ParentheticalParser
 from .exceptions import *
 from .utils import parse_aside, parse_infobox, parse_album_page, parse_wikipedia_album_page
 
