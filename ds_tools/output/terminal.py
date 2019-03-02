@@ -32,11 +32,21 @@ except Exception:
 
 
 def uprint(msg):
+    if not isinstance(msg, str):
+        if isinstance(msg, bytes):
+            msg = msg.decode("utf-8")
+        else:
+            msg = str(msg)
     _uout.write(msg + "\n")
     _uout.flush()
 
 
 def uerror(msg):
+    if not isinstance(msg, str):
+        if isinstance(msg, bytes):
+            msg = msg.decode("utf-8")
+        else:
+            msg = str(msg)
     _uerr.write(msg + "\n")
     _uerr.flush()
 

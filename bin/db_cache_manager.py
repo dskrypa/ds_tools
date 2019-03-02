@@ -10,6 +10,7 @@ import logging
 import sys
 from fnmatch import fnmatch
 from pathlib import Path
+from urllib.parse import quote as url_quote
 
 sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
 from ds_tools.argparsing import ArgParser
@@ -45,20 +46,32 @@ def main():
     cache = DBCache(None, db_path=args.path)
 
     if args.action == "list":
-        for key in sorted(cache.keys()):
+        for key, orig in normalized_keys(cache):
             uprint(key)
     elif args.action == "delete":
         prefix = "[DRY RUN] Would delete" if args.dry_run else "Deleting"
-        for key in sorted(cache.keys()):
+        for key, orig in normalized_keys(cache):
             if any(fnmatch(key, pat) for pat in args.patterns):
                 log.info("{}: {}".format(prefix, key))
                 if not args.dry_run:
-                    del cache[key]
+                    del cache[orig]
     elif args.action == "get":
         entry = cache[args.key]
         log.info(entry)
     else:
         raise ValueError("Unconfigured action: {}".format(args.action))
+
+
+def normalized_keys(cache):
+    keys = []
+    for key in cache.keys():
+        orig = key
+        if not isinstance(key, str):
+            url, qs = key
+            key = "{}?{}".format(url, "&".join("{}={}".format(k, url_quote(v)) for k, v in sorted(qs)))
+        keys.append((key, orig))
+    return sorted(keys)
+
 
 if __name__ == "__main__":
     try:

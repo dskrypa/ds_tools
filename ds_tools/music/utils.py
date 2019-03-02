@@ -467,7 +467,8 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
     except AttributeError:
         num_type_rx = parse_discography_entry._num_type_rx = re.compile(r"_\d$")
     base_type = album_type and (album_type[:-2] if num_type_rx.search(album_type) else album_type).lower() or ""
-    if base_type == "features" and parsed[0].endswith("-"):
+    is_feature = base_type in ("features", "collaborations_and_features")
+    if is_feature and parsed[0].endswith("-"):
         primary_artist = parsed.pop(0)[:-1].strip()
         primary_uri = links[0][1] if links and links[0][0] == primary_artist else None
         log.debug("Primary artist={}, links[0]={}".format(primary_artist, links[0] if links else None))
@@ -519,15 +520,15 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
     #     if primary_artist != artist.english_name:
     #         collabs[artist.english_name] = artist._uri_path
 
-    is_feature_or_collab = base_type in ("features", "collaborations")
+    is_feature_or_collab = base_type in ("features", "collaborations", "collaborations_and_features")
     is_ost = base_type in ("ost", "osts")
 
     # non_artist_links = [lnk for lnk in links if lnk[1] and lnk[1] != primary_uri and lnk[1] not in collabs.values()]
     non_artist_links = [lnk for lnk in links if lnk[1] and lnk[1] != primary_uri and lnk[1] not in collab_hrefs]
     if non_artist_links:
         if len(non_artist_links) > 1:
-            fmt = "Too many non-artist links found: {}\nFrom li: {}\nParsed parts: {}"
-            raise WikiEntityParseException(fmt.format(non_artist_links, ele, parsed))
+            fmt = "Too many non-artist links found: {}\nFrom li: {}\nParsed parts: {}\nbase_type={}"
+            raise WikiEntityParseException(fmt.format(non_artist_links, ele, parsed, base_type))
 
         link_text, link_href = non_artist_links[0]
         if title != link_text and not is_feature_or_collab:
@@ -747,7 +748,8 @@ def parse_album_page(uri_path, clean_soup, side_info):
                     album0["repackage_of_title"] = a.text
                 break
         else:
-            raise WikiEntityParseException("Unable to find link to repackaged version of {}".format(uri_path))
+            fmt = "Unable to find link to repackaged version of {}; details={}"
+            raise WikiEntityParseException(fmt.format(uri_path, details))
     elif (details[0] == "original" and details[1] == "soundtrack") or (details[0].lower() in ("ost", "soundtrack")):
         album0["num"] = None
         album0["type"] = "OST"
@@ -986,13 +988,18 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
 
     try:
         lang_map = parse_track_info._lang_map
+        version_types = parse_track_info._version_types
     except AttributeError:
         lang_map = parse_track_info._lang_map = {
             "chinese": "Chinese", "chn": "Chinese",
             "english": "English", "en": "English", "eng": "English",
             "japanese": "Japanese", "jp": "Japanese", "jap": "Japanese",
-            "korean": "Korean", "kr": "Korean", "kor": "Korean",
+            "korean": "Korean", "kr": "Korean", "kor": "Korean", "ko": "Korean",
         }
+        version_types = parse_track_info._version_types = (
+            "inst", "acoustic", "ballad", "original", "remix", "r&b", "band", "karaoke", "special", "full length",
+            "single", "album", "radio", "limited", "normal", "english rap", "rap", "piano", "acapella", "edm"
+        )
 
     name_parts, collabs, misc, unknown = [], [], [], []
     link_texts = set(link[0] for link in links) if links else None
@@ -1011,13 +1018,13 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
             # collabs.extend(str2list(part[len(feat):].strip()))
         elif lc_part.endswith((" ver.", " ver", " version", " edition", " ed.")):
             value = part.rsplit(maxsplit=1)[0]
-            if lc_part.startswith(("inst", "acoustic", "ballad", "original", "remix", "r&b", "band")):
+            if lc_part.startswith(version_types):
                 track["version"] = value
             else:
                 try:
                     track["language"] = lang_map[value.lower()]
                 except KeyError:
-                    log.debug("Found unexpected version text in {!r}: {!r}".format(text, value))
+                    log.debug("Found unexpected version text in {!r}: {!r}".format(text, value), extra={"color": 100})
                     track["version"] = value
 
         elif lc_part.startswith(("inst", "acoustic")):

@@ -314,7 +314,12 @@ class ColorLogFormatter(DatetimeFormatter):
         formatted = super().format(record)
         color = getattr(record, "color", None) or ("red" if getattr(record, "red", False) else None)
         if color:
-            formatted = colored(formatted, color)
+            if isinstance(color, (str, int)):
+                formatted = colored(formatted, color)
+            elif isinstance(color, dict):
+                formatted = colored(formatted, **color)
+            else:
+                formatted = colored(formatted, *color)
         if COLOR_CODED_THREADS:
             try:
                 threadno = int(record.threadName.split("-")[1])

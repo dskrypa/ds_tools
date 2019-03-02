@@ -8,7 +8,7 @@ from ..utils import soupify
 __all__ = [
     "MusicException", "InvalidArtistException", "AlbumNotFoundException", "TrackDiscoveryException",
     "AmbiguousEntityException", "WikiEntityParseException", "TrackInfoParseException", "WikiEntityInitException",
-    "WikiEntityIdentificationException", "NoTrackListException", "InvalidTrackListException"
+    "WikiEntityIdentificationException", "NoTrackListException", "InvalidTrackListException", "WikiTypeError"
 ]
 
 
@@ -50,6 +50,15 @@ class WikiEntityIdentificationException(WikiEntityInitException):
 
 class InvalidTrackListException(MusicException):
     """Exception to be raised when an invalid track list name was provided"""
+
+
+class WikiTypeError(TypeError, MusicException):
+    """Exception to be raised when an incorrect type was used to initialize a WikiEntity"""
+    def __init__(self, url, article, category, cls_cat):
+        self.url, self.article, self.category, self.cls_cat = url, article, category, cls_cat
+
+    def __str__(self):
+        return "{} is {} {} page (expected: {})".format(self.url, self.article, self.category, self.cls_cat)
 
 
 class AmbiguousEntityException(MusicException):

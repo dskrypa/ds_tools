@@ -68,45 +68,49 @@ class WikiEntityMeta(type):
 
         super().__init__(name, bases, attr_dict)
 
-    def __call__(cls, uri_path=None, client=None, *, name=None, disco_entry=None, no_type_check=False, **kwargs):
+    def __call__(
+        cls, uri_path=None, client=None, *, name=None, disco_entry=None, no_type_check=False, no_fetch=False, **kwargs
+    ):
         """
         :param str|None uri_path: The uri path for a page on a wiki
         :param WikiClient|None client: The WikiClient object to use to retrieve the wiki page
         :param str|None name: The name of a WikiEntity to lookup if the uri_path is unknown
         :param dict|None disco_entry: A dict containing information about an album from an Artist's discography section
         :param bool no_type_check: Skip type checks and do not cache the returned object
+        :param bool no_fetch: Skip page retrieval
         :param kwargs: Additional keyword arguments to pass to the WikiEntity when initializing it
         :return WikiEntity: A WikiEntity (or subclass thereof) based on the provided information
         """
-        if disco_entry:
-            uri_path = uri_path or disco_entry.get("uri_path")
-            name = name or disco_entry.get("title")
-            disco_site = disco_entry.get("wiki")
-            if disco_site and not client:
-                client = WikiClient.for_site(disco_site)
-        else:
-            if name and not uri_path:
+        if not no_fetch:
+            if disco_entry:
+                uri_path = uri_path or disco_entry.get("uri_path")
+                name = name or disco_entry.get("title")
+                disco_site = disco_entry.get("wiki")
+                if disco_site and not client:
+                    client = WikiClient.for_site(disco_site)
+            else:
+                if name and not uri_path:
+                    if client is None:
+                        client = KpopWikiClient()
+                    uri_path = client.normalize_name(name)
+                elif name and uri_path and uri_path.startswith("//"):   # Alternate subdomain of fandom.com
+                    uri_path = None
+
+            if uri_path and uri_path.startswith(("http://", "https://")):
+                _url = urlparse(uri_path)
                 if client is None:
-                    client = KpopWikiClient()
-                uri_path = client.normalize_name(name)
-            elif name and uri_path and uri_path.startswith("//"):   # Alternate subdomain of fandom.com
-                uri_path = None
+                    client = WikiClient.for_site(_url.hostname)
+                elif client and client._site != _url.hostname:
+                    fmt = "The provided client is for {!r}, but the URL requires a client for {!r}: {}"
+                    raise ValueError(fmt.format(client._site, _url.hostname, uri_path))
+                uri_path = _url.path[6:] if _url.path.startswith("/wiki/") else _url.path
+            elif client is None:
+                client = KpopWikiClient()
 
-        if uri_path and uri_path.startswith(("http://", "https://")):
-            _url = urlparse(uri_path)
-            if client is None:
-                client = WikiClient.for_site(_url.hostname)
-            elif client and client._site != _url.hostname:
-                fmt = "The provided client is for {!r}, but the URL requires a client for {!r}: {}"
-                raise ValueError(fmt.format(client._site, _url.hostname, uri_path))
-            uri_path = _url.path[6:] if _url.path.startswith("/wiki/") else _url.path
-        elif client is None:
-            client = KpopWikiClient()
-
-        if no_type_check:
+        if no_type_check or no_fetch:
             obj = cls.__new__(cls, uri_path, client)
             # noinspection PyArgumentList
-            obj.__init__(uri_path, client, name=name, disco_entry=disco_entry, **kwargs)
+            obj.__init__(uri_path, client, name=name, disco_entry=disco_entry, no_fetch=no_fetch, **kwargs)
             return obj
 
         is_feat_collab = disco_entry and disco_entry.get("base_type") in ("features", "collaborations", "singles")
@@ -148,16 +152,19 @@ class WikiEntityMeta(type):
                     category = "tv_series"
                 elif any(i in cat for i in ("discographies",) for cat in cats):
                     category = "discography"
+                elif any(i in cat for i in ("disambiguation",) for cat in cats):
+                    category = "disambiguation"
                 else:
                     log.debug("Unable to determine category for {}".format(url))
                     category = None
 
             exp_cls = WikiEntityMeta._category_classes.get(category)
             exp_base = WikiEntityMeta._category_bases.get(category)
-            if (exp_cls and not issubclass(exp_cls, cls)) or (exp_base and not issubclass(cls, exp_base)):
+            if (exp_cls and not issubclass(exp_cls, cls)) or (exp_base and not issubclass(cls, exp_base)) or (not exp_cls and not exp_base):
                 article = "an" if category and category[0] in "aeiou" else "a"
-                log.debug("Specified cls={}, exp_cls={}, exp_base={}".format(cls.__name__, exp_cls.__name__, exp_base.__name__))
-                raise TypeError("{} is {} {} page (expected: {})".format(url, article, category, cls_cat))
+                exp_cls_strs = (getattr(exp_cls, "__name__", None), getattr(exp_base, "__name__", None))
+                log.debug("Specified cls={}, exp_cls={}, exp_base={}".format(cls.__name__, *exp_cls_strs))
+                raise WikiTypeError(url, article, category, cls_cat)
         else:
             exp_cls = cls
             raw = None
@@ -176,10 +183,10 @@ class WikiEntity(metaclass=WikiEntityMeta):
     _categories = {}
     _category = None
 
-    def __init__(self, uri_path=None, client=None, *, name=None, raw=None, **kwargs):
+    def __init__(self, uri_path=None, client=None, *, name=None, raw=None, no_fetch=False, **kwargs):
         self._client = client
         self._uri_path = uri_path
-        self._raw = raw if raw is not None else client.get_page(uri_path) if uri_path else None
+        self._raw = raw if raw is not None else client.get_page(uri_path) if uri_path and not no_fetch else None
         self.name = name or uri_path
         self.aliases = [self.name]
 
@@ -695,9 +702,32 @@ class WikiSongCollection(WikiEntity):
         for name, href in self._artists.items():
             try:
                 artist = WikiArtist(href, name=name)
+            except AmbiguousEntityException as e:
+                fmt = "{}'s artist={!r} is ambiguous"
+                if e.alternatives:
+                    fmt += " - it could be one of: {}".format(" | ".join(e.alternatives))
+                log.warning(fmt.format(self, name, href), extra={"color": (11, 9)})
+                artists.add(WikiArtist(href, name=name, no_fetch=True))
             except CodeBasedRestException as e:
-                fmt = "Error retrieving info for {}'s artist={!r} (href={!r}): {}"
-                log.error(fmt.format(self, name, href, e), extra={"color": 13})
+                if not isinstance(self._client, KpopWikiClient):
+                    try:
+                        artist = WikiArtist(name=name, client=self._client)
+                    except CodeBasedRestException as e2:
+                        fmt = "Error retrieving info for {}'s artist={!r} (href={!r}) from both {} and {}: {}"
+                        log.error(fmt.format(self, name, href, self._client, KpopWikiClient(), e), extra={"color": 13})
+                    else:
+                        artists.add(artist)
+                else:
+                    fmt = "Error retrieving info for {}'s artist={!r} (href={!r}): {}"
+                    log.error(fmt.format(self, name, href, e), extra={"color": 13})
+            except WikiTypeError as e:
+                #no_type_check
+                if e.category == "disambiguation":
+                    fmt = "{}'s artist={!r} has an ambiguous href={}"
+                    log.warning(fmt.format(self, name, e.url), extra={"color": (11, 9)})
+                    artists.add(WikiArtist(href, name=name, no_fetch=True))
+                else:
+                    raise e
             else:
                 artists.add(artist)
         return sorted(artists)
@@ -1053,4 +1083,4 @@ def find_ost(artist, title, disco_entry):
 
 if __name__ == "__main__":
     from ds_tools.logging import LogManager
-    lm = LogManager.create_default_logger(2, log_path=None, entry_fmt="%(asctime)s %(name)s %(message)s")
+    lm = LogManager.create_default_logger(2, log_path=None, entry_fmt="%(asctime)s %(name)s %(lineno)d %(message)s")
