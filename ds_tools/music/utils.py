@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 :author: Doug Skrypa
 """
@@ -16,21 +14,22 @@ from urllib.parse import urlparse
 from bs4.element import NavigableString
 from fuzzywuzzy import utils as fuzz_utils
 
+from ..core import datetime_with_tz
 from ..utils import (
-    RecursiveDescentParser, UnexpectedTokenError, is_any_cjk, ParentheticalParser, contains_any_cjk, is_hangul,
-    datetime_with_tz, DASH_CHARS, QMARKS, num_suffix
+    is_any_cjk, ParentheticalParser, contains_any_cjk, is_hangul, DASH_CHARS, QMARKS, num_suffix,
+    ListBasedRecursiveDescentParser, ALL_WHITESPACE, UnexpectedTokenError
 )
 from .exceptions import *
 
 __all__ = [
-    "SongTitleParser", "DiscographyEntryParser", "sanitize", "unsurround", "_normalize_title", "parse_intro_name",
-    "split_name", "eng_cjk_sort", "categorize_langs", "LangCat", "parse_discography_entry", "parse_aside",
-    "parse_album_page", "parse_track_info", "parse_ost_page", "parse_wikipedia_album_page", "parse_infobox",
-    "edition_combinations", "multi_lang_name", "comparison_type_check", "parse_discography_page", "synonym_pattern",
-    "parse_drama_wiki_info_list"
+    "sanitize", "unsurround", "_normalize_title", "parse_intro_name", "split_name", "eng_cjk_sort", "categorize_langs",
+    "LangCat", "parse_discography_entry", "parse_aside", "parse_album_page", "parse_track_info", "parse_ost_page",
+    "parse_wikipedia_album_page", "parse_infobox", "edition_combinations", "multi_lang_name", "comparison_type_check",
+    "parse_discography_page", "synonym_pattern", "parse_drama_wiki_info_list"
 ]
 log = logging.getLogger("ds_tools.music.utils")
 
+FEAT_ARTIST_INDICATORS = ("with", "feat.", "feat ", "featuring")
 NUM_STRIP_TBL = str.maketrans({c: "" for c in "0123456789"})
 NUM2INT = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
 NUMS = {
@@ -44,6 +43,200 @@ QMARK_STRIP_TBL = str.maketrans({c: "" for c in QMARKS})
 SYNONYMS = [{"and": "and", "&": "&", "+": "\\+"}]
 
 
+class TrackInfoParser(ListBasedRecursiveDescentParser):
+    _entry_point = "content"
+    _strip = True
+    _opener2closer = {"LPAREN": "RPAREN", "LBPAREN": "RBPAREN", "LBRKT": "RBRKT", "QUOTE": "QUOTE", "DASH": "DASH"}
+    _nested_fmts = {"LPAREN": "({})", "LBPAREN": "({})", "LBRKT": "[{}]", "QUOTE": "{!r}", "DASH": "({})"}
+    _content_tokens = ["TEXT", "WS"] + [v for k, v in _opener2closer.items() if k != v]
+    _req_preceders = ["WS"] + list(_opener2closer.values())
+    TOKENS = OrderedDict([
+        ("QUOTE", "[{}]".format(QMARKS)),
+        ("LPAREN", "\("),
+        ("RPAREN", "\)"),
+        ("LBPAREN", "（"),
+        ("RBPAREN", "）"),
+        ("LBRKT", "\["),
+        ("RBRKT", "\]"),
+        ("TIME", "\s*\d+:\d{2}"),
+        ("WS", "\s+"),
+        ("DASH", "[{}]".format(DASH_CHARS)),
+        ("TEXT", "[^\"“()（）\[\]{}-]+".format(ALL_WHITESPACE)),
+    ])
+
+    def __init__(self, selective_recombine=True):
+        self._selective_recombine = selective_recombine
+
+    def _lookahead_unpaired(self, closer):
+        """Find the position of the next closer that does not have a preceding opener in the remaining tokens"""
+        openers = {opener for opener, _closer in self._opener2closer.items() if _closer == closer}
+        last = len(self.tokens) - 1
+        i = self._idx
+        opened = 0
+        closed = 0
+        while i <= last:
+            pos, token = self.tokens[i]
+            if token.type in openers:
+                opened += 1
+            elif token.type == closer:
+                closed += 1
+                if closed > opened:
+                    return pos
+            i += 1
+        return -1
+
+    def parenthetical(self, closer="RPAREN"):
+        """
+        parenthetical ::= ( { text | WS | ( parenthetical ) }* )
+        """
+        # log.debug("Opening {}".format(closer))
+        text = ""
+        parts = []
+        nested = False
+        while self.next_tok:
+            if self._accept(closer):
+                if text:
+                    parts.append(text)
+                # log.debug("[closing] Closing {}: {}".format(closer, parts))
+                return parts, nested, False
+            elif self._accept_any(self._opener2closer):
+                prev_tok_type = self.prev_tok.type
+                tok_type = self.tok.type
+                if tok_type == "DASH":
+                    # next_dash = self._lookahead("DASH")
+                    try:
+                        next_dash = self._remaining.index(self.tok.value)
+                    except ValueError:
+                        next_dash = -1
+                    if next_dash == -1 or next_dash > self._lookahead_unpaired(closer):
+                        text += self.tok.value
+                        continue
+                    elif text and not prev_tok_type == "WS" and self._peek("TEXT"):
+                        text += self.tok.value
+                        continue
+
+                if text:
+                    parts.append(text)
+                    text = ""
+
+                parentheticals, _nested, unpaired = self.parenthetical(self._opener2closer[tok_type])
+                if len(parts) == len(parentheticals) == 1 and parts[0].lower().startswith(FEAT_ARTIST_INDICATORS):
+                    parts[0] = "{} of {}".format(parts[0].strip(), parentheticals[0])
+                else:
+                    parts.extend(parentheticals)
+
+                # parts.extend(_parts)
+                # text += self._nested_fmts[tok_type].format(self.parenthetical(self._opener2closer[tok_type])[0])
+                nested = True
+            else:
+                self._advance()
+                text += self.tok.value
+
+        if text:
+            parts.append(text)
+        # log.debug("[no toks] Closing {}: {}".format(closer, parts))
+        return parts, nested, True
+
+    def content(self):
+        """
+        content :: = text { (parenthetical) }* { text }*
+        """
+        text = ""
+        time_part = None
+        parts = []
+        while self.next_tok:
+            if self._accept_any(self._opener2closer):
+                tok_type = self.tok.type
+                if text and self.prev_tok.type not in self._req_preceders and self._peek("TEXT"):
+                    text += self.tok.value
+                    continue
+                elif tok_type == "QUOTE":
+                    if any((c not in self._remaining) and (self._full.count(c) % 2 == 1) for c in QMARKS):
+                        log.debug("Unpaired quote found in {!r}".format(self._full))
+                        continue
+                elif tok_type == "DASH":
+                    # log.debug("Found DASH ({!r}={}); remaining: {!r}".format(self.tok.value, ord(self.tok.value), self._remaining))
+                    if self._peek("TIME"):
+                        if text:
+                            parts.append(text)
+                            text = ""
+                        continue
+                    elif self._peek("WS") or self.tok.value not in self._remaining:
+                        # log.debug("Appending DASH because WS did not follow it or the value does not occur again")
+                        text += self.tok.value
+                        continue
+                # elif tok_type == "TIME":
+                #     if self.prev_tok.type == "DASH":
+                #         parts.append(self.tok.value.strip())
+                #     else:
+                #         text += self.tok.value
+                #         continue
+
+                if text:
+                    parts.append(text)
+                    text = ""
+                parentheticals, nested, unpaired = self.parenthetical(self._opener2closer[tok_type])
+                # log.debug("content parentheticals: {}".format(parentheticals))
+                # log.debug("Parsed {!r} (nested={}); next token={!r}".format(parenthetical, nested, self.next_tok))
+                # if not parts and not nested and not self._peek("WS"):
+                if not nested and not self._peek("WS") and self.next_tok is not None and len(parentheticals) == 1:
+                    text += self._nested_fmts[tok_type].format(parentheticals[0])
+                elif len(parentheticals) == 1 and isinstance(parentheticals[0], str):
+                    parts.append((parentheticals[0], nested, tok_type))
+                else:
+                    parts.extend(parentheticals)
+                    # parts.append((parenthetical, nested, tok_type))
+            elif self._accept_any(self._content_tokens):
+                text += self.tok.value
+            elif self._accept("TIME"):
+                if self.prev_tok.type == "DASH":
+                    if time_part:
+                        fmt = "Unexpected {!r} token {!r} in {!r} (time {!r} was already found)"
+                        raise UnexpectedTokenError(fmt.format(
+                            self.next_tok.type, self.next_tok.value, self._full, time_part
+                        ))
+                    time_part = self.tok.value.strip()
+                    # parts.append(self.tok.value.strip())
+                else:
+                    text += self.tok.value
+            else:
+                raise UnexpectedTokenError("Unexpected {!r} token {!r} in {!r}".format(
+                    self.next_tok.type, self.next_tok.value, self._full
+                ))
+
+        if text:
+            parts.append(text)
+
+        if self._selective_recombine:
+            single_idxs = set()
+            had_nested = False
+            for i, part in enumerate(parts):
+                if isinstance(part, tuple):
+                    nested = part[1]
+                    had_nested = had_nested or nested
+                    if not nested:
+                        single_idxs.add(i)
+
+            # log.debug("{!r} => {} [nested: {}][singles: {}]".format(self._full, parts, had_nested, sorted(single_idxs)))
+            if had_nested and single_idxs:
+                single_idxs = sorted(single_idxs)
+                while single_idxs:
+                    i = single_idxs.pop(0)
+                    for ti in (i - 1, i + 1):
+                        if (ti < 0) or (ti > (len(parts) - 1)):
+                            continue
+                        if isinstance(parts[ti], str) and parts[ti].strip():
+                            parenthetical, nested, tok_type = parts[i]
+                            formatted = self._nested_fmts[tok_type].format(parenthetical)
+                            parts[ti] = (formatted + parts[ti]) if ti > i else (parts[ti] + formatted)
+                            parts.pop(i)
+                            single_idxs = [idx - 1 for idx in single_idxs]
+                            break
+
+        cleaned = (part for part in map(str.strip, (p[0] if isinstance(p, tuple) else p for p in parts)) if part)
+        return [part for part in cleaned if part not in "\"“()（）[]"], time_part
+
+
 def synonym_pattern(name):
     parts = name.lower().split()
     for synonym_set in SYNONYMS:
@@ -54,184 +247,6 @@ def synonym_pattern(name):
     pattern = r"\s+".join(parts)
     # log.debug("Synonym pattern: {!r} => {!r}".format(name, pattern))
     return re.compile(pattern, re.IGNORECASE)
-
-
-class SongTitleParser(RecursiveDescentParser):
-    _entry_point = "title"
-    _strip = True
-    TOKENS = OrderedDict([
-        ("QUOTE", "[{}]".format(QMARKS)),
-        ("LPAREN", "[\(（]"),
-        ("RPAREN", "[\)）]"),
-        ("DASH", "\s*[-–]\s*"),
-        ("TIME", "\d+:\d{2}"),
-        ("WS", "\s+"),
-        ("TEXT", "[^\"“()（）]+"),
-    ])
-
-    def title(self):
-        """
-        title ::= name { (extra) }* { dash }* { time }* { (extra) }*
-        """
-        title = {"name": self.name().strip(), "duration": None, "extras": []}
-        while self.next_tok:
-            if self._accept("LPAREN"):
-                title["extras"].append(self.extra())
-            elif self._accept("DASH"):
-                if self._peek("TIME"):
-                    pass
-                elif self.tok.value.strip() in self._remaining:
-                    title["extras"].append(self.extra("DASH"))
-                else:
-                    raise UnexpectedTokenError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
-            elif self._accept("WS"):
-                pass
-            elif self._accept("TIME"):
-                title["duration"] = self.tok.value
-            elif self._accept("QUOTE") and any(self._full.count(c) % 2 == 1 for c in QMARKS):
-                log.warning("Unpaired quote found in {!r}".format(self._full), extra={"red": True})
-                pass
-            else:
-                raise UnexpectedTokenError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
-        return title
-
-    def extra(self, closer="RPAREN"):
-        """
-        extra ::= ( text | dash | time | quote | (extra) )
-        """
-        text = ""
-        while self.next_tok:
-            if self._accept(closer):
-                return text
-            elif self._accept("LPAREN"):
-                text += "({})".format(self.extra())
-            else:
-                self._advance()
-                text += self.tok.value
-        return text
-
-    def name(self):
-        """
-        name :: = { " }* text { (extra) }* { " }*
-        """
-        had_extra = False
-        name = ""
-        first_char_was_quote = False
-        # quotes = 0
-        while self.next_tok:
-            if self._peek("TIME") and name:
-                return name
-            elif self._peek("LPAREN") and name and all(c not in self._full for c in QMARKS):
-                return name
-
-            if self._accept("QUOTE"):
-                # quotes += 1
-                if not name:
-                    first_char_was_quote = True
-                else:
-                    return name
-            elif self._accept("DASH"):
-                if self._peek("TIME"):
-                    return name
-                elif self.tok.value.strip() in self._remaining:
-                    name += "({})".format(self.extra("DASH"))
-                else:
-                    name += self.tok.value
-            elif self._accept("LPAREN"):
-                name += "({})".format(self.extra())
-                had_extra = True
-            elif self._accept("TEXT") or self._accept("RPAREN"):
-                name += self.tok.value
-            elif self._accept("WS"):
-                if had_extra and not (first_char_was_quote and any(c in self._remaining for c in QMARKS)):
-                # if had_extra and not any(self._full.startswith(c) and (self._full.count(c) > 1) for c in QMARKS):
-                    return name
-                name += self.tok.value
-            elif self._accept("TIME"):
-                name += self.tok.value
-            else:
-                raise UnexpectedTokenError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
-        return name
-
-
-class DiscographyEntryParser(SongTitleParser):
-    _entry_point = "title"
-    _strip = True
-    TOKENS = OrderedDict([
-        ("YEAR", "\(\d{4}\)"),
-        ("QUOTE", "[{}]".format(QMARKS)),
-        ("LPAREN", "[\(（]"),
-        ("RPAREN", "[\)）]"),
-        ("DASH", "\s*[-–]\s*"),
-        ("WS", "\s+"),
-        ("TEXT", "[^\"“()（）]+"),
-    ])
-
-    def title(self):
-        """
-        title ::= name { (extra) }* { dash }* { (time) }* { (extra) }*
-        """
-        title = {"name": self.name().strip(), "year": None, "extras": []}
-        while self.next_tok:
-            if self._accept("LPAREN"):
-                title["extras"].append(self.extra())
-            elif self._accept("DASH"):
-                if self.tok.value.strip() in self._remaining:
-                    title["extras"].append(self.extra("DASH"))
-                else:
-                    raise UnexpectedTokenError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
-            elif self._accept("WS"):
-                pass
-            elif self._accept("YEAR"):
-                title["year"] = self.tok.value[1:-1]
-            elif self._accept("QUOTE"):
-                if any((c not in self._remaining) and (self._full.count(c) % 2 == 1) for c in QMARKS):
-                    log.warning("Unpaired quote found in {!r}".format(self._full), extra={"red": True})
-                else:
-                    raise UnexpectedTokenError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
-            else:
-                raise UnexpectedTokenError("Unexpected {!r} in {!r}".format(self.next_tok, self._full))
-        return title
-
-    def name(self):
-        """
-        name :: = { " }* text { (extra) }* { " }*
-        """
-        had_extra = False
-        name = ""
-        first_char_was_quote = False
-        quotes = 0
-        while self.next_tok:
-            if self._peek("YEAR"):
-                return name
-            elif self._peek("LPAREN") and name and (quotes % 2 == 0):
-                return name
-
-            if self._accept("QUOTE"):
-                quotes += 1
-                if not name:
-                    first_char_was_quote = True
-                elif first_char_was_quote:
-                    return name
-                else:
-                    name += self.tok.value
-            elif self._accept("DASH"):
-                if self.tok.value.strip() in self._remaining:
-                    name += "({})".format(self.extra("DASH"))
-                else:
-                    name += self.tok.value
-            elif self._accept("LPAREN"):
-                name += "({})".format(self.extra())
-                had_extra = True
-            elif self._accept("TEXT") or self._accept("RPAREN"):
-                name += self.tok.value
-            elif self._accept("WS"):
-                if had_extra and not (first_char_was_quote and any(c in self._remaining for c in QMARKS)):
-                    return name
-                name += self.tok.value
-            else:
-                raise UnexpectedTokenError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
-        return name
 
 
 def sanitize(text):
@@ -423,8 +438,12 @@ class LangCat(Enum):
     MIX = 3
 
 
+def categorize_lang(s):
+    return LangCat.CJK if is_any_cjk(s) else LangCat.MIX if contains_any_cjk(s) else LangCat.ENG
+
+
 def categorize_langs(strs):
-    return tuple(LangCat.CJK if is_any_cjk(s) else LangCat.MIX if contains_any_cjk(s) else LangCat.ENG for s in strs)
+    return tuple(categorize_lang(s) for s in strs)
 
 
 def parse_discography_entry(artist, ele, album_type, lang, type_idx):
@@ -790,7 +809,7 @@ def parse_album_page(uri_path, clean_soup, side_info):
         album["artists"] = side_info.get("artist", {})
 
     try:
-        track_lists = parse_album_tracks(uri_path, clean_soup)
+        track_lists = parse_album_tracks(uri_path, clean_soup, links)
     except NoTrackListException as e:
         if not album1 and "single" in album0["type"].lower():
             eng, cjk = album0["title_parts"][:2]
@@ -815,7 +834,15 @@ def parse_album_page(uri_path, clean_soup, side_info):
     return albums
 
 
-def parse_album_tracks(uri_path, clean_soup):
+def parse_album_tracks(uri_path, clean_soup, intro_links):
+    """
+    Parse the Track List section of a Kpop Wiki album/single page.
+
+    :param str uri_path: The uri_path of the page to include in log messages
+    :param clean_soup: The cleaned up bs4 soup for the page content
+    :param list intro_links: List of tuples of (text, href) containing links from the intro
+    :return list: List of dicts of album parts/editions/disks, with a track list per section
+    """
     track_list_span = clean_soup.find("span", id="Track_list") or clean_soup.find("span", id="Tracklist")
     if not track_list_span:
         raise NoTrackListException("Unable to find track list for album {}".format(uri_path))
@@ -843,11 +870,9 @@ def parse_album_tracks(uri_path, clean_soup):
 
             tracks = []
             for i, li in enumerate(ele.find_all("li")):
-                track = parse_track_info(i + 1, li.text, uri_path)
                 track_links = link_tuples(li.find_all("a"))
-                # track_links = [(a.text, a.get("href")) for a in li.find_all("a")]
-                if track_links:
-                    track["links"] = track_links
+                all_links = list(set(track_links + intro_links))
+                track = parse_track_info(i + 1, li.text, uri_path, include={"links": track_links}, links=all_links)
                 tracks.append(track)
 
             track_lists.append({"section": section, "tracks": tracks, "links": links, "disk": disk})
@@ -903,13 +928,17 @@ def _combine_name_parts(name_parts):
     return [combined] + name_parts[2:]
 
 
-def parse_track_info(idx, text, source, length=None, **kwargs):
+def parse_track_info(idx, text, source, length=None, *, include=None, links=None):
     """
+    Split and categorize the given text to identify track metadata such as length, collaborators, and english/cjk name
+    parts.
+
     :param int|str idx: Track number / index in list (1-based)
     :param str|container text: The text to be parsed, or already parsed/split text
     :param str source: uri_path or other identifier for the source of the text being parsed (to add context to errors)
     :param str|None length: Length of the track, if known (MM:SS format)
-    :param kwargs: Additional fields to be included in the returned track dict
+    :param dict|None include: Additional fields to be included in the returned track dict
+    :param list|None links: List of tuples of (text, href) that were in the html for the given text
     :return dict: The parsed track information
     """
     if isinstance(idx, str):
@@ -922,31 +951,51 @@ def parse_track_info(idx, text, source, length=None, **kwargs):
             fmt = "Error parsing track number {!r} for {!r} from {}: {}"
             raise TrackInfoParseException(fmt.format(idx, text, source, e)) from e
 
-    parser = ParentheticalParser(False)
-    track = dict(kwargs, num=idx, length="-1:00")
+    # parser = ParentheticalParser(False)
+    parser = TrackInfoParser()
+    track = {"num": idx, "length": "-1:00"}
+    if include:
+        track.update(include)
     if isinstance(text, str):
         text = unsurround(text.strip(), *(c*2 for c in QMARKS))
         try:
-            parsed = parser.parse(text)
+            parsed, time_part = parser.parse(text)
         except Exception as e:
             raise TrackInfoParseException("Error parsing track from {}: {!r}".format(source, text)) from e
     else:
         parsed = text
+        time_part = None
 
     # log.debug("{!r} => {}".format(text, parsed))
     if length:
         track["length"] = length
+    if time_part:
+        if length:
+            fmt = "Length={!r} was provided for track {}/{!r} from {}, but it was also parsed to be {!r}"
+            raise TrackInfoParseException(fmt.format(length, idx, text, source, time_part))
+        track["length"] = time_part
 
-    if has_parens(parsed[0]):   #.count("(") > 1:
-        to_re_parse = parsed.pop(0)
-        _parsed = parsed
-        try:
-            parsed = parser.parse(to_re_parse)
-        except Exception as e:
-            raise TrackInfoParseException("Error parsing track from {}: {!r}".format(source, parsed[0])) from e
-        parsed.extend(_parsed)
+    # if has_parens(parsed[0]):   #.count("(") > 1:
+    #     to_re_parse = parsed.pop(0)
+    #     _parsed = parsed
+    #     try:
+    #         parsed = parser.parse(to_re_parse)
+    #     except Exception as e:
+    #         raise TrackInfoParseException("Error parsing track from {}: {!r}".format(source, parsed[0])) from e
+    #     parsed.extend(_parsed)
 
-    name_parts, collabs, misc = [], [], []
+    try:
+        lang_map = parse_track_info._lang_map
+    except AttributeError:
+        lang_map = parse_track_info._lang_map = {
+            "chinese": "Chinese", "chn": "Chinese",
+            "english": "English", "en": "English", "eng": "English",
+            "japanese": "Japanese", "jp": "Japanese", "jap": "Japanese",
+            "korean": "Korean", "kr": "Korean", "kor": "Korean",
+        }
+
+    name_parts, collabs, misc, unknown = [], [], [], []
+    link_texts = set(link[0] for link in links) if links else None
     for n, part in enumerate(parsed):
         if n == 0:
             name_parts.append(part)
@@ -955,30 +1004,47 @@ def parse_track_info(idx, text, source, length=None, **kwargs):
             continue
 
         lc_part = part.lower()
-        feat = next((val for val in ("with", "feat.", "feat ", "featuring") if val in lc_part), None)
+        feat = next((val for val in FEAT_ARTIST_INDICATORS if val in lc_part), None)
         if feat:
             collab_part = part[len(feat):].strip() if lc_part.startswith(feat) else part
             collabs.extend(str2list(collab_part, pat="(?: and |,|;|&| feat\.? | featuring | with )"))
             # collabs.extend(str2list(part[len(feat):].strip()))
-        elif lc_part.endswith((" ver.", " ver", " version")):
+        elif lc_part.endswith((" ver.", " ver", " version", " edition", " ed.")):
             value = part.rsplit(maxsplit=1)[0]
-            if lc_part.startswith(("inst", "acoustic")):
+            if lc_part.startswith(("inst", "acoustic", "ballad", "original", "remix", "r&b", "band")):
                 track["version"] = value
             else:
-                track["language"] = {"kr": "Korean", "jp": "Japanese"}.get(value.lower(), value)
+                try:
+                    track["language"] = lang_map[value.lower()]
+                except KeyError:
+                    log.debug("Found unexpected version text in {!r}: {!r}".format(text, value))
+                    track["version"] = value
+
         elif lc_part.startswith(("inst", "acoustic")):
             track["version"] = part
         elif any(val in lc_part for val in ("bonus", " ost", " mix", "remix", "edition only")):  # spaces intentional
             misc.append(part)
-        elif any(lc_part.startswith(c) for c in DASH_CHARS):
-            try:
-                len_rx = parse_track_info._len_rx
-            except AttributeError:
-                len_rx = parse_track_info._len_rx = re.compile(r"^[{}]\s*(\d+:\d{{2}})$".format(DASH_CHARS))
-
-            m = len_rx.match(part)
-            if m:
-                track["length"] = m.group(1)
+        # elif any(lc_part.startswith(c) for c in DASH_CHARS):
+        #     try:
+        #         len_rx = parse_track_info._len_rx
+        #     except AttributeError:
+        #         len_rx = parse_track_info._len_rx = re.compile(r"^[{}]\s*(\d+:\d{{2}})$".format(DASH_CHARS))
+        #
+        #     m = len_rx.match(part)
+        #     if m:
+        #         track["length"] = m.group(1)
+        # elif lc_artists and any(lc_artist in lc_part for lc_artist in lc_artists):
+        #     split_part = str2list(part, pat="(?: and |,|;|&| feat\.? | featuring | with )")
+        #     if all(sp.lower() in lc_artists for sp in split_part):
+        #         collabs.extend(split_part)
+        #     else:
+        #         name_parts.append(part)
+        elif links and any(link_text in part for link_text in link_texts):
+            split_part = str2list(part, pat="(?: and |,|;|&| feat\.? | featuring | with )")
+            if all(sp in link_texts for sp in split_part):
+                collabs.extend(split_part)                  # assume links are to artists
+            else:
+                name_parts.append(part)
         else:
             name_parts.append(part)
 
@@ -996,6 +1062,8 @@ def parse_track_info(idx, text, source, length=None, **kwargs):
         track["collaborators"] = sorted(collabs)
     if misc:
         track["misc"] = misc
+    if unknown:
+        track["unknown"] = unknown
 
     return track
 
@@ -1339,7 +1407,8 @@ def parse_discography_page(uri_path, clean_soup, artist):
                             album_title = None
                         links = link_tuples(chain(title_ele.find_all("a"), album_ele.find_all("a")))
                         track = parse_track_info(
-                            1, title_ele.text, uri_path, links=links, album=album_title, year=int(row[1].text.strip())
+                            1, title_ele.text, uri_path,
+                            include={"links": links, "album": album_title, "year": int(row[1].text.strip())}
                         )
                         tracks.append(track)
                     singles.append({"type": album_type, "sub_type": sub_type, "tracks": tracks})

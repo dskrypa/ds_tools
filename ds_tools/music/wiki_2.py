@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 :author: Doug Skrypa
 """
@@ -18,8 +16,10 @@ from urllib.parse import urlparse
 import bs4
 from fuzzywuzzy import fuzz, utils as fuzz_utils
 
-from ..exceptions import CodeBasedRestException
-from ..utils import soupify, cached_property, DictAttrPropertyMixin, DictAttrProperty, cached
+from ..caching import cached, DictAttrProperty, DictAttrPropertyMixin
+from ..core import cached_property
+from ..http import CodeBasedRestException
+from ..utils import soupify
 from .exceptions import *
 from .utils import *
 from .wiki_rest import WikiClient, KpopWikiClient, WikipediaClient, DramaWikiClient
@@ -691,7 +691,16 @@ class WikiSongCollection(WikiEntity):
 
     @cached_property
     def artists(self):
-        return sorted({WikiArtist(href, name=name) for name, href in self._artists.items()})
+        artists = set()
+        for name, href in self._artists.items():
+            try:
+                artist = WikiArtist(href, name=name)
+            except CodeBasedRestException as e:
+                fmt = "Error retrieving info for {}'s artist={!r} (href={!r}): {}"
+                log.error(fmt.format(self, name, href, e), extra={"color": 13})
+            else:
+                artists.add(artist)
+        return sorted(artists)
 
     @cached_property
     def artist(self):
@@ -946,6 +955,19 @@ class WikiTrack(DictAttrPropertyMixin):
         self.english_name, self.cjk_name = self._info["name_parts"]
         self.name = multi_lang_name(self.english_name, self.cjk_name)
 
+        # Clean up the collaborator list for tracks that include the primary artist in the list of collaborators
+        # Example case: LOONA pre-debut single albums
+        if self._collaborators:
+            if self._artist and self._artist in self._collaborators:
+                self._collaborators.remove(self._artist)
+            elif self._collection:
+                for artist in self._collection.artists:
+                    for alias in artist.aliases:
+                        try:
+                            self._collaborators.remove(alias)
+                        except ValueError:
+                            pass
+
     def __repr__(self):
         if self.num is not None:
             name = "{}[{:2d}][{!r}]".format(type(self).__name__, self.num, self.name)
@@ -970,7 +992,7 @@ class WikiTrack(DictAttrPropertyMixin):
     def _formatted_name_parts(self):
         parts = []
         if self.version:
-            parts.append("{} ver.".format(self.version) if self.version.lower() == "acoustic" else self.version)
+            parts.append("{} ver.".format(self.version) if not self.version.lower().startswith("inst") else self.version)
         if self.language:
             parts.append("{} ver.".format(self.language))
         if self.misc:

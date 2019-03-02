@@ -1,5 +1,8 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+"""
+Text processing utilities.
+
+:author: Doug Skrypa
+"""
 
 import logging
 import re
@@ -10,7 +13,7 @@ from unicodedata import category as unicode_cat
 
 __all__ = [
     "Token", "RecursiveDescentParser", "UnexpectedTokenError", "strip_punctuation", "ParentheticalParser", "DASH_CHARS",
-    "QMARKS", "ALL_WHITESPACE", "CHARS_BY_CATEGORY"
+    "QMARKS", "ALL_WHITESPACE", "CHARS_BY_CATEGORY", "ListBasedRecursiveDescentParser"
 ]
 log = logging.getLogger("ds_tools.utils.text_processing")
 
@@ -76,6 +79,18 @@ class RecursiveDescentParser:
     def _remaining(self):
         return self._full[self._pos:]
 
+    def _find_next(self, token_type):
+        cls = type(self)
+        parser = cls()
+        parser._pos = 0
+        tokens = parser.tokenize(self._full)
+        for token in iter(tokens, None):
+            if parser._pos < self._pos:
+                continue
+            elif token.type == token_type:
+                return parser._pos
+        return -1
+
     def _advance(self):
         self.prev_tok, self.tok, self.next_tok = self.tok, self.next_tok, next(self.tokens, None)
 
@@ -102,12 +117,59 @@ class RecursiveDescentParser:
             raise UnexpectedTokenError("Expected {}".format(token_type))
 
 
+class ListBasedRecursiveDescentParser(RecursiveDescentParser):
+    def tokenize(self, text):
+        # noinspection PyUnresolvedReferences
+        scanner = self.pattern.scanner(text.strip() if self._strip else text)
+        return [(m.span()[0], Token(m.lastgroup, m.group())) for m in iter(scanner.match, None)]
+
+    # noinspection PyAttributeOutsideInit
+    def parse(self, text):
+        self._idx = -1
+        return super().parse(text)
+
+    def __next_token(self):
+        self._idx += 1
+        try:
+            # noinspection PyUnresolvedReferences
+            self._pos, token = self.tokens[self._idx]
+        except IndexError:
+            return None
+        else:
+            return token
+
+    def _advance(self):
+        self.prev_tok, self.tok, self.next_tok = self.tok, self.next_tok, self.__next_token()
+
+    # noinspection PyTypeChecker, PyUnresolvedReferences
+    def _lookahead(self, token_type):
+        last = len(self.tokens) - 1
+        i = self._idx
+        while i <= last:
+            pos, token = self.tokens[i]
+            if token.type == token_type:
+                return pos
+            i += 1
+        return -1
+
+    # noinspection PyTypeChecker, PyUnresolvedReferences
+    def _lookahead_any(self, token_types):
+        last = len(self.tokens) - 1
+        i = self._idx
+        while i <= last:
+            pos, token = self.tokens[i]
+            if token.type in token_types:
+                return pos
+            i += 1
+        return -1
+
+
 class ParentheticalParser(RecursiveDescentParser):
     _entry_point = "content"
     _strip = True
     _opener2closer = {"LPAREN": "RPAREN", "LBPAREN": "RBPAREN", "LBRKT": "RBRKT", "QUOTE": "QUOTE", "DASH": "DASH"}
     _nested_fmts = {"LPAREN": "({})", "LBPAREN": "({})", "LBRKT": "[{}]", "QUOTE": "{!r}", "DASH": "({})"}
-    _content_tokens = ["TEXT", "WS"] + list(_opener2closer.values())
+    _content_tokens = ["TEXT", "WS"] + [v for k, v in _opener2closer.items() if k != v]
     _req_preceders = ["WS"] + list(_opener2closer.values())
     TOKENS = OrderedDict([
         ("QUOTE", "[{}]".format(QMARKS)),
