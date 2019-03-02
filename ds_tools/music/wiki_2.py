@@ -338,7 +338,7 @@ class WikiArtist(WikiEntity):
         self.english_name, self.cjk_name, self.stylized_name, self.aka = None, None, None, None
         if self._raw:
             try:
-                self.english_name, self.cjk_name, self.stylized_name, self.aka = parse_intro_name(self._clean_soup.text)
+                self.english_name, self.cjk_name, self.stylized_name, self.aka, self._info = parse_intro_name(self._clean_soup.text)
             except Exception as e:
                 if strict:
                     raise e
@@ -594,7 +594,7 @@ class WikiSongCollection(WikiEntity):
     def __init__(self, uri_path=None, client=None, *, disco_entry=None, album_info=None, **kwargs):
         super().__init__(uri_path, client, **kwargs)
         self._discography_entry = disco_entry or {}
-        self.english_name, self.cjk_name, self.stylized_name, self.aka = None, None, None, None
+        self.english_name, self.cjk_name, self.stylized_name, self.aka, self._info = None, None, None, None, None
         self._album_info = album_info or {}
         self._albums = []
         self._primary_artist = None
@@ -645,7 +645,7 @@ class WikiSongCollection(WikiEntity):
             else:
                 self._album_info = albums[0]
 
-            self.english_name, self.cjk_name, self.stylized_name, self.aka = self._album_info["title_parts"]
+            self.english_name, self.cjk_name, self.stylized_name, self.aka, self._info = self._album_info["title_parts"]
         elif disco_entry:
             self._primary_artist = disco_entry.get("primary_artist")
             try:
@@ -662,6 +662,8 @@ class WikiSongCollection(WikiEntity):
             self._track_lists = [self._album_info.get("tracks")]
 
         self.name = multi_lang_name(self.english_name, self.cjk_name)
+        if self._info:
+            self.name = " ".join(chain((self.name,), map("({})".format, self._info)))
 
     def __lt__(self, other):
         comparison_type_check(self, other, WikiSongCollection, "<")
@@ -706,7 +708,7 @@ class WikiSongCollection(WikiEntity):
                 fmt = "{}'s artist={!r} is ambiguous"
                 if e.alternatives:
                     fmt += " - it could be one of: {}".format(" | ".join(e.alternatives))
-                log.warning(fmt.format(self, name, href), extra={"color": (11, 9)})
+                log.warning(fmt.format(self, name), extra={"color": (11, 9)})
                 artists.add(WikiArtist(href, name=name, no_fetch=True))
             except CodeBasedRestException as e:
                 if not isinstance(self._client, KpopWikiClient):
@@ -715,11 +717,13 @@ class WikiSongCollection(WikiEntity):
                     except CodeBasedRestException as e2:
                         fmt = "Error retrieving info for {}'s artist={!r} (href={!r}) from both {} and {}: {}"
                         log.error(fmt.format(self, name, href, self._client, KpopWikiClient(), e), extra={"color": 13})
+                        artists.add(WikiArtist(href, name=name, no_fetch=True))
                     else:
                         artists.add(artist)
                 else:
                     fmt = "Error retrieving info for {}'s artist={!r} (href={!r}): {}"
                     log.error(fmt.format(self, name, href, e), extra={"color": 13})
+                    artists.add(WikiArtist(href, name=name, no_fetch=True))
             except WikiTypeError as e:
                 #no_type_check
                 if e.category == "disambiguation":
@@ -937,7 +941,13 @@ class WikiSoundtrack(WikiSongCollection):
                 artist = WikiArtist(name=eng)
             except AmbiguousEntityException as e:
                 if not group_eng:
-                    raise e
+                    fmt = "{}'s artist={!r} is ambiguous"
+                    if e.alternatives:
+                        fmt += " - it could be one of: {}".format(" | ".join(e.alternatives))
+                    log.warning(fmt.format(self, eng), extra={"color": (11, 9)})
+                    artists.add(WikiArtist(name=eng, no_fetch=True))
+                    continue
+
                 for alt_href in e.alternatives:
                     tmp_artist = WikiArtist(alt_href)
                     try:
@@ -947,7 +957,15 @@ class WikiSoundtrack(WikiSongCollection):
                     except AttributeError:
                         pass
                 else:
-                    raise e
+                    fmt = "{}'s artist={!r} is ambiguous"
+                    if e.alternatives:
+                        fmt += " - it could be one of: {}".format(" | ".join(e.alternatives))
+                    log.warning(fmt.format(self, eng), extra={"color": (11, 9)})
+                    artists.add(WikiArtist(name=eng, no_fetch=True))
+            except CodeBasedRestException as e:
+                fmt = "Error retrieving info for {}'s artist={!r}: {}"
+                log.error(fmt.format(self, eng, e), extra={"color": 13})
+                artists.add(WikiArtist(name=eng, no_fetch=True))
             else:
                 artists.add(artist)
         return sorted(artists)
@@ -964,7 +982,8 @@ class WikiFeatureOrSingle(WikiSongCollection):
         single = {
             "name_parts": (self.english_name, self.cjk_name), "num": 1,
             # "collaborators": list(self._discography_entry.get("collaborators", {}))
-            "collaborators": [c["artist"][0] for c in self._discography_entry.get("collaborators", [])]
+            "collaborators": [c["artist"][0] for c in self._discography_entry.get("collaborators", [])],
+            "misc": self._info
         }
         return {"tracks": [single]}
 
@@ -1027,6 +1046,10 @@ class WikiTrack(DictAttrPropertyMixin):
             parts.append("{} ver.".format(self.language))
         if self.misc:
             parts.extend(self.misc)
+        if self._artist:
+            primary_artist_aliases = set(chain.from_iterable(artist.aliases for artist in self._collection.artists))
+            if self._artist not in primary_artist_aliases:
+                parts.append("{} solo".format(self._artist))
         if self._collaborators:
             parts.append("with {}".format(", ".join(self._collaborators)))
         return tuple(map("({})".format, parts))

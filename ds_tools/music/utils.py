@@ -190,7 +190,7 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
             elif self._accept_any(self._content_tokens):
                 text += self.tok.value
             elif self._accept("TIME"):
-                if self.prev_tok.type == "DASH":
+                if self.prev_tok.type == "DASH" or not self.next_tok:
                     if time_part:
                         fmt = "Unexpected {!r} token {!r} in {!r} (time {!r} was already found)"
                         raise UnexpectedTokenError(fmt.format(
@@ -278,6 +278,7 @@ def parse_intro_name(text):
     except Exception as e:
         raise ValueError("Unable to parse artist name from intro: {}".format(first_sentence)) from e
 
+    # log.debug("{!r} => {}".format(first_sentence, parts))
     if len(parts) == 1:
         base, details = parts[0], ""
     else:
@@ -285,21 +286,28 @@ def parse_intro_name(text):
     if " is " in base:
         base = base[:base.index(" is ")].strip()
         eng, cjk = eng_cjk_sort(base)
-        return eng, cjk, None, None
+        return eng, cjk, None, None, None
     elif is_any_cjk(details):
-        return base, details, None, None
+        return base, details, None, None, None
     elif not contains_any_cjk(details):
         eng, cjk = eng_cjk_sort(base)
-        return eng, cjk, None, None
+        return eng, cjk, None, None, None
     elif details.lower().endswith("ost") and base.lower().endswith("ost") and contains_any_cjk(details):
         eng, cjk = eng_cjk_sort((base, details), permissive=True)
-        return eng, cjk, None, None
+        return eng, cjk, None, None, None
+    elif base.endswith(")") and details.endswith(")"):
+        base_parts = parser.parse(base)
+        details_parts = parser.parse(details)
+        if len(base_parts) == len(details_parts) ==  2 and base_parts[1] == details_parts[1]:
+            eng, cjk = eng_cjk_sort((base_parts[0], details_parts[0]), permissive=True)
+            return eng, cjk, None, None, [base_parts[1]]
 
     cjk = ""
     found_hangul = False
     stylized = None
     aka = None
     aka_leads = ("aka", "a.k.a.", "also known as", "or simply")
+    info = []
     for part in map(str.strip, re.split("[;,]", details)):
         lc_part = part.lower()
         if lc_part.startswith("stylized as"):
@@ -310,13 +318,15 @@ def parse_intro_name(text):
         elif ":" in part and not found_hangul:
             _lang_name, cjk = eng_cjk_sort(tuple(map(str.strip, part.split(":", 1))))
             found_hangul = is_hangul(cjk)
+        elif lc_part.endswith((" ver.", " ver")):
+            info.append(part)
         elif not aka:
             for lead in aka_leads:
                 if lc_part.startswith(lead):
                     aka = part[len(lead):].strip()
                     break
 
-    return base, cjk, stylized, aka
+    return base, cjk, stylized, aka, info
 
 
 def split_name(name, unused=False, check_keywords=True):
@@ -723,7 +733,7 @@ def parse_album_page(uri_path, clean_soup, side_info):
     if not intro_match:
         raise WikiEntityParseException(bad_intro_fmt.format(uri_path, intro_text[:200]))
 
-    album0["title_parts"] = parse_intro_name(intro_match.group(1))  # base, cjk, stylized, aka
+    album0["title_parts"] = parse_intro_name(intro_match.group(1))  # base, cjk, stylized, aka, info
     details_str = intro_match.group(2)
     details_str = details_str.replace("full length", "full-length").replace("mini-album", "mini album")
     details = list(details_str.split())
@@ -772,7 +782,7 @@ def parse_album_page(uri_path, clean_soup, side_info):
             releases = side_info.get("released", [])
             repkg_dt = next((dt for dt, note in releases if note and note.lower() == "repackage"), None)
             if repkg_dt:
-                album1["title_parts"] = parse_intro_name(repkg_title)   # base, cjk, stylized, aka
+                album1["title_parts"] = parse_intro_name(repkg_title)   # base, cjk, stylized, aka, info
                 album1["length"] = next((val for val, note in side_info.get("length", []) if note == "repackage"), None)
                 album1["num"] = album0["num"]
                 album1["type"] = album0["type"]
@@ -816,8 +826,15 @@ def parse_album_page(uri_path, clean_soup, side_info):
     except NoTrackListException as e:
         if not album1 and "single" in album0["type"].lower():
             eng, cjk = album0["title_parts"][:2]
+            title_info = album0["title_parts"][-1]
+            _name = "{} ({})".format(eng, cjk)
+            if title_info:
+                _name = " ".join(chain((_name,), map("({})".format, title_info)))
             album0["tracks"] = {
-                "section": None, "tracks": [{"name_parts": (eng, cjk), "num": 1, "length": album0["length"] or "-1:00"}]
+                "section": None, "tracks": [
+                    # {"name_parts": (eng, cjk), "num": 1, "length": album0["length"] or "-1:00", "misc": title_info},
+                    parse_track_info(1, _name, uri_path, album0["length"] or "-1:00")
+                ]
             }
         else:
             raise e
@@ -990,16 +1007,23 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
     try:
         lang_map = parse_track_info._lang_map
         version_types = parse_track_info._version_types
+        misc_indicators = parse_track_info._misc_indicators
     except AttributeError:
         lang_map = parse_track_info._lang_map = {
             "chinese": "Chinese", "chn": "Chinese",
             "english": "English", "en": "English", "eng": "English",
             "japanese": "Japanese", "jp": "Japanese", "jap": "Japanese",
             "korean": "Korean", "kr": "Korean", "kor": "Korean", "ko": "Korean",
+            "spanish": "Spanish"
         }
         version_types = parse_track_info._version_types = (
             "inst", "acoustic", "ballad", "original", "remix", "r&b", "band", "karaoke", "special", "full length",
-            "single", "album", "radio", "limited", "normal", "english rap", "rap", "piano", "acapella", "edm"
+            "single", "album", "radio", "limited", "normal", "english rap", "rap", "piano", "acapella", "edm", "stage",
+            "live"
+        )
+        misc_indicators = parse_track_info._misc_indicators = ( # spaces intentional
+            "bonus", " ost", " mix", "remix", "edition only", "special track", "prod. by", "produced by", "director's",
+            " only"
         )
 
     name_parts, collabs, misc, unknown = [], [], [], []
@@ -1013,10 +1037,16 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
 
         lc_part = part.lower()
         feat = next((val for val in FEAT_ARTIST_INDICATORS if val in lc_part), None)
+        duet_etc = next((val for val in (" duet", " trio") if val in lc_part), None)
         if feat:
             collab_part = part[len(feat):].strip() if lc_part.startswith(feat) else part
             collabs.extend(str2list(collab_part, pat="(?: and |,|;|&| feat\.? | featuring | with )"))
             # collabs.extend(str2list(part[len(feat):].strip()))
+        elif duet_etc:
+            collab_part = part[:-len(duet_etc)].strip()
+            collabs.extend(str2list(collab_part, pat="(?: and |,|;|&| feat\.? | featuring | with )"))
+        elif lc_part.endswith(" solo"):
+            track["artist"] = part[:-5].strip()
         elif lc_part.endswith((" ver.", " ver", " version", " edition", " ed.")):
             value = part.rsplit(maxsplit=1)[0]
             if lc_part.startswith(version_types):
@@ -1027,10 +1057,9 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
                 except KeyError:
                     log.debug("Found unexpected version text in {!r}: {!r}".format(text, value), extra={"color": 100})
                     track["version"] = value
-
         elif lc_part.startswith(("inst", "acoustic")):
             track["version"] = part
-        elif any(val in lc_part for val in ("bonus", " ost", " mix", "remix", "edition only")):  # spaces intentional
+        elif any(val in lc_part for val in misc_indicators):
             misc.append(part)
         # elif any(lc_part.startswith(c) for c in DASH_CHARS):
         #     try:
@@ -1237,7 +1266,7 @@ def parse_wikipedia_album_page(uri_path, clean_soup, side_info):
     if not intro_match:
         raise WikiEntityParseException(bad_intro_fmt.format(uri_path, intro_text[:200]))
 
-    album0["title_parts"] = parse_intro_name(intro_match.group(1))  # base, cjk, stylized, aka
+    album0["title_parts"] = parse_intro_name(intro_match.group(1))  # base, cjk, stylized, aka, info
 
     details_str = intro_match.group(2)
     details = list(details_str.split())
