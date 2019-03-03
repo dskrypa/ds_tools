@@ -70,19 +70,15 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
     def _lookahead_unpaired(self, closer):
         """Find the position of the next closer that does not have a preceding opener in the remaining tokens"""
         openers = {opener for opener, _closer in self._opener2closer.items() if _closer == closer}
-        last = len(self.tokens) - 1
-        i = self._idx
         opened = 0
         closed = 0
-        while i <= last:
-            pos, token = self.tokens[i]
+        for pos, token in self.tokens[self._idx:]:
             if token.type in openers:
                 opened += 1
             elif token.type == closer:
                 closed += 1
                 if closed > opened:
                     return pos
-            i += 1
         return -1
 
     def parenthetical(self, closer="RPAREN"):
@@ -123,8 +119,11 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
                     text = ""
 
                 parentheticals, _nested, unpaired = self.parenthetical(self._opener2closer[tok_type])
-                if len(parts) == len(parentheticals) == 1 and parts[0].lower().startswith(FEAT_ARTIST_INDICATORS) and self._parenthetical_count > 2:
-                    parts[0] = "{} of {}".format(parts[0].strip(), parentheticals[0])
+                if len(parts) == len(parentheticals) == 1 and self._parenthetical_count > 2:
+                    if parts[0].lower().startswith(FEAT_ARTIST_INDICATORS):
+                        parts[0] = "{} of {}".format(parts[0].strip(), parentheticals[0])
+                    else:
+                        parts[0] += self._nested_fmts[tok_type].format(parentheticals[0])
                 else:
                     parts.extend(parentheticals)
 
@@ -591,9 +590,17 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
     return info
 
 
-def str2list(text, pat="(?: and |,|;|&)"):
+def str2list(text, pat="^(?:with|feat\.?|as) | and |,|;|&| feat\.? | featuring | with "):
     """Convert a string list to a proper list"""
-    return [val for val in map(str.strip, re.split(pat, text)) if val]
+    try:
+        compiled_pats = str2list._compiled_pats
+    except AttributeError:
+        compiled_pats = str2list._compiled_pats = {}
+    try:
+        pat_rx = compiled_pats[pat]
+    except KeyError:
+        pat_rx = compiled_pats[pat] = re.compile(pat)
+    return [val for val in map(str.strip, pat_rx.split(text)) if val]
 
 
 def link_tuples(anchors):
@@ -971,15 +978,13 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
             fmt = "Error parsing track number {!r} for {!r} from {}: {}"
             raise TrackInfoParseException(fmt.format(idx, text, source, e)) from e
 
-    # parser = ParentheticalParser(False)
-    parser = TrackInfoParser()
     track = {"num": idx, "length": "-1:00"}
     if include:
         track.update(include)
     if isinstance(text, str):
         text = unsurround(text.strip(), *(c*2 for c in QMARKS))
         try:
-            parsed, time_part = parser.parse(text)
+            parsed, time_part = TrackInfoParser().parse(text)
         except Exception as e:
             raise TrackInfoParseException("Error parsing track from {}: {!r}".format(source, text)) from e
     else:
@@ -994,15 +999,6 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
             fmt = "Length={!r} was provided for track {}/{!r} from {}, but it was also parsed to be {!r}"
             raise TrackInfoParseException(fmt.format(length, idx, text, source, time_part))
         track["length"] = time_part
-
-    # if has_parens(parsed[0]):   #.count("(") > 1:
-    #     to_re_parse = parsed.pop(0)
-    #     _parsed = parsed
-    #     try:
-    #         parsed = parser.parse(to_re_parse)
-    #     except Exception as e:
-    #         raise TrackInfoParseException("Error parsing track from {}: {!r}".format(source, parsed[0])) from e
-    #     parsed.extend(_parsed)
 
     try:
         lang_map = parse_track_info._lang_map
@@ -1022,15 +1018,17 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
             "live"
         )
         misc_indicators = parse_track_info._misc_indicators = ( # spaces intentional
-            "bonus", " ost", " mix", "remix", "edition only", "special track", "prod. by", "produced by", "director's",
-            " only"
+            "bonus", " ost", " mix", "remix", "special track", "prod. by", "produced by", "director's", " only",
+            "remaster", "intro"
         )
 
-    name_parts, collabs, misc, unknown = [], [], [], []
+    name_parts, name_langs, collabs, misc, unknown = [], [], [], [], []
     link_texts = set(link[0] for link in links) if links else None
     for n, part in enumerate(parsed):
         if n == 0:
+            # log.debug("{!r}: Adding to name parts: {!r}".format(text, part))
             name_parts.append(part)
+            name_langs.append(categorize_lang(part))
             continue
         elif not part:
             continue
@@ -1061,29 +1059,25 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
             track["version"] = part
         elif any(val in lc_part for val in misc_indicators):
             misc.append(part)
-        # elif any(lc_part.startswith(c) for c in DASH_CHARS):
-        #     try:
-        #         len_rx = parse_track_info._len_rx
-        #     except AttributeError:
-        #         len_rx = parse_track_info._len_rx = re.compile(r"^[{}]\s*(\d+:\d{{2}})$".format(DASH_CHARS))
-        #
-        #     m = len_rx.match(part)
-        #     if m:
-        #         track["length"] = m.group(1)
-        # elif lc_artists and any(lc_artist in lc_part for lc_artist in lc_artists):
-        #     split_part = str2list(part, pat="(?: and |,|;|&| feat\.? | featuring | with )")
-        #     if all(sp.lower() in lc_artists for sp in split_part):
-        #         collabs.extend(split_part)
-        #     else:
-        #         name_parts.append(part)
         elif links and any(link_text in part for link_text in link_texts):
             split_part = str2list(part, pat="(?: and |,|;|&| feat\.? | featuring | with )")
-            if all(sp in link_texts for sp in split_part):
+            if any(sp in link_texts for sp in split_part):
                 collabs.extend(split_part)                  # assume links are to artists
-            else:
+            elif len(set(name_langs)) < 2:
+                # log.debug("{!r}: Adding to name parts: {!r}".format(text, part))
                 name_parts.append(part)
+                name_langs.append(categorize_lang(part))
+            else:
+                log.debug("Assuming {!r} from {!r} > {!r} is misc [no link matches]".format(part, source, text), extra={"color": 70})
+                misc.append(part)
         else:
-            name_parts.append(part)
+            if len(set(name_langs)) < 2:
+                # log.debug("{!r}: Adding to name parts: {!r}".format(text, part))
+                name_parts.append(part)
+                name_langs.append(categorize_lang(part))
+            else:
+                log.debug("Assuming {!r} from {!r} > {!r} is misc".format(part, source, text), extra={"color": 70})
+                misc.append(part)
 
     if len(name_parts) > 2:
         log.log(9, "High name part count in {} [{!r} =>]: {}".format(source, text, name_parts))
@@ -1091,7 +1085,7 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
             name_parts = _combine_name_parts(name_parts)
 
     try:
-        track["name_parts"] = eng_cjk_sort(name_parts[0] if len(name_parts) == 1 else name_parts)
+        track["name_parts"] = eng_cjk_sort(name_parts[0] if len(name_parts) == 1 else name_parts, tuple(name_langs))
     except ValueError:
         track["name_parts"] = tuple(name_parts) if len(name_parts) == 2 else (name_parts[0], "")
 
@@ -1181,8 +1175,8 @@ def parse_ost_page(uri_path, clean_soup):
                     name_parts = [part[:-7].strip() for part in name_parts]
                     name_parts.append("Inst.")
 
-                track = parse_track_info(tds[0].text, name_parts, uri_path)
-                track["artist"] = tds[2].text.strip()
+                track = parse_track_info(tds[0].text, name_parts, uri_path, include={"from_ost": True})
+                track["collaborators"] = str2list(tds[2].text.strip())
                 tracks.append(track)
 
         track_lists.append({"section": section, "tracks": tracks, "info": info})
