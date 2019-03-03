@@ -97,7 +97,7 @@ class WikiClient(RestClient):
                     except Exception as pe:
                         pass
                     else:
-                        log.debug("Checking {!r} for {}".format(name, _name))
+                        log.log(9, "Checking {!r} for {!r}".format(name, _name))
                         try:
                             return self._name_cache["{}: {}".format(self.host, name)]
                         except KeyError as ke:

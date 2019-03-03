@@ -406,8 +406,9 @@ class WikiArtist(WikiEntity):
         try:
             return WikiDiscography(None, WikipediaClient(), name=name, artist=self)
         except Exception as e:
-            fmt = "Unable to retrieve alternate discography page for {}: {}\n{}"
-            log.debug(fmt.format(self, e, traceback.format_exc()))
+            fmt = "Unable to retrieve alternate discography page for {}: {}{}"
+            # log.debug(fmt.format(self, e, "\n" + traceback.format_exc()))
+            log.debug(fmt.format(self, e))
         return None
 
     @property
@@ -478,9 +479,21 @@ class WikiArtist(WikiEntity):
                 uri_path = entry["uri_path"]
                 title = entry["title"]
 
+            cls = WikiSongCollection
+            if not uri_path:
+                base_type = entry.get("base_type")
+                if base_type == "osts":
+                    cls = WikiSoundtrack
+                elif any(val in base_type for val in ("singles", "collaborations", "features")):
+                    cls = WikiFeatureOrSingle
+                elif "albums" in base_type:
+                    cls = WikiAlbum
+                else:
+                    log.debug("{}: Unexpected base_type={!r} for {}".format(self, base_type, entry), extra={"color": 9})
+
             try:
                 try:
-                    discography.append(WikiSongCollection(uri_path, client, disco_entry=entry, artist_context=self))
+                    discography.append(cls(uri_path, client, disco_entry=entry, artist_context=self))
                 except CodeBasedRestException as http_e:
                     if entry["is_ost"]:
                         ost = find_ost(self, title, entry)
@@ -488,10 +501,14 @@ class WikiArtist(WikiEntity):
                             discography.append(ost)
                         else:
                             log.debug("{}: Unable to find wiki page or alternate matches for {}".format(self, entry))
-                            raise http_e
+                            ost = cls(uri_path, client, disco_entry=entry, artist_context=self, no_fetch=True)
+                            discography.append(ost)
+                            # raise http_e
                     else:
                         log.debug("{}: Unable to find wiki page for {}".format(self, entry))
-                        raise http_e
+                        alb = cls(uri_path, client, disco_entry=entry, artist_context=self, no_fetch=True)
+                        discography.append(alb)
+                        # raise http_e
             except MusicException as e:
                 fmt = "{}: Error processing discography entry for {!r} / {!r}: {}"
                 log.error(fmt.format(self, entry["uri_path"], entry["title"], e), extra={"color": 13})
@@ -674,7 +691,9 @@ class WikiSongCollection(WikiEntity):
 
         self._track_lists = self._album_info.get("track_lists")
         if self._track_lists is None:
-            self._track_lists = [self._album_info.get("tracks")]
+            album_tracks = self._album_info.get("tracks")
+            if album_tracks:
+                self._track_lists = [album_tracks]
 
         self.name = multi_lang_name(self.english_name, self.cjk_name)
         if self._info:
@@ -717,6 +736,8 @@ class WikiSongCollection(WikiEntity):
     def artists(self):
         artists = set()
         for name, href in self._artists.items():
+            if name.lower() in ("various artists", "various"):
+                continue
             try:
                 artist = WikiArtist(href, name=name)
             except AmbiguousEntityException as e:
@@ -745,8 +766,11 @@ class WikiSongCollection(WikiEntity):
                     else:
                         artists.add(artist)
                 else:
-                    fmt = "Error retrieving info for {}'s artist={!r} (href={!r}): {}"
-                    log.error(fmt.format(self, name, href, e), extra={"color": 13})
+                    msg = "Error retrieving info for {}'s artist={!r} (href={!r}): {}".format(self, name, href, e)
+                    if href is None:
+                        log.log(9, msg)
+                    else:
+                        log.error(msg, extra={"color": 13})
                     artists.add(WikiArtist(href, name=name, no_fetch=True))
             except WikiTypeError as e:
                 #no_type_check
@@ -778,7 +802,7 @@ class WikiSongCollection(WikiEntity):
         return editions_by_disk
 
     def _get_tracks(self, edition_or_part=None, disk=None):
-        if self._raw:
+        if self._track_lists:
             # log.debug("{}: Retrieving tracks for edition_or_part={!r}".format(self, edition_or_part))
             if disk is None and edition_or_part is None or isinstance(edition_or_part, int):
                 edition_or_part = edition_or_part or 0
@@ -845,7 +869,7 @@ class WikiSongCollection(WikiEntity):
             if "single" in self.album_type.lower():
                 return {"tracks": [{"name_parts": (self.english_name, self.cjk_name)}]}
             else:
-                log.debug("No page content found for {} - returning empty track list".format(self))
+                log.debug("No page content found for {} - returning empty track list".format(self), extra={"color": 8})
                 return {"tracks": []}
 
     @cached(True)
@@ -1003,12 +1027,23 @@ class WikiFeatureOrSingle(WikiSongCollection):
             log.log(9, "Skipping WikiFeatureOrSingle _get_tracks()")
             return super()._get_tracks(edition_or_part)
 
-        single = {
-            "name_parts": (self.english_name, self.cjk_name), "num": 1,
-            # "collaborators": list(self._discography_entry.get("collaborators", {}))
-            "collaborators": [c["artist"][0] for c in self._discography_entry.get("collaborators", [])],
-            "misc": self._info
-        }
+        track_info = self._discography_entry.get("track_info")
+        if track_info:
+            single = track_info.copy()
+            collabs = set(single.get("collaborators") or [])
+            collabs.update(c["artist"][0] for c in self._discography_entry.get("collaborators", []))
+            single["collaborators"] = sorted(collabs)
+            misc = single.get("misc") or []
+            if self._info:
+                misc.extend(self._info)
+            single["misc"] = misc
+        else:
+            single = {
+                "name_parts": (self.english_name, self.cjk_name), "num": 1,
+                # "collaborators": list(self._discography_entry.get("collaborators", {}))
+                "collaborators": [c["artist"][0] for c in self._discography_entry.get("collaborators", [])],
+                "misc": self._info
+            }
         return {"tracks": [single]}
 
 
@@ -1020,6 +1055,7 @@ class WikiTrack(DictAttrPropertyMixin):
     version = DictAttrProperty("_info", "version", default=None)
     misc = DictAttrProperty("_info", "misc", default=None)
     from_ost = DictAttrProperty("_info", "from_ost", default=False)
+    from_compilation = DictAttrProperty("_info", "compilation", default=False)
     _collaborators = DictAttrProperty("_info", "collaborators", default_factory=list)
     _artist = DictAttrProperty("_info", "artist", default=None)
 
@@ -1103,7 +1139,7 @@ class WikiTrack(DictAttrPropertyMixin):
                 parts.append("{} solo".format(self._artist))
         if self._collaborators:
             collabs = ", ".join(self._collaborators)
-            if self.from_ost and self._artist_context is None:
+            if self.from_compilation or (self.from_ost and self._artist_context is None):
                 parts.insert(0, "by {}".format(collabs))
             else:
                 parts.append("with {}".format(collabs))
@@ -1125,7 +1161,7 @@ def find_ost(artist, title, disco_entry):
     k_client = KpopWikiClient()
     w_client = WikipediaClient()
     show_title = " ".join(title.split()[:-1])  # Search without 'OST' suffix
-    # log.debug("Searching for show {!r} for OST {!r}".format(show_title, title))
+    # log.debug("{}: Searching for show {!r} for OST {!r}".format(artist, show_title, title))
 
     for client in (d_client, w_client):
         alt_match = client.title_search(show_title)
@@ -1142,9 +1178,11 @@ def find_ost(artist, title, disco_entry):
                     return WikiSongCollection(alt_uri_path, d_client, disco_entry=disco_entry, artist_context=artist)
 
     if artist._disco_page:
+        # log.debug("{}: Processing discography page to find OST tracks...".format(artist))
         title_rx = synonym_pattern(title)
         for ost_name, tracks in artist._disco_page._soundtracks.items():
             if title_rx.match(ost_name):
+                # log.debug("{}: Found discography page match {!r} = {!r}".format(artist, title, ost_name))
                 album_info = {
                     "track_lists": [{"section": None, "tracks": tracks}], "num": None, "type": "OST",
                     "repackage": False, "length": None, "released": None, "links": []

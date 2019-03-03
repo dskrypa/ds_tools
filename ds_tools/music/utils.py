@@ -72,13 +72,14 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
         openers = {opener for opener, _closer in self._opener2closer.items() if _closer == closer}
         opened = 0
         closed = 0
+        # log.debug("Looking for next {!r} from idx={} in {}".format(closer, self._idx, self.tokens))
         for pos, token in self.tokens[self._idx:]:
-            if token.type in openers:
-                opened += 1
-            elif token.type == closer:
+            if token.type == closer:
                 closed += 1
                 if closed > opened:
                     return pos
+            elif token.type in openers:
+                opened += 1
         return -1
 
     def parenthetical(self, closer="RPAREN"):
@@ -86,8 +87,6 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
         parenthetical ::= ( { text | WS | ( parenthetical ) }* )
         """
         # log.debug("Opening {}".format(closer))
-        if not hasattr(self, "_parenthetical_count"):
-            self._parenthetical_count = 0
         self._parenthetical_count += 1
         text = ""
         parts = []
@@ -104,10 +103,12 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
                 if tok_type == "DASH":
                     # next_dash = self._lookahead("DASH")
                     try:
-                        next_dash = self._remaining.index(self.tok.value)
+                        next_dash = self._remaining.index(self.tok.value) + self._pos
                     except ValueError:
                         next_dash = -1
-                    if next_dash == -1 or next_dash > self._lookahead_unpaired(closer):
+                    next_closer = self._lookahead_unpaired(closer)
+                    # log.debug("Found DASH @ pos={}, next is @ pos={}; closer pos={}".format(self._pos, next_dash, next_closer))
+                    if next_dash == -1 or next_dash > next_closer:
                         text += self.tok.value
                         continue
                     elif text and not prev_tok_type == "WS" and self._peek("TEXT"):
@@ -122,6 +123,8 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
                 if len(parts) == len(parentheticals) == 1 and self._parenthetical_count > 2:
                     if parts[0].lower().startswith(FEAT_ARTIST_INDICATORS):
                         parts[0] = "{} of {}".format(parts[0].strip(), parentheticals[0])
+                    elif parentheticals[0].lower().endswith((" ver.", " ver", " version", " edition", " ed.")):
+                        parts.extend(parentheticals)
                     else:
                         parts[0] += self._nested_fmts[tok_type].format(parentheticals[0])
                 else:
@@ -141,6 +144,7 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
         """
         content :: = text { (parenthetical) }* { text }*
         """
+        self._parenthetical_count = 0
         text = ""
         time_part = None
         parts = []
@@ -165,27 +169,19 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
                         # log.debug("Appending DASH because WS did not follow it or the value does not occur again")
                         text += self.tok.value
                         continue
-                # elif tok_type == "TIME":
-                #     if self.prev_tok.type == "DASH":
-                #         parts.append(self.tok.value.strip())
-                #     else:
-                #         text += self.tok.value
-                #         continue
 
                 if text:
                     parts.append(text)
                     text = ""
                 parentheticals, nested, unpaired = self.parenthetical(self._opener2closer[tok_type])
                 # log.debug("content parentheticals: {}".format(parentheticals))
-                # log.debug("Parsed {!r} (nested={}); next token={!r}".format(parenthetical, nested, self.next_tok))
-                # if not parts and not nested and not self._peek("WS"):
+                # log.debug("Parsed {!r} (nested={}); next token={!r}".format(parentheticals, nested, self.next_tok))
                 if not nested and not self._peek("WS") and self.next_tok is not None and len(parentheticals) == 1:
                     text += self._nested_fmts[tok_type].format(parentheticals[0])
                 elif len(parentheticals) == 1 and isinstance(parentheticals[0], str):
                     parts.append((parentheticals[0], nested, tok_type))
                 else:
                     parts.extend(parentheticals)
-                    # parts.append((parenthetical, nested, tok_type))
             elif self._accept_any(self._content_tokens):
                 text += self.tok.value
             elif self._accept("TIME"):
@@ -196,7 +192,6 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
                             self.next_tok.type, self.next_tok.value, self._full, time_part
                         ))
                     time_part = self.tok.value.strip()
-                    # parts.append(self.tok.value.strip())
                 else:
                     text += self.tok.value
             else:
@@ -469,6 +464,17 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
         log.warning("Unhandled discography entry format {!r} for {}".format(ele_text, artist), extra={"red": True})
         return None
 
+    """
+    TODO - handle:
+    Inkigayo Music Crush Part.4 ("First Christmas" with Doyoung) (2016)
+    [Collaboration album/OST] ("[Track name]" with [collaborator]) ([year])
+    
+    "The Liar and His Lover OST" ("A Fox" , "I'm Okay" with Lee Hyun-woo, "Your Days", "Shiny Boy", "Waiting For You", "The Road to Me") (2017) 
+    [Collaboration album/OST] ("[Track 1]"{ with [collaborator]}, "[Track 2]"{ with [collaborator]}, ...) ([year])
+    
+    "Tempted OST Part.2" ("Nonsense") (2018) 
+    [Collaboration album/OST] ("[Track 1]") ([year])
+    """
     # log.debug("Parsed {!r} => {}".format(ele_text, parsed))
     links = link_tuples(ele.find_all("a"))
     linkd = dict(links)
@@ -486,18 +492,27 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
         primary_artist = artist.english_name
         primary_uri = artist._uri_path
     year = int(parsed.pop()) if len(parsed[-1]) == 4 and parsed[-1].isdigit() else None
-
+    track_info = None
     title = parsed.pop(0)
     if ele_text.startswith("[") and not title.startswith("[") and not any("]" in part for part in parsed):
         title = "[{}]".format(title)                    # Special case for albums '[+ +]' / '[X X]'
-    elif not ele_text.startswith('"') and len(parsed) == 1 and '"' in ele_text:
+    elif not is_feature and not ele_text.startswith('"') and len(parsed) == 1 and '"' in ele_text:
         title = '{} "{}"'.format(title, parsed.pop(0))  # Special case for album name ending in quoted word
+    elif "singles" in base_type:
+        track_info = parse_track_info(1, title, ele)
+        # log.debug("{!r} is a single - track info: {}".format(title, track_info))
+        if len(track_info["name_parts"]) == 1:
+            title = track_info["name_parts"][0]
+        else:
+            eng, cjk = track_info["name_parts"]
+            title = "{} ({})".format(eng, cjk) if eng and cjk else eng or cjk
+            if track_info.get("language"):
+                title += " ({} ver.)".format(track_info["language"])
 
     collabs, misc_info = [], []
     for item in parsed:
         lc_item = item.lower()
         if lc_item.startswith(("with ", "feat. ", "feat ", "as ")) or "feat." in lc_item:
-            # item = item.split(maxsplit=1)[1]    # remove the with/feat prefix
             for collab in str2list(item, pat="^(?:with|feat\.?|as) | and |,|;|&| feat\.? | featuring | with "):
                 try:
                     soloist, of_group = collab.split(" of ")
@@ -508,11 +523,6 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
                         "artist": split_name(soloist), "artist_href": linkd.get(soloist),
                         "of_group": split_name(of_group), "group_href": linkd.get(of_group),
                     })
-            # item_collabs = set(str2list(item))
-            # if links:
-            #     collabs.update({text: href for text, href in links if text in item_collabs})
-            # else:
-            #     collabs.update({name: None for name in item_collabs})
         else:
             misc_info.append(item)
 
@@ -532,14 +542,8 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
             collab_names.add(artist.english_name)
             collab_hrefs.add(artist._uri_path)
 
-    # if artist.english_name not in collabs or artist._uri_path not in collabs.values():
-    #     if primary_artist != artist.english_name:
-    #         collabs[artist.english_name] = artist._uri_path
-
     is_feature_or_collab = base_type in ("features", "collaborations", "collaborations_and_features")
     is_ost = base_type in ("ost", "osts")
-
-    # non_artist_links = [lnk for lnk in links if lnk[1] and lnk[1] != primary_uri and lnk[1] not in collabs.values()]
     non_artist_links = [lnk for lnk in links if lnk[1] and lnk[1] != primary_uri and lnk[1] not in collab_hrefs]
     if non_artist_links:
         if len(non_artist_links) > 1:
@@ -591,7 +595,7 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
         "title": title, "primary_artist": (primary_artist, primary_uri), "type": album_type, "base_type": base_type,
         "year": year, "collaborators": collabs, "misc_info": misc_info, "language": lang, "uri_path": uri_path,
         "wiki": wiki, "is_feature_or_collab": is_feature_or_collab, "is_ost": is_ost,
-        "num": "{}{}".format(type_idx, num_suffix(type_idx))
+        "num": "{}{}".format(type_idx, num_suffix(type_idx)), "track_info": track_info
     }
     return info
 
@@ -835,7 +839,7 @@ def parse_album_page(uri_path, clean_soup, side_info):
         album["artists"] = side_info.get("artist", {})
 
     try:
-        track_lists = parse_album_tracks(uri_path, clean_soup, links)
+        track_lists = parse_album_tracks(uri_path, clean_soup, links, "compilation" in album0["type"].lower())
     except NoTrackListException as e:
         if not album1 and "single" in album0["type"].lower():
             eng, cjk = album0["title_parts"][:2]
@@ -867,7 +871,7 @@ def parse_album_page(uri_path, clean_soup, side_info):
     return albums
 
 
-def parse_album_tracks(uri_path, clean_soup, intro_links):
+def parse_album_tracks(uri_path, clean_soup, intro_links, compilation=False):
     """
     Parse the Track List section of a Kpop Wiki album/single page.
 
@@ -905,7 +909,9 @@ def parse_album_tracks(uri_path, clean_soup, intro_links):
             for i, li in enumerate(ele.find_all("li")):
                 track_links = link_tuples(li.find_all("a"))
                 all_links = list(set(track_links + intro_links))
-                track = parse_track_info(i + 1, li.text, uri_path, include={"links": track_links}, links=all_links)
+                track = parse_track_info(
+                    i + 1, li.text, uri_path, include={"links": track_links}, links=all_links, compilation=compilation
+                )
                 tracks.append(track)
 
             track_lists.append({"section": section, "tracks": tracks, "links": links, "disk": disk})
@@ -961,7 +967,7 @@ def _combine_name_parts(name_parts):
     return [combined] + name_parts[2:]
 
 
-def parse_track_info(idx, text, source, length=None, *, include=None, links=None):
+def parse_track_info(idx, text, source, length=None, *, include=None, links=None, compilation=False):
     """
     Split and categorize the given text to identify track metadata such as length, collaborators, and english/cjk name
     parts.
@@ -1021,7 +1027,7 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
         version_types = parse_track_info._version_types = (
             "inst", "acoustic", "ballad", "original", "remix", "r&b", "band", "karaoke", "special", "full length",
             "single", "album", "radio", "limited", "normal", "english rap", "rap", "piano", "acapella", "edm", "stage",
-            "live"
+            "live", "rock"
         )
         misc_indicators = parse_track_info._misc_indicators = ( # spaces intentional
             "bonus", " ost", " mix", "remix", "special track", "prod. by", "produced by", "director's", " only",
@@ -1030,6 +1036,10 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
 
     name_parts, name_langs, collabs, misc, unknown = [], [], [], [], []
     link_texts = set(link[0] for link in links) if links else None
+    if compilation:
+        collabs.extend(str2list(parsed.pop(-1), pat="(?: and |,|;|&| feat\.? | featuring | with )"))
+        track["compilation"] = True
+
     for n, part in enumerate(parsed):
         if n == 0:
             # log.debug("{!r}: Adding to name parts: {!r}".format(text, part))
@@ -1054,14 +1064,31 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
         elif lc_part.endswith((" ver.", " ver", " version", " edition", " ed.")):
             value = part.rsplit(maxsplit=1)[0]
             if lc_part.startswith(version_types):
-                track["version"] = value
+                if track.get("version"):
+                    if track["version"].lower() == value.lower():
+                        continue
+                    log.warning("Multiple version entries found for {!r} from {!r}".format(text, source), extra={"color": 14})
+                    misc.append("{} ver.".format(value) if "ver" in lc_part and "ver" not in value else part)
+                else:
+                    track["version"] = value
             else:
                 try:
                     track["language"] = lang_map[value.lower()]
                 except KeyError:
                     log.debug("Found unexpected version text in {!r}: {!r}".format(text, value), extra={"color": 100})
-                    track["version"] = value
+                    if track.get("version"):
+                        if track["version"].lower() == value.lower():
+                            continue
+                        log.warning("Multiple version entries found for {!r} from {!r}".format(text, source), extra={"color": 14})
+                        misc.append("{} ver.".format(value) if "ver" in lc_part and "ver" not in value else part)
+                    else:
+                        track["version"] = value
         elif lc_part.startswith(("inst", "acoustic")):
+            if track.get("version"):
+                lc_version = track["version"].lower()
+                if any(val in lc_version for val in ("inst", "acoustic")):
+                    log.warning("Multiple version entries found for {!r} from {!r}".format(text, source), extra={"color": 14})
+                misc.append("{} ver.".format(track["version"]) if "ver" not in track["version"].lower() else part)
             track["version"] = part
         elif any(val in lc_part for val in misc_indicators) or all(val in lc_part for val in (" by ", " of ")):
             misc.append(part)
