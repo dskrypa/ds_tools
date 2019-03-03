@@ -271,6 +271,7 @@ def _normalize_title(title):
 
 def parse_intro_name(text):
     first_sentence = text.strip().partition(". ")[0].strip()  # Note: space is intentional
+    first_sentence = first_sentence.replace("\xa0", " ")
     parser = ParentheticalParser()
     try:
         parts = parser.parse(first_sentence)    # Note: returned strs already stripped of leading/trailing spaces
@@ -288,6 +289,10 @@ def parse_intro_name(text):
         return eng, cjk, None, None, None
     elif is_any_cjk(details):
         return base, details, None, None, None
+    elif base in ("+ +", "X X"):                            # Special case for particular albums
+        return "[{}]".format(base), "", None, details, None
+    elif len(parts) == 2 and first_sentence.endswith('"'):  # Special case for album name ending in quoted word
+        return '{} "{}"'.format(base, details), "", None, None, None
     elif not contains_any_cjk(details):
         eng, cjk = eng_cjk_sort(base)
         return eng, cjk, None, None, None
@@ -463,13 +468,8 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
     except Exception as e:
         log.warning("Unhandled discography entry format {!r} for {}".format(ele_text, artist), extra={"red": True})
         return None
-    # else:
-    #     log.debug("Parsed {!r} => {}".format(ele_text, parsed))
 
-    # links = [
-    #     (t, h[6:] if h.startswith("/wiki/") else h)
-    #     for t, h in ((a.text, a.get("href") or "") for a in ele.find_all("a"))
-    # ]
+    # log.debug("Parsed {!r} => {}".format(ele_text, parsed))
     links = link_tuples(ele.find_all("a"))
     linkd = dict(links)
     try:
@@ -486,7 +486,13 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
         primary_artist = artist.english_name
         primary_uri = artist._uri_path
     year = int(parsed.pop()) if len(parsed[-1]) == 4 and parsed[-1].isdigit() else None
+
     title = parsed.pop(0)
+    if ele_text.startswith("[") and not title.startswith("[") and not any("]" in part for part in parsed):
+        title = "[{}]".format(title)                    # Special case for albums '[+ +]' / '[X X]'
+    elif not ele_text.startswith('"') and len(parsed) == 1 and '"' in ele_text:
+        title = '{} "{}"'.format(title, parsed.pop(0))  # Special case for album name ending in quoted word
+
     collabs, misc_info = [], []
     for item in parsed:
         lc_item = item.lower()
@@ -1057,7 +1063,7 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
                     track["version"] = value
         elif lc_part.startswith(("inst", "acoustic")):
             track["version"] = part
-        elif any(val in lc_part for val in misc_indicators):
+        elif any(val in lc_part for val in misc_indicators) or all(val in lc_part for val in (" by ", " of ")):
             misc.append(part)
         elif links and any(link_text in part for link_text in link_texts):
             split_part = str2list(part, pat="(?: and |,|;|&| feat\.? | featuring | with )")
@@ -1420,7 +1426,7 @@ def parse_discography_page(uri_path, clean_soup, artist):
             break
 
         ele = h2.next_sibling
-        while ele.name != "h2":
+        while hasattr(ele, "name") and ele.name != "h2":
             if isinstance(ele, NavigableString):
                 ele = ele.next_sibling
                 continue
