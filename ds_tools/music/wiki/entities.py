@@ -80,7 +80,8 @@ class WikiEntityMeta(type):
         super().__init__(name, bases, attr_dict)
 
     def __call__(
-        cls, uri_path=None, client=None, *, name=None, disco_entry=None, no_type_check=False, no_fetch=False, **kwargs
+        cls, uri_path=None, client=None, *, name=None, disco_entry=None, no_type_check=False, no_fetch=False,
+        of_group=None, **kwargs
     ):
         """
         :param str|None uri_path: The uri path for a page on a wiki
@@ -101,6 +102,19 @@ class WikiEntityMeta(type):
                     client = WikiClient.for_site(disco_site)
             else:
                 if name and not uri_path:
+                    if of_group:
+                        if not isinstance(of_group, WikiGroup):
+                            try:
+                                of_group = WikiGroup(name=of_group)
+                            except Exception as e:
+                                fmt = "Error initializing WikiGroup(name={!r}) for member {!r}: {}"
+                                log.debug(fmt.format(of_group, name, e))
+
+                        if isinstance(of_group, WikiGroup):
+                            for member in of_group.members:
+                                if member.matches(name):
+                                    return member
+
                     if client is None:
                         client = KpopWikiClient()
                     uri_path = client.normalize_name(name)
@@ -188,7 +202,17 @@ class WikiEntityMeta(type):
             # noinspection PyArgumentList
             obj.__init__(uri_path, client, name=name, raw=raw, disco_entry=disco_entry, **kwargs)
             WikiEntityMeta._instances[key] = obj
-        return WikiEntityMeta._instances[key]
+        else:
+            obj = WikiEntityMeta._instances[key]
+
+        if of_group:
+            if not isinstance(obj, WikiSinger):
+                raise WikiTypeError("{} is not a WikiSinger, so cannot be of_group={}".format(obj, of_group))
+            elif obj.member_of is None or not obj.member_of.matches(of_group):
+                fmt = "Found {} for uri_path={!r}, name={!r}, but they are a member_of={}, not of_group={!r}"
+                raise WikiEntityIdentificationException(fmt.format(obj, uri_path, name, obj.member_of, of_group))
+
+        return obj
 
 
 class WikiEntity(metaclass=WikiEntityMeta):
@@ -221,6 +245,12 @@ class WikiEntity(metaclass=WikiEntityMeta):
     @cached_property
     def lc_aliases(self):
         return [a.lower() for a in self.aliases]
+
+    def matches(self, other):
+        if isinstance(other, str):
+            lc_other = other.lower().strip()
+            return lc_other in self.lc_aliases
+        return self == other
 
     @property
     def _soup(self):
@@ -634,6 +664,28 @@ class WikiSinger(WikiArtist):
                                 log.debug(fmt.format(self, group_name, a.text, href, e))
                             else:
                                 break
+
+        eng_first, eng_last, cjk_eng_first, cjk_eng_last = None, None, None, None
+        for eng, cjk in self._side_info.get('birth_name', []):
+            if eng and cjk:
+                cjk_eng_last, cjk_eng_first = eng.split(maxsplit=1)
+                self.aliases.extend((eng, cjk))
+            elif eng:
+                eng_first, eng_last = eng.rsplit(maxsplit=1)
+                self.aliases.extend((eng, eng_first))
+            elif cjk:
+                self.aliases.append(cjk)
+
+        if cjk_eng_first or cjk_eng_last:
+            if eng_last:
+                self.aliases.append(cjk_eng_first if eng_last == cjk_eng_last else cjk_eng_last)
+            else:
+                self.aliases.append(cjk_eng_first)
+
+        try:
+            del self.__dict__['lc_aliases']
+        except KeyError:
+            pass
 
 
 class WikiSongCollection(WikiEntity):

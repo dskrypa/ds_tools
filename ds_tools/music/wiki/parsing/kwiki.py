@@ -330,6 +330,8 @@ def parse_aside(aside):
                     value = [li.text for li in ele_children[0].find_all('li')]
                 else:
                     value = str2list(val_ele.text)
+            elif key == 'birth_name':
+                value = [split_name(s) for s in val_ele.stripped_strings]
             else:
                 value = val_ele.text
         parsed[key] = value

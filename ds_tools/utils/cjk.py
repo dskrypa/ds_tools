@@ -55,8 +55,12 @@ HIRAGANA_RANGES = [     # Source: https://en.wikipedia.org/wiki/Hiragana#Unicode
     (0x3040, 0x309F),   # Hiragana
     (0x1B100, 0x1B120), # Kana Extended-A
 ]
+# The following are not technically considered CJK, but will be for the purposes of this library
+THAI_RANGES = [         # Source: https://en.wikipedia.org/wiki/Thai_alphabet#Unicode
+    (0x0E00, 0x0E7F)    # Thai
+]
 JAPANESE_RANGES = KATAKANA_RANGES + HIRAGANA_RANGES
-ANY_CJK_RANGES = HANGUL_RANGES + JAPANESE_RANGES + CJK_RANGES
+ANY_CJK_RANGES = HANGUL_RANGES + JAPANESE_RANGES + CJK_RANGES + THAI_RANGES
 # https://en.wikipedia.org/wiki/Hangul_Compatibility_Jamo
 JAMO_CONSONANTS_START = 0x3130
 JAMO_VOWELS_START = 0x314F
