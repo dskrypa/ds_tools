@@ -19,7 +19,7 @@ from .core import validate_or_make_dir, TZ_LOCAL
 from .output import colored
 
 __all__ = ["LogManager", "add_context_filter"]
-log = logging.getLogger("ds_tools.logging")
+log = logging.getLogger(__name__)
 
 ENTRY_FMT_DETAILED = "%(asctime)s %(levelname)s %(threadName)s %(name)s %(lineno)d %(message)s"
 DEFAULT_LOGGER_NAME = "ds_tools"

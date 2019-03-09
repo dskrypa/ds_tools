@@ -42,7 +42,7 @@ __all__ = [
 ]
 log = logging.getLogger(__name__)
 # Loggers that should not be displayed by default
-logr = {'parse': logging.getLogger('ds_tools.utils.time.parse')}
+logr = {'parse': logging.getLogger(__name__ + '.parse')}
 for logger in logr.values():
     logger.setLevel(logging.WARNING)
 

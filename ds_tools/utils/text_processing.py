@@ -15,7 +15,7 @@ __all__ = [
     "Token", "RecursiveDescentParser", "UnexpectedTokenError", "strip_punctuation", "ParentheticalParser", "DASH_CHARS",
     "QMARKS", "ALL_WHITESPACE", "CHARS_BY_CATEGORY", "ListBasedRecursiveDescentParser"
 ]
-log = logging.getLogger("ds_tools.utils.text_processing")
+log = logging.getLogger(__name__)
 
 
 def _chars_by_category():

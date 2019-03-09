@@ -16,7 +16,7 @@ from .core import kwmerge
 from .output import to_str
 
 __all__ = ["exec_local", "exec_via_ssh", "tee", "psg", "ExternalProcessException"]
-log = logging.getLogger("ds_tools.shell")
+log = logging.getLogger(__name__)
 
 SSH = "/usr/bin/ssh"
 

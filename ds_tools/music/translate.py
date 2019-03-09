@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
+An attempt to use Google Translate programmatically
+
+:author: Doug Skrypa
 """
 
 import logging
@@ -15,7 +16,7 @@ from ds_tools.http import RestClient
 from ds_tools.utils.soup import soupify, fix_html_prettify
 
 __all__ = []
-log = logging.getLogger("ds_tools.music.translate")
+log = logging.getLogger(__name__)
 
 fix_html_prettify()
 

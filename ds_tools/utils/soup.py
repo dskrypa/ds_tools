@@ -89,7 +89,7 @@ from requests import Response
 
 __all__ = ["soupify", "fix_html_prettify", "HtmlSoup"]
 
-log = logging.getLogger("ds_tools.utils.soup")
+log = logging.getLogger(__name__)
 
 _regex_pattern_type = type(re.compile(""))
 

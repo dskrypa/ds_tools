@@ -10,7 +10,7 @@ __all__ = [
     "is_hangul", "contains_hangul", "is_japanese", "contains_japanese", "is_cjk", "contains_cjk",
     "is_any_cjk", "contains_any_cjk", "is_hangul_syllable", "decompose_syllables"
 ]
-log = logging.getLogger("ds_tools.utils.cjk")
+log = logging.getLogger(__name__)
 
 HANGUL_RANGES = [       # Source: https://en.wikipedia.org/wiki/Korean_language_and_computers#Hangul_in_Unicode
     (0xAC00, 0xD7A3),   # Hangul syllables
