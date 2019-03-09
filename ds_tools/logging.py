@@ -67,8 +67,11 @@ class LogManager:
             logging.getLogger().setLevel(logging.NOTSET)
             self.logger = logging.getLogger(name)
             self.logger.setLevel(logging.NOTSET)    #Default is 30 / WARNING
+            self.m_logger = logging.getLogger("__main__")
+            self.m_logger.setLevel(logging.NOTSET)  #Default is 30 / WARNING
             if replace_handlers:
                 self.logger.handlers = []
+                self.m_logger.handlers = []
             self.stdout_lvl = logging.INFO
             self.log_path = None
 
@@ -202,6 +205,7 @@ class LogManager:
         if name is not None:
             handler.name = name
         self.logger.addHandler(handler)
+        self.m_logger.addHandler(handler)
 
     def init_default_stream_logger(self, verbosity=0):
         """
