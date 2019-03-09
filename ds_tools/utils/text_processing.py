@@ -9,6 +9,7 @@ import re
 import string
 import sys
 from collections import OrderedDict, defaultdict
+from itertools import chain
 from unicodedata import category as unicode_cat
 
 __all__ = [
@@ -28,6 +29,7 @@ def _chars_by_category():
 ALL_WHITESPACE = "".join(re.findall(r"\s", "".join(chr(c) for c in range(sys.maxunicode + 1))))
 CHARS_BY_CATEGORY = _chars_by_category()    # Note: ALL_WHITESPACE is a superset of CHARS_BY_CATEGORY["Zs"]
 DASH_CHARS = CHARS_BY_CATEGORY["Pd"] + "~"
+# ALL_PUNCTUATION = "".join(chain.from_iterable(chars for cat, chars in CHARS_BY_CATEGORY.items() if cat.startswith("P")))
 PUNC_STRIP_TBL = str.maketrans({c: "" for c in string.punctuation})
 QMARKS = "\"“"
 
@@ -181,7 +183,7 @@ class ParentheticalParser(RecursiveDescentParser):
         ("RBRKT", "\]"),
         ("WS", "\s+"),
         ("DASH", "[{}]".format(DASH_CHARS)),
-        ("TEXT", "[^\"“()（）\[\]{}-]+".format(ALL_WHITESPACE)),
+        ("TEXT", "[^{}{}()（）\[\]{}]+".format(DASH_CHARS, QMARKS, ALL_WHITESPACE)),
     ])
 
     def __init__(self, selective_recombine=True):
@@ -191,10 +193,12 @@ class ParentheticalParser(RecursiveDescentParser):
         """
         parenthetical ::= ( { text | WS | ( parenthetical ) }* )
         """
+        # log.debug('Opening {}'.format(closer))
         text = ""
         nested = False
         while self.next_tok:
             if self._accept(closer):
+                # log.debug('[closing] Closing {}: {} [nested: {}]'.format(closer, text, nested))
                 return text, nested
             elif self._accept_any(self._opener2closer):
                 tok_type = self.tok.type
@@ -202,7 +206,7 @@ class ParentheticalParser(RecursiveDescentParser):
                     if self.tok.value not in self._remaining:
                         text += self.tok.value
                         continue
-                    elif text and not self.prev_tok.type == "WS" and self._peek("TEXT"):
+                    elif text and self.prev_tok.type != "WS" and self._peek("TEXT"):
                         text += self.tok.value
                         continue
                 text += self._nested_fmts[tok_type].format(self.parenthetical(self._opener2closer[tok_type])[0])
@@ -210,6 +214,7 @@ class ParentheticalParser(RecursiveDescentParser):
             else:
                 self._advance()
                 text += self.tok.value
+        # log.debug('[closing] Closing {}: {} [nested: {}]'.format(closer, text, nested))
         return text, nested
 
     def content(self):
