@@ -4,6 +4,7 @@
 
 import logging
 import re
+from collections import defaultdict
 from itertools import chain
 from urllib.parse import urlparse
 
@@ -12,6 +13,7 @@ from bs4.element import NavigableString
 from ....core import datetime_with_tz
 from ....utils import ParentheticalParser, DASH_CHARS, num_suffix
 from ...name_processing import *
+from ..utils import synonym_pattern
 from .exceptions import *
 from .common import *
 
@@ -365,15 +367,20 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
     if is_feature and parsed[0].endswith('-'):
         primary_artist = parsed.pop(0)[:-1].strip()
         primary_uri = links[0][1] if links and links[0][0] == primary_artist else None
-        log.debug('Primary artist={}, links[0]={}'.format(primary_artist, links[0] if links else None))
+        # log.debug('Primary artist={}, links[0]={}'.format(primary_artist, links[0] if links else None))
     else:
         primary_artist = artist.english_name
         primary_uri = artist._uri_path
+
     year = int(parsed.pop()) if len(parsed[-1]) == 4 and parsed[-1].isdigit() else None
+    year_was_last = year is not None
+    if year is None and len(parsed[-2]) == 4 and parsed[-2].isdigit():
+        year = int(parsed.pop(-2))
+
     track_info = None
     title = parsed.pop(0)
     if ele_text.startswith('[') and not title.startswith('[') and not any(']' in part for part in parsed):
-        title = '[{}]'.format(title)  # Special case for albums '[+ +]' / '[X X]'
+        title = '[{}]'.format(title)                    # Special case for albums '[+ +]' / '[X X]'
     elif not is_feature and not ele_text.startswith('"') and len(parsed) == 1 and '"' in ele_text:
         title = '{} "{}"'.format(title, parsed.pop(0))  # Special case for album name ending in quoted word
     elif 'singles' in base_type:
@@ -404,6 +411,35 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
         else:
             misc_info.append(item)
 
+    is_repackage = False
+    if misc_info:
+        for i, value in enumerate(misc_info):
+            if value.lower() == 'repackage':
+                is_repackage = True
+                misc_info.pop(i)
+                break
+
+    if misc_info:
+        if len(misc_info) > 1:
+            log.debug('Unexpected misc_info length for {} - {!r}: {}'.format(artist, ele_text, misc_info))
+        elif len(misc_info) == 1 and year_was_last:
+            value = misc_info[0]
+            lc_value = value.lower()
+            lc_misc_parts = lc_value.split()
+            misc_parts = value.split()
+            replaced_part = False
+            for i, lc_part in enumerate(lc_misc_parts):
+                if lc_part in LANG_ABBREV_MAP:
+                    misc_parts[i] = LANG_ABBREV_MAP[lc_part]
+                    replaced_part = True
+                    break
+
+            title = '{} ({})'.format(title, ' '.join(misc_parts) if replaced_part else value)
+            misc_info = []
+        else:
+            fmt = '{}: Unexpected misc content in discography entry {!r} => title={!r}, misc: {}'
+            log.debug(fmt.format(artist, ele_text, title, misc_info), extra={'color': 100})
+
     collab_names, collab_hrefs = set(), set()
     for collab in collabs:
         # log.debug('Collaborator for {}: {}'.format(title, collab))
@@ -431,8 +467,19 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
         link_text, link_href = non_artist_links[0]
         if title != link_text and not is_feature_or_collab:
             # if is_feature_or_collab: likely a feature / single with a link to a collaborator
-            if not any(title.replace('(', c).replace(')', c) == link_text for c in '-~'):
-                log.debug('Unexpected first link text {!r} for album {!r}'.format(link_text, title))
+            # otherwise, it may contain an indication of the version of the album
+            try:
+                synonym_pats = parse_discography_entry._synonym_pats
+            except AttributeError:
+                pat_sets = defaultdict(set)
+                for abbrev, canonical in LANG_ABBREV_MAP.items():
+                    pat_sets[canonical].add(abbrev)
+                synonym_pats = parse_discography_entry._synonym_pats = list(pat_sets.values()) + ['()[]-~']
+
+            # if not any(title.replace('(', c).replace(')', c) == link_text for c in '-~'):
+            if not (link_text.startswith(title) and any(c in link_text for c in '-~([')):
+                if not synonym_pattern(link_text, synonym_pats).match(title):
+                    log.debug('Unexpected first link text {!r} for album {!r}'.format(link_text, title))
 
         if link_href.startswith(('http://', 'https://')):
             url = urlparse(link_href)
@@ -472,7 +519,7 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
     info = {
         'title': title, 'primary_artist': (primary_artist, primary_uri), 'type': album_type, 'base_type': base_type,
         'year': year, 'collaborators': collabs, 'misc_info': misc_info, 'language': lang, 'uri_path': uri_path,
-        'wiki': wiki, 'is_feature_or_collab': is_feature_or_collab, 'is_ost': is_ost,
+        'wiki': wiki, 'is_feature_or_collab': is_feature_or_collab, 'is_ost': is_ost, 'is_repackage': is_repackage,
         'num': '{}{}'.format(type_idx, num_suffix(type_idx)), 'track_info': track_info
     }
     return info

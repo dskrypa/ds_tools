@@ -50,7 +50,7 @@ def parse_discography_page(uri_path, clean_soup, artist):
                             album_title = None
                         links = link_tuples(chain(title_ele.find_all('a'), album_ele.find_all('a')))
                         track = parse_track_info(
-                            1, title_ele.text, uri_path,
+                            1, title_ele.text, uri_path, links=links,
                             include={'links': links, 'album': album_title, 'year': int(row[1].text.strip())}
                         )
                         tracks.append(track)

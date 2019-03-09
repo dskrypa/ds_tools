@@ -10,12 +10,19 @@ from ...name_processing import *
 from .exceptions import *
 
 __all__ = [
-    'album_num_type', 'first_side_info_val', 'link_tuples', 'NUM2INT', 'parse_track_info', 'TrackInfoParser',
-    'unsurround'
+    'album_num_type', 'first_side_info_val', 'LANG_ABBREV_MAP', 'link_tuples', 'NUM2INT', 'parse_track_info',
+    'TrackInfoParser', 'unsurround'
 ]
 log = logging.getLogger(__name__)
 
 FEAT_ARTIST_INDICATORS = ('with', 'feat.', 'feat ', 'featuring')
+LANG_ABBREV_MAP = {
+    'chinese': 'Chinese', 'chn': 'Chinese',
+    'english': 'English', 'en': 'English', 'eng': 'English',
+    'japanese': 'Japanese', 'jp': 'Japanese', 'jap': 'Japanese',
+    'korean': 'Korean', 'kr': 'Korean', 'kor': 'Korean', 'ko': 'Korean',
+    'spanish': 'Spanish'
+}
 NUM2INT = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
 NUMS = {
     'first': '1st', 'second': '2nd', 'third': '3rd', 'fourth': '4th', 'fifth': '5th', 'sixth': '6th',
@@ -41,11 +48,15 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
         ('TIME', '\s*\d+:\d{2}'),
         ('WS', '\s+'),
         ('DASH', '[{}]'.format(DASH_CHARS)),
-        ("TEXT", '[^"“()（）\[\]{}-]+'.format(ALL_WHITESPACE)),
+        ("TEXT", "[^{}{}()（）\[\]{}]+".format(DASH_CHARS, QMARKS, ALL_WHITESPACE)),
     ])
 
     def __init__(self, selective_recombine=True):
         self._selective_recombine = selective_recombine
+
+    def parse(self, text, context=None):
+        self._context = context
+        return super().parse(text)
 
     def _lookahead_unpaired(self, closer):
         """Find the position of the next closer that does not have a preceding opener in the remaining tokens"""
@@ -136,7 +147,7 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
                     continue
                 elif tok_type == 'QUOTE':
                     if any((c not in self._remaining) and (self._full.count(c) % 2 == 1) for c in QMARKS):
-                        log.debug('Unpaired quote found in {!r}'.format(self._full))
+                        log.debug('Unpaired quote found in {!r} - {!r}'.format(self._context, self._full))
                         continue
                 elif tok_type == 'DASH':
                     # log.debug('Found DASH ({!r}={}); remaining: {!r}'.format(self.tok.value, ord(self.tok.value), self._remaining))
@@ -274,7 +285,7 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
     if isinstance(text, str):
         text = unsurround(text.strip(), *(c*2 for c in QMARKS))
         try:
-            parsed, time_part = TrackInfoParser().parse(text)
+            parsed, time_part = TrackInfoParser().parse(text, source)
         except Exception as e:
             raise TrackInfoParseException('Error parsing track from {}: {!r}'.format(source, text)) from e
     else:
@@ -291,25 +302,17 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
         track['length'] = time_part
 
     try:
-        lang_map = parse_track_info._lang_map
         version_types = parse_track_info._version_types
         misc_indicators = parse_track_info._misc_indicators
     except AttributeError:
-        lang_map = parse_track_info._lang_map = {
-            'chinese': 'Chinese', 'chn': 'Chinese',
-            'english': 'English', 'en': 'English', 'eng': 'English',
-            'japanese': 'Japanese', 'jp': 'Japanese', 'jap': 'Japanese',
-            'korean': 'Korean', 'kr': 'Korean', 'kor': 'Korean', 'ko': 'Korean',
-            'spanish': 'Spanish'
-        }
         version_types = parse_track_info._version_types = (
             'inst', 'acoustic', 'ballad', 'original', 'remix', 'r&b', 'band', 'karaoke', 'special', 'full length',
             'single', 'album', 'radio', 'limited', 'normal', 'english rap', 'rap', 'piano', 'acapella', 'edm', 'stage',
-            'live', 'rock'
+            'live', 'rock', 'director\'s'
         )
         misc_indicators = parse_track_info._misc_indicators = ( # spaces intentional
             'bonus', ' ost', ' mix', 'remix', 'special track', 'prod. by', 'produced by', 'director\'s', ' only',
-            'remaster', 'intro'
+            'remaster', 'intro', 'unit', 'hidden track'
         )
 
     name_parts, name_langs, collabs, misc, unknown = [], [], [], [], []
@@ -351,14 +354,20 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
                     track['version'] = value
             else:
                 try:
-                    track['language'] = lang_map[value.lower()]
+                    track['language'] = LANG_ABBREV_MAP[value.lower()]
                 except KeyError:
-                    log.debug('Found unexpected version text in {!r}: {!r}'.format(text, value), extra={'color': 100})
+                    log.debug('Found unexpected version text in {!r} - {!r}: {!r}'.format(source, text, value), extra={'color': 100})
                     if track.get('version'):
-                        if track['version'].lower() == value.lower():
+                        old_ver = track['version']
+                        if old_ver.lower() == value.lower():
                             continue
-                        log.warning('Multiple version entries found for {!r} from {!r}'.format(text, source), extra={'color': 14})
-                        misc.append('{} ver.'.format(value) if 'ver' in lc_part and 'ver' not in value else part)
+
+                        new_ver = '{} ver.'.format(value) if 'ver' in lc_part and 'ver' not in value else part
+                        if len(set(categorize_langs((old_ver, new_ver)))) == 1:
+                            warn_fmt = 'Multiple version entries found for {!r} from {!r}'
+                            log.warning(warn_fmt.format(text, source), extra={'color': 14})
+
+                        misc.append(new_ver)
                     else:
                         track['version'] = value
         elif lc_part.startswith(('inst', 'acoustic')):

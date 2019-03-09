@@ -165,6 +165,8 @@ class WikiEntityMeta(type):
                     category = "discography"
                 elif any(i in cat for i in ("disambiguation",) for cat in cats):
                     category = "disambiguation"
+                elif any(i in cat for i in ("agencies",) for cat in cats):
+                    category = "agency"
                 else:
                     log.debug("Unable to determine category for {}".format(url))
                     category = None
@@ -304,6 +306,10 @@ class WikiEntity(metaclass=WikiEntityMeta):
         else:
             log.debug("No sanitization configured for soup objects from {}".format(type(self._client).__name__))
         return content
+
+
+class WikiAgency(WikiEntity):
+    _category = "agency"
 
 
 class WikiDiscography(WikiEntity):
@@ -785,10 +791,26 @@ class WikiSongCollection(WikiEntity):
                             break
                     if found:
                         continue
+
                 fmt = "{}'s artist={!r} is ambiguous"
+                no_warn = False
                 if e.alternatives:
                     fmt += " - it could be one of: {}".format(" | ".join(e.alternatives))
-                log.warning(fmt.format(self, name), extra={"color": (11, 9)})
+                    if len(e.alternatives) == 1:
+                        alt_href = e.alternatives[0]
+                        try:
+                            alt_entity = WikiEntity(alt_href)
+                        except Exception:
+                            pass
+                        else:
+                            if not isinstance(alt_entity, WikiArtist):
+                                fmt = "{}'s artist={!r} has no page in {}; the disambiguation alternative was {}"
+                                log.debug(fmt.format(self, name, alt_entity._client.host, alt_entity))
+                                no_warn = True
+
+                if not no_warn:
+                    log.warning(fmt.format(self, name), extra={"color": (11, 9)})
+
                 artists.add(WikiArtist(href, name=name, no_fetch=True))
             except CodeBasedRestException as e:
                 if not isinstance(self._client, KpopWikiClient):
@@ -904,7 +926,7 @@ class WikiSongCollection(WikiEntity):
             if "single" in self.album_type.lower():
                 return {"tracks": [{"name_parts": (self.english_name, self.cjk_name)}]}
             else:
-                log.debug("No page content found for {} - returning empty track list".format(self), extra={"color": 8})
+                log.log(9, "No page content found for {} - returning empty track list".format(self), extra={"color": 8})
                 return {"tracks": []}
 
     @cached(True)
@@ -1232,8 +1254,3 @@ def find_ost(artist, title, disco_entry):
         return WikiSoundtrack(disco_entry["uri_path"], k_client, disco_entry=disco_entry, artist_context=artist)
 
     return None
-
-
-if __name__ == "__main__":
-    from ds_tools.logging import LogManager
-    lm = LogManager.create_default_logger(2, log_path=None, entry_fmt="%(asctime)s %(name)s %(lineno)d %(message)s")

@@ -2,6 +2,8 @@
 :author: Doug Skrypa
 """
 
+from collections import OrderedDict
+
 from ...core import cached_property
 from ...utils import soupify
 from ..exceptions import MusicException
@@ -61,7 +63,8 @@ class AmbiguousEntityException(MusicWikiException):
     def alternatives(self):
         soup = soupify(self.html)
         try:
-            return [soup.find('span', class_='alternative-suggestion').find('a').text]
+            a = soup.find('span', class_='alternative-suggestion').find('a')
+            return [a.get('href')[6:] if a.get('href') else a.text.strip()]
         except Exception as e:
             pass
 
