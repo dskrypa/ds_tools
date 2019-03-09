@@ -28,7 +28,7 @@ from ..core import cached_property, get_user_cache_dir, format_duration
 from ..http import CodeBasedRestException
 from ..utils import contains_hangul, ParentheticalParser
 from .patches import tag_repr
-from .wiki import Artist, split_name, CollaborationSong
+from .wiki.old import Artist, split_name, CollaborationSong
 
 __all__ = [
     "SongFile", "FakeMusicFile", "iter_music_files", "load_tags", "iter_music_albums",
@@ -36,7 +36,7 @@ __all__ = [
     "InvalidTagName", "TagValueException", "TagNotFound", "WikiMatchException", "AlbumDir", "iter_album_dirs",
     "RM_TAGS_MP4", "RM_TAGS_ID3"
 ]
-log = logging.getLogger("ds_tools.music.files")
+log = logging.getLogger(__name__)
 
 NON_MUSIC_EXTS = {"jpg", "jpeg", "png", "jfif", "part", "pdf", "zip"}
 PUNC_STRIP_TBL = str.maketrans({c: "" for c in string.punctuation})

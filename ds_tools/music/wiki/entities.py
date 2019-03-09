@@ -16,16 +16,18 @@ from urllib.parse import urlparse
 import bs4
 from fuzzywuzzy import fuzz, utils as fuzz_utils
 
-from ..caching import cached, DictAttrProperty, DictAttrPropertyMixin
-from ..core import cached_property
-from ..http import CodeBasedRestException
-from ..utils import soupify
+from ...caching import cached, DictAttrProperty, DictAttrPropertyMixin
+from ...core import cached_property
+from ...http import CodeBasedRestException
+from ...utils import soupify
+from ..name_processing import *
 from .exceptions import *
 from .utils import *
-from .wiki_rest import WikiClient, KpopWikiClient, WikipediaClient, DramaWikiClient
+from .rest import WikiClient, KpopWikiClient, WikipediaClient, DramaWikiClient
+from .parsing import *
 
 __all__ = []
-log = logging.getLogger("ds_tools.music.wiki_2")
+log = logging.getLogger(__name__)
 
 ALBUM_DATED_TYPES = ("Singles", )
 ALBUM_MULTI_DISK_TYPES = ("Albums", "Special Albums", "Japanese Albums", "Remake Albums", "Repackage Albums")
@@ -49,6 +51,15 @@ NUMS = {
     "seventh": "7th", "eighth": "8th", "ninth": "9th", "tenth": "10th", "debut": "1st"
 }
 STRIP_TBL = str.maketrans({c: "" for c in JUNK_CHARS})
+
+"""
+TODO:
+- Album type classification
+- Album numbering
+- Search for artist / soloist / soloist of group
+- Search for album / song from artist
+
+"""
 
 
 class WikiEntityMeta(type):
@@ -346,11 +357,13 @@ class WikiArtist(WikiEntity):
         self.english_name, self.cjk_name, self.stylized_name, self.aka = None, None, None, None
         if self._raw:
             try:
-                self.english_name, self.cjk_name, self.stylized_name, self.aka, self._info = parse_intro_name(self._clean_soup.text)
+                name_parts = parse_name(self._clean_soup.text)
             except Exception as e:
                 if strict:
                     raise e
                 log.warning("{} while processing intro for {}: {}".format(type(e).__name__, name or uri_path, e))
+            else:
+                self.english_name, self.cjk_name, self.stylized_name, self.aka, self._info = name_parts
         if name and not any(val for val in (self.english_name, self.cjk_name, self.stylized_name)):
             self.english_name, self.cjk_name = split_name(name)
 
@@ -376,7 +389,7 @@ class WikiArtist(WikiEntity):
     def known_artist_eng_names(cls):
         if not cls.__known_artists_loaded:
             cls.__known_artists_loaded = True
-            known_artists_path = Path(__file__).resolve().parents[2].joinpath("music/artist_dir_to_artist.json")
+            known_artists_path = Path(__file__).resolve().parents[3].joinpath("music/artist_dir_to_artist.json")
             with open(known_artists_path.as_posix(), "r", encoding="utf-8") as f:
                 artists = json.load(f)
             cls._known_artists.update((split_name(artist)[0].lower() for artist in artists.values()))
@@ -509,7 +522,7 @@ class WikiArtist(WikiEntity):
                         alb = cls(uri_path, client, disco_entry=entry, artist_context=self, no_fetch=True)
                         discography.append(alb)
                         # raise http_e
-            except MusicException as e:
+            except MusicWikiException as e:
                 fmt = "{}: Error processing discography entry for {!r} / {!r}: {}"
                 log.error(fmt.format(self, entry["uri_path"], entry["title"], e), extra={"color": 13})
                 raise e
@@ -698,6 +711,28 @@ class WikiSongCollection(WikiEntity):
         self.name = multi_lang_name(self.english_name, self.cjk_name)
         if self._info:
             self.name = " ".join(chain((self.name,), map("({})".format, self._info)))
+
+        if self._raw and isinstance(self._client, KpopWikiClient) and not disco_entry and not artist_context:
+            artist = None
+            try:
+                artist = self.artist
+            except AttributeError:
+                try:
+                    artist = self.artists[0]
+                except IndexError:
+                    pass
+            finally:
+                for key in ("artists", "_artists", "artist"):
+                    try:
+                        del self.__dict__[key]
+                    except KeyError:
+                        pass
+
+            if artist is not None:
+                for album in artist.discography:
+                    if album == self:
+                        self._discography_entry = album._discography_entry
+                        break
 
     def __lt__(self, other):
         comparison_type_check(self, other, WikiSongCollection, "<")

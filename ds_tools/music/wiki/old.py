@@ -16,16 +16,17 @@ from weakref import WeakValueDictionary
 import bs4
 from fuzzywuzzy import fuzz, utils as fuzz_utils
 
-from ..core import cached_property, datetime_with_tz, now, format_duration
-from ..utils import (
+from ...core import cached_property, datetime_with_tz, now, format_duration
+from ...utils import (
     soupify, is_hangul, contains_hangul, UnexpectedTokenError, ParentheticalParser, RecursiveDescentParser, QMARKS
 )
+from ..exceptions import TrackDiscoveryException
 from .exceptions import *
-from .utils import *
-from .wiki_rest import KpopWikiClient, WikipediaClient
+from .rest import KpopWikiClient, WikipediaClient
+from .parsing.common import unsurround
 
 __all__ = ["Artist", "Album", "Song", "CollaborationSong", "split_name"]
-log = logging.getLogger("ds_tools.music.wiki")
+log = logging.getLogger(__name__)
 
 JUNK_CHARS = string.whitespace + string.punctuation
 NUM_STRIP_TBL = str.maketrans({c: "" for c in "0123456789"})
@@ -34,7 +35,9 @@ NUMS = {
     "seventh": "7th", "eighth": "8th", "ninth": "9th", "tenth": "10th", "debut": "1st"
 }
 STRIP_TBL = str.maketrans({c: "" for c in JUNK_CHARS})
-
+PATH_SANITIZATION_DICT = {c: "" for c in "*;?<>\""}
+PATH_SANITIZATION_DICT.update({"/": "_", ":": "-", "\\": "_", "|": "-"})
+PATH_SANITIZATION_TABLE = str.maketrans(PATH_SANITIZATION_DICT)
 
 """
 TODO:
@@ -54,6 +57,18 @@ ver.)]> by changing...
    - title from '따끔 (Inst.)' to 'Um Oh Ah Yeh (음오아예) (Inst.)'
 
 """
+
+
+def sanitize(text):
+    return text.translate(PATH_SANITIZATION_TABLE)
+
+
+def _normalize_title(title):
+    try:
+        space_rx = _normalize_title._space_rx
+    except AttributeError:
+        space_rx = _normalize_title._space_rx = re.compile(r"\s+")
+    return space_rx.sub(" ", fuzz_utils.full_process(title, force_ascii=False))
 
 
 class WikiObject:

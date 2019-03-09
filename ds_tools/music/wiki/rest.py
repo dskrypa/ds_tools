@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 :author: Doug Skrypa
 """
@@ -10,24 +8,24 @@ from urllib.parse import urlparse
 
 import bs4
 
-from ..caching import cached, DBCache
-from ..http import CodeBasedRestException, RestClient
-from ..utils import soupify, ParentheticalParser
+from ...caching import cached, DBCache
+from ...http import CodeBasedRestException, RestClient
+from ...utils import soupify, ParentheticalParser
 from .exceptions import *
-from .utils import parse_aside, parse_infobox, parse_album_page, parse_wikipedia_album_page
+from .parsing import parse_aside, parse_infobox, parse_album_page, parse_wikipedia_album_page
 
-__all__ = ["KpopWikiClient", "WikipediaClient"]
-log = logging.getLogger("ds_tools.music.wiki_rest")
+__all__ = ['KpopWikiClient', 'WikipediaClient']
+log = logging.getLogger(__name__)
 
 AMBIGUOUS_URI_PATH_TEXT = [
-    "This article is a disambiguation page", "Wikipedia does not have an article with this exact name."
+    'This article is a disambiguation page', 'Wikipedia does not have an article with this exact name.'
 ]
 JUNK_CHARS = string.whitespace + string.punctuation
 STRIP_TBL = str.maketrans({c: "" for c in JUNK_CHARS})
 
 
 def http_req_cache_key(self, endpoint, *args, **kwargs):
-    params = kwargs.get("params")
+    params = kwargs.get('params')
     url = self.url_for(endpoint)
     if params:
         return url, tuple(sorted(params.items()))
@@ -48,12 +46,12 @@ class WikiClient(RestClient):
             cls.__instances[cls] = super().__new__(cls)
         return cls.__instances[cls]
 
-    def __init__(self, host=None, prefix="wiki", proto="https", **kwargs):
-        if not getattr(self, "_WikiClient__initialized", False):
+    def __init__(self, host=None, prefix='wiki', proto='https', **kwargs):
+        if not getattr(self, '_WikiClient__initialized', False):
             super().__init__(host or self._site, rate_limit=1, prefix=prefix, proto=proto, log_params=True, **kwargs)
-            self._resp_cache = DBCache("responses", cache_subdir="kpop_wiki")
-            self._name_cache = DBCache("names", cache_subdir="kpop_wiki")
-            self._bad_name_cache = DBCache("invalid_names", cache_subdir="kpop_wiki")
+            self._resp_cache = DBCache('responses', cache_subdir='kpop_wiki')
+            self._name_cache = DBCache('names', cache_subdir='kpop_wiki')
+            self._bad_name_cache = DBCache('invalid_names', cache_subdir='kpop_wiki')
             self.__initialized = True
 
     @classmethod
@@ -61,10 +59,10 @@ class WikiClient(RestClient):
         try:
             return cls._sites[site]()
         except KeyError as e:
-            raise ValueError("No WikiClient class exists for site {!r}".format(site)) from e
+            raise ValueError('No WikiClient class exists for site {!r}'.format(site)) from e
 
-    # @cached("_resp_cache", lock=True, key=lambda s, e, *a, **kw: s.url_for(e), exc=True, optional=True)
-    @cached("_resp_cache", lock=True, key=http_req_cache_key, exc=True, optional=True)
+    # @cached('_resp_cache', lock=True, key=lambda s, e, *a, **kw: s.url_for(e), exc=True, optional=True)
+    @cached('_resp_cache', lock=True, key=http_req_cache_key, exc=True, optional=True)
     def get(self, *args, **kwargs):
         return super().get(*args, **kwargs)
 
@@ -72,13 +70,13 @@ class WikiClient(RestClient):
     def get_page(self, endpoint, **kwargs):
         return self.get(endpoint, **kwargs).text
 
-    @cached("_name_cache", lock=True, key=lambda s, a: "{}: {}".format(s.host, a))
+    @cached('_name_cache', lock=True, key=lambda s, a: '{}: {}'.format(s.host, a))
     def normalize_name(self, name):
         name = name.strip()
         if not name:
-            raise ValueError("A valid name must be provided")
+            raise ValueError('A valid name must be provided')
         _name = name
-        name = name.replace(" ", "_")
+        name = name.replace(' ', '_')
         try:
             html = self.get_page(name)
         except CodeBasedRestException as e:
@@ -97,9 +95,9 @@ class WikiClient(RestClient):
                     except Exception as pe:
                         pass
                     else:
-                        log.log(9, "Checking {!r} for {!r}".format(name, _name))
+                        log.log(9, 'Checking {!r} for {!r}'.format(name, _name))
                         try:
-                            return self._name_cache["{}: {}".format(self.host, name)]
+                            return self._name_cache['{}: {}'.format(self.host, name)]
                         except KeyError as ke:
                             pass
 
@@ -125,16 +123,16 @@ class WikiClient(RestClient):
 
 
 class KpopWikiClient(WikiClient):
-    _site = "kpop.fandom.com"
+    _site = 'kpop.fandom.com'
 
     @cached(True)
     def get_entity_base(self, uri_path, obj_type=None):
         raw = self.get_page(uri_path)
-        # if "This article is a disambiguation page" in raw:
+        # if 'This article is a disambiguation page' in raw:
         #     raise AmbiguousEntityException(uri_path, raw, obj_type)
-        cat_ul = soupify(raw, parse_only=bs4.SoupStrainer("ul", class_="categories"))
-        # cat_ul = soupify(raw).find("ul", class_="categories")
-        return raw, {li.text.lower() for li in cat_ul.find_all("li")} if cat_ul else set()
+        cat_ul = soupify(raw, parse_only=bs4.SoupStrainer('ul', class_='categories'))
+        # cat_ul = soupify(raw).find('ul', class_='categories')
+        return raw, {li.text.lower() for li in cat_ul.find_all('li')} if cat_ul else set()
 
     def parse_side_info(self, soup):
         return parse_aside(soup)
@@ -144,17 +142,17 @@ class KpopWikiClient(WikiClient):
 
 
 class WikipediaClient(WikiClient):
-    _site = "en.wikipedia.org"
+    _site = 'en.wikipedia.org'
 
     @cached(True)
     def get_entity_base(self, uri_path, obj_type=None):
         raw = self.get_page(uri_path)
-        if "Wikipedia does not have an article with this exact name." in raw:
+        if 'Wikipedia does not have an article with this exact name.' in raw:
             raise AmbiguousEntityException(uri_path, raw, obj_type)
-        cat_links = soupify(raw, parse_only=bs4.SoupStrainer("div", id="mw-normal-catlinks"))
-        # cat_links = soupify(raw).find("div", id="mw-normal-catlinks")
-        cat_ul = cat_links.find("ul") if cat_links else None
-        return raw, {li.text.lower() for li in cat_ul.find_all("li")} if cat_ul else set()
+        cat_links = soupify(raw, parse_only=bs4.SoupStrainer('div', id='mw-normal-catlinks'))
+        # cat_links = soupify(raw).find('div', id='mw-normal-catlinks')
+        cat_ul = cat_links.find('ul') if cat_links else None
+        return raw, {li.text.lower() for li in cat_ul.find_all('li')} if cat_ul else set()
 
     def parse_side_info(self, soup):
         return parse_infobox(soup)
@@ -164,60 +162,60 @@ class WikipediaClient(WikiClient):
 
     def title_search(self, title):
         #https://en.wikipedia.org/w/index.php?search=My+Lovely+Girl+OST&title=Special%3ASearch&fulltext=Search
-        params = {"search": title, "title": "Special:Search", "fulltext": "Search"}
+        params = {'search': title, 'title': 'Special:Search', 'fulltext': 'Search'}
         try:
-            resp = self.get("index.php", params=params)#, use_cached=False)
+            resp = self.get('index.php', params=params)#, use_cached=False)
         except CodeBasedRestException as e:
-            log.debug("Error searching for title {!r}: {}".format(title, e))
+            log.debug('Error searching for title {!r}: {}'.format(title, e))
             raise e
 
         clean_title = title.translate(STRIP_TBL).lower()
-        soup = soupify(resp.text, parse_only=bs4.SoupStrainer("ul", class_="mw-search-results"))
-        for a in soup.find_all("a"):
+        soup = soupify(resp.text, parse_only=bs4.SoupStrainer('ul', class_='mw-search-results'))
+        for a in soup.find_all('a'):
             if a.text.translate(STRIP_TBL).lower() == clean_title:
-                href = a.get("href") or ""
-                if href and "redlink=1" not in href:
-                    return href[6:] if href.startswith("/wiki/") else href
+                href = a.get('href') or ""
+                if href and 'redlink=1' not in href:
+                    return href[6:] if href.startswith('/wiki/') else href
         return None
 
 
 class DramaWikiClient(WikiClient):
-    _site = "wiki.d-addicts.com"
+    _site = 'wiki.d-addicts.com'
 
     def __init__(self):
-        if not getattr(self, "_DramaWikiClient__initialized", False):
+        if not getattr(self, '_DramaWikiClient__initialized', False):
             super().__init__(prefix="")
             self.__initialized = True
 
     @cached(True)
     def get_entity_base(self, uri_path, obj_type=None):
         raw = self.get_page(uri_path)
-        cat_links = soupify(raw, parse_only=bs4.SoupStrainer("div", id="mw-normal-catlinks"))
-        # cat_links = soupify(raw).find("div", id="mw-normal-catlinks")
-        cat_ul = cat_links.find("ul") if cat_links else None
-        return raw, {li.text.lower() for li in cat_ul.find_all("li")} if cat_ul else set()
+        cat_links = soupify(raw, parse_only=bs4.SoupStrainer('div', id='mw-normal-catlinks'))
+        # cat_links = soupify(raw).find('div', id='mw-normal-catlinks')
+        cat_ul = cat_links.find('ul') if cat_links else None
+        return raw, {li.text.lower() for li in cat_ul.find_all('li')} if cat_ul else set()
 
     def title_search(self, title):
         try:
-            resp = self.get("index.php", params={"search": title, "title": "Special:Search"})#, use_cached=False)
+            resp = self.get('index.php', params={'search': title, 'title': 'Special:Search'})#, use_cached=False)
         except CodeBasedRestException as e:
-            log.debug("Error searching for OST {!r}: {}".format(title, e))
+            log.debug('Error searching for OST {!r}: {}'.format(title, e))
             raise e
 
         url = urlparse(resp.url)
-        if url.path != "/index.php":    # If there's an exact match, it redirects to that page
+        if url.path != '/index.php':    # If there's an exact match, it redirects to that page
             return url.path[1:]
 
         clean_title = title.translate(STRIP_TBL).lower()
-        soup = soupify(resp.text, parse_only=bs4.SoupStrainer(class_="searchresults"))
-        # for a in soup.find(class_="searchresults").find_all("a"):
-        for a in soup.find_all("a"):
+        soup = soupify(resp.text, parse_only=bs4.SoupStrainer(class_='searchresults'))
+        # for a in soup.find(class_='searchresults').find_all('a'):
+        for a in soup.find_all('a'):
             if a.text.translate(STRIP_TBL).lower() == clean_title:
-                href = a.get("href") or ""
-                if href and "redlink=1" not in href:
+                href = a.get('href') or ""
+                if href and 'redlink=1' not in href:
                     return href
         return None
 
-    @cached("_name_cache", lock=True, key=lambda s, a: "{}: {}".format(s.host, a))
+    @cached('_name_cache', lock=True, key=lambda s, a: '{}: {}'.format(s.host, a))
     def normalize_name(self, name):
         return self.title_search(name)
