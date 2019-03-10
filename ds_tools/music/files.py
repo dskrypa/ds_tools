@@ -26,7 +26,8 @@ from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
 from ..caching import cached, DBCache, CacheKey, ClearableCachedPropertyMixin
 from ..core import cached_property, get_user_cache_dir, format_duration
 from ..http import CodeBasedRestException
-from ..utils import contains_hangul, ParentheticalParser
+from ..unicode import contains_hangul
+from ..utils import ParentheticalParser
 from .patches import tag_repr
 from .wiki.old import Artist, split_name, CollaborationSong
 

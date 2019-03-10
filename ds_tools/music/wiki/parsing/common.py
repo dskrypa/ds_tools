@@ -19,7 +19,7 @@ FEAT_ARTIST_INDICATORS = ('with', 'feat.', 'feat ', 'featuring')
 LANG_ABBREV_MAP = {
     'chinese': 'Chinese', 'chn': 'Chinese',
     'english': 'English', 'en': 'English', 'eng': 'English',
-    'japanese': 'Japanese', 'jp': 'Japanese', 'jap': 'Japanese',
+    'japanese': 'Japanese', 'jp': 'Japanese', 'jap': 'Japanese', 'jpn': 'Japanese',
     'korean': 'Korean', 'kr': 'Korean', 'kor': 'Korean', 'ko': 'Korean',
     'spanish': 'Spanish'
 }

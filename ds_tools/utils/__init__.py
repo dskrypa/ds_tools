@@ -1,5 +1,4 @@
 
-from .cjk import *
 from .misc import *
 from .soup import *
 from .text_processing import *

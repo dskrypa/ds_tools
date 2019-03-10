@@ -7,7 +7,8 @@ import re
 import types
 from enum import Enum
 
-from ..utils import is_any_cjk, ParentheticalParser, contains_any_cjk, is_hangul
+from ..unicode import is_any_cjk, contains_any_cjk, is_hangul
+from ..utils import ParentheticalParser
 
 __all__ = [
     'categorize_lang', 'categorize_langs', 'combine_name_parts', 'eng_cjk_sort', 'has_parens', 'LangCat', 'parse_name',

@@ -17,9 +17,8 @@ import bs4
 from fuzzywuzzy import fuzz, utils as fuzz_utils
 
 from ...core import cached_property, datetime_with_tz, now, format_duration
-from ...utils import (
-    soupify, is_hangul, contains_hangul, UnexpectedTokenError, ParentheticalParser, RecursiveDescentParser, QMARKS
-)
+from ...unicode import is_hangul, contains_hangul
+from ...utils import soupify, UnexpectedTokenError, ParentheticalParser, RecursiveDescentParser, QMARKS
 from ..exceptions import TrackDiscoveryException
 from .exceptions import *
 from .rest import KpopWikiClient, WikipediaClient

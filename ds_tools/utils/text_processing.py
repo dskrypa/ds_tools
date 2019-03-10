@@ -9,7 +9,7 @@ import re
 import string
 import sys
 from collections import OrderedDict, defaultdict
-from itertools import chain
+# from itertools import chain
 from unicodedata import category as unicode_cat
 
 __all__ = [
@@ -26,6 +26,7 @@ def _chars_by_category():
     return {cat: "".join(chars) for cat, chars in chars_by_cat.items()}
 
 
+# ALL_NUMS = "".join(re.findall(r"\d", "".join(chr(c) for c in range(sys.maxunicode + 1))))
 ALL_WHITESPACE = "".join(re.findall(r"\s", "".join(chr(c) for c in range(sys.maxunicode + 1))))
 CHARS_BY_CATEGORY = _chars_by_category()    # Note: ALL_WHITESPACE is a superset of CHARS_BY_CATEGORY["Zs"]
 DASH_CHARS = CHARS_BY_CATEGORY["Pd"] + "~"

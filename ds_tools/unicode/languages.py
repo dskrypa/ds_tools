@@ -1,10 +1,14 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+"""
+Tools for identifying the languages used in text.
+
+:author: Doug Skrypa
+"""
 
 import logging
 import re
 import string
 import unicodedata
+from enum import Enum
 
 __all__ = [
     "is_hangul", "contains_hangul", "is_japanese", "contains_japanese", "is_cjk", "contains_cjk",
@@ -12,6 +16,31 @@ __all__ = [
 ]
 log = logging.getLogger(__name__)
 
+LATIN_RANGES = [        # Source: https://en.wikipedia.org/wiki/List_of_Unicode_characters#Latin_script
+    (0x0000, 0x007F),   # Basic Latin
+    (0x0080, 0x00FF),   # Latin-1 Supplement
+    (0x0100, 0x017F),   # Latin Extended-A
+    (0x0180, 0x024F),   # Latin Extended-B
+    (0x1E00, 0x1EFF),   # Latin Extended Additional
+    (0x2C60, 0x2C7F),   # Latin Extended-C
+    (0xA720, 0xA7FF),   # Latin Extended-D
+    (0xAB30, 0xAB6F),   # Latin Extended-E
+]
+GREEK_COPTIC_RANGES = [
+    (0x0370, 0x03FF),   # Greek and Coptic
+    (0x2C80, 0x2CFF),   # Coptic
+    (0x102E0, 0x102FF), # Coptic Epact Numbers
+    (0x1F00, 0x1FFF),   # Greek Extended
+]
+CYRILLIC_RANGES = [     # Source: https://en.wikipedia.org/wiki/Cyrillic_script_in_Unicode
+    (0x0400, 0x04FF),   # Cyrillic
+    (0x0500, 0x052F),   # Cyrillic Supplement
+    (0x2DE0, 0x2DFF),   # Cyrillic Extended-A
+    (0xA640, 0xA69F),   # Cyrillic Extended-B
+    (0x1C80, 0x1C8F),   # Cyrillic Extended-C
+    (0x1D2B, 0x1D78),   # Phonetic Extensions
+    (0xFE2E, 0xFE2F),   # Combining Half Marks
+]
 HANGUL_RANGES = [       # Source: https://en.wikipedia.org/wiki/Korean_language_and_computers#Hangul_in_Unicode
     (0xAC00, 0xD7A3),   # Hangul syllables
     (0x1100, 0x11FF),   # Hangul Jamo
@@ -60,7 +89,7 @@ THAI_RANGES = [         # Source: https://en.wikipedia.org/wiki/Thai_alphabet#Un
     (0x0E00, 0x0E7F)    # Thai
 ]
 JAPANESE_RANGES = KATAKANA_RANGES + HIRAGANA_RANGES
-ANY_CJK_RANGES = HANGUL_RANGES + JAPANESE_RANGES + CJK_RANGES + THAI_RANGES
+NON_ENG_RANGES = HANGUL_RANGES + JAPANESE_RANGES + CJK_RANGES + THAI_RANGES
 # https://en.wikipedia.org/wiki/Hangul_Compatibility_Jamo
 JAMO_CONSONANTS_START = 0x3130
 JAMO_VOWELS_START = 0x314F
@@ -73,6 +102,52 @@ SYLLABLES_START, SYLLABLES_END = HANGUL_RANGES[0]
 
 NUM_STRIP_TBL = str.maketrans({c: "" for c in "0123456789"})
 PUNC_STRIP_TBL = str.maketrans({c: "" for c in string.punctuation})
+
+
+class LangCat(Enum):
+    UNK = -1
+    NUL = 0
+    MIX = 1
+    ENG = 2
+    HAN = 3
+    JPN = 4
+    CJK = 5
+    THAI = 6
+    GRK = 7
+    CYR = 8
+
+    @classmethod
+    def _ranges(cls):
+        yield cls.ENG, LATIN_RANGES
+        yield cls.HAN, HANGUL_RANGES
+        yield cls.JPN, JAPANESE_RANGES
+        yield cls.THAI, THAI_RANGES
+        yield cls.CJK, CJK_RANGES
+        yield cls.GRK, GREEK_COPTIC_RANGES
+        yield cls.CYR, CYRILLIC_RANGES
+
+    @classmethod
+    def categorize(cls, text, detailed=False):
+        if len(text) == 1:
+            dec = ord(text)
+            for cat, ranges in cls._ranges():
+                if any(a <= dec <= b for a, b in ranges):
+                    return cat
+            return cls.UNK
+        elif len(text) == 0:
+            return cls.NUL
+        else:
+            text = re.sub("[\d\s]+", "", text).translate(PUNC_STRIP_TBL)
+            if len(text) == 0:
+                return cls.NUL
+            elif detailed:
+                return set(cls.categorize(c) for c in text)
+            else:
+                cat = cls.categorize(text[0])
+                for c in text[1:]:
+                    if cls.categorize(c) != cat:
+                        return cls.MIX
+                return cat
 
 
 def is_hangul(a_str):
@@ -140,7 +215,7 @@ def is_any_cjk(a_str, strip_punc=True, strip_nums=True):
         return all(is_any_cjk(c) for c in a_str)
 
     as_dec = ord(a_str)
-    return any(a <= as_dec <= b for a, b in ANY_CJK_RANGES)
+    return any(a <= as_dec <= b for a, b in NON_ENG_RANGES)
 
 
 def is_hangul_syllable(char):
