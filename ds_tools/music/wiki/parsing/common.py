@@ -5,6 +5,7 @@
 import logging
 from collections import OrderedDict
 
+from ....unicode import LangCat
 from ....utils import DASH_CHARS, QMARKS, ListBasedRecursiveDescentParser, ALL_WHITESPACE, UnexpectedTokenError
 from ...name_processing import *
 from .exceptions import *
@@ -325,7 +326,7 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
         if n == 0:
             # log.debug('{!r}: Adding to name parts: {!r}'.format(text, part))
             name_parts.append(part)
-            name_langs.append(categorize_lang(part))
+            name_langs.append(LangCat.categorize(part))
             continue
         elif not part:
             continue
@@ -386,7 +387,7 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
             elif len(set(name_langs)) < 2:
                 # log.debug('{!r}: Adding to name parts: {!r}'.format(text, part))
                 name_parts.append(part)
-                name_langs.append(categorize_lang(part))
+                name_langs.append(LangCat.categorize(part))
             else:
                 log.debug('Assuming {!r} from {!r} > {!r} is misc [no link matches]'.format(part, source, text), extra={'color': 70})
                 misc.append(part)
@@ -394,7 +395,7 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
             if len(set(name_langs)) < 2:
                 # log.debug('{!r}: Adding to name parts: {!r}'.format(text, part))
                 name_parts.append(part)
-                name_langs.append(categorize_lang(part))
+                name_langs.append(LangCat.categorize(part))
             else:
                 log.debug('Assuming {!r} from {!r} > {!r} is misc'.format(part, source, text), extra={'color': 70})
                 misc.append(part)

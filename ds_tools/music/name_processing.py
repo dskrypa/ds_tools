@@ -11,8 +11,7 @@ from ..unicode import is_any_cjk, contains_any_cjk, is_hangul, LangCat
 from ..utils import ParentheticalParser
 
 __all__ = [
-    'categorize_lang', 'categorize_langs', 'combine_name_parts', 'eng_cjk_sort', 'has_parens', 'parse_name',
-    'split_name', 'str2list'
+    'categorize_langs', 'combine_name_parts', 'eng_cjk_sort', 'has_parens', 'parse_name', 'split_name', 'str2list'
 ]
 log = logging.getLogger(__name__)
 
@@ -198,12 +197,8 @@ def has_parens(text):
     return any(c in text for c in '()[]')
 
 
-def categorize_lang(s):
-    return LangCat.categorize(s)
-
-
 def categorize_langs(strs):
-    return tuple(categorize_lang(s) for s in strs)
+    return tuple(LangCat.categorize(s) for s in strs)
 
 
 def str2list(text, pat='^(?:with|feat\.?|as) | and |,|;|&| feat\.? | featuring | with '):
