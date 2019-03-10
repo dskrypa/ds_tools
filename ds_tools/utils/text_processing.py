@@ -9,12 +9,12 @@ import re
 import string
 import sys
 from collections import OrderedDict, defaultdict
-# from itertools import chain
+from itertools import chain
 from unicodedata import category as unicode_cat
 
 __all__ = [
     "Token", "RecursiveDescentParser", "UnexpectedTokenError", "strip_punctuation", "ParentheticalParser", "DASH_CHARS",
-    "QMARKS", "ALL_WHITESPACE", "CHARS_BY_CATEGORY", "ListBasedRecursiveDescentParser"
+    "QMARKS", "ALL_WHITESPACE", "CHARS_BY_CATEGORY", "ListBasedRecursiveDescentParser", "ALL_PUNCTUATION", "ALL_SYMBOLS"
 ]
 log = logging.getLogger(__name__)
 
@@ -30,7 +30,8 @@ def _chars_by_category():
 ALL_WHITESPACE = "".join(re.findall(r"\s", "".join(chr(c) for c in range(sys.maxunicode + 1))))
 CHARS_BY_CATEGORY = _chars_by_category()    # Note: ALL_WHITESPACE is a superset of CHARS_BY_CATEGORY["Zs"]
 DASH_CHARS = CHARS_BY_CATEGORY["Pd"] + "~"
-# ALL_PUNCTUATION = "".join(chain.from_iterable(chars for cat, chars in CHARS_BY_CATEGORY.items() if cat.startswith("P")))
+ALL_PUNCTUATION = "".join(chain.from_iterable(chars for cat, chars in CHARS_BY_CATEGORY.items() if cat.startswith("P")))
+ALL_SYMBOLS = "".join(chain.from_iterable(chars for cat, chars in CHARS_BY_CATEGORY.items() if cat.startswith("S")))
 PUNC_STRIP_TBL = str.maketrans({c: "" for c in string.punctuation})
 QMARKS = "\"“"
 

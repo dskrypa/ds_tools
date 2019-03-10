@@ -7,11 +7,11 @@ import re
 import types
 from enum import Enum
 
-from ..unicode import is_any_cjk, contains_any_cjk, is_hangul
+from ..unicode import is_any_cjk, contains_any_cjk, is_hangul, LangCat
 from ..utils import ParentheticalParser
 
 __all__ = [
-    'categorize_lang', 'categorize_langs', 'combine_name_parts', 'eng_cjk_sort', 'has_parens', 'LangCat', 'parse_name',
+    'categorize_lang', 'categorize_langs', 'combine_name_parts', 'eng_cjk_sort', 'has_parens', 'parse_name',
     'split_name', 'str2list'
 ]
 log = logging.getLogger(__name__)
@@ -179,14 +179,17 @@ def eng_cjk_sort(strs, langs=None, permissive=False):
     if not isinstance(strs, str) and len(strs) == 1:
         langs = langs[0]
         strs = strs[0]
-    if langs == (LangCat.ENG, LangCat.CJK) or (permissive and langs == (LangCat.ENG, LangCat.MIX)):
-        return strs
-    elif langs == (LangCat.CJK, LangCat.ENG) or (permissive and langs == (LangCat.MIX, LangCat.ENG)):
-        return reversed(strs)
+
+    if not isinstance(langs, LangCat) and len(langs) == 2:
+        a, b = langs
+        if a in (LangCat.ENG, LangCat.NUL) and (b in LangCat.non_eng_cats or permissive and b == LangCat.MIX):
+            return strs
+        elif b in (LangCat.ENG, LangCat.NUL) and (a in LangCat.non_eng_cats or permissive and a == LangCat.MIX):
+            return reversed(strs)
     elif isinstance(strs, str):
-        if langs == LangCat.ENG:
+        if langs in (LangCat.ENG, LangCat.NUL):
             return strs, ''
-        elif langs == LangCat.CJK:
+        elif langs in LangCat.non_eng_cats:
             return '', strs
     raise ValueError('Unexpected values: strs={!r}, langs={!r}'.format(strs, langs))
 
@@ -195,14 +198,8 @@ def has_parens(text):
     return any(c in text for c in '()[]')
 
 
-class LangCat(Enum):
-    ENG = 1
-    CJK = 2
-    MIX = 3
-
-
 def categorize_lang(s):
-    return LangCat.CJK if is_any_cjk(s) else LangCat.MIX if contains_any_cjk(s) else LangCat.ENG
+    return LangCat.categorize(s)
 
 
 def categorize_langs(strs):

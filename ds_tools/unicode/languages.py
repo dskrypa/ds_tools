@@ -10,9 +10,12 @@ import string
 import unicodedata
 from enum import Enum
 
+from ..core import classproperty
+from ..utils import ALL_PUNCTUATION, ALL_SYMBOLS
+
 __all__ = [
     "is_hangul", "contains_hangul", "is_japanese", "contains_japanese", "is_cjk", "contains_cjk",
-    "is_any_cjk", "contains_any_cjk", "is_hangul_syllable", "decompose_syllables"
+    "is_any_cjk", "contains_any_cjk", "is_hangul_syllable", "decompose_syllables", "LangCat"
 ]
 log = logging.getLogger(__name__)
 
@@ -102,6 +105,7 @@ SYLLABLES_START, SYLLABLES_END = HANGUL_RANGES[0]
 
 NUM_STRIP_TBL = str.maketrans({c: "" for c in "0123456789"})
 PUNC_STRIP_TBL = str.maketrans({c: "" for c in string.punctuation})
+PUNC_SYMBOL_STRIP_TBL = str.maketrans({c: "" for c in ALL_PUNCTUATION + ALL_SYMBOLS})
 
 
 class LangCat(Enum):
@@ -115,6 +119,10 @@ class LangCat(Enum):
     THAI = 6
     GRK = 7
     CYR = 8
+
+    @classproperty
+    def non_eng_cats(self):
+        return LangCat.UNK, LangCat.HAN, LangCat.JPN, LangCat.CJK, LangCat.THAI, LangCat.GRK, LangCat.CYR
 
     @classmethod
     def _ranges(cls):
@@ -137,7 +145,7 @@ class LangCat(Enum):
         elif len(text) == 0:
             return cls.NUL
         else:
-            text = re.sub("[\d\s]+", "", text).translate(PUNC_STRIP_TBL)
+            text = _strip_non_word_chars(text)
             if len(text) == 0:
                 return cls.NUL
             elif detailed:
@@ -151,16 +159,41 @@ class LangCat(Enum):
 
     @classmethod
     def contains_any(cls, text, cat):
+        """
+        :param str text: Text to examine
+        :param LangCat cat: A :class:`LangCat` language category
+        :return bool: True if the given text contains a character with the given language category, False otherwise
+        """
         if cat == cls.MIX:
             return cls.categorize(text) == cls.MIX
         elif len(text) > 1:
-            text = re.sub("[\d\s]+", "", text).translate(PUNC_STRIP_TBL)
+            text = _strip_non_word_chars(text)
         if len(text) == 0:
             return cat == cls.NUL
         for c in text:
             if cls.categorize(c) == cat:
                 return True
         return False
+
+    @classmethod
+    def contains_any_not(cls, text, cat):
+        if cat == cls.MIX:
+            raise ValueError("{!r} is not supported for {}.contains_any_not()".format(cat, cls.__name__))
+        elif len(text) > 1:
+            text = _strip_non_word_chars(text)
+        if len(text) == 0:
+            return cat != cls.NUL
+        for c in text:
+            if cls.categorize(c) != cat:
+                return True
+        return False
+
+
+def _strip_non_word_chars(text):
+    # original = text
+    text = re.sub("[\d\s]+", "", text).translate(PUNC_SYMBOL_STRIP_TBL)
+    # log.debug("_strip_non_word_chars({!r}) => {!r}".format(original, text))
+    return text
 
 
 def is_hangul(a_str):

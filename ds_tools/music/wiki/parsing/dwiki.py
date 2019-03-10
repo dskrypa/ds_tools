@@ -5,6 +5,7 @@
 import logging
 
 from ....core import datetime_with_tz
+from ....unicode import LangCat
 from ...name_processing import *
 from .exceptions import *
 from .common import *
@@ -39,7 +40,7 @@ def parse_ost_page(uri_path, clean_soup):
             tds = tr.find_all('td')
             if tds:
                 name_parts = list(tds[1].stripped_strings)
-                if len(name_parts) == 1 and categorize_langs(name_parts)[0] == LangCat.MIX:
+                if len(name_parts) == 1 and LangCat.categorize(name_parts[0]) == LangCat.MIX:
                     name_parts = split_name(name_parts[0], unused=True)
                 elif all(part.lower().endswith('(inst.)') for part in name_parts):
                     name_parts = [part[:-7].strip() for part in name_parts]
@@ -86,7 +87,12 @@ def parse_drama_wiki_info_list(uri_path, info_ul):
                 try:
                     soloist, of_group = artist.split(' of ')
                 except Exception as e:
-                    value.append({'artist': split_name(artist)})
+                    try:
+                        value.append({'artist': split_name(artist)})
+                    except ValueError as e1:
+                        log.error('Error splitting {!r} in {}'.format(artist, uri_path))
+                        raise e1
+
                 else:
                     value.append({'artist': split_name(soloist), 'of_group': split_name(of_group)})
         elif key == 'also known as':

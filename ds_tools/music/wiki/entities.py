@@ -19,6 +19,7 @@ from fuzzywuzzy import fuzz, utils as fuzz_utils
 from ...caching import cached, DictAttrProperty, DictAttrPropertyMixin
 from ...core import cached_property
 from ...http import CodeBasedRestException
+from ...unicode import LangCat
 from ...utils import soupify
 from ..name_processing import *
 from .exceptions import *
@@ -117,6 +118,20 @@ class WikiEntityMeta(type):
 
                     if client is None:
                         client = KpopWikiClient()
+
+                    if isinstance(client, KpopWikiClient) and LangCat.contains_any_not(name, LangCat.ENG):
+                        try:
+                            link_text, link_href = client.search(name)[0]
+                        except Exception:
+                            log.debug("Found no search results from {} for {!r}".format(client.host, name))
+                        else:
+                            entity = cls(link_href, client=client)
+                            if entity.matches(name):
+                                return entity
+                            else:
+                                fmt = "Found {} by searching {} for {!r}, but it was not a match"
+                                log.debug(fmt.format(entity, client.host, name))
+
                     uri_path = client.normalize_name(name)
                 elif name and uri_path and uri_path.startswith("//"):   # Alternate subdomain of fandom.com
                     uri_path = None

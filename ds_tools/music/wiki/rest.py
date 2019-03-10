@@ -140,6 +140,26 @@ class KpopWikiClient(WikiClient):
     def parse_album_page(self, uri_path, clean_soup, side_info):
         return parse_album_page(uri_path, clean_soup, side_info)
 
+    def search(self, query):
+        try:
+            resp = self.get('Special:Search', params={'query': query})
+        except CodeBasedRestException as e:
+            log.debug('Error retrieving results for query {!r}: {}'.format(query, e))
+            raise e
+
+        results = []
+        soup = soupify(resp.text, parse_only=bs4.SoupStrainer('ul', class_='Results'))
+        for li in soup.find_all('li', class_='result'):
+            a = li.find('a', class_='result-link')
+            if a:
+                href = a.get('href')
+                if href:
+                    url = urlparse(href)
+                    uri_path = url.path
+                    uri_path = uri_path[6:] if uri_path.startswith('/wiki/') else uri_path
+                    results.append((a.text, uri_path))
+        return results
+
 
 class WikipediaClient(WikiClient):
     _site = 'en.wikipedia.org'
