@@ -149,6 +149,19 @@ class LangCat(Enum):
                         return cls.MIX
                 return cat
 
+    @classmethod
+    def contains_any(cls, text, cat):
+        if cat == cls.MIX:
+            return cls.categorize(text) == cls.MIX
+        elif len(text) > 1:
+            text = re.sub("[\d\s]+", "", text).translate(PUNC_STRIP_TBL)
+        if len(text) == 0:
+            return cat == cls.NUL
+        for c in text:
+            if cls.categorize(c) == cat:
+                return True
+        return False
+
 
 def is_hangul(a_str):
     """
