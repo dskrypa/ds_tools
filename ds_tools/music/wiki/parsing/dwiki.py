@@ -6,7 +6,7 @@ import logging
 
 from ....core import datetime_with_tz
 from ....unicode import LangCat
-from ...name_processing import *
+from ...name_processing import eng_cjk_sort, split_name, str2list
 from .exceptions import *
 from .common import *
 

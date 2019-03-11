@@ -12,10 +12,12 @@ from bs4.element import NavigableString
 
 from ....core import datetime_with_tz
 from ....utils import ParentheticalParser, DASH_CHARS, num_suffix
-from ...name_processing import *
+from ...name_processing import has_parens, parse_name, split_name, str2list
 from ..utils import synonym_pattern
-from .exceptions import *
-from .common import *
+from .common import (
+    album_num_type, first_side_info_val, LANG_ABBREV_MAP, link_tuples, NUM2INT, parse_track_info, unsurround
+)
+from .exceptions import NoTrackListException, WikiEntityParseException
 
 __all__ = ['parse_album_page', 'parse_album_tracks', 'parse_aside', 'parse_discography_entry']
 log = logging.getLogger(__name__)

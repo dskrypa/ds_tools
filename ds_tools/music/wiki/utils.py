@@ -11,7 +11,7 @@ from fuzzywuzzy import utils as fuzz_utils
 
 from ...utils import QMARKS
 
-__all__ = ['comparison_type_check', 'edition_combinations', 'multi_lang_name', 'synonym_pattern']
+__all__ = ['comparison_type_check', 'edition_combinations', 'multi_lang_name', 'sanitize_path', 'synonym_pattern']
 log = logging.getLogger(__name__)
 
 FEAT_ARTIST_INDICATORS = ("with", "feat.", "feat ", "featuring")
@@ -26,6 +26,10 @@ PATH_SANITIZATION_TABLE = str.maketrans(PATH_SANITIZATION_DICT)
 QMARK_STRIP_TBL = str.maketrans({c: "" for c in QMARKS})
 REGEX_ESCAPE_TABLE = str.maketrans({c: "\\" + c for c in "()[]{}^$+*.?|\\"})
 SYNONYM_SETS = [{"and", "&", "+"}, {"version", "ver."}]
+
+
+def sanitize_path(text):
+    return text.translate(PATH_SANITIZATION_TABLE)
 
 
 def comparison_type_check(obj, other, req_type, op):

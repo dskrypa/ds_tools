@@ -5,7 +5,6 @@
 import logging
 import re
 import types
-from enum import Enum
 
 from ..unicode import is_any_cjk, contains_any_cjk, is_hangul, LangCat
 from ..utils import ParentheticalParser
@@ -190,6 +189,11 @@ def eng_cjk_sort(strs, langs=None, permissive=False):
             return strs, ''
         elif langs in LangCat.non_eng_cats:
             return '', strs
+        elif langs == LangCat.MIX:
+            detailed = LangCat.categorize(strs, True)
+            if isinstance(detailed, set) and not detailed.intersection(LangCat.asian_cats):
+                return strs, ''
+
     raise ValueError('Unexpected values: strs={!r}, langs={!r}'.format(strs, langs))
 
 

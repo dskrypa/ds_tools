@@ -7,7 +7,7 @@ from collections import OrderedDict
 
 from ....unicode import LangCat
 from ....utils import DASH_CHARS, QMARKS, ListBasedRecursiveDescentParser, ALL_WHITESPACE, UnexpectedTokenError
-from ...name_processing import *
+from ...name_processing import categorize_langs, combine_name_parts, eng_cjk_sort, str2list
 from .exceptions import *
 
 __all__ = [

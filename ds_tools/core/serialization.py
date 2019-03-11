@@ -7,6 +7,7 @@ Helpers for serializing Python data structures to JSON or YAML
 import json
 from collections import UserDict
 from collections.abc import Mapping, KeysView, ValuesView
+from datetime import datetime
 
 import yaml
 
@@ -23,6 +24,8 @@ class PermissiveJSONEncoder(json.JSONEncoder):
             return dict(o)
         elif isinstance(o, bytes):
             return o.decode('utf-8')
+        elif isinstance(o, datetime):
+            return o.strftime('%Y-%m-%d %H:%M:%S %Z')
         return super().default(o)
 
 

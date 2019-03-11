@@ -124,6 +124,10 @@ class LangCat(Enum):
     def non_eng_cats(self):
         return LangCat.UNK, LangCat.HAN, LangCat.JPN, LangCat.CJK, LangCat.THAI, LangCat.GRK, LangCat.CYR
 
+    @classproperty
+    def asian_cats(self):
+        return LangCat.HAN, LangCat.JPN, LangCat.CJK, LangCat.THAI
+
     @classmethod
     def _ranges(cls):
         yield cls.ENG, LATIN_RANGES

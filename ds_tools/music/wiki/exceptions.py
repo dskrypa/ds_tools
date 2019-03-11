@@ -32,10 +32,13 @@ class InvalidTrackListException(MusicWikiException):
 
 class WikiTypeError(TypeError, MusicWikiException):
     """Exception to be raised when an incorrect type was used to initialize a WikiEntity"""
-    def __init__(self, url, article, category, cls_cat):
-        self.url, self.article, self.category, self.cls_cat = url, article, category, cls_cat
+    def __init__(self, url_or_msg, article=None, category=None, cls_cat=None):
+        self.url, self.article, self.category, self.cls_cat = url_or_msg, article, category, cls_cat
+        self.msg = None if article else url_or_msg
 
     def __str__(self):
+        if self.msg:
+            return self.msg
         return '{} is {} {} page (expected: {})'.format(self.url, self.article, self.category, self.cls_cat)
 
 

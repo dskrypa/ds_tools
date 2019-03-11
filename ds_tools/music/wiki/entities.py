@@ -21,9 +21,9 @@ from ...core import cached_property
 from ...http import CodeBasedRestException
 from ...unicode import LangCat
 from ...utils import soupify
-from ..name_processing import *
+from ..name_processing import eng_cjk_sort, parse_name, split_name
 from .exceptions import *
-from .utils import *
+from .utils import comparison_type_check, edition_combinations, multi_lang_name, sanitize_path, synonym_pattern
 from .rest import WikiClient, KpopWikiClient, WikipediaClient, DramaWikiClient
 from .parsing import *
 
@@ -32,18 +32,26 @@ log = logging.getLogger(__name__)
 
 ALBUM_DATED_TYPES = ("Singles", )
 ALBUM_MULTI_DISK_TYPES = ("Albums", "Special Albums", "Japanese Albums", "Remake Albums", "Repackage Albums")
-ALBUM_NUMBERED_TYPES = (
-    "Albums", "Mini Albums", "Special Albums", "Japanese Albums", "Japanese Mini Albums", "Single Albums",
-    "Remake Albums", "Repackage Albums", "Summer Mini Albums"
-)
-ALBUM_TYPE_MAP = {
-    "mini_album": "Mini Album", "single": "Single", "digital_single": "Single", "special_single": "Single",
-    "single_album": "Single Album", "studio_album": "Album", "collaboration": "Collaboration",
-    "promotional_single": "Single", "special_album": "Special Album", "ost": "Soundtrack",
-    "feature": "Collaboration", "best_album": "Compilation", "live_album": "Live", "other_release": "Other",
-    "collaborations_and_feature": "Collaboration", "collaboration_single": "Collaboration",
-    "remake_album": "Remake Album", # Album that contains only covers of other artists' songs
-    "repackage_album": "Repackage Album"
+ALBUM_NUMBERED_TYPES = ("Album", "Mini Album", "Special Album", "Single Album", "Remake Album", "Repackage Album")
+DISCOGRAPHY_TYPE_MAP = {
+    'best_albums': 'Compilation',
+    'collaborations': 'Collaboration',
+    'collaborations_and_features': 'Collaboration',
+    'collaboration_single': 'Collaboration',
+    'digital_singles': 'Single',
+    'features': 'Collaboration',
+    'live_albums': 'Live',
+    'mini_albums': 'Mini Album',
+    'osts': 'Soundtrack',
+    'other_releases': 'Single',
+    'promotional_singles': 'Single',
+    'remake_albums': 'Remake Album',    # Album that contains only covers of other artists' songs
+    'repackage_albums': 'Album',
+    'single_albums': 'Single Album',
+    'singles': 'Single',
+    'special_albums': 'Album',
+    'special_singles': 'Single',
+    'studio_albums': 'Album'
 }
 JUNK_CHARS = string.whitespace + string.punctuation
 NUM_STRIP_TBL = str.maketrans({c: "" for c in "0123456789"})
@@ -584,6 +592,10 @@ class WikiArtist(WikiEntity):
     def soundtracks(self):
         return [album for album in self.discography if isinstance(album, WikiSoundtrack)]
 
+    @cached_property
+    def expected_rel_path(self):
+        return Path(sanitize_path(self.english_name))
+
 
 class WikiGroup(WikiArtist):
     _category = "group"
@@ -817,7 +829,41 @@ class WikiSongCollection(WikiEntity):
 
     @cached_property
     def album_type(self):
-        return self._album_info.get("type") or self._discography_entry.get("base_type")
+        return DISCOGRAPHY_TYPE_MAP[self._discography_entry.get("base_type")]
+
+    @cached_property
+    def album_num(self):
+        return self._discography_entry.get("num")
+
+    @cached_property
+    def num_and_type(self):
+        lang = self._discography_entry.get('language')
+        if lang and lang.lower() != 'korean':
+            return '{} {} {}'.format(self.album_num, lang.title(), self.album_type)
+        return '{} {}'.format(self.album_num, self.album_type)
+
+    @cached_property
+    def title(self):
+        extra = ' '.join(map('({})'.format, self._info)) if self._info else ''
+        return '{} {}'.format(self.name, extra) if extra else self.name
+
+    @cached_property
+    def expected_rel_dir(self):
+        numbered_type = self.album_type in ALBUM_NUMBERED_TYPES
+        if numbered_type or self.album_type in ('Single', ):
+            release_date = self._album_info["released"].strftime("%Y.%m.%d")
+            if numbered_type:
+                title = '[{}] {} [{}]'.format(release_date, self.title, self.num_and_type)
+            else:
+                title = '[{}] {}'.format(release_date, self.title)
+        else:
+            title = self.title
+
+        return Path(self.album_type + 's').joinpath(sanitize_path(title)).as_posix()
+
+    @cached_property
+    def expected_rel_path(self):
+        return self.artist.expected_rel_path.joinpath(self.expected_rel_dir)
 
     @cached_property
     def _artists(self):
@@ -916,7 +962,9 @@ class WikiSongCollection(WikiEntity):
         artists = self.artists
         if len(artists) == 1:
             return artists[0]
-        raise AttributeError("{} has multiple contributing artists".format(self))
+        elif self._artist_context:
+            return self._artist_context
+        raise AttributeError("{} has multiple contributing artists and no artist context".format(self))
 
     @cached_property
     def _editions_by_disk(self):
@@ -1043,6 +1091,11 @@ class WikiSongCollection(WikiEntity):
 
 class WikiAlbum(WikiSongCollection):
     _category = "album"
+
+    @cached_property
+    def num_and_type(self):
+        base = super().num_and_type
+        return '{} Repackage'.format(base) if self.repackage_of else base
 
     @cached_property
     def repackaged_version(self):
@@ -1277,6 +1330,13 @@ class WikiTrack(DictAttrPropertyMixin):
     def seconds(self):
         m, s = map(int, self.length_str.split(":"))
         return (s + (m * 60)) if m > -1 else 0
+
+    def expected_filename(self, ext='mp3'):
+        base = '{}.{}'.format(self.long_name, ext)
+        return '{:02d}. {}'.format(self.num, base) if self.num else base
+
+    def expected_rel_path(self, ext='mp3'):
+        return self._collection.expected_rel_path.joinpath(self.expected_filename(ext))
 
 
 def find_ost(artist, title, disco_entry):

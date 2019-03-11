@@ -10,7 +10,7 @@ from bs4.element import NavigableString
 
 from ....core import datetime_with_tz
 from ....utils import DASH_CHARS, num_suffix
-from ...name_processing import *
+from ...name_processing import parse_name, str2list
 from .exceptions import *
 from .common import *
 
