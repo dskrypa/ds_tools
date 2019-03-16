@@ -19,7 +19,7 @@ from weakref import WeakValueDictionary
 import mutagen
 import mutagen.id3._frames
 from fuzzywuzzy import fuzz
-from mutagen.id3 import ID3, TDRC, TIT2, TALB, TPE1
+from mutagen.id3 import ID3, TDRC, TIT2, TALB, TPE1, POPM
 from mutagen.id3._frames import Frame, TextFrame
 from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
 
@@ -41,6 +41,7 @@ log = logging.getLogger(__name__)
 
 NON_MUSIC_EXTS = {"jpg", "jpeg", "png", "jfif", "part", "pdf", "zip"}
 PUNC_STRIP_TBL = str.maketrans({c: "" for c in string.punctuation})
+RATING_RANGES = [(1, 31, 15), (32, 95, 64), (96, 159, 128), (160, 223, 196), (224, 255, 255)]
 RM_TAGS_MP4 = ["*itunes*", "??ID", "?cmt", "ownr", "xid ", "purd"]
 RM_TAGS_ID3 = ["TXXX*", "PRIV*", "WXXX*", "COMM*", "TCOP"]
 TYPED_TAG_MAP = {
@@ -717,6 +718,10 @@ class SongFile(ClearableCachedPropertyMixin):
         # ftype = "[{}]".format(self.ext) if self.ext is not None else ""
         return "<{}({!r})>".format(type(self).__name__, self.rel_path)
 
+    @classmethod
+    def for_plex_track(cls, track, root='//U-NAS-1/'):
+        return cls(Path(root).joinpath(track.media[0].parts[0].file).resolve())
+
     @cached_property
     def extended_repr(self):
         try:
@@ -752,6 +757,77 @@ class SongFile(ClearableCachedPropertyMixin):
     @cached_property
     def path(self):
         return Path(self._f.filename).resolve()
+
+    @property
+    def rating(self):
+        """The rating for this track on a scale of 1-255"""
+        try:
+            return self.get_tag('POPM', True).rating
+        except TagNotFound:
+            return None
+
+    @rating.setter
+    def rating(self, value):
+        try:
+            tag = self.get_tag('POPM', True)
+        except TagNotFound:
+            self.tags.add(POPM(rating=value))
+        else:
+            tag.rating = value
+        self.save()
+
+    @property
+    def star_rating_10(self):
+        star_rating_5 = self.star_rating
+        star_rating_10 = star_rating_5 * 2
+        a, b, c = RATING_RANGES[star_rating_5 - 1]
+        # log.debug('rating = {}, stars/5 = {}, a={}, b={}, c={}'.format(self.rating, star_rating_5, a, b, c))
+        if star_rating_5 == 1 and self.rating < c:
+            return 1
+        return star_rating_10 + 1 if self.rating > c else star_rating_10
+
+    @star_rating_10.setter
+    def star_rating_10(self, value):
+        if not isinstance(value, int) or not 0 < value < 11:
+            raise ValueError('Star ratings must be ints on a scale of 1-10; invalid value: {}'.format(value))
+        elif value == 1:
+            self.rating = 1
+        else:
+            base, extra = divmod(value, 2)
+            self.rating = RATING_RANGES[base - 1][2] + extra
+
+    @property
+    def star_rating(self):
+        """
+        This implementation uses the ranges specified here: https://en.wikipedia.org/wiki/ID3#ID3v2_rating_tag_issue
+
+        :return int|None: The star rating equivalent of this track's POPM rating
+        """
+        rating = self.rating
+        if rating is not None:
+            for stars, (a, b, c) in enumerate(RATING_RANGES):
+                if a <= rating <= b:
+                    return stars + 1
+        return None
+
+    @star_rating.setter
+    def star_rating(self, value):
+        """
+        This implementation uses the same values specified in the following link, except for 1 star, which uses 15
+        instead of 1: https://en.wikipedia.org/wiki/ID3#ID3v2_rating_tag_issue
+
+        :param int value: The number of stars to set
+        :return:
+        """
+        if not isinstance(value, (int, float)) or not 0 < value < 5.5:
+            raise ValueError('Star ratings must on a scale of 1-5; invalid value: {}'.format(value))
+        elif int(value) != value:
+            if int(value) + 0.5 == value:
+                self.star_rating_10 = int(value * 2)
+            else:
+                raise ValueError('Star ratings must be a multiple of 0.5; invalid value: {}'.format(value))
+        else:
+            self.rating = RATING_RANGES[int(value) - 1][2]
 
     @property
     def length(self):

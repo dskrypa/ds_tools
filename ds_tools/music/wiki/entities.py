@@ -63,8 +63,6 @@ STRIP_TBL = str.maketrans({c: "" for c in JUNK_CHARS})
 
 """
 TODO:
-- Album type classification
-- Album numbering
 - Search for artist / soloist / soloist of group
 - Search for album / song from artist
 
