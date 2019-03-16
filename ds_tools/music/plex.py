@@ -73,15 +73,48 @@ class LocalPlexServer:
     def music(self):
         return self._sesssion.library.section('Music')
 
+    def get_tracks(self, **kwargs):
+        return self.music.fetchItems('/library/sections/1/all?type=10', **kwargs)
+
+    def get_track(self, **kwargs):
+        return self.music.fetchItem('/library/sections/1/all?type=10', **kwargs)
+
     def find_songs_by_rating_gte(self, rating):
         """
         :param int rating: Song rating on a scale of 0-10
         :return list: List of :class:`plexapi.audio.Track` objects
         """
-        return self.music.fetchItems('/library/sections/1/all?type=10', userRating__gte=rating)
+        return self.get_tracks(userRating__gte=rating)
 
     def find_song(self, path):
-        return self.music.fetchItem('/library/sections/1/all?type=10', media__part__file=path)
+        return self.get_track(media__part__file=path)
+
+    def sync_ratings_to_files(self, dry_run=False):
+        prefix = '[DRY RUN] Would update' if dry_run else 'Updating'
+        for track in self.find_songs_by_rating_gte(1):
+            file = SongFile.for_plex_track(track)
+            file_stars = file.star_rating_10
+            plex_stars = track.userRating
+            if file_stars == plex_stars:
+                log.debug('Rating is already correct for {}'.format(file))
+            else:
+                log.info('{} rating from {} to {} for {}'.format(prefix, file_stars, plex_stars, file))
+                if not dry_run:
+                    file.star_rating_10 = plex_stars
+
+    def sync_ratings_from_files(self, dry_run=False):
+        prefix = '[DRY RUN] Would update' if dry_run else 'Updating'
+        for track in self.get_tracks():
+            file = SongFile.for_plex_track(track)
+            file_stars = file.star_rating_10
+            if file_stars is not None:
+                plex_stars = track.userRating
+                if file_stars == plex_stars:
+                    log.debug('Rating is already correct for {}'.format(file))
+                else:
+                    log.info('{} rating from {} to {} for {}'.format(prefix, plex_stars, file_stars, file))
+                    if not dry_run:
+                        track.edit(**{'userRating.value': file_stars})
 
 
 def print_song_info(songs):
@@ -100,4 +133,6 @@ def stars(rating, out_of=10, num_stars=5):
 
 if __name__ == '__main__':
     from ds_tools.logging import LogManager
+    from .patches import apply_mutagen_patches
+    apply_mutagen_patches()
     lm = LogManager.create_default_logger(2, log_path=None, entry_fmt='%(asctime)s %(name)s %(message)s')

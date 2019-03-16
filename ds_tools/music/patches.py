@@ -7,9 +7,9 @@ import string
 from unicodedata import normalize
 
 from mutagen.id3._frames import Frame
-from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm
+from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
 
-__all__ = ["tag_repr", "apply_repr_patches"]
+__all__ = ["tag_repr", "apply_mutagen_patches"]
 log = logging.getLogger(__name__)
 
 # Translate whitespace characters (such as \n, \r, etc.) to their escape sequences
@@ -23,8 +23,15 @@ def tag_repr(tag_val, max_len=125, sub_len=25):
     return tag_val
 
 
-def apply_repr_patches():
-    # Monkey-patch Frame's repr so APIC and similar frames don't kill terminals
+def apply_mutagen_patches():
+    """
+    Monkey-patch...
+      - Frame's repr so APIC and similar frames don't kill terminals
+      - MP4Tags to add an unofficial POPM integer field to MP4Tags to store song ratings
+    """
+    # noinspection PyUnresolvedReferences
+    MP4Tags._MP4Tags__atoms[b'POPM'] = (MP4Tags._MP4Tags__parse_integer, MP4Tags._MP4Tags__render_integer, 1)
+
     _orig_frame_repr = Frame.__repr__
     def _frame_repr(self):
         kw = []

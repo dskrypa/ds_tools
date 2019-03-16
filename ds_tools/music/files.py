@@ -42,9 +42,9 @@ log = logging.getLogger(__name__)
 NON_MUSIC_EXTS = {"jpg", "jpeg", "png", "jfif", "part", "pdf", "zip"}
 PUNC_STRIP_TBL = str.maketrans({c: "" for c in string.punctuation})
 RATING_RANGES = [(1, 31, 15), (32, 95, 64), (96, 159, 128), (160, 223, 196), (224, 255, 255)]
-RM_TAGS_MP4 = ["*itunes*", "??ID", "?cmt", "ownr", "xid ", "purd"]
+RM_TAGS_MP4 = ["*itunes*", "??ID", "?cmt", "ownr", "xid ", "purd", "desc", "ldes", "cprt"]
 RM_TAGS_ID3 = ["TXXX*", "PRIV*", "WXXX*", "COMM*", "TCOP"]
-TYPED_TAG_MAP = {
+TYPED_TAG_MAP = {   # See: https://wiki.hydrogenaud.io/index.php?title=Tag_Mapping
     "title": {"mp4": "\xa9nam", "mp3": "TIT2"},
     "date": {"mp4": "\xa9day", "mp3": "TDRC"},
     "genre": {"mp4": "\xa9gen", "mp3": "TCON"},
@@ -53,6 +53,11 @@ TYPED_TAG_MAP = {
     "album_artist": {"mp4": "aART", "mp3": "TPE2"},
     "track": {"mp4": "trkn", "mp3": "TRCK"},
     "disk": {"mp4": "disk", "mp3": "TPOS"},
+    "grouping": {"mp4": "\xa9grp", "mp3": "TIT1"},
+    "album_sort_order": {"mp4": "soal", "mp3": "TSOA"},
+    "track_sort_order": {"mp4": "sonm", "mp3": "TSOT"},
+    "album_artist_sort_order": {"mp4": "soaa", "mp3": "TSO2"},
+    "track_artist_sort_order": {"mp4": "soar", "mp3": "TSOP"},
 }
 
 
@@ -719,7 +724,14 @@ class SongFile(ClearableCachedPropertyMixin):
         return "<{}({!r})>".format(type(self).__name__, self.rel_path)
 
     @classmethod
-    def for_plex_track(cls, track, root='//U-NAS-1/'):
+    def for_plex_track(cls, track, root=None):
+        if root is None:
+            root_path_file = Path('~/.plex/server_path_root.txt').expanduser().resolve()
+            if root_path_file.exists():
+                root = root_path_file.open('r').read().strip()
+            if not root:
+                raise ValueError('A server root path must be provided or be in {}'.format(root_path_file.as_posix()))
+
         return cls(Path(root).joinpath(track.media[0].parts[0].file).resolve())
 
     @cached_property
@@ -761,24 +773,35 @@ class SongFile(ClearableCachedPropertyMixin):
     @property
     def rating(self):
         """The rating for this track on a scale of 1-255"""
-        try:
-            return self.get_tag('POPM', True).rating
-        except TagNotFound:
-            return None
+        if isinstance(self.tags, MP4Tags):
+            try:
+                return self.tags['POPM'][0]
+            except KeyError:
+                return None
+        else:
+            try:
+                return self.get_tag('POPM', True).rating
+            except TagNotFound:
+                return None
 
     @rating.setter
     def rating(self, value):
-        try:
-            tag = self.get_tag('POPM', True)
-        except TagNotFound:
-            self.tags.add(POPM(rating=value))
+        if isinstance(self.tags, MP4Tags):
+            self.tags['POPM'] = [value]
         else:
-            tag.rating = value
+            try:
+                tag = self.get_tag('POPM', True)
+            except TagNotFound:
+                self.tags.add(POPM(rating=value))
+            else:
+                tag.rating = value
         self.save()
 
     @property
     def star_rating_10(self):
         star_rating_5 = self.star_rating
+        if star_rating_5 is None:
+            return None
         star_rating_10 = star_rating_5 * 2
         a, b, c = RATING_RANGES[star_rating_5 - 1]
         # log.debug('rating = {}, stars/5 = {}, a={}, b={}, c={}'.format(self.rating, star_rating_5, a, b, c))
@@ -788,12 +811,12 @@ class SongFile(ClearableCachedPropertyMixin):
 
     @star_rating_10.setter
     def star_rating_10(self, value):
-        if not isinstance(value, int) or not 0 < value < 11:
+        if not isinstance(value, (int, float)) or not 0 < value < 11:
             raise ValueError('Star ratings must be ints on a scale of 1-10; invalid value: {}'.format(value))
         elif value == 1:
             self.rating = 1
         else:
-            base, extra = divmod(value, 2)
+            base, extra = divmod(int(value), 2)
             self.rating = RATING_RANGES[base - 1][2] + extra
 
     @property
@@ -1099,7 +1122,7 @@ class SongFile(ClearableCachedPropertyMixin):
     @cached_property
     def ext(self):
         if isinstance(self.tags, MP4Tags):
-            return "mp4"
+            return self.path.suffix[1:]
         elif isinstance(self.tags, ID3):
             return "mp3"
         return None
@@ -1116,7 +1139,7 @@ class SongFile(ClearableCachedPropertyMixin):
 
     def set_text_tag(self, tag, value, by_id=False):
         tag_id = tag if by_id else self.tag_name_to_id(tag)
-        if self.ext == "mp4":
+        if isinstance(self.tags, MP4Tags):
             self.tags[tag_id] = value
         elif self.ext == "mp3":
             try:
@@ -1149,7 +1172,7 @@ class SongFile(ClearableCachedPropertyMixin):
         """
         if self.ext == "mp3":
             return self.tags.getall(tag_id.upper())         # all MP3 tags are uppercase; some MP4 tags are mixed case
-        return self.tags[tag_id]                            # MP4Tags doesn't have getall() and always returns a list
+        return self.tags.get(tag_id, [])                    # MP4Tags doesn't have getall() and always returns a list
 
     def tags_named(self, tag_name):
         """
@@ -1365,6 +1388,6 @@ class InvalidAlbumDir(Exception):
 
 if __name__ == "__main__":
     from ds_tools.logging import LogManager
-    from .patches import apply_repr_patches
-    apply_repr_patches()
+    from .patches import apply_mutagen_patches
+    apply_mutagen_patches()
     lm = LogManager.create_default_logger(2, log_path=None, entry_fmt="%(asctime)s %(name)s %(lineno)d %(message)s")
