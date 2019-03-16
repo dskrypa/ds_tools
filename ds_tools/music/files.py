@@ -898,7 +898,7 @@ class SongFile(ClearableCachedPropertyMixin):
 
     @cached_property
     def album_from_dir(self):
-        album = self.album_dir
+        album = self.path.parent.name
         m = re.match("^\[\d{4}[0-9.]*\] (.*)$", album)   # Begins with date
         if m:
             album = m.group(1).strip()
@@ -917,15 +917,6 @@ class SongFile(ClearableCachedPropertyMixin):
     @cached_property
     def tag_artist(self):
         return self.tag_text("artist")
-
-    def set_artist(self, artist):
-        self.set_text_tag("artist", artist, by_id=False)
-
-    def set_album_artist(self, artist):
-        self.set_text_tag("album_artist", artist, by_id=False)
-
-    def set_album(self, album):
-        self.set_text_tag("album", album, by_id=False)
 
     @cached_property
     def wiki_artist(self):
@@ -1069,25 +1060,10 @@ class SongFile(ClearableCachedPropertyMixin):
             return os.path.join(self.wiki_album.expected_rel_path, self.basename())
         elif self.wiki_artist and ("single" in self.album_type_dir.lower()):
             artist_dir = self.wiki_artist.expected_dirname
-            dest = os.path.join(artist_dir, self.album_type_dir, self.album_dir, self.basename())
+            dest = os.path.join(artist_dir, self.path.parents[1].name, self.path.parent.name, self.basename())
             log.warning("{}.wiki_expected_rel_path defaulting to {!r}".format(self, dest))
             return dest
         return None
-
-    @cached_property
-    def album_path(self):
-        """The directory that this file is in"""
-        return os.path.dirname(os.path.abspath(self.filename))
-
-    @cached_property
-    def album_type_path(self):
-        """The directory containing this file's album dir (i.e., 'Albums', 'Mini Albums', 'Singles', etc.)"""
-        return os.path.dirname(self.album_path)
-
-    @cached_property
-    def artist_path(self):
-        """The directory containing this file's album type dir"""
-        return os.path.dirname(self.album_type_path)
 
     @cached_property
     def _artist_path(self):
@@ -1108,16 +1084,8 @@ class SongFile(ClearableCachedPropertyMixin):
         return None
 
     @cached_property
-    def album_dir(self):
-        return os.path.basename(self.album_path)
-
-    @cached_property
     def album_type_dir(self):
-        return os.path.basename(self.album_type_path)
-
-    @cached_property
-    def artist_dir(self):
-        return os.path.basename(self.artist_path)
+        return self.path.parents[1].name
 
     @cached_property
     def ext(self):
@@ -1128,11 +1096,9 @@ class SongFile(ClearableCachedPropertyMixin):
         return None
 
     def basename(self, no_ext=False, trim_prefix=False):
-        basename = os.path.basename(self.filename)
-        if no_ext:
-            basename = os.path.splitext(basename)[0]
+        basename = self.path.stem if no_ext else self.path.name
         if trim_prefix:
-            m = re.match("\d+\.?\s*(.*)", basename)
+            m = re.match(r"\d+\.?\s*(.*)", basename)
             if m:
                 basename = m.group(1)
         return basename
@@ -1239,7 +1205,7 @@ class SongFile(ClearableCachedPropertyMixin):
                 raise e
 
     def tagless_sha256sum(self):
-        with open(self.filename, "rb") as f:
+        with self.path.open('rb') as f:
             tmp = BytesIO(f.read())
 
         try:
@@ -1252,7 +1218,7 @@ class SongFile(ClearableCachedPropertyMixin):
         return sha256(tmp.read()).hexdigest()
 
     def sha256sum(self):
-        with open(self.filename, "rb") as f:
+        with self.path.open('rb') as f:
             return sha256(f.read()).hexdigest()
 
     # @cached_property
