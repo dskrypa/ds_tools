@@ -3,19 +3,50 @@
 """
 
 import logging
+import os
 import re
 import types
+from unicodedata import normalize, combining
 
 from ..unicode import is_any_cjk, contains_any_cjk, is_hangul, LangCat
 from ..utils import ParentheticalParser
 
 __all__ = [
-    'categorize_langs', 'combine_name_parts', 'eng_cjk_sort', 'has_parens', 'parse_name', 'split_name', 'str2list'
+    'categorize_langs', 'combine_name_parts', 'eng_cjk_sort', 'fuzz_process', 'has_parens', 'parse_name', 'split_name',
+    'str2list'
 ]
 log = logging.getLogger(__name__)
 
 
+def fuzz_process(text):
+    """
+    Performs the same functions as :func:`full_process<fuzzywuzzy.utils.full_process>`, with some additional steps.
+    Consecutive spaces are condensed, and diacritical marks are stripped.  Example::\n
+        >>> fuzz_process('Rosé  한')     # Note: there are 2 spaces here
+        'rose 한'
+
+    :param str text: A string to be processed
+    :return str: The processed string
+    """
+    try:
+        non_letter_non_num_rx = fuzz_process._non_letter_non_num_rx
+    except AttributeError:
+        non_letter_non_num_rx = fuzz_process._non_letter_non_num_rx = re.compile(r'\W')
+
+    text = non_letter_non_num_rx.sub(' ', text)     # Convert non-letter/numeric characters to spaces
+    text = ' '.join(text.split())                   # Condense sets of consecutive spaces to 1 space (faster than regex)
+    text = text.lower().strip()                     # Convert to lower case & strip leading/trailing whitespace
+    # Remove accents and other diacritical marks; composed Hangul and the like stays intact
+    text = normalize('NFC', ''.join(c for c in normalize('NFD', text) if not combining(c)))
+    return text
+
+
 def parse_name(text):
+    """
+
+    :param text:
+    :return tuple: (base, cjk, stylized, aka, info)
+    """
     first_sentence = text.strip().partition('. ')[0].strip()  # Note: space is intentional
     first_sentence = first_sentence.replace('\xa0', ' ')
     parser = ParentheticalParser()
@@ -68,6 +99,9 @@ def parse_name(text):
         elif ':' in part and not found_hangul:
             _lang_name, cjk = eng_cjk_sort(tuple(map(str.strip, part.split(':', 1))))
             found_hangul = is_hangul(cjk)
+        elif not found_hangul and not cjk and contains_any_cjk(part):
+            found_hangul = LangCat.HAN in LangCat.categorize(part, True)
+            cjk = part
         elif lc_part.endswith((' ver.', ' ver')):
             info.append(part)
         elif not aka:
@@ -79,20 +113,87 @@ def parse_name(text):
     return base, cjk, stylized, aka, info
 
 
-def split_name(name, unused=False, check_keywords=True):
+def is_unzipped_name(text):
+    outer_commas, inner_commas = 0, 0
+    in_parenthetical = 0
+    for c in text:
+        if c == ',':
+            if in_parenthetical:
+                inner_commas += 1
+            else:
+                outer_commas += 1
+        elif c == '(':
+            in_parenthetical += 1
+        elif c == ')':
+            in_parenthetical -= 1
+    return outer_commas == inner_commas and outer_commas != 0
+
+
+def split_names(text):
+    if not any(c in text for c in ',&'):
+        try:
+            return [split_name(text, True)]
+        except ValueError as e:
+            if 'feat. ' in text:
+                parser = ParentheticalParser()
+                return [split_name(part, True, permissive=True) for part in parser.parse(text)]
+            elif LangCat.categorize(text) == LangCat.MIX and has_parens(text):
+                return [split_name(text, True, require_preceder=False)]
+            else:
+                raise e
+    elif is_unzipped_name(text):
+        parts = ParentheticalParser().parse(text)
+        if len(parts) == 2:
+            x, y = parts
+        elif len(parts) == 3:
+            if ',' in parts[0] and ',' in parts[2] and ',' not in parts[1]:
+                x = '{} ({})'.format(*parts[:2])
+                y = parts[2]
+            else:
+                raise ValueError('Unexpected parse result: {}'.format(parts))
+        else:
+            raise ValueError('Unexpected parse result: {}'.format(parts))
+        return [split_name((a, b), True) for a, b in zip(map(str.strip, x.split(',')), map(str.strip, y.split(',')))]
+
+    names = str2list(text)
+    if any('(' in name and ')' not in name for name in names) or any(')' in name and '(' not in name for name in names):
+        for i, name in enumerate(names):
+            if i and ')' in name and '(' not in name:
+                last = names[i - 1]
+                if '(' in last and ')' not in last:
+                    a, b = map(str.strip, last.split('('))
+                    names[i - 1] = '{} / {}'.format(a, b)
+                    names[i] = '{} / {}'.format(a, name[:-1] if name.endswith(')') else name)
+
+    unique = []         # Maintain the order that they were in the original string
+    for name in names:
+        if name not in unique:
+            unique.append(name)
+
+    unique_split = []
+    for name in unique:
+        eng, cjk, of_group = split_name(name, True, permissive=True)
+        unique_split.append((eng, cjk, of_group))
+    return unique_split
+
+
+def split_name(name, unused=False, check_keywords=True, permissive=False, require_preceder=True):
     """
-    :param str name: A song/album/artist title
+    :param str|tuple name: A song/album/artist title
     :param bool unused: Return a 3-tuple instead of a 2-tuple, with the 3rd element being the content that was discarded
     :param bool check_keywords: Check for some key words at the start of the English name, such as 'inst.' or 'feat.'
       and count that as an invalid English name part
     :return tuple: (english, cjk)
     """
-    name = name.strip()
-    parser = ParentheticalParser()
-    try:
-        parts = parser.parse(name)   # Note: returned strs already stripped of leading/trailing spaces
-    except Exception as e:
-        raise ValueError('Unable to split {!r} into separate English/CJK strings'.format(name)) from e
+    parser = ParentheticalParser(require_preceder=require_preceder)
+    if isinstance(name, str):
+        name = name.strip()
+        try:
+            parts = parser.parse(name)   # Note: returned strs already stripped of leading/trailing spaces
+        except Exception as e:
+            raise ValueError('Unable to split {!r} into separate English/CJK strings'.format(name)) from e
+    else:
+        parts = name
 
     if not parts:
         raise ValueError('Unable to split {!r} into separate English/CJK strings (nothing was parsed)'.format(name))
@@ -109,6 +210,18 @@ def split_name(name, unused=False, check_keywords=True):
     elif len(parts) == 2:
         if LangCat.MIX not in langs and len(set(langs)) == 2:
             eng, cjk = eng_cjk_sort(parts, langs)           # Name (other lang)
+            if ' / ' in eng:                                # Group / Soloist (soloist other lang)
+                not_used, eng = eng.split(' / ')
+            if ' / ' in cjk:
+                _nu, cjk = cjk.split(' / ')
+                not_used = (not_used, _nu) if not_used else _nu
+            elif not not_used and ' (' in eng and ' (' in cjk:  # Soloist (group) (Soloist (group) {other lang})
+                eng, g_eng = parser.parse(eng)
+                cjk, g_cjk = parser.parse(cjk)
+                not_used = (g_eng, g_cjk)
+        elif permissive and LangCat.MIX not in langs and len(set(langs)) == 1:
+            eng, cjk = eng_cjk_sort(parts[0])               # Soloist (Group) {all same lang}
+            not_used = parts[1]
         elif langs[0] == LangCat.MIX and langs[1] != LangCat.MIX and has_parens(parts[0]):
             eng, cjk = split_name(parts[0])                 # Soloist (other lang) (Group single lang)
             not_used = parts[1]
@@ -124,6 +237,23 @@ def split_name(name, unused=False, check_keywords=True):
                 not_used = split_name(parts[1])
             except Exception:
                 not_used = parts[1]
+        elif langs == (LangCat.ENG, LangCat.MIX):
+            common_suffix = ''.join(reversed(os.path.commonprefix(list(map(lambda x: ''.join(reversed(x)), parts)))))
+            if len(common_suffix) > 3 and LangCat.categorize(parts[1], True).intersection(LangCat.asian_cats):
+                eng, cjk = parts
+            elif ' / ' in parts[1]:                         # Soloist (Group / soloist other lang)
+                try:
+                    not_used, cjk = eng_cjk_sort(parts[1].split(' / '))
+                except Exception:
+                    pass
+                else:
+                    eng = parts[0]
+        elif langs == (LangCat.MIX, LangCat.MIX) and ' X ' in parts[1]:
+            if LangCat.categorize(parts[0], True).intersection(LangCat.asian_cats):
+                eng, cjk = '', parts[0]
+            else:
+                eng, cjk = parts[0], ''
+            not_used = parts[1].split(' X ')
     elif len(parts) == 3:
         if LangCat.MIX not in langs and len(set(langs)) == 2:
             if langs[0] == langs[1] != langs[2]:
@@ -139,23 +269,36 @@ def split_name(name, unused=False, check_keywords=True):
             else:
                 eng, cjk = eng_cjk_sort(parts[:2], langs[:2])           # Name (other lang) (Group|extra single lang)
                 not_used = parts[2]
+                keyword = next((val for val in ('from ',) if val in not_used), None)
+                if keyword:
+                    not_used = not_used[len(keyword):].strip()
 
     if not eng and not cjk:
         # traceback.print_stack()
-        raise ValueError('Unable to split {!r} into separate English/CJK strings'.format(name))
+        fmt = 'Unable to split {!r} into separate English/CJK strings - parts={}, langs={}'
+        raise ValueError(fmt.format(name, parts, langs))
 
-    if check_keywords and eng.lower().startswith(('feat.', 'featuring', 'inst.', 'instrumental')):
-        log.debug('Shuffling return values due to keywords: {}'.format((eng, cjk, not_used)))
-        if not_used is None:
-            not_used = eng
-        elif isinstance(not_used, str):
-            not_used = [not_used, eng]
-        else:
-            not_used = list(not_used)
-            not_used.append(eng)
-        eng = ''
-        if not cjk:
-            raise ValueError('Unable to split {!r} into separate English/CJK strings'.format(name))
+    if check_keywords:
+        keywords = ('feat.', 'featuring', 'inst.', 'instrumental')
+        lc_eng = eng.lower()
+        if lc_eng.startswith(keywords):
+            if not cjk and not not_used:
+                keyword = next((val for val in keywords if val in lc_eng), None)
+                if keyword:
+                    eng = eng[len(keyword):].strip()
+            else:
+                log.debug('Shuffling return values due to keywords: {}'.format((eng, cjk, not_used)))
+                if not_used is None:
+                    not_used = eng
+                elif isinstance(not_used, str):
+                    not_used = [not_used, eng]
+                else:
+                    not_used = list(not_used)
+                    not_used.append(eng)
+                eng = ''
+
+            if not cjk and not eng:
+                raise ValueError('Unable to split {!r} into separate English/CJK strings'.format(name))
 
     return (eng, cjk, not_used) if unused else (eng, cjk)
 
