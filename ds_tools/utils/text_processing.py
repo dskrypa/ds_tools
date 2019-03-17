@@ -188,8 +188,9 @@ class ParentheticalParser(RecursiveDescentParser):
         ("TEXT", "[^{}{}()（）\[\]{}]+".format(DASH_CHARS, QMARKS, ALL_WHITESPACE)),
     ])
 
-    def __init__(self, selective_recombine=True):
+    def __init__(self, selective_recombine=True, require_preceder=True):
         self._selective_recombine = selective_recombine
+        self._require_preceder = require_preceder
 
     def parenthetical(self, closer="RPAREN"):
         """
@@ -219,6 +220,9 @@ class ParentheticalParser(RecursiveDescentParser):
         # log.debug('[closing] Closing {}: {} [nested: {}]'.format(closer, text, nested))
         return text, nested
 
+    def _should_not_enter(self):
+        return self._require_preceder and self.prev_tok.type not in self._req_preceders and self._peek("TEXT")
+
     def content(self):
         """
         content :: = text { (parenthetical) }* { text }*
@@ -228,7 +232,7 @@ class ParentheticalParser(RecursiveDescentParser):
         while self.next_tok:
             if self._accept_any(self._opener2closer):
                 tok_type = self.tok.type
-                if text and self.prev_tok.type not in self._req_preceders and self._peek("TEXT"):
+                if text and self._should_not_enter():
                     text += self.tok.value
                     continue
                 elif tok_type == "QUOTE":
