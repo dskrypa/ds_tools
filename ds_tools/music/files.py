@@ -29,7 +29,9 @@ from ..http import CodeBasedRestException
 from ..unicode import contains_hangul
 from ..utils import ParentheticalParser
 from .patches import tag_repr
-from .wiki.old import Artist, split_name, CollaborationSong
+from .name_processing import split_names
+from .wiki import WikiArtist
+from .wiki.old import Artist, CollaborationSong, split_name
 
 __all__ = [
     "SongFile", "FakeMusicFile", "iter_music_files", "load_tags", "iter_music_albums",
@@ -919,6 +921,41 @@ class SongFile(ClearableCachedPropertyMixin):
         return self.tag_text("artist")
 
     @cached_property
+    def in_competition_album(self):
+        try:
+            album_artist = self.tag_text('album_artist')
+        except Exception:
+            return False
+        else:
+            if album_artist.lower().startswith('produce'):
+                if album_artist.split()[-1].isdigit():
+                    return True
+        return False
+
+    @cached_property
+    def wiki_artist_new(self):
+        artists = split_names(self.tag_artist)
+        exc = None
+        for eng, cjk, of_group in artists:
+            if self.in_competition_album:
+                return WikiArtist(name=eng or cjk, no_fetch=True)
+            try:
+                return WikiArtist(of_group=of_group, aliases=tuple(filter(None, (eng, cjk))))
+            except CodeBasedRestException as e:
+                exc = e
+            except AttributeError as e:
+                log.error('Error matching artist {} for {}: {}'.format((eng, cjk, of_group), self, e))
+                traceback.print_exc()
+            except Exception as e:
+                log.error('Error matching artist {} for {}: {}'.format((eng, cjk, of_group), self, e))
+                if len(artists) > 1:
+                    log.info('{} has additional artists: {}'.format(self, artists))
+                raise e
+        if exc:
+            log.error('Error matching artist {} for {}: {}'.format(artists, self, exc))
+            raise exc
+
+    @cached_property
     def wiki_artist(self):
         eng, han = None, None
         try:
@@ -1095,6 +1132,14 @@ class SongFile(ClearableCachedPropertyMixin):
             return "mp3"
         return None
 
+    @cached_property
+    def _tag_type(self):
+        if isinstance(self.tags, MP4Tags):
+            return "mp4"
+        elif isinstance(self.tags, ID3):
+            return "mp3"
+        return None
+
     def basename(self, no_ext=False, trim_prefix=False):
         basename = self.path.stem if no_ext else self.path.name
         if trim_prefix:
@@ -1127,7 +1172,7 @@ class SongFile(ClearableCachedPropertyMixin):
         except KeyError as e:
             raise InvalidTagName(tag_name, self) from e
         try:
-            return type2id[self.ext]
+            return type2id[self._tag_type]
         except KeyError as e:
             raise UnsupportedTagForFileType(tag_name, self) from e
 
@@ -1353,7 +1398,5 @@ class InvalidAlbumDir(Exception):
 
 
 if __name__ == "__main__":
-    from ds_tools.logging import LogManager
     from .patches import apply_mutagen_patches
     apply_mutagen_patches()
-    lm = LogManager.create_default_logger(2, log_path=None, entry_fmt="%(asctime)s %(name)s %(lineno)d %(message)s")
