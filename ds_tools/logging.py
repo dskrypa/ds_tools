@@ -271,6 +271,112 @@ class LogManager:
         self.init_default_stream_logger(verbosity)
         return self.init_default_file_logger(log_path, file_level, file_fmt)
 
+    @classmethod
+    def update_level(cls, *args, **kwargs):
+        update_level(*args, **kwargs)
+
+
+def update_level(name, level, verbosity='set', handlers=True, handlers_only=False):
+    """
+    Recursively update loggers and their handlers to change the level of logs that are emitted.
+
+    :param name: Logger name
+    :param int level: Log level
+    :param str verbosity: One of ('set', 'increase', 'decrease', '+', '-') to indicate whether the log level should
+      change or not based on the current level
+    :param bool handlers: Change the level of handlers (if False: only change the level of loggers)
+    :param bool handlers_only: True to only change the level of handlers, False (default) to change the level of
+      handlers and loggers (note: ``handlers`` must also be True to change the level of handlers - if ``handlers`` is
+      False and ``handlers_only`` is True, then no actions will be taken)
+    """
+    fmt = 'Updating log level for {!r} from {} ({}) to {} ({})'
+    lv_name = logging.getLevelName
+    v, lv = verbosity, level
+    logger = logging.getLogger(name)
+    n = logger.level
+    if not handlers_only:
+        if (n != lv and v == 'set') or (n > lv and v in ('increase', '+')) or (n > lv and v in ('decrease', '-')):
+            log.info(fmt.format(logger, n, lv_name(n), level, lv_name(level)))
+            logger.setLevel(level)
+
+    fmt = 'Updating log level for {!r}\'s handler {!r} from {} ({}) to {} ({})'
+    if handlers and hasattr(logger, 'handlers'):
+        for handler in logger.handlers:
+            n = handler.level
+            if (n != lv and v == 'set') or (n > lv and v in ('increase', '+')) or (n > lv and v in ('decrease', '-')):
+                log.info(fmt.format(logger, handler, n, lv_name(n), level, lv_name(level)))
+                handler.setLevel(level)
+
+    if name is not None and '.' in name:
+        update_level(name.rsplit('.', 1)[0], level, verbosity, handlers)
+
+
+def get_logger_info(only_with_handlers=False, non_null_handlers_only=False, test_filters=False):
+    loggers = {}
+    for lname, logger in logging.Logger.manager.loggerDict.items():
+        entry = {'type': type(logger).__qualname__}
+        try:
+            entry['level'] = logger.level
+            entry['level_name'] = logging.getLevelName(logger.level)
+        except AttributeError:
+            pass
+
+        if hasattr(logger, 'handlers'):
+            handlers = []
+            for handler in logger.handlers:
+                if non_null_handlers_only and isinstance(handler, logging.NullHandler):
+                    continue
+
+                handler_info = {
+                    'type': type(handler).__qualname__,
+                    'name': handler.name,
+                    'level': handler.level,
+                    'level_name': logging.getLevelName(handler.level),
+                }
+                if isinstance(handler, logging.FileHandler):
+                    handler_info['file'] = handler.baseFilename
+                elif isinstance(handler, logging.StreamHandler):    # FileHandler is a StreamHandler
+                    handler_info['stream'] = getattr(handler.stream, 'name', '')
+                if handler.formatter:
+                    handler_info['formatter'] = {
+                        'type': type(handler.formatter).__qualname__,
+                        'format': handler.formatter._fmt,
+                        'date_format': handler.formatter.datefmt
+                    }
+                if handler.filters:
+                    if test_filters:
+                        record = logging.LogRecord(lname, 0, 'test', 1, 'test', None, None)
+                        filter_info = []
+                        for f in handler.filters:
+                            allowed = []
+                            for i in range(51):
+                                record.levelno = i
+                                record.levelname = logging.getLevelName(i)
+                                if f.filter(record):
+                                    allowed.append(i)
+
+                            filter_info.append({
+                                'type': type(f).__qualname__,
+                                'repr': repr(f),
+                                'level_range': (min(allowed), max(allowed))
+                            })
+                    else:
+                        filter_info = [{'type': type(f).__qualname__, 'repr': repr(f)} for f in handler.filters]
+
+                    handler_info['filters'] = filter_info
+                handlers.append(handler_info)
+
+            if handlers:
+                entry['handlers'] = handlers
+            elif only_with_handlers:
+                continue
+        elif only_with_handlers:
+            continue
+
+        loggers[lname] = entry
+
+    return loggers
+
 
 def get_level_info(handler):
     """
@@ -382,6 +488,18 @@ def add_context_filter(filter_instance, name=None):
                 logger.addFilter(filter_instance)
             except AttributeError:                  # ignore PlaceHolder objects
                 pass
+
+
+def stream_handler_repr(self):
+    # This monkey patch is to fix the case where the stream name is an int
+    level = logging.getLevelName(self.level)
+    name = str(getattr(self.stream, 'name', ''))
+    if name:
+        name += ' '
+    return '<%s %s(%s)>' % (self.__class__.__name__, name, level)
+
+
+logging.StreamHandler.__repr__ = stream_handler_repr
 
 
 if __name__ == "__main__":
