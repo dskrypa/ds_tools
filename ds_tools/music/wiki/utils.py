@@ -4,14 +4,15 @@
 
 import logging
 import re
+from collections import OrderedDict
 from itertools import chain, combinations
-
-# import Levenshtein as lev
-from fuzzywuzzy import utils as fuzz_utils
 
 from ...utils import QMARKS
 
-__all__ = ['comparison_type_check', 'edition_combinations', 'multi_lang_name', 'sanitize_path', 'synonym_pattern']
+__all__ = [
+    'comparison_type_check', 'edition_combinations', 'get_page_category', 'multi_lang_name', 'sanitize_path',
+    'synonym_pattern'
+]
 log = logging.getLogger(__name__)
 
 FEAT_ARTIST_INDICATORS = ("with", "feat.", "feat ", "featuring")
@@ -20,6 +21,17 @@ NUMS = {
     "first": "1st", "second": "2nd", "third": "3rd", "fourth": "4th", "fifth": "5th", "sixth": "6th",
     "seventh": "7th", "eighth": "8th", "ninth": "9th", "tenth": "10th", "debut": "1st"
 }
+PAGE_CATEGORIES = OrderedDict([
+    ("album", ("albums", "discography article stubs")),
+    ("group", ("groups", "group article stubs")),
+    ("singer", ("singers", "person article stubs")),
+    ("soundtrack", ("osts", "kost", "jost", "cost")),
+    ("tv_series", ("television series", "television drama", "kdrama", "competition shows")),
+    ("discography", ("discographies",)),
+    ("disambiguation", ("disambiguation",)),
+    ("agency", ("agencies",)),
+    ("sports team", ("sports team",)),
+])
 PATH_SANITIZATION_DICT = {c: "" for c in "*;?<>\""}
 PATH_SANITIZATION_DICT.update({"/": "_", ":": "-", "\\": "_", "|": "-"})
 PATH_SANITIZATION_TABLE = str.maketrans(PATH_SANITIZATION_DICT)
@@ -82,3 +94,18 @@ def synonym_pattern(text, synonym_sets=None, chain_sets=True):
     pattern = ''.join('\s+' if part == ' ' else part for part in parts)
     # log.debug("Synonym pattern: {!r} => {!r}".format(text, pattern))
     return re.compile(pattern, re.IGNORECASE)
+
+
+def get_page_category(url, cats):
+    if any(i in cat for i in ("singles", "songs") for cat in cats):
+        if any("single album" in cat for cat in cats):
+            return "album"
+        else:
+            return "collab/feature/single"
+    else:
+        for category, indicators in PAGE_CATEGORIES.items():
+            if any(i in cat for i in indicators for cat in cats):
+                return category
+
+        log.debug("Unable to determine category for {}".format(url))
+        return None
