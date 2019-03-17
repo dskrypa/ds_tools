@@ -39,25 +39,25 @@ class Printer:
 
     @staticmethod
     def jsonc(content):
-        return json.dumps(content, separators=(",", ":"), cls=PermissiveJSONEncoder)
+        return json.dumps(content, separators=(",", ":"), cls=PermissiveJSONEncoder, ensure_ascii=False)
 
     @staticmethod
     def json(content):
-        return json.dumps(content, cls=PermissiveJSONEncoder)
+        return json.dumps(content, cls=PermissiveJSONEncoder, ensure_ascii=False)
 
     @staticmethod
     def jsonp(content):
-        return json.dumps(content, sort_keys=True, indent=4, cls=PermissiveJSONEncoder)
+        return json.dumps(content, sort_keys=True, indent=4, cls=PermissiveJSONEncoder, ensure_ascii=False)
 
     def pformat(self, content, *args, **kwargs):
         if isinstance(content, types.GeneratorType):
             return "\n".join(self.pformat(c, *args, **kwargs) for c in content)
         elif self.output_format == "json":
-            return json.dumps(content, cls=PermissiveJSONEncoder)
+            return json.dumps(content, cls=PermissiveJSONEncoder, ensure_ascii=False)
         elif self.output_format == "json-pretty":
-            return json.dumps(content, sort_keys=True, indent=4, cls=PermissiveJSONEncoder)
+            return json.dumps(content, sort_keys=True, indent=4, cls=PermissiveJSONEncoder, ensure_ascii=False)
         elif self.output_format == "json-compact":
-            return json.dumps(content, separators=(",", ":"), cls=PermissiveJSONEncoder)
+            return json.dumps(content, separators=(",", ":"), cls=PermissiveJSONEncoder, ensure_ascii=False)
         elif self.output_format == "json-lines":
             if not isinstance(content, (list, set)):
                 raise TypeError("Expected list or set; found {}".format(type(content).__name__))
@@ -65,7 +65,7 @@ class Printer:
             last = len(content) - 1
             for i, val in enumerate(content):
                 suffix = "," if i < last else ""
-                lines.append(json.dumps(val, cls=PermissiveJSONEncoder) + suffix)
+                lines.append(json.dumps(val, cls=PermissiveJSONEncoder, ensure_ascii=False) + suffix)
             lines.append("]\n")
             return "\n".join(lines)
         elif self.output_format == "text":
