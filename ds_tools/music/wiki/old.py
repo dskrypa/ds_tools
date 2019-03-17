@@ -1737,8 +1737,3 @@ class DiscographyEntryParser(SongTitleParser):
             else:
                 raise UnexpectedTokenError("Unexpected {!r} token {!r} in {!r}".format(self.next_tok.type, self.next_tok.value, self._full))
         return name
-
-
-if __name__ == "__main__":
-    from ds_tools.logging import LogManager
-    lm = LogManager.create_default_logger(2, log_path=None, entry_fmt="%(asctime)s %(name)s %(message)s")
