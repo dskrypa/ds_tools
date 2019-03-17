@@ -14,7 +14,7 @@ from ...utils import soupify, ParentheticalParser
 from .exceptions import *
 from .parsing import parse_aside, parse_infobox, parse_album_page, parse_wikipedia_album_page
 
-__all__ = ['KpopWikiClient', 'WikipediaClient']
+__all__ = ['DramaWikiClient', 'KindieWikiClient', 'KpopWikiClient', 'WikiClient', 'WikipediaClient']
 log = logging.getLogger(__name__)
 
 AMBIGUOUS_URI_PATH_TEXT = [
@@ -107,6 +107,11 @@ class WikiClient(RestClient):
                                 return self.normalize_name(alt)
                             except Exception as ne:
                                 pass
+
+                    uri_path = self.title_search(name)
+                    if uri_path is not None:
+                        return uri_path
+
             raise e
         else:
             if any(val in html for val in AMBIGUOUS_URI_PATH_TEXT):
@@ -120,6 +125,9 @@ class WikiClient(RestClient):
 
     def parse_album_page(self, uri_path, clean_soup, side_info):
         return []
+
+    def title_search(self, title):
+        raise NotImplementedError()
 
 
 class KpopWikiClient(WikiClient):
@@ -140,6 +148,26 @@ class KpopWikiClient(WikiClient):
     def parse_album_page(self, uri_path, clean_soup, side_info):
         return parse_album_page(uri_path, clean_soup, side_info)
 
+    def title_search(self, title):
+        try:
+            resp = self.get('Special:Search', params={'query': title})
+        except CodeBasedRestException as e:
+            log.debug('Error retrieving results for query {!r}: {}'.format(title, e))
+            raise e
+
+        lc_title = title.lower()
+        results = []
+        soup = soupify(resp.text, parse_only=bs4.SoupStrainer('ul', class_='Results'))
+        for li in soup.find_all('li', class_='result'):
+            a = li.find('a', class_='result-link')
+            if a:
+                href = a.get('href')
+                if href and lc_title in li.text.lower():
+                    url = urlparse(href)
+                    uri_path = url.path
+                    return uri_path[6:] if uri_path.startswith('/wiki/') else uri_path
+        return None
+
     def search(self, query):
         try:
             resp = self.get('Special:Search', params={'query': query})
@@ -159,6 +187,10 @@ class KpopWikiClient(WikiClient):
                     uri_path = uri_path[6:] if uri_path.startswith('/wiki/') else uri_path
                     results.append((a.text, uri_path))
         return results
+
+
+class KindieWikiClient(KpopWikiClient):
+    _site = 'kindie.fandom.com'
 
 
 class WikipediaClient(WikiClient):
