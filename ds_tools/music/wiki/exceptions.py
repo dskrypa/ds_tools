@@ -9,8 +9,8 @@ from ...utils import soupify
 from ..exceptions import MusicException
 
 __all__ = [
-    'AmbiguousEntityException', 'InvalidTrackListException', 'MusicWikiException', 'WikiEntityIdentificationException',
-    'WikiEntityInitException', 'WikiTypeError'
+    'AmbiguousEntityException', 'InvalidTrackListException', 'MemberDiscoveryException', 'MusicWikiException',
+    'WikiEntityIdentificationException', 'WikiEntityInitException', 'WikiTypeError'
 ]
 
 
@@ -30,16 +30,21 @@ class InvalidTrackListException(MusicWikiException):
     """Exception to be raised when an invalid track list name was provided"""
 
 
+class MemberDiscoveryException(MusicWikiException):
+    """Exception to be raised when unable to find a member/sub-unit of a given group"""
+
+
 class WikiTypeError(TypeError, MusicWikiException):
     """Exception to be raised when an incorrect type was used to initialize a WikiEntity"""
-    def __init__(self, url_or_msg, article=None, category=None, cls_cat=None):
-        self.url, self.article, self.category, self.cls_cat = url_or_msg, article, category, cls_cat
+    def __init__(self, url_or_msg, article=None, category=None, cls_cat=None, cls=None):
+        self.url, self.article, self.category, self.cls_cat, self.cls = url_or_msg, article, category, cls_cat, cls
         self.msg = None if article else url_or_msg
 
     def __str__(self):
         if self.msg:
             return self.msg
-        return '{} is {} {} page (expected: {})'.format(self.url, self.article, self.category, self.cls_cat)
+        fmt = 'Invalid URL for {}: {} - it is {} {} page; expected: {}'
+        return fmt.format(self.cls.__name__, self.url, self.article, self.category, self.cls_cat)
 
 
 class AmbiguousEntityException(MusicWikiException):
