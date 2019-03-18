@@ -165,10 +165,13 @@ def parse_album_page(uri_path, clean_soup, side_info):
         try:
             repkg_rx = parse_album_page._repkg_rx
         except AttributeError:
-            repkg_rx = parse_album_page._repkg_rx = re.compile('A repackage titled (.*) (?:was|will be) released')
+            repkg_rx = parse_album_page._repkg_rx = re.compile(
+                'A repackage titled (.*?)(?:,[^,]+,)? (?:was|will be) released'
+            )
         repkg_match = repkg_rx.search(intro_text)
         if repkg_match:
             repkg_title = repkg_match.group(1)
+            # log.debug('repackage of uri_path={!r} is titled {!r}'.format(uri_path, repkg_title))
             releases = side_info.get('released', [])
             repkg_dt = next((dt for dt, note in releases if note and note.lower() == 'repackage'), None)
             if repkg_dt:
