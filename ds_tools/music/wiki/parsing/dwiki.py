@@ -15,7 +15,10 @@ log = logging.getLogger(__name__)
 
 
 def parse_ost_page(uri_path, clean_soup):
-    first_h2 = clean_soup.find('h2')
+    try:
+        first_h2 = clean_soup.find('h2')
+    except AttributeError:
+        first_h2 = None
     if not first_h2:
         raise WikiEntityParseException('Unable to find first OST part section in {}'.format(uri_path))
 
