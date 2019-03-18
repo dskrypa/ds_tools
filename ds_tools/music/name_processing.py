@@ -269,7 +269,7 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
             else:
                 eng, cjk = eng_cjk_sort(parts[:2], langs[:2])           # Name (other lang) (Group|extra single lang)
                 not_used = parts[2]
-                keyword = next((val for val in ('from ',) if val in not_used), None)
+                keyword = next((val for val in ('from ',) if not_used.startswith(val)), None)
                 if keyword:
                     not_used = not_used[len(keyword):].strip()
 

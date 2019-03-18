@@ -345,7 +345,7 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
             track['artist'] = part[:-5].strip()
         elif lc_part.endswith((' ver.', ' ver', ' version', ' edition', ' ed.')):
             value = part.rsplit(maxsplit=1)[0]
-            if lc_part.startswith(version_types):
+            if lc_part.startswith(version_types) or any(val in lc_part for val in ('remaster',)):
                 if track.get('version'):
                     if track['version'].lower() == value.lower():
                         continue

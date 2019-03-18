@@ -262,10 +262,16 @@ class DramaWikiClient(WikiClient):
         soup = soupify(resp.text, parse_only=bs4.SoupStrainer(class_='searchresults'))
         # for a in soup.find(class_='searchresults').find_all('a'):
         for a in soup.find_all('a'):
-            if a.text.translate(STRIP_TBL).lower() == clean_title:
+            clean_a = a.text.translate(STRIP_TBL).lower()
+            if clean_a == clean_title or clean_title in clean_a:
                 href = a.get('href') or ""
                 if href and 'redlink=1' not in href:
                     return href
+
+        lc_title = title.lower()
+        keyword = next((val for val in ('the ', 'a ') if lc_title.startswith(val)), None)
+        if keyword:
+            return self.title_search(title[len(keyword):].strip())
         return None
 
     @cached('_name_cache', lock=True, key=lambda s, a: '{}: {}'.format(s.host, a))
