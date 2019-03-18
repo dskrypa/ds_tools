@@ -25,25 +25,37 @@ def parse_discography_page(uri_path, clean_soup, artist):
     except AttributeError:
         date_comment_rx = parse_discography_page._date_comment_rx = re.compile(r'^(\S+ \d+\s*, \d{4}).*')
 
-    for h2 in clean_soup.find_all('h2'):
+    if clean_soup.find('span', id='Discography'):
+        top_lvl_h, sub_h = 'h3', 'h4'
+    else:
+        top_lvl_h, sub_h = 'h2', 'h3'
+
+    for h2 in clean_soup.find_all(top_lvl_h):
         album_type = h2.text.strip().lower()
         sub_type = None
         if album_type in ('music videos', 'see also'):
             break
 
         ele = h2.next_sibling
-        while hasattr(ele, 'name') and ele.name != 'h2':
+        while hasattr(ele, 'name') and ele.name != top_lvl_h:
             if isinstance(ele, NavigableString):
                 ele = ele.next_sibling
                 continue
-            elif ele.name == 'h3':
+            elif ele.name == sub_h:
                 sub_type = ele.text.strip().lower()
             elif ele.name == 'table':
                 columns = [th.text.strip() for th in ele.find('tr').find_all('th')]
-                if columns[-1] == 'Album':
+                if columns[-1] in ('Album', 'Drama'):
                     tracks = []
-                    for row in expanded_wiki_table(ele):
-                        title_ele = row[0]
+                    expanded = expanded_wiki_table(ele)
+                    # log.debug('Expanded table: {}'.format(expanded))
+                    for row in expanded:
+                        if row[0].text.strip().isdigit():
+                            title_ele = row[1]
+                            year_ele = row[0]
+                        else:
+                            title_ele = row[0]
+                            year_ele = row[1]
                         album_ele = row[-1]
                         album_title = album_ele.text.strip()
                         if album_title.lower() == 'non-album single':
@@ -51,8 +63,9 @@ def parse_discography_page(uri_path, clean_soup, artist):
                         links = link_tuples(chain(title_ele.find_all('a'), album_ele.find_all('a')))
                         track = parse_track_info(
                             1, title_ele.text, uri_path, links=links,
-                            include={'links': links, 'album': album_title, 'year': int(row[1].text.strip())}
+                            include={'links': links, 'album': album_title, 'year': int(year_ele.text.strip())}
                         )
+                        # log.debug('Adding type={!r}, sub_type={!r}, track: {}'.format(album_type, sub_type, track))
                         tracks.append(track)
                     singles.append({'type': album_type, 'sub_type': sub_type, 'tracks': tracks})
                 else:
