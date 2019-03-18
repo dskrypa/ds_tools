@@ -388,7 +388,8 @@ class WikiEntity(metaclass=WikiEntityMeta):
             content = self._soup.find("div", id="mw-content-text")
         except AttributeError as e:
             self.__side_info = None
-            log.warning(e)
+            if self._soup is not None:
+                log.warning(e)
             return None
 
         if isinstance(self._client, (KpopWikiClient, KindieWikiClient)):
@@ -512,12 +513,21 @@ class WikiArtist(WikiEntity):
                 log.warning("{} while processing intro for {}: {}".format(type(e).__name__, name or uri_path, e))
             else:
                 self.english_name, self.cjk_name, self.stylized_name, self.aka, self._info = name_parts
+
         if name and not any(val for val in (self.english_name, self.cjk_name, self.stylized_name)):
             self.english_name, self.cjk_name = split_name(name)
 
         self.name = multi_lang_name(self.english_name, self.cjk_name)
         if self.english_name and isinstance(self._client, KpopWikiClient):
             type(self)._known_artists.add(self.english_name.lower())
+
+        if isinstance(self._client, WikipediaClient):
+            try:
+                self._albums, self._singles = parse_discography_page(self._uri_path, self._clean_soup, self)
+            except Exception:
+                self._albums, self._singles = None, None
+        else:
+            self._albums, self._singles = None, None
 
     def __repr__(self):
         try:
@@ -566,10 +576,12 @@ class WikiArtist(WikiEntity):
         name = self._uri_path.title() + "_discography"
         try:
             return WikiDiscography(None, WikipediaClient(), name=name, artist=self)
+        except WikiTypeError as e:
+            return WikiArtist(None, WikipediaClient(), name=name)
         except Exception as e:
-            fmt = "Unable to retrieve alternate discography page for {}: {}{}"
+            # fmt = 'Unable to retrieve alternate discography page for {}: {}{}'
             # log.debug(fmt.format(self, e, "\n" + traceback.format_exc()))
-            log.debug(fmt.format(self, e))
+            log.debug('Unable to retrieve alternate discography page for {}: {}'.format(self, e))
         return None
 
     @property
@@ -691,6 +703,31 @@ class WikiArtist(WikiEntity):
         for text, href in self._side_info.get('associated', {}).items():
             associated.append(WikiArtist(href, name=text, client=self._client))
         return associated
+
+    def find_song_collection(self, name, min_score=55):
+        match_fmt = '{}: {} matched {!r} with score={} because its alias={!r} =~= {!r}'
+        best_score, best_alias, best_val, best_coll = 0, None, None, None
+        for collection in self.discography:
+            score, alias, val = collection.score_match(name)
+            if score >= 100:
+                # log.debug(match_fmt.format(self, collection, name, score, alias, val))
+                return collection
+            elif score > best_score:
+                best_score, best_alias, best_val, best_coll = score, alias, val, collection
+
+        if best_score > min_score:
+            # log.debug(match_fmt.format(self, best_coll, name, best_score, best_alias, best_val))
+            return best_coll
+        return None
+
+    @cached_property
+    def _soundtracks(self):
+        soundtracks = defaultdict(list)
+        for group in self._singles:
+            if group["sub_type"] and "soundtrack" in group["sub_type"]:
+                for track in group["tracks"]:
+                    soundtracks[track["album"]].append(track)
+        return soundtracks
 
 
 class WikiGroup(WikiArtist):
@@ -1255,6 +1292,8 @@ class WikiSoundtrack(WikiSongCollection):
     def __init__(self, uri_path=None, client=None, **kwargs):
         super().__init__(uri_path, client, **kwargs)
         if isinstance(self._client, DramaWikiClient):
+            if not self._raw:
+                raise WikiEntityInitException('WikiSoundtrack requires a valid uri_path')
             self._track_lists = parse_ost_page(self._uri_path, self._clean_soup)
             self._album_info = {
                 "track_lists": self._track_lists, "num": None, "type": "OST", "repackage": False, "length": None,
@@ -1487,16 +1526,20 @@ def find_ost(artist, title, disco_entry):
     for client in (d_client, w_client):
         alt_match = client.title_search(show_title)
         if alt_match:
-            series = WikiTVSeries(alt_match, client)
-            if series.ost_href:
-                return WikiSongCollection(series.ost_href, d_client, disco_entry=disco_entry, artist_context=artist)
+            try:
+                series = WikiTVSeries(alt_match, client)
+            except WikiTypeError:
+                pass
+            else:
+                if series.ost_href:
+                    return WikiSongCollection(series.ost_href, d_client, disco_entry=disco_entry, artist_context=artist)
 
-            for alt_title in series.aka:
-                # log.debug("Found AKA for {!r}: {!r}".format(show_title, alt_title))
-                alt_uri_path = d_client.normalize_name(alt_title + " OST")
-                if alt_uri_path:
-                    log.debug("Found alternate uri_path for {!r}: {!r}".format(title, alt_uri_path))
-                    return WikiSongCollection(alt_uri_path, d_client, disco_entry=disco_entry, artist_context=artist)
+                for alt_title in series.aka:
+                    # log.debug("Found AKA for {!r}: {!r}".format(show_title, alt_title))
+                    alt_uri_path = d_client.normalize_name(alt_title + " OST")
+                    if alt_uri_path:
+                        log.debug("Found alternate uri_path for {!r}: {!r}".format(title, alt_uri_path))
+                        return WikiSongCollection(alt_uri_path, d_client, disco_entry=disco_entry, artist_context=artist)
 
     if artist._disco_page:
         # log.debug("{}: Processing discography page to find OST tracks...".format(artist))
@@ -1513,6 +1556,8 @@ def find_ost(artist, title, disco_entry):
                 return WikiSoundtrack(
                     None, b_client, no_type_check=True, disco_entry=_entry, album_info=album_info, artist_context=artist
                 )
+            # else:
+            #     log.debug("{}: Found discography page {!r} != {!r}".format(artist, title, ost_name))
 
     if disco_entry.get("wiki") == k_client._site and disco_entry.get("uri_path"):
         return WikiSoundtrack(disco_entry["uri_path"], k_client, disco_entry=disco_entry, artist_context=artist)

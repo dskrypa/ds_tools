@@ -956,6 +956,14 @@ class SongFile(ClearableCachedPropertyMixin):
             raise exc
 
     @cached_property
+    def wiki_album_new(self):
+        try:
+            return self.wiki_artist_new.find_song_collection(self.album_name_cleaned)
+        except AttributeError as e:
+            traceback.print_exc()
+            raise e
+
+    @cached_property
     def wiki_artist(self):
         eng, han = None, None
         try:
