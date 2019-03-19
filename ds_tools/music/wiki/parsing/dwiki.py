@@ -79,8 +79,11 @@ def parse_drama_wiki_info_list(uri_path, info_ul):
             try:
                 value = datetime_with_tz(value, '%Y-%b-%d')
             except Exception as e:
-                log.debug('Error parsing release date {!r} for {}: {}'.format(value, uri_path, e))
-                pass
+                try:
+                    value = datetime_with_tz(value, '%Y-%m-%d')
+                except Exception as e1:
+                    log.debug('Errors parsing release date {!r} for {}: {}, {}'.format(value, uri_path, e, e1))
+                    pass
         elif key == 'language':
             value = str2list(value)
         elif key == 'artist':

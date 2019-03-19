@@ -44,6 +44,7 @@ DISCOGRAPHY_TYPE_MAP = {
     'collaborations_and_features': 'Collaboration',
     'collaboration_single': 'Collaboration',
     'digital_singles': 'Single',
+    'eps': 'Extended Play',
     'features': 'Collaboration',
     'live_albums': 'Live',
     'mini_albums': 'Mini Album',
@@ -508,9 +509,10 @@ class WikiArtist(WikiEntity):
             try:
                 name_parts = parse_name(self._clean_soup.text)
             except Exception as e:
+                fmt = '{} while processing intro for {}: {}'
+                log.warning(fmt.format(type(e).__name__, self._client.url_for(uri_path), e))
                 if strict:
                     raise e
-                log.warning("{} while processing intro for {}: {}".format(type(e).__name__, name or uri_path, e))
             else:
                 self.english_name, self.cjk_name, self.stylized_name, self.aka, self._info = name_parts
 
@@ -685,7 +687,7 @@ class WikiArtist(WikiEntity):
             except MusicWikiException as e:
                 fmt = "{}: Error processing discography entry for {!r} / {!r}: {}"
                 log.error(fmt.format(self, entry["uri_path"], entry["title"], e), extra={"color": 13})
-                raise e
+                # raise e
 
         return discography
 

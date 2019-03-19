@@ -97,7 +97,9 @@ def synonym_pattern(text, synonym_sets=None, chain_sets=True):
 
 
 def get_page_category(url, cats):
-    if any(i in cat for i in ("singles", "songs") for cat in cats):
+    if url.endswith('_discography'):
+        return 'discography'
+    elif any(i in cat for i in ("singles", "songs") for cat in cats):
         if any("single album" in cat for cat in cats):
             return "album"
         else:

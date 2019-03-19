@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from bs4.element import NavigableString
 
 from ....core import datetime_with_tz
-from ....utils import ParentheticalParser, DASH_CHARS, num_suffix
+from ....utils import ParentheticalParser, DASH_CHARS, num_suffix, QMARKS
 from ...name_processing import has_parens, parse_name, split_name, str2list
 from ..utils import synonym_pattern
 from .common import (
@@ -415,6 +415,27 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
                         'artist': split_name(soloist), 'artist_href': linkd.get(soloist),
                         'of_group': split_name(of_group), 'group_href': linkd.get(of_group),
                     })
+        elif base_type == 'osts' and 'with' in item:
+            try:
+                ost_song_rx = parse_discography_entry._ost_song_rx
+            except AttributeError:
+                ost_song_rx = parse_discography_entry._ost_song_rx = re.compile(
+                    r'([{}])(.*)\1\s*(?:with|feat\.?|featuring)\s*(.*)'.format(QMARKS + "'"), re.IGNORECASE
+                )
+            m = ost_song_rx.match(item)
+            if m:
+                song, _collabs = m.groups()[1:]
+                misc_info.append(song)
+                for collab in str2list(_collabs, pat='^(?:with|feat\.?|as) | and |,|;|&| feat\.? | featuring | with '):
+                    try:
+                        soloist, of_group = collab.split(' of ')
+                    except Exception as e:
+                        collabs.append({'artist': split_name(collab), 'artist_href': linkd.get(collab)})
+                    else:
+                        collabs.append({
+                            'artist': split_name(soloist), 'artist_href': linkd.get(soloist),
+                            'of_group': split_name(of_group), 'group_href': linkd.get(of_group),
+                        })
         else:
             misc_info.append(item)
 

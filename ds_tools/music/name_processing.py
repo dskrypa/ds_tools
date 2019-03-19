@@ -33,9 +33,12 @@ def fuzz_process(text):
     except AttributeError:
         non_letter_non_num_rx = fuzz_process._non_letter_non_num_rx = re.compile(r'\W')
 
+    original = text
     text = non_letter_non_num_rx.sub(' ', text)     # Convert non-letter/numeric characters to spaces
     text = ' '.join(text.split())                   # Condense sets of consecutive spaces to 1 space (faster than regex)
     text = text.lower().strip()                     # Convert to lower case & strip leading/trailing whitespace
+    if len(text) == 0:
+        text = ' '.join(original.split()).lower().strip()   # In case the text is only non-letter/numeric characters
     # Remove accents and other diacritical marks; composed Hangul and the like stays intact
     text = normalize('NFC', ''.join(c for c in normalize('NFD', text) if not combining(c)))
     return text
@@ -60,6 +63,8 @@ def parse_name(text):
         base, details = parts[0], ''
     else:
         base, details = parts[:2]
+
+    lc_details = details.lower()
     if ' is ' in base:
         base = base[:base.index(' is ')].strip()
         eng, cjk = eng_cjk_sort(base)
@@ -73,7 +78,7 @@ def parse_name(text):
     elif not contains_any_cjk(details):
         eng, cjk = eng_cjk_sort(base)
         return eng, cjk, None, None, None
-    elif details.lower().endswith('ost') and base.lower().endswith('ost') and contains_any_cjk(details):
+    elif lc_details.endswith('ost') and base.lower().endswith('ost') and contains_any_cjk(details):
         eng, cjk = eng_cjk_sort((base, details), permissive=True)
         return eng, cjk, None, None, None
     elif base.endswith(')') and details.endswith(')'):
@@ -82,7 +87,12 @@ def parse_name(text):
         if len(base_parts) == len(details_parts) == 2 and base_parts[1] == details_parts[1]:
             eng, cjk = eng_cjk_sort((base_parts[0], details_parts[0]), permissive=True)
             return eng, cjk, None, None, [base_parts[1]]
+    elif lc_details.startswith('hangul'):
+        details = details[6:]
+        if details.startswith(':'):
+            details = details[1:].strip()
 
+    # log.debug('base={!r}, details={!r}, processing further...'.format(base, details))
     cjk = ''
     found_hangul = False
     stylized = None
@@ -90,6 +100,7 @@ def parse_name(text):
     aka_leads = ('aka', 'a.k.a.', 'also known as', 'or simply')
     info = []
     for part in map(str.strip, re.split('[;,]', details)):
+        # log.debug('Processing part of details: {!r}'.format(part))
         lc_part = part.lower()
         if lc_part.startswith('stylized as'):
             stylized = part[11:].strip()
@@ -100,8 +111,20 @@ def parse_name(text):
             _lang_name, cjk = eng_cjk_sort(tuple(map(str.strip, part.split(':', 1))))
             found_hangul = is_hangul(cjk)
         elif not found_hangul and not cjk and contains_any_cjk(part):
-            found_hangul = LangCat.HAN in LangCat.categorize(part, True)
-            cjk = part
+            part_parts = part.split()
+            if is_hangul(part_parts[0]) and LangCat.categorize(part_parts[1]) == LangCat.ENG:
+                prefix = os.path.commonprefix([base, part_parts[1]])
+                if len(prefix) > 3 and prefix != base:  # Special case for EXO-CBX, slightly genericized
+                    # log.debug('Matched split mixed part: {}'.format(part_parts))
+                    found_hangul = True
+                    cjk = part_parts[0]
+                    info.append(part_parts[1])
+                else:
+                    found_hangul = LangCat.HAN in LangCat.categorize(part, True)
+                    cjk = part
+            else:
+                found_hangul = LangCat.HAN in LangCat.categorize(part, True)
+                cjk = part
         elif lc_part.endswith((' ver.', ' ver')):
             info.append(part)
         elif not aka:
