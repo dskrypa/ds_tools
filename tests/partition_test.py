@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 
-from misc import partitioned_exec
+import sys
+from pathlib import Path
+
+sys.path.append(Path(__file__).resolve().parents[1].as_posix())
+from ds_tools.core import partitioned_exec
 
 
 class PartitionTester:
