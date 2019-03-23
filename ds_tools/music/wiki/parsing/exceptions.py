@@ -4,7 +4,7 @@
 
 from ..exceptions import MusicWikiException
 
-__all__ = ['NoTrackListException', 'TrackInfoParseException', 'WikiEntityParseException']
+__all__ = ['NoTrackListException', 'TrackInfoParseException', 'UnexpectedDateFormat', 'WikiEntityParseException']
 
 
 class WikiEntityParseException(MusicWikiException):
@@ -17,3 +17,7 @@ class NoTrackListException(WikiEntityParseException):
 
 class TrackInfoParseException(MusicWikiException):
     """Exception to be raised when unable to parse expected content from a WikiEntity track list item, or track title"""
+
+
+class UnexpectedDateFormat(WikiEntityParseException):
+    """Exception to be raised when an unexpected date format is encountered"""

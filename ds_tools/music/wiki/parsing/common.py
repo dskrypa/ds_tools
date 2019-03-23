@@ -3,16 +3,18 @@
 """
 
 import logging
+import re
 from collections import OrderedDict
 
+from ....core import datetime_with_tz
 from ....unicode import LangCat
 from ....utils import DASH_CHARS, QMARKS, ListBasedRecursiveDescentParser, ALL_WHITESPACE, UnexpectedTokenError
-from ...name_processing import categorize_langs, combine_name_parts, eng_cjk_sort, str2list
+from ...name_processing import categorize_langs, combine_name_parts, eng_cjk_sort, str2list, split_name
 from .exceptions import *
 
 __all__ = [
-    'album_num_type', 'first_side_info_val', 'LANG_ABBREV_MAP', 'link_tuples', 'NUM2INT', 'parse_track_info',
-    'TrackInfoParser', 'unsurround'
+    'album_num_type', 'first_side_info_val', 'LANG_ABBREV_MAP', 'link_tuples', 'NUM2INT', 'parse_date',
+    'parse_track_info', 'TrackInfoParser', 'TrackListParser', 'unsurround'
 ]
 log = logging.getLogger(__name__)
 
@@ -22,13 +24,88 @@ LANG_ABBREV_MAP = {
     'english': 'English', 'en': 'English', 'eng': 'English',
     'japanese': 'Japanese', 'jp': 'Japanese', 'jap': 'Japanese', 'jpn': 'Japanese',
     'korean': 'Korean', 'kr': 'Korean', 'kor': 'Korean', 'ko': 'Korean',
-    'spanish': 'Spanish'
+    'spanish': 'Spanish',
+    'mandarin': 'Mandarin'
 }
 NUM2INT = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
 NUMS = {
     'first': '1st', 'second': '2nd', 'third': '3rd', 'fourth': '4th', 'fifth': '5th', 'sixth': '6th',
     'seventh': '7th', 'eighth': '8th', 'ninth': '9th', 'tenth': '10th', 'debut': '1st'
 }
+
+
+class TrackListParser(ListBasedRecursiveDescentParser):
+    _entry_point = 'tracks'
+    _strip = True
+    _quote_reqs = ('WS', 'ARTIST_DELIM', 'COMMA')
+    TOKENS = OrderedDict([
+        ('QUOTE', '[{}]'.format(QMARKS + "'")),
+        ('COMMA', ','),
+        ('ARTIST_DELIM', ' as | feat\.? | featuring | with '),
+        ('WS', '\s+'),
+        ('TEXT', '[^{},]+'.format(QMARKS + "'"))
+    ])
+
+    def parse(self, text, context=None, link_dict=None):
+        self._context = context
+        self._link_dict = link_dict or {}
+        return super().parse(text)
+
+    def tracks(self):
+        """
+        tracks :: = quote text quote {'with' text}*[, tracks]
+        """
+        songs = []
+        collabs = []
+        title = ''
+        inside_quotes = False
+        while self.next_tok:
+            if self._accept('QUOTE'):
+                if self.prev_tok is None or self.next_tok is None:
+                    inside_quotes = not inside_quotes
+                elif self._last_any(self._quote_reqs) or self._peek_any(self._quote_reqs):
+                    inside_quotes = not inside_quotes
+                else:
+                    title += self.tok.value
+            elif self._accept('COMMA'):
+                if inside_quotes:
+                    title += self.tok.value
+                elif self.next_tok is None or self._peek('QUOTE'):
+                    songs.append(
+                        {'num': None, 'length': '-1:00', 'name_parts': split_name(title), 'collaborators': collabs}
+                    )
+                    title = ''
+                    collabs = []
+            elif self._accept('ARTIST_DELIM'):
+                if inside_quotes:
+                    title += self.tok.value
+            elif self._accept('WS'):
+                if inside_quotes:
+                    title += self.tok.value
+            elif self._accept('TEXT'):
+                if inside_quotes:
+                    title += self.tok.value
+                else:
+                    collab = self.tok.value
+                    try:
+                        soloists, of_group = collab.split(' of ')
+                    except Exception as e:
+                        collabs.append({'artist': split_name(collab), 'artist_href': self._link_dict.get(collab)})
+                    else:
+                        for soloist in re.split(' and | & ', soloists):
+                            collabs.append({
+                                'artist': split_name(soloist), 'artist_href': self._link_dict.get(soloist),
+                                'of_group': split_name(of_group), 'group_href': self._link_dict.get(of_group),
+                            })
+            else:
+                raise UnexpectedTokenError('Unexpected {!r} token {!r} in {!r}'.format(
+                    self.next_tok.type, self.next_tok.value, self._full
+                ))
+
+        title = title.strip()
+        if title:
+            songs.append({'num': None, 'length': '-1:00', 'name_parts': split_name(title), 'collaborators': collabs})
+        return songs
 
 
 class TrackInfoParser(ListBasedRecursiveDescentParser):
@@ -49,7 +126,7 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
         ('TIME', '\s*\d+:\d{2}'),
         ('WS', '\s+'),
         ('DASH', '[{}]'.format(DASH_CHARS)),
-        ("TEXT", "[^{}{}()（）\[\]{}]+".format(DASH_CHARS, QMARKS, ALL_WHITESPACE)),
+        ('TEXT', '[^{}{}()（）\[\]{}]+'.format(DASH_CHARS, QMARKS, ALL_WHITESPACE)),
     ])
 
     def __init__(self, selective_recombine=True):
@@ -257,7 +334,7 @@ def album_num_type(details):
     raise ValueError('Unable to determine album type from details: {}'.format(details))
 
 
-def parse_track_info(idx, text, source, length=None, *, include=None, links=None, compilation=False):
+def parse_track_info(idx, text, source, length=None, *, include=None, links=None, compilation=False, artist=None):
     """
     Split and categorize the given text to identify track metadata such as length, collaborators, and english/cjk name
     parts.
@@ -309,11 +386,11 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
         version_types = parse_track_info._version_types = (
             'inst', 'acoustic', 'ballad', 'original', 'remix', 'r&b', 'band', 'karaoke', 'special', 'full length',
             'single', 'album', 'radio', 'limited', 'normal', 'english rap', 'rap', 'piano', 'acapella', 'edm', 'stage',
-            'live', 'rock', 'director\'s'
+            'live', 'rock', 'director\'s', 'cd', 'solo', 'classical orchestra'
         )
         misc_indicators = parse_track_info._misc_indicators = ( # spaces intentional
             'bonus', ' ost', ' mix', 'remix', 'special track', 'prod. by', 'produced by', 'director\'s', ' only',
-            'remaster', 'intro', 'unit', 'hidden track'
+            'remaster', 'intro', 'unit', 'hidden track', 'pre-debut', 'digital'
         )
 
     name_parts, name_langs, collabs, misc, unknown = [], [], [], [], []
@@ -357,7 +434,12 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
                 try:
                     track['language'] = LANG_ABBREV_MAP[value.lower()]
                 except KeyError:
-                    log.debug('Found unexpected version text in {!r} - {!r}: {!r}'.format(source, text, value), extra={'color': 100})
+                    lc_val = value.lower()
+                    is_artist_version = artist and isinstance(artist, dict) and next(iter(artist)).lower() in lc_val
+                    if not (is_artist_version or (lc_val == str(source).lower())):
+                        dbg_fmt = 'Found unexpected version text in {!r} - {!r}: {!r}'
+                        log.debug(dbg_fmt.format(source, text, value), extra={'color': 100})
+
                     if track.get('version'):
                         old_ver = track['version']
                         if old_ver.lower() == value.lower():
@@ -418,3 +500,22 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
         track['unknown'] = unknown
 
     return track
+
+
+def parse_date(dt_str, try_dateparser=False, source=None):
+    dt_formats = ('%Y-%b-%d', '%Y-%m-%d', '%B %d, %Y', '%d %B %Y')
+    for dt_fmt in dt_formats:
+        try:
+            return datetime_with_tz(dt_str, dt_fmt)
+        except Exception as e:
+            pass
+
+    if try_dateparser:
+        try:
+            return datetime_with_tz(dt_str, use_dateparser=True)
+        except Exception as e:
+            pass
+
+    src_msg = ' in {!r}'.format(source) if source else ''
+    err_fmt = 'Datetime string {!r}{} did not match any expected format: {}'
+    raise UnexpectedDateFormat(err_fmt.format(dt_str, src_msg, ', '.join(map(repr, dt_formats))))
