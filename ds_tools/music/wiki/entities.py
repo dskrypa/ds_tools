@@ -24,7 +24,8 @@ from ...utils import soupify
 from ..name_processing import eng_cjk_sort, fuzz_process, parse_name, split_name
 from .exceptions import *
 from .utils import (
-    comparison_type_check, edition_combinations, get_page_category, multi_lang_name, sanitize_path, synonym_pattern
+    comparison_type_check, edition_combinations, get_page_category, multi_lang_name, sanitize_path, strify_collabs,
+    synonym_pattern
 )
 from .rest import WikiClient, KindieWikiClient, KpopWikiClient, WikipediaClient, DramaWikiClient
 from .parsing import *
@@ -282,8 +283,20 @@ class WikiEntity(metaclass=WikiEntityMeta):
 
     @cached_property
     def aliases(self):
-        aliases = (getattr(self, attr, None) for attr in ("english_name", "cjk_name", "stylized_name", "aka", "name"))
-        return [a for a in aliases if a]
+        _aliases = (getattr(self, attr, None) for attr in ("english_name", "cjk_name", "stylized_name", "name"))
+        aliases = [a for a in _aliases if a]
+        try:
+            # noinspection PyUnresolvedReferences
+            aka = self.aka
+        except AttributeError:
+            pass
+        else:
+            if aka:
+                if isinstance(aka, str):
+                    aliases.append(aka)
+                else:
+                    aliases.extend(aka)
+        return aliases
 
     @cached_property
     def lc_aliases(self):
@@ -485,10 +498,11 @@ class WikiTVSeries(WikiEntity):
             self.name = self._side_info["name"]
             self.aka = self._side_info.get("also known as", [])
         elif isinstance(self._client, DramaWikiClient):
+            self.name = soupify(self._raw, parse_only=bs4.SoupStrainer('h2', class_='title')).text  # Outside self._soup
             ul = self._clean_soup.find(id="Details").parent.find_next("ul")
             self._info = parse_drama_wiki_info_list(self._uri_path, ul)
             self.english_name, self.cjk_name = self._info["title"]
-            self.name = multi_lang_name(self.english_name, self.cjk_name)
+            # self.name = multi_lang_name(self.english_name, self.cjk_name)
             self.aka = self._info.get("also known as", [])
             ost = self._info.get("original soundtrack")
             if ost:
@@ -506,15 +520,20 @@ class WikiArtist(WikiEntity):
         super().__init__(uri_path, client, **kwargs)
         self.english_name, self.cjk_name, self.stylized_name, self.aka = None, None, None, None
         if self._raw:
-            try:
-                name_parts = parse_name(self._clean_soup.text)
-            except Exception as e:
-                fmt = '{} while processing intro for {}: {}'
-                log.warning(fmt.format(type(e).__name__, self._client.url_for(uri_path), e))
-                if strict:
-                    raise e
+            if isinstance(self._client, DramaWikiClient):
+                ul = self._clean_soup.find(id="Profile").parent.find_next("ul")
+                self._profile = parse_drama_wiki_info_list(self._uri_path, ul)
+                self.english_name, self.cjk_name = self._profile['name']
             else:
-                self.english_name, self.cjk_name, self.stylized_name, self.aka, self._info = name_parts
+                try:
+                    name_parts = parse_name(self._clean_soup.text)
+                except Exception as e:
+                    fmt = '{} while processing intro for {}: {}'
+                    log.warning(fmt.format(type(e).__name__, self._client.url_for(uri_path), e))
+                    if strict:
+                        raise e
+                else:
+                    self.english_name, self.cjk_name, self.stylized_name, self.aka, self._info = name_parts
 
         if name and not any(val for val in (self.english_name, self.cjk_name, self.stylized_name)):
             self.english_name, self.cjk_name = split_name(name)
@@ -528,6 +547,9 @@ class WikiArtist(WikiEntity):
                 self._albums, self._singles = parse_discography_page(self._uri_path, self._clean_soup, self)
             except Exception:
                 self._albums, self._singles = None, None
+        elif isinstance(self._client, DramaWikiClient):
+            self._albums = parse_artist_osts(self._uri_path, self._clean_soup, self)
+            self._singles = None
         else:
             self._albums, self._singles = None, None
 
@@ -591,7 +613,7 @@ class WikiArtist(WikiEntity):
         try:
             discography_h2 = self._clean_soup.find("span", id="Discography").parent
         except AttributeError as e:
-            log.error("No page content / discography was found for {}".format(self))
+            log.log(9, "No page content / discography was found for {}".format(self))
             return []
 
         entries = []
@@ -661,7 +683,7 @@ class WikiArtist(WikiEntity):
                     cls = WikiSoundtrack
                 elif any(val in base_type for val in ("singles", "collaborations", "features")):
                     cls = WikiFeatureOrSingle
-                elif "albums" in base_type:
+                elif any(val in base_type for val in ('albums', 'eps')):
                     cls = WikiAlbum
                 else:
                     log.debug("{}: Unexpected base_type={!r} for {}".format(self, base_type, entry), extra={"color": 9})
@@ -1316,6 +1338,20 @@ class WikiSoundtrack(WikiSongCollection):
                 self._intended = m.group(2).strip(), None
 
     @cached_property
+    def tv_series(self):
+        if not isinstance(self._client, DramaWikiClient):
+            raise AttributeError('{} has no attribute tv_series'.format(self))
+
+        li = self._clean_soup.find(lambda tag: tag.name == 'li' and tag.text.startswith('Title:'))
+        if li:
+            a = li.find('a')
+            if a:
+                href = a.get('href')
+                if href:
+                    return WikiTVSeries(href, client=self._client)
+        raise AttributeError('{} has no attribute tv_series'.format(self))
+
+    @cached_property
     def _artists(self):
         if not isinstance(self._client, DramaWikiClient):
             return super()._artists
@@ -1373,6 +1409,31 @@ class WikiSoundtrack(WikiSongCollection):
                 artists.add(artist)
         return sorted(artists)
 
+    def _get_tracks(self, edition_or_part=None, disk=None):
+        track_info = self._discography_entry.get("track_info")
+        use_discography_info = self._intended is None and track_info
+        if not use_discography_info and self._raw and self._track_lists:
+            log.log(9, "Skipping WikiSoundtrack _get_tracks()")
+            return super()._get_tracks(edition_or_part, disk)
+
+        if track_info:
+            _tracks = (track_info,) if isinstance(track_info, dict) else track_info
+            tracks = []
+            for _track in _tracks:
+                track = _track.copy()
+                track["collaborators"] = strify_collabs(track.get("collaborators") or [])
+                misc = track.get("misc") or []
+                if self._info:
+                    misc.extend(self._info)
+                track["misc"] = misc
+                track['from_discography_info'] = True
+                tracks.append(track)
+
+            return {"tracks": tracks}
+        else:
+            log.log(9, "No page content found for {} - returning empty track list".format(self), extra={"color": 8})
+            return {"tracks": []}
+
 
 class WikiFeatureOrSingle(WikiSongCollection):
     _category = "collab/feature/single"
@@ -1380,18 +1441,27 @@ class WikiFeatureOrSingle(WikiSongCollection):
     def _get_tracks(self, edition_or_part=None, disk=None):
         if self._raw and self._track_lists:
             log.log(9, "Skipping WikiFeatureOrSingle _get_tracks()")
-            return super()._get_tracks(edition_or_part)
+            return super()._get_tracks(edition_or_part, disk)
 
         track_info = self._discography_entry.get("track_info")
         if track_info:
-            single = track_info.copy()
-            collabs = set(single.get("collaborators") or [])
-            collabs.update(c["artist"][0] for c in self._discography_entry.get("collaborators", []))
-            single["collaborators"] = sorted(collabs)
-            misc = single.get("misc") or []
-            if self._info:
-                misc.extend(self._info)
-            single["misc"] = misc
+            _tracks = (track_info,) if isinstance(track_info, dict) else track_info
+            tracks = []
+            for _track in _tracks:
+                track = _track.copy()
+
+                collabs = track.get("collaborators") or []
+                collabs.extend(self._discography_entry.get("collaborators", []))
+                track["collaborators"] = strify_collabs(collabs)
+
+                # collabs = set(track.get("collaborators") or [])
+                # collabs.update(c["artist"][0] for c in self._discography_entry.get("collaborators", []))
+                # track["collaborators"] = sorted(collabs)
+                misc = track.get("misc") or []
+                if self._info:
+                    misc.extend(self._info)
+                track["misc"] = misc
+                tracks.append(track)
         else:
             single = {
                 "name_parts": (self.english_name, self.cjk_name), "num": 1,
@@ -1399,7 +1469,8 @@ class WikiFeatureOrSingle(WikiSongCollection):
                 "collaborators": [c["artist"][0] for c in self._discography_entry.get("collaborators", [])],
                 "misc": self._info
             }
-        return {"tracks": [single]}
+            tracks = [single]
+        return {"tracks": tracks}
 
 
 class WikiTrack(DictAttrPropertyMixin):
@@ -1413,6 +1484,7 @@ class WikiTrack(DictAttrPropertyMixin):
     from_compilation = DictAttrProperty("_info", "compilation", default=False)
     _collaborators = DictAttrProperty("_info", "collaborators", default_factory=list)
     _artist = DictAttrProperty("_info", "artist", default=None)
+    _from_disco_info = DictAttrProperty("_info", "from_discography_info", default=False)
 
     def __init__(self, info, collection, artist_context):
         self._info = info   # num, length, language, version, name_parts, collaborators, misc, artist
@@ -1423,19 +1495,20 @@ class WikiTrack(DictAttrPropertyMixin):
 
         if self.from_ost and self._artist_context:
             # log.debug("Comparing collabs={} to aliases={}".format(self._collaborators, self._artist_context.aliases))
-            if not any(lc_alias in self._lc_collaborator_map for lc_alias in self._artist_context.lc_aliases):
-                self._artist_context = None
-            else:
-                for lc_alias in self._artist_context.lc_aliases:
-                    try:
-                        collab_name = self._lc_collaborator_map[lc_alias]
-                    except KeyError:
-                        pass
-                    else:
+            if not self._from_disco_info:
+                if not any(lc_alias in self._lc_collaborator_map for lc_alias in self._artist_context.lc_aliases):
+                    self._artist_context = None
+                else:
+                    for lc_alias in self._artist_context.lc_aliases:
                         try:
-                            self._collaborators.remove(collab_name)
-                        except ValueError:
+                            collab_name = self._lc_collaborator_map[lc_alias]
+                        except KeyError:
                             pass
+                        else:
+                            try:
+                                self._collaborators.remove(collab_name)
+                            except ValueError:
+                                pass
         else:
             # Clean up the collaborator list for tracks that include the primary artist in the list of collaborators
             # Example case: LOONA pre-debut single albums
@@ -1523,7 +1596,7 @@ def find_ost(artist, title, disco_entry):
     k_client = KpopWikiClient()
     w_client = WikipediaClient()
     show_title = " ".join(title.split()[:-1])  # Search without 'OST' suffix
-    # log.debug("{}: Searching for show {!r} for OST {!r}".format(artist, show_title, title))
+    log.debug("{}: Searching for show {!r} for OST {!r}".format(artist, show_title, title))
 
     for client in (d_client, w_client):
         alt_match = client.title_search(show_title)
@@ -1542,6 +1615,23 @@ def find_ost(artist, title, disco_entry):
                     if alt_uri_path:
                         log.debug("Found alternate uri_path for {!r}: {!r}".format(title, alt_uri_path))
                         return WikiSongCollection(alt_uri_path, d_client, disco_entry=disco_entry, artist_context=artist)
+
+    results = w_client.search(show_title)   # At this point, there was no exact match for this search
+    if results:
+        log.debug('Trying to match {!r} to {!r}'.format(show_title, results[0][1]))
+        try:
+            series = WikiTVSeries(results[0][1], w_client)
+        except WikiTypeError:
+            pass
+        else:
+            if series.matches(show_title):
+            # lc_title = show_title.lower()
+            # log.debug('Comparing {!r} to {}'.format(lc_title, series.aka))
+            # if any(aka.lower() == lc_title for aka in series.aka):
+                alt_uri_path = d_client.normalize_name(series.name + " OST")
+                if alt_uri_path:
+                    log.debug("Found alternate uri_path for {!r}: {!r}".format(title, alt_uri_path))
+                    return WikiSongCollection(alt_uri_path, d_client, disco_entry=disco_entry, artist_context=artist)
 
     if artist._disco_page:
         # log.debug("{}: Processing discography page to find OST tracks...".format(artist))
