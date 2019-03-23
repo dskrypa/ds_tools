@@ -104,6 +104,12 @@ class RecursiveDescentParser:
     def _peek_any(self, token_types):
         return self.next_tok and self.next_tok.type in token_types
 
+    def _last(self, token_type):
+        return self.prev_tok and self.prev_tok.type == token_type
+
+    def _last_any(self, token_types):
+        return self.prev_tok and self.prev_tok.type in token_types
+
     def _accept(self, token_type):
         if self.next_tok and self.next_tok.type == token_type:
             self._advance()

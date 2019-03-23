@@ -33,6 +33,7 @@ import re
 from datetime import datetime, timedelta
 from _strptime import TimeRE                # Needed to work around timezone handling limitations
 
+import dateparser
 import pytz
 from tzlocal import get_localzone
 
@@ -92,7 +93,7 @@ def _recompile_datetime(tokens, fmt):
     return dt_str
 
 
-def datetime_with_tz(dt, fmt=DATETIME_FMT, tz=None):
+def datetime_with_tz(dt, fmt=DATETIME_FMT, tz=None, use_dateparser=False):
     """
     Converts the given timestamp string to a datetime object, and ensures that its tzinfo is set.
 
@@ -109,7 +110,9 @@ def datetime_with_tz(dt, fmt=DATETIME_FMT, tz=None):
     original_dt = dt
     # original_fmt = fmt
     tokens = {}
-    if isinstance(dt, str):
+    if use_dateparser:
+        dt = dateparser.parse(dt)
+    elif isinstance(dt, str):
         if DT_FMT_TZ_RX.search(fmt):                # Trade-off: %z without : won't need this, but more conditions
             tokens = _tokenize_datetime(dt, fmt)    # would be required to tell if tokens should be generated later
             if tz:
