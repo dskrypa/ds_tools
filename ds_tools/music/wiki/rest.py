@@ -3,6 +3,7 @@
 """
 
 import logging
+import re
 import string
 from urllib.parse import urlparse
 
@@ -13,12 +14,14 @@ from ...http import CodeBasedRestException, RestClient
 from ...utils import soupify, ParentheticalParser
 from .exceptions import *
 from .parsing import parse_aside, parse_infobox, parse_album_page, parse_wikipedia_album_page
+from .utils import get_page_category
 
 __all__ = ['DramaWikiClient', 'KindieWikiClient', 'KpopWikiClient', 'WikiClient', 'WikipediaClient']
 log = logging.getLogger(__name__)
 
 AMBIGUOUS_URI_PATH_TEXT = [
-    'This article is a disambiguation page', 'Wikipedia does not have an article with this exact name.'
+    'This article is a disambiguation page', 'Wikipedia does not have an article with this exact name.',
+    'This disambiguation page lists articles associated with'
 ]
 JUNK_CHARS = string.whitespace + string.punctuation
 STRIP_TBL = str.maketrans({c: "" for c in JUNK_CHARS})
@@ -101,12 +104,12 @@ class WikiClient(RestClient):
                         except KeyError as ke:
                             pass
 
-                    for alt in aae.potential_alternatives:
-                        if not self._bad_name_cache.get(alt):
-                            try:
-                                return self.normalize_name(alt)
-                            except Exception as ne:
-                                pass
+                    # for alt in aae.potential_alternatives:
+                    #     if not self._bad_name_cache.get(alt):
+                    #         try:
+                    #             return self.normalize_name(alt)
+                    #         except Exception as ne:
+                    #             pass
 
                     uri_path = self.title_search(name)
                     if uri_path is not None:
@@ -199,12 +202,15 @@ class WikipediaClient(WikiClient):
     @cached(True)
     def get_entity_base(self, uri_path, obj_type=None):
         raw = self.get_page(uri_path)
-        if 'Wikipedia does not have an article with this exact name.' in raw:
+        if any(val in raw for val in AMBIGUOUS_URI_PATH_TEXT):
             raise AmbiguousEntityException(uri_path, raw, obj_type)
         cat_links = soupify(raw, parse_only=bs4.SoupStrainer('div', id='mw-normal-catlinks'))
-        # cat_links = soupify(raw).find('div', id='mw-normal-catlinks')
         cat_ul = cat_links.find('ul') if cat_links else None
-        return raw, {li.text.lower() for li in cat_ul.find_all('li')} if cat_ul else set()
+        cats = {li.text.lower() for li in cat_ul.find_all('li')} if cat_ul else set()
+        cat = get_page_category(uri_path, cats, no_debug=True)
+        if cat is None and re.search('For other uses, see.*?\(disambiguation\)', raw, re.IGNORECASE):
+            raise AmbiguousEntityException(uri_path, raw, obj_type)
+        return raw, cats
 
     def parse_side_info(self, soup):
         return parse_infobox(soup)
@@ -212,8 +218,28 @@ class WikipediaClient(WikiClient):
     def parse_album_page(self, uri_path, clean_soup, side_info):
         return parse_wikipedia_album_page(uri_path, clean_soup, side_info)
 
+    def search(self, query):
+        params = {'search': query, 'title': 'Special:Search', 'fulltext': 'Search'}
+        try:
+            resp = self.get('index.php', params=params)  #, use_cached=False)
+        except CodeBasedRestException as e:
+            log.debug('Error retrieving results for query {!r}: {}'.format(query, e))
+            raise e
+
+        results = []
+        soup = soupify(resp.text, parse_only=bs4.SoupStrainer('ul', class_='mw-search-results'))
+        for div in soup.find_all('div', class_='mw-search-result-heading'):
+            a = div.find('a')
+            if a:
+                href = a.get('href')
+                if href:
+                    url = urlparse(href)
+                    uri_path = url.path
+                    uri_path = uri_path[6:] if uri_path.startswith('/wiki/') else uri_path
+                    results.append((a.text, uri_path))
+        return results
+
     def title_search(self, title):
-        #https://en.wikipedia.org/w/index.php?search=My+Lovely+Girl+OST&title=Special%3ASearch&fulltext=Search
         params = {'search': title, 'title': 'Special:Search', 'fulltext': 'Search'}
         try:
             resp = self.get('index.php', params=params)#, use_cached=False)
@@ -246,6 +272,23 @@ class DramaWikiClient(WikiClient):
         # cat_links = soupify(raw).find('div', id='mw-normal-catlinks')
         cat_ul = cat_links.find('ul') if cat_links else None
         return raw, {li.text.lower() for li in cat_ul.find_all('li')} if cat_ul else set()
+
+    def search(self, query):
+        try:
+            resp = self.get('index.php', params={'search': query, 'title': 'Special:Search'})#, use_cached=False)
+        except CodeBasedRestException as e:
+            log.debug('Error retrieving results for query {!r}: {}'.format(query, e))
+            raise e
+
+        results = []
+        soup = soupify(resp.text, parse_only=bs4.SoupStrainer('ul', class_='mw-search-results'))
+        for div in soup.find_all('div', class_='mw-search-result-heading'):
+            a = div.find('a')
+            if a:
+                href = a.get('href')
+                if href:
+                    results.append((a.text, urlparse(href).path))
+        return results
 
     def title_search(self, title):
         try:

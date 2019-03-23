@@ -349,7 +349,7 @@ def eng_cjk_sort(strs, langs=None, permissive=False):
         if a in (LangCat.ENG, LangCat.NUL) and (b in LangCat.non_eng_cats or permissive and b == LangCat.MIX):
             return strs
         elif b in (LangCat.ENG, LangCat.NUL) and (a in LangCat.non_eng_cats or permissive and a == LangCat.MIX):
-            return reversed(strs)
+            return tuple(reversed(strs))
     elif isinstance(strs, str):
         if langs in (LangCat.ENG, LangCat.NUL):
             return strs, ''
