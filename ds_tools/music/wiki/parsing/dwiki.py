@@ -4,14 +4,37 @@
 
 import logging
 
-from ....core import datetime_with_tz
 from ....unicode import LangCat
 from ...name_processing import eng_cjk_sort, split_name, str2list
 from .exceptions import *
 from .common import *
 
-__all__ = ['parse_drama_wiki_info_list', 'parse_ost_page']
+__all__ = ['parse_artist_osts', 'parse_drama_wiki_info_list', 'parse_ost_page']
 log = logging.getLogger(__name__)
+
+
+def parse_artist_osts(uri_path, clean_soup, artist):
+    try:
+        ost_ul = clean_soup.find('span', id='TV_Show_Theme_Songs').parent.find_next('ul')
+    except Exception as e:
+        raise WikiEntityParseException('Unable to find TV_Show_Theme_Songs section in {}'.format(uri_path)) from e
+
+    albums = []
+    for li in ost_ul.find_all('li'):
+        links = [(a.text, a.get('href') or '') for a in li.find_all('a')]
+        for text, href in links:
+            if href and '_ost' in href.lower() or ' ost' in text.lower():
+                album = {
+                    'title': text, 'type': 'OST', 'is_ost': True, 'uri_path': href, 'base_type': 'osts',
+                    'wiki': 'wiki.d-addicts.com', 'collaborators': {}, 'misc_info': [], 'language': None,
+                    'primary_artist': (artist.name, artist._uri_path) if artist else (None, None),
+                    'is_feature_or_collab': None
+                }
+                albums.append(album)
+                break
+        else:
+            log.warning('No OST found in li on {}: {}'.format(uri_path, li))
+    return albums
 
 
 def parse_ost_page(uri_path, clean_soup):
@@ -68,26 +91,24 @@ def parse_drama_wiki_info_list(uri_path, info_ul):
             fmt = 'Error splitting key:value pair {!r} from {}: {}'
             raise WikiEntityParseException(fmt.format(li.text.strip(), uri_path, e)) from e
         key = key.lower()
-        if i == 0 and key != 'title':
+        if i == 0 and key not in ('title', 'name'):
             return None
-        elif key == 'title':
+        elif key in ('title', 'name'):
             try:
                 value = eng_cjk_sort(map(str.strip, value.split('/')), permissive=True)
             except Exception as e:
                 pass
         elif key == 'release date':
             try:
-                value = datetime_with_tz(value, '%Y-%b-%d')
+                value = parse_date(value, try_dateparser=True, source=uri_path)
+            except UnexpectedDateFormat as e:
+                log.debug('Error parsing release date: {}'.format(e))
             except Exception as e:
-                try:
-                    value = datetime_with_tz(value, '%Y-%m-%d')
-                except Exception as e1:
-                    log.debug('Errors parsing release date {!r} for {}: {}, {}'.format(value, uri_path, e, e1))
-                    pass
+                log.debug('Error parsing release date {!r} for {}: {}'.format(value, uri_path, e))
         elif key == 'language':
             value = str2list(value)
         elif key == 'artist':
-            artists = str2list(value, pat='(?: and |,|;|&| feat\.? )')
+            artists = str2list(value)
             value = []
             for artist in artists:
                 try:

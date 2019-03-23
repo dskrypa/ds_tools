@@ -8,7 +8,6 @@ from itertools import chain
 
 from bs4.element import NavigableString
 
-from ....core import datetime_with_tz
 from ....utils import DASH_CHARS, num_suffix
 from ...name_processing import parse_name, str2list
 from .exceptions import *
@@ -74,9 +73,10 @@ def parse_discography_page(uri_path, clean_soup, artist):
                         title = th.text.strip()
                         album = {
                             'title': title, 'links': links, 'type': album_type, 'sub_type': sub_type, 'is_ost': False,
-                            'primary_artist': (artist.name, artist._uri_path), 'uri_path': dict(links).get(title),
-                            'base_type': album_type, 'wiki': 'en.wikipedia.org', 'num': '{}{}'.format(i, num_suffix(i)),
-                            'collaborators': {}, 'misc_info': [], 'language': None, 'is_feature_or_collab': None
+                            'primary_artist': (artist.name, artist._uri_path) if artist else (None, None),
+                            'uri_path': dict(links).get(title), 'base_type': album_type, 'wiki': 'en.wikipedia.org',
+                            'num': '{}{}'.format(i, num_suffix(i)), 'collaborators': {}, 'misc_info': [],
+                            'language': None, 'is_feature_or_collab': None
                         }
 
                         for li in th.parent.find('td').find('ul').find_all('li'):
@@ -84,18 +84,22 @@ def parse_discography_page(uri_path, clean_soup, artist):
                             key = key.lower()
                             if key == 'released':
                                 try:
-                                    value = datetime_with_tz(value, '%B %d, %Y')
-                                except Exception as e:
+                                    value = parse_date(value, source=uri_path)
+                                except Exception as e0:
                                     m = date_comment_rx.match(value)
                                     if m:
                                         try:
-                                            value = datetime_with_tz(m.group(1), '%B %d, %Y')
-                                        except Exception:
+                                            value = parse_date(m.group(1), source=uri_path)
+                                        except UnexpectedDateFormat as e:
+                                            raise e
+                                        except Exception as e:
                                             msg = 'Unexpected date format on {}: {}'.format(uri_path, value)
-                                            raise WikiEntityParseException(msg) from e
+                                            raise UnexpectedDateFormat(msg) from e
                                     else:
+                                        if isinstance(e0, UnexpectedDateFormat):
+                                            raise e0
                                         msg = 'Unexpected date format on {}: {}'.format(uri_path, value)
-                                        raise WikiEntityParseException(msg) from e
+                                        raise UnexpectedDateFormat(msg) from e0
                             elif key in ('label', 'format'):
                                 value = str2list(value, ',')
 
@@ -273,9 +277,11 @@ def parse_infobox(infobox):
                 value = []
                 val = val_ele.text.strip()
                 try:
-                    dt = datetime_with_tz(val, '%d %B %Y')
+                    dt = parse_date(val)
+                except UnexpectedDateFormat as e:
+                    raise e
                 except Exception as e:
-                    raise WikiEntityParseException('Unexpected release date format: {!r}'.format(val)) from e
+                    raise UnexpectedDateFormat('Unexpected release date format: {!r}'.format(val)) from e
                 else:
                     value.append((dt, None))
             elif key == 'length':

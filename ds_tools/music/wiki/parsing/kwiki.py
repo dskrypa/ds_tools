@@ -10,20 +10,20 @@ from urllib.parse import urlparse
 
 from bs4.element import NavigableString
 
-from ....core import datetime_with_tz
 from ....utils import ParentheticalParser, DASH_CHARS, num_suffix, QMARKS
 from ...name_processing import has_parens, parse_name, split_name, str2list
 from ..utils import synonym_pattern
 from .common import (
-    album_num_type, first_side_info_val, LANG_ABBREV_MAP, link_tuples, NUM2INT, parse_track_info, unsurround
+    album_num_type, first_side_info_val, LANG_ABBREV_MAP, link_tuples, NUM2INT, parse_track_info, unsurround,
+    parse_date, TrackListParser
 )
-from .exceptions import NoTrackListException, WikiEntityParseException
+from .exceptions import NoTrackListException, WikiEntityParseException, UnexpectedDateFormat
 
 __all__ = ['parse_album_page', 'parse_album_tracks', 'parse_aside', 'parse_discography_entry']
 log = logging.getLogger(__name__)
 
 
-def parse_album_tracks(uri_path, clean_soup, intro_links, compilation=False):
+def parse_album_tracks(uri_path, clean_soup, intro_links, artist, compilation=False):
     """
     Parse the Track List section of a Kpop Wiki album/single page.
 
@@ -62,7 +62,8 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, compilation=False):
                 track_links = link_tuples(li.find_all('a'))
                 all_links = list(set(track_links + intro_links))
                 track = parse_track_info(
-                    i + 1, li.text, uri_path, include={'links': track_links}, links=all_links, compilation=compilation
+                    i + 1, li.text, uri_path, include={'links': track_links}, links=all_links, compilation=compilation,
+                    artist=artist
                 )
                 tracks.append(track)
 
@@ -211,11 +212,12 @@ def parse_album_page(uri_path, clean_soup, side_info):
     album0['name'] = side_info.get('name')
 
     albums = [album0, album1] if album1 else [album0]
+    artist = side_info.get('artist', {})
     for album in albums:
-        album['artists'] = side_info.get('artist', {})
+        album['artists'] = artist
 
     try:
-        track_lists = parse_album_tracks(uri_path, clean_soup, links, 'compilation' in album0['type'].lower())
+        track_lists = parse_album_tracks(uri_path, clean_soup, links, artist, 'compilation' in album0['type'].lower())
     except NoTrackListException as e:
         if not album1 and 'single' in album0['type'].lower():
             eng, cjk = album0['title_parts'][:2]
@@ -287,7 +289,7 @@ def parse_aside(aside):
                 for s in val_ele.stripped_strings:
                     cleaned_date = comma_fix_rx.sub(',', s)
                     try:
-                        dt = datetime_with_tz(cleaned_date, '%B %d, %Y')
+                        dt = parse_date(cleaned_date, source=val_ele)
                     except Exception as e:
                         if value and not value[-1][1]:
                             value[-1] = (value[-1][0], unsurround(s))
@@ -296,13 +298,17 @@ def parse_aside(aside):
                             if m:
                                 cleaned_date = comma_fix_rx.sub(',', m.group(1))
                                 try:
-                                    dt = datetime_with_tz(cleaned_date, '%B %d, %Y')
+                                    dt = parse_date(cleaned_date, source=val_ele)
+                                except UnexpectedDateFormat as e1:
+                                    raise e1
                                 except Exception as e1:
-                                    raise ValueError(unexpected_date_fmt.format(val_ele)) from e1
+                                    raise UnexpectedDateFormat(unexpected_date_fmt.format(val_ele)) from e1
                                 else:
                                     value.append((dt, m.group(2)))
                             else:
-                                raise ValueError(unexpected_date_fmt.format(val_ele)) from e
+                                if isinstance(e, UnexpectedDateFormat):
+                                    raise e
+                                raise UnexpectedDateFormat(unexpected_date_fmt.format(val_ele)) from e
                     else:
                         value.append((dt, None))
             elif key == 'length':
@@ -401,7 +407,7 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
             if track_info.get('language'):
                 title += ' ({} ver.)'.format(track_info['language'])
 
-    collabs, misc_info = [], []
+    collabs, misc_info, songs = [], [], []
     for item in parsed:
         lc_item = item.lower()
         if lc_item.startswith(('with ', 'feat. ', 'feat ', 'as ')) or 'feat.' in lc_item:
@@ -415,27 +421,42 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
                         'artist': split_name(soloist), 'artist_href': linkd.get(soloist),
                         'of_group': split_name(of_group), 'group_href': linkd.get(of_group),
                     })
-        elif base_type == 'osts' and 'with' in item:
-            try:
-                ost_song_rx = parse_discography_entry._ost_song_rx
-            except AttributeError:
-                ost_song_rx = parse_discography_entry._ost_song_rx = re.compile(
-                    r'([{}])(.*)\1\s*(?:with|feat\.?|featuring)\s*(.*)'.format(QMARKS + "'"), re.IGNORECASE
-                )
-            m = ost_song_rx.match(item)
-            if m:
-                song, _collabs = m.groups()[1:]
-                misc_info.append(song)
-                for collab in str2list(_collabs, pat='^(?:with|feat\.?|as) | and |,|;|&| feat\.? | featuring | with '):
-                    try:
-                        soloist, of_group = collab.split(' of ')
-                    except Exception as e:
-                        collabs.append({'artist': split_name(collab), 'artist_href': linkd.get(collab)})
-                    else:
-                        collabs.append({
-                            'artist': split_name(soloist), 'artist_href': linkd.get(soloist),
-                            'of_group': split_name(of_group), 'group_href': linkd.get(of_group),
-                        })
+        elif base_type == 'osts':
+            ost_tracks = TrackListParser().parse(item, artist, linkd)
+            for track in ost_tracks:
+                track['from_ost'] = True
+                songs.append(track)
+                collabs.extend(track.get('collaborators', []))
+
+            # try:
+            #     ost_song_rx = parse_discography_entry._ost_song_rx
+            # except AttributeError:
+            #     ost_song_rx = parse_discography_entry._ost_song_rx = re.compile(
+            #         r'([{}])(.*)\1\s*(?:with|feat\.?|featuring)?\s*(.*)'.format(QMARKS + "'"), re.IGNORECASE
+            #     )
+            # parts = list(map(str.strip, item.split(',')))
+            # for part in parts:
+            #     m = ost_song_rx.match(item)
+            #     if m:
+            #         song_title, _collabs = m.groups()[1:]
+            #         track = {'num': None, 'length': '-1:00', 'name_parts': (song_title,)}
+            #         pat = r'^(?:with|feat\.?|as) | and |,|;|&| feat\.? | featuring | with '
+            #         track_collabs = []
+            #         for collab in str2list(_collabs, pat=pat):
+            #             try:
+            #                 soloist, of_group = collab.split(' of ')
+            #             except Exception as e:
+            #                 track_collabs.append({'artist': split_name(collab), 'artist_href': linkd.get(collab)})
+            #             else:
+            #                 track_collabs.append({
+            #                     'artist': split_name(soloist), 'artist_href': linkd.get(soloist),
+            #                     'of_group': split_name(of_group), 'group_href': linkd.get(of_group),
+            #                 })
+            #         track['collaborators'] = track_collabs
+            #         songs.append(track)
+            #     else:
+            #         fmt = '{}: Unexpected OST discography entry format in {!r}: {!r}'
+            #         raise WikiEntityParseException(fmt.format(artist, item, part))
         else:
             misc_info.append(item)
 
@@ -464,6 +485,8 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
 
             title = '{} ({})'.format(title, ' '.join(misc_parts) if replaced_part else value)
             misc_info = []
+        elif len(misc_info) == 1 and any(val in misc_info for val in ('pre-debut', 'digital')):
+            pass
         else:
             fmt = '{}: Unexpected misc content in discography entry {!r} => title={!r}, misc: {}'
             log.debug(fmt.format(artist, ele_text, title, misc_info), extra={'color': 100})
@@ -548,7 +571,7 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
         'title': title, 'primary_artist': (primary_artist, primary_uri), 'type': album_type, 'base_type': base_type,
         'year': year, 'collaborators': collabs, 'misc_info': misc_info, 'language': lang, 'uri_path': uri_path,
         'wiki': wiki, 'is_feature_or_collab': is_feature_or_collab, 'is_ost': is_ost, 'is_repackage': is_repackage,
-        'num': '{}{}'.format(type_idx, num_suffix(type_idx)), 'track_info': track_info
+        'num': '{}{}'.format(type_idx, num_suffix(type_idx)), 'track_info': track_info or songs
     }
     return info
 
