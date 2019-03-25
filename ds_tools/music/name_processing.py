@@ -8,12 +8,14 @@ import re
 import types
 from unicodedata import normalize, combining
 
+from fuzzywuzzy import fuzz, utils as fuzz_utils
+
 from ..unicode import is_any_cjk, contains_any_cjk, is_hangul, LangCat
 from ..utils import ParentheticalParser
 
 __all__ = [
-    'categorize_langs', 'combine_name_parts', 'eng_cjk_sort', 'fuzz_process', 'has_parens', 'parse_name', 'split_name',
-    'str2list'
+    'categorize_langs', 'combine_name_parts', 'eng_cjk_sort', 'fuzz_process', 'has_parens', 'parse_name',
+    'revised_weighted_ratio', 'split_name', 'str2list'
 ]
 log = logging.getLogger(__name__)
 
@@ -30,12 +32,15 @@ def fuzz_process(text):
     """
     try:
         non_letter_non_num_rx = fuzz_process._non_letter_non_num_rx
+        ost_rx = fuzz_process._ost_rx
     except AttributeError:
         non_letter_non_num_rx = fuzz_process._non_letter_non_num_rx = re.compile(r'\W')
+        ost_rx = fuzz_process._ost_rx = re.compile(r'\sOST(?:$|\s)', re.IGNORECASE)
 
     original = text
     text = non_letter_non_num_rx.sub(' ', text)     # Convert non-letter/numeric characters to spaces
     text = ' '.join(text.split())                   # Condense sets of consecutive spaces to 1 space (faster than regex)
+    text = ost_rx.sub('', text)                     # Remove 'OST' to prevent false positives based only on that
     text = text.lower().strip()                     # Convert to lower case & strip leading/trailing whitespace
     if len(text) == 0:
         text = ' '.join(original.split()).lower().strip()   # In case the text is only non-letter/numeric characters
@@ -44,13 +49,73 @@ def fuzz_process(text):
     return text
 
 
+def revised_weighted_ratio(s1, s2):
+    """
+    Return a measure of the sequences' similarity between 0 and 100, using different algorithms.
+    **Steps in the order they occur**
+
+    #. Run full_process from utils on both strings
+    #. Short circuit if this makes either string empty
+    #. Take the ratio of the two processed strings (fuzz.ratio)
+    #. Run checks to compare the length of the strings
+        * If one of the strings is more than 1.5 times as long as the other use partial_ratio comparisons - scale
+          partial results by 0.9 (this makes sure only full results can return 100)
+        * If one of the strings is over 8 times as long as the other instead scale by 0.6
+    #. Run the other ratio functions
+        * if using partial ratio functions call partial_ratio, partial_token_sort_ratio and partial_token_set_ratio
+          scale all of these by the ratio based on length
+        * otherwise call token_sort_ratio and token_set_ratio
+        * all token based comparisons are scaled by 0.95 (on top of any partial scalars)
+    #. Take the highest value from these results round it and return it as an integer.
+    """
+    p1 = s1
+    p2 = s2
+    if not p1 or not p2:
+        return 0
+
+    # should we look at partials?
+    try_partial = True
+    unbase_scale = .95
+    partial_scale = .90
+
+    base = fuzz.ratio(p1, p2)
+    len_ratio = float(max(len(p1), len(p2))) / min(len(p1), len(p2))
+
+    # if strings are similar length, don't use partials
+    if len_ratio < 1.5:
+        try_partial = False
+
+    # if one string is much much shorter than the other
+    if len_ratio > 3:
+        partial_scale = .25
+    elif len_ratio > 2:
+        partial_scale = .45
+    elif len_ratio > 1.5:
+        partial_scale = .625
+    elif len_ratio > 1:
+        partial_scale = .75
+
+    if try_partial:
+        partial = fuzz.partial_ratio(p1, p2) * partial_scale
+        ptsor = fuzz.partial_token_sort_ratio(p1, p2, full_process=False) * unbase_scale * partial_scale
+        ptser = fuzz.partial_token_set_ratio(p1, p2, full_process=False) * unbase_scale * partial_scale
+        return fuzz_utils.intr(max(base, partial, ptsor, ptser))
+    else:
+        tsor = fuzz.token_sort_ratio(p1, p2, full_process=False) * unbase_scale
+        tser = fuzz.token_set_ratio(p1, p2, full_process=False) * unbase_scale
+        return fuzz_utils.intr(max(base, tsor, tser))
+
+
 def parse_name(text):
     """
 
     :param text:
     :return tuple: (base, cjk, stylized, aka, info)
     """
-    first_sentence = text.strip().partition('. ')[0].strip()  # Note: space is intentional
+    stripped = text.strip()
+    first_sentence, period, stripped = stripped.partition('. ')     # Note: space is intentional
+    if ' ' not in first_sentence:
+        first_sentence += period + stripped.partition('. ')[0].strip()
     first_sentence = first_sentence.replace('\xa0', ' ')
     parser = ParentheticalParser()
     try:
@@ -65,8 +130,9 @@ def parse_name(text):
         base, details = parts[:2]
 
     lc_details = details.lower()
-    if ' is ' in base:
-        base = base[:base.index(' is ')].strip()
+    if ' is a ' in base:
+        base = base[:base.index(' is a ')].strip()
+        # log.warning('Used \'is\' split for {!r}=>{!r}==>>{!r}'.format(text[:250], parts[0], base), extra={'color': (9, 11)})
         eng, cjk = eng_cjk_sort(base)
         return eng, cjk, None, None, None
     elif is_any_cjk(details):
@@ -262,7 +328,8 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
                 not_used = parts[1]
         elif langs == (LangCat.ENG, LangCat.MIX):
             common_suffix = ''.join(reversed(os.path.commonprefix(list(map(lambda x: ''.join(reversed(x)), parts)))))
-            if len(common_suffix) > 3 and LangCat.categorize(parts[1], True).intersection(LangCat.asian_cats):
+            if common_suffix and LangCat.categorize(parts[1][:-len(common_suffix)]) in LangCat.asian_cats:
+            # if len(common_suffix) > 3 and LangCat.categorize(parts[1], True).intersection(LangCat.asian_cats):
                 eng, cjk = parts
             elif ' / ' in parts[1]:                         # Soloist (Group / soloist other lang)
                 try:

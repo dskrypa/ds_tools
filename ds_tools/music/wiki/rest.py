@@ -18,6 +18,9 @@ from .utils import get_page_category
 
 __all__ = ['DramaWikiClient', 'KindieWikiClient', 'KpopWikiClient', 'WikiClient', 'WikipediaClient']
 log = logging.getLogger(__name__)
+logr = {'normalize': logging.getLogger(__name__ + '.normalize')}
+for logger in logr.values():
+    logger.setLevel(logging.WARNING)
 
 AMBIGUOUS_URI_PATH_TEXT = [
     'This article is a disambiguation page', 'Wikipedia does not have an article with this exact name.',
@@ -78,11 +81,13 @@ class WikiClient(RestClient):
         name = name.strip()
         if not name:
             raise ValueError('A valid name must be provided')
+        _log = logr['normalize']
         _name = name
         name = name.replace(' ', '_')
         try:
             html = self.get_page(name)
         except CodeBasedRestException as e:
+            _log.debug('{}: Error getting page {!r}: {}'.format(self._site, name, e))
             if e.code == 404:
                 self._bad_name_cache[name] = True
                 aae = AmbiguousEntityException(name, e.resp.text)
@@ -98,27 +103,24 @@ class WikiClient(RestClient):
                     except Exception as pe:
                         pass
                     else:
-                        log.log(9, 'Checking {!r} for {!r}'.format(name, _name))
+                        _log.debug('{}: Checking {!r} for {!r}'.format(self._site, name, _name))
                         try:
                             return self._name_cache['{}: {}'.format(self.host, name)]
                         except KeyError as ke:
                             pass
 
-                    # for alt in aae.potential_alternatives:
-                    #     if not self._bad_name_cache.get(alt):
-                    #         try:
-                    #             return self.normalize_name(alt)
-                    #         except Exception as ne:
-                    #             pass
-
+                    _log.debug('{}: Searching for {!r}'.format(self._site, name))
                     uri_path = self.title_search(name)
+                    _log.debug('{}: Found search match for {!r}: {}'.format(self._site, name, uri_path))
                     if uri_path is not None:
                         return uri_path
 
             raise e
         else:
             if any(val in html for val in AMBIGUOUS_URI_PATH_TEXT):
+                _log.debug('{}: Page {!r} exists, but is a disambiguation page'.format(self._site, name))
                 raise AmbiguousEntityException(name, html)
+            _log.debug('{}: Page {!r} exists, and appears to be valid'.format(self._site, name))
             return name
 
     normalize_artist = normalize_name
@@ -161,7 +163,9 @@ class KpopWikiClient(WikiClient):
         lc_title = title.lower()
         results = []
         soup = soupify(resp.text, parse_only=bs4.SoupStrainer('ul', class_='Results'))
-        for li in soup.find_all('li', class_='result'):
+        for i, li in enumerate(soup.find_all('li', class_='result')):
+            if i > 10:
+                return None
             a = li.find('a', class_='result-link')
             if a:
                 href = a.get('href')

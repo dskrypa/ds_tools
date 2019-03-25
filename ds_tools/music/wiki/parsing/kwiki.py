@@ -120,10 +120,11 @@ def parse_album_page(uri_path, clean_soup, side_info):
         intro_rx = parse_album_page._intro_rx
     except AttributeError:
         intro_rx = parse_album_page._intro_rx = re.compile(r'^(.*?)\s+is\s+(?:a|the)\s+(.*?)\.\s')
+
     intro_match = intro_rx.match(intro_text)
     if not intro_match:
         raise WikiEntityParseException(bad_intro_fmt.format(uri_path, intro_text[:200]))
-
+    # log.debug('{}: intro match group(len={}): {!r}'.format(uri_path, len(intro_match.group(1)), intro_match.group(1)))
     album0['title_parts'] = parse_name(intro_match.group(1))  # base, cjk, stylized, aka, info
     details_str = intro_match.group(2)
     details_str = details_str.replace('full length', 'full-length').replace('mini-album', 'mini album')

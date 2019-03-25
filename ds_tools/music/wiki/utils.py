@@ -10,8 +10,8 @@ from itertools import chain, combinations
 from ...utils import QMARKS
 
 __all__ = [
-    'comparison_type_check', 'edition_combinations', 'get_page_category', 'multi_lang_name', 'sanitize_path',
-    'strify_collabs', 'synonym_pattern'
+    'comparison_type_check', 'edition_combinations', 'get_page_category', 'multi_lang_name', 'normalize_href',
+    'sanitize_path', 'strify_collabs', 'synonym_pattern'
 ]
 log = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ NUMS = {
 }
 PAGE_CATEGORIES = OrderedDict([
     ('album', ('albums', 'discography article stubs')),
-    ('group', ('groups', 'group article stubs')),
+    ('group', ('group', 'group article stubs')),
     ('singer', ('singer', 'person article stubs', 'actor', 'actress')),
     ('soundtrack', ('osts', 'kost', 'jost', 'cost')),
     ('tv_series', ('television series', 'television drama', 'kdrama', 'competition shows', 'jdrama')),
@@ -32,6 +32,7 @@ PAGE_CATEGORIES = OrderedDict([
     ('agency', ('agencies',)),
     ('sports team', ('sports team',)),
     ('movie', ('movies', 'films')),
+    ('play', ('plays',)),
 ])
 PATH_SANITIZATION_DICT = {c: '' for c in '*;?<>"'}
 PATH_SANITIZATION_DICT.update({'/': '_', ':': '-', '\\': '_', '|': '-'})
@@ -39,6 +40,13 @@ PATH_SANITIZATION_TABLE = str.maketrans(PATH_SANITIZATION_DICT)
 QMARK_STRIP_TBL = str.maketrans({c: '' for c in QMARKS})
 REGEX_ESCAPE_TABLE = str.maketrans({c: '\\' + c for c in '()[]{}^$+*.?|\\'})
 SYNONYM_SETS = [{'and', '&', '+'}, {'version', 'ver.'}]
+
+
+def normalize_href(href):
+    if not href:
+        return None
+    href = href[6:] if href.startswith("/wiki/") else href
+    return None if 'redlink=1' in href else href
 
 
 def sanitize_path(text):

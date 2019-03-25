@@ -9,7 +9,7 @@ from itertools import chain
 from bs4.element import NavigableString
 
 from ....utils import DASH_CHARS, num_suffix
-from ...name_processing import parse_name, str2list
+from ...name_processing import parse_name, str2list, split_name
 from .exceptions import *
 from .common import *
 
@@ -250,57 +250,85 @@ def parse_infobox(infobox):
         # log.debug('Processing tr: {}'.format(tr))
         if i == 0:
             parsed['name'] = tr.text.strip()
+            continue
         elif i == 1:
             continue    # Image
-        elif i == 2 and tr.find('th').get('colspan'):
-            try:
-                parsed['type'], artist = map(str.strip, tr.text.strip().split(' by '))
-            except Exception as e:
-                log.debug('Error processing infobox row {!r}: {}'.format(tr, e))
-                raise e
 
-            for a in tr.find_all('a'):
-                if a.text == artist:
-                    href = a.get('href') or ''
-                    parsed['artist'] = {artist: href[6:] if href.startswith('/wiki/') else href}
-                    break
-            else:
-                parsed['artist'] = {artist: None}
-        else:
-            th = tr.find('th')
-            if not th or th.get('colspan'):
-                break
-            key = th.text.strip().lower()
-            val_ele = tr.find('td')
-
-            if key == 'released':
-                value = []
-                val = val_ele.text.strip()
+        th = tr.find('th')
+        if not th or (th.get('colspan') and i != 2):
+            break
+        key = th.text.strip().lower()
+        if i == 2:
+            if key != 'background information':
                 try:
-                    dt = parse_date(val)
-                except UnexpectedDateFormat as e:
-                    raise e
+                    parsed['type'], artist = map(str.strip, tr.text.strip().split(' by '))
                 except Exception as e:
-                    raise UnexpectedDateFormat('Unexpected release date format: {!r}'.format(val)) from e
+                    # log.debug('Error processing infobox row {!r}: {}'.format(tr, e))
+                    # raise e
+                    pass
                 else:
-                    value.append((dt, None))
-            elif key == 'length':
-                value = [(val_ele.text.strip(), None)]
-            elif key == 'also known as':
-                value = [val for val in val_ele.stripped_strings if val]
-            elif key in ('agency', 'associated', 'composer', 'current', 'label', 'writer'):
-                anchors = list(val_ele.find_all('a'))
-                if anchors:
-                    value = dict(link_tuples(anchors))
-                    # value = {a.text: a.get('href') for a in anchors}
-                else:
-                    ele_children = list(val_ele.children)
-                    if not isinstance(ele_children[0], NavigableString) and ele_children[0].name == 'ul':
-                        value = {li.text: None for li in ele_children[0].find_all('li')}
+                    for a in tr.find_all('a'):
+                        if a.text == artist:
+                            href = a.get('href') or ''
+                            parsed['artist'] = {artist: href[6:] if href.startswith('/wiki/') else href}
+                            break
                     else:
-                        value = {name: None for name in str2list(val_ele.text)}
-            else:
-                value = val_ele.text.strip()
+                        parsed['artist'] = {artist: None}
 
-            parsed[key] = value
+                    continue
+            else:
+                continue
+
+        val_ele = tr.find('td')
+        if key == 'released':
+            value = []
+            val = val_ele.text.strip()
+            try:
+                dt = parse_date(val)
+            except UnexpectedDateFormat as e:
+                raise e
+            except Exception as e:
+                raise UnexpectedDateFormat('Unexpected release date format: {!r}'.format(val)) from e
+            else:
+                value.append((dt, None))
+        elif key == 'length':
+            value = [(val_ele.text.strip(), None)]
+        elif key == 'also known as':
+            value = [val for val in val_ele.stripped_strings if val]
+        elif key == 'born':
+            for j, val in enumerate(val_ele.stripped_strings):
+                if j == 0:
+                    try:
+                        dt = parse_date(val)
+                    except Exception as e:
+                        parsed['birth_name'] = [split_name(val)]
+                    else:
+                        parsed['birth_date'] = dt
+                elif '(age' in val:
+                    pass
+                else:
+                    try:
+                        dt = parse_date(val)
+                    except Exception as e:
+                        parsed['birth_place'] = val
+                    else:
+                        parsed['birth_date'] = dt
+
+            # log.info('Parsed "born" section: {}'.format(parsed), extra={'color': 123})
+            continue
+        elif key in ('agency', 'associated', 'composer', 'current', 'label', 'writer'):
+            anchors = list(val_ele.find_all('a'))
+            if anchors:
+                value = dict(link_tuples(anchors))
+                # value = {a.text: a.get('href') for a in anchors}
+            else:
+                ele_children = list(val_ele.children)
+                if not isinstance(ele_children[0], NavigableString) and ele_children[0].name == 'ul':
+                    value = {li.text: None for li in ele_children[0].find_all('li')}
+                else:
+                    value = {name: None for name in str2list(val_ele.text)}
+        else:
+            value = val_ele.text.strip()
+
+        parsed[key] = value
     return parsed

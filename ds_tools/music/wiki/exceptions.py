@@ -2,7 +2,7 @@
 :author: Doug Skrypa
 """
 
-from collections import OrderedDict
+from urllib.parse import urlparse
 
 from ...core import cached_property
 from ...utils import soupify
@@ -49,7 +49,9 @@ class WikiTypeError(TypeError, MusicWikiException):
 
 class AmbiguousEntityException(MusicWikiException):
     def __init__(self, uri_path, html, obj_type=None):
-        self.uri_path = uri_path
+        parsed_url = urlparse(uri_path)
+        self.site = parsed_url.hostname
+        self.uri_path = parsed_url.path
         self.html = html
         self.obj_type = obj_type or 'Page'
 
@@ -57,15 +59,6 @@ class AmbiguousEntityException(MusicWikiException):
     def alternative(self):
         alts = self.alternatives
         return alts[0] if len(alts) == 1 else None
-
-    @property
-    def potential_alternatives(self):
-        alts = []
-        for func in ('title', 'upper'):
-            val = getattr(self.uri_path, func)()
-            if val != self.uri_path:
-                alts.append(val)
-        return alts
 
     @cached_property
     def alternatives(self):
@@ -83,6 +76,17 @@ class AmbiguousEntityException(MusicWikiException):
                 for li in disambig_div.parent.find('ul')
                 for a in li.find_all('a', limit=1)
             ]
+        else:
+            try:
+                ul = soup.find('div', class_='mw-parser-output').find('ul')
+            except Exception:
+                pass
+            else:
+                return [
+                    a.get('href')[6:] if a.get('href') else a.text.strip()
+                    for li in ul.find_all('li')
+                    for a in li.find_all('a', limit=1)
+                ]
         return []
 
     def __str__(self):

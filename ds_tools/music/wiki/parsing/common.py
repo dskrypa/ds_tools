@@ -14,7 +14,7 @@ from .exceptions import *
 
 __all__ = [
     'album_num_type', 'first_side_info_val', 'LANG_ABBREV_MAP', 'link_tuples', 'NUM2INT', 'parse_date',
-    'parse_track_info', 'TrackInfoParser', 'TrackListParser', 'unsurround'
+    'parse_track_info', 'split_artist_list', 'TrackInfoParser', 'TrackListParser', 'unsurround'
 ]
 log = logging.getLogger(__name__)
 
@@ -32,6 +32,59 @@ NUMS = {
     'first': '1st', 'second': '2nd', 'third': '3rd', 'fourth': '4th', 'fifth': '5th', 'sixth': '6th',
     'seventh': '7th', 'eighth': '8th', 'ninth': '9th', 'tenth': '10th', 'debut': '1st'
 }
+
+
+def split_artist_list(artist_list, context=None, link_dict=None):
+    try:
+        prod_by_rx = split_artist_list._prod_by_rx
+        delim_rx = split_artist_list._delim_rx
+        group_paren_members_rx = split_artist_list._group_paren_members_rx
+    except AttributeError:
+        prod_by_rx = split_artist_list._prod_by_rx = re.compile(
+            r'^(.*)\s\(Prod(?:\.|uced)? by\s+(.*)\)$', re.IGNORECASE
+        )
+        delim_rx = split_artist_list._delim_rx = re.compile(
+            r'(?:,\s*|;\s*|(?:^|\s)(?:,|;|as|feat\.?|featuring|with)\s+)', re.IGNORECASE
+        )
+        group_paren_members_rx = split_artist_list._group_paren_members_rx = re.compile(r'^([^(]+)\s+\((.*,.*)\)$')
+
+    artists = []
+    producers = []
+    links = link_dict or {}
+
+    m = group_paren_members_rx.match(artist_list)
+    if m:
+        fake_show_group, artist_list = m.groups()
+
+    for artist in delim_rx.split(artist_list):
+        m = prod_by_rx.match(artist)
+        if m:
+            artist, prod_by = m.groups()
+            producers.append(prod_by)
+
+        if ' of ' in artist:
+            try:
+                soloists, of_group = artist.split(' of ')
+            except ValueError as e:
+                for _artist in re.split(' and | & ', artist):
+                    # log.debug('Extending with {!r}'.format(_artist))
+                    artists.extend(split_artist_list(_artist, context, link_dict))
+            else:
+                for soloist in re.split(' and | & ', soloists):
+                    artist_dict = {'artist_href': links.get(soloist), 'group_href': links.get(of_group)}
+                    for key, val in (('artist', soloist), ('of_group', of_group)):
+                        try:
+                            artist_dict[key] = split_name(val)
+                        except ValueError:
+                            artist_dict[key] = split_name(val, require_preceder=False)
+                    artists.append(artist_dict)
+        else:
+            try:
+                artists.append({'artist': split_name(artist), 'artist_href': links.get(artist)})
+            except ValueError:
+                artists.append({'artist': split_name(artist, require_preceder=False), 'artist_href': links.get(artist)})
+
+    return artists, producers
 
 
 class TrackListParser(ListBasedRecursiveDescentParser):
