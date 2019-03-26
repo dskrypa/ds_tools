@@ -195,9 +195,9 @@ class RestClient:
         try:
             resp = self.session.request(method, url, **kwargs)
         except requests.RequestException as e:
-            raise self._exc_type(e, endpoint)
+            raise self._exc_type(e, url)
         if raise_non_200 and not (200 <= resp.status_code <= 299):
-            raise self._exc_type(resp, endpoint)
+            raise self._exc_type(resp, url)
         return resp
 
     def get(self, endpoint, **kwargs):

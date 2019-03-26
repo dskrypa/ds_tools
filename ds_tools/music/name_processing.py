@@ -8,7 +8,7 @@ import re
 import types
 from unicodedata import normalize, combining
 
-from fuzzywuzzy import fuzz, utils as fuzz_utils
+from fuzzywuzzy import fuzz
 
 from ..unicode import is_any_cjk, contains_any_cjk, is_hangul, LangCat
 from ..utils import ParentheticalParser
@@ -49,7 +49,7 @@ def fuzz_process(text):
     return text
 
 
-def revised_weighted_ratio(s1, s2):
+def revised_weighted_ratio(p1, p2):
     """
     Return a measure of the sequences' similarity between 0 and 100, using different algorithms.
     **Steps in the order they occur**
@@ -68,8 +68,6 @@ def revised_weighted_ratio(s1, s2):
         * all token based comparisons are scaled by 0.95 (on top of any partial scalars)
     #. Take the highest value from these results round it and return it as an integer.
     """
-    p1 = s1
-    p2 = s2
     if not p1 or not p2:
         return 0
 
@@ -99,11 +97,13 @@ def revised_weighted_ratio(s1, s2):
         partial = fuzz.partial_ratio(p1, p2) * partial_scale
         ptsor = fuzz.partial_token_sort_ratio(p1, p2, full_process=False) * unbase_scale * partial_scale
         ptser = fuzz.partial_token_set_ratio(p1, p2, full_process=False) * unbase_scale * partial_scale
-        return fuzz_utils.intr(max(base, partial, ptsor, ptser))
+        # log.debug('{!r}=?={!r}: ratio={}, len_ratio={}, part_ratio={}, tok_sort_ratio={}, tok_set_ratio={}'.format(p1, p2, base, len_ratio, partial, ptsor, ptser))
+        return int(round(max(base, partial, ptsor, ptser)))
     else:
         tsor = fuzz.token_sort_ratio(p1, p2, full_process=False) * unbase_scale
         tser = fuzz.token_set_ratio(p1, p2, full_process=False) * unbase_scale
-        return fuzz_utils.intr(max(base, tsor, tser))
+        # log.debug('{!r}=?={!r}: ratio={}, len_ratio={}, tok_sort_ratio={}, tok_set_ratio={}'.format(p1, p2, base, len_ratio, tsor, tser))
+        return int(round(max(base, tsor, tser)))
 
 
 def parse_name(text):
