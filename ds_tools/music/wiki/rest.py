@@ -151,7 +151,7 @@ class KpopWikiClient(WikiClient):
         return parse_aside(soup)
 
     def parse_album_page(self, uri_path, clean_soup, side_info):
-        return parse_album_page(uri_path, clean_soup, side_info)
+        return parse_album_page(uri_path, clean_soup, side_info, self)
 
     def title_search(self, title):
         try:

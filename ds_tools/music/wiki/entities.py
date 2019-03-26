@@ -436,6 +436,8 @@ class WikiEntity(metaclass=WikiEntityMeta):
                     score -= 40
                 if ("live" in alias and "live" not in val) or ("live" in val and "live" not in alias):
                     score -= 25
+
+                # log.debug('{!r}=?={!r}: score={}, alias={!r}, val={!r}'.format(self, other, score, alias, val))
                 if score > best_score:
                     best_score, best_alias, best_val = score, alias, val
 
@@ -785,7 +787,8 @@ class WikiArtist(WikiEntity):
                             discography.append(ost)
                             # raise http_e
                     else:
-                        log.debug("{}: Unable to find wiki page for {}".format(self, entry))
+                        fmt = '{}: Unable to find wiki page for {} via {}\n{}'
+                        log.debug(fmt.format(self, entry, client.url_for(uri_path), traceback.format_exc()))
                         alb = cls(uri_path, client, disco_entry=entry, artist_context=self, no_fetch=True)
                         discography.append(alb)
                         # raise http_e
@@ -1087,7 +1090,10 @@ class WikiSongCollection(WikiEntity):
     _part_rx = re.compile(r"(?:part|code no)\.?\s*", re.IGNORECASE)
     _bonus_rx = re.compile(r"^(.*)\s+bonus tracks?$", re.IGNORECASE)
 
-    def __init__(self, uri_path=None, client=None, *, disco_entry=None, album_info=None, artist_context=None, **kwargs):
+    def __init__(
+        self, uri_path=None, client=None, *, disco_entry=None, album_info=None, artist_context=None,
+        version_title=None, **kwargs
+    ):
         super().__init__(uri_path, client, **kwargs)
         self._discography_entry = disco_entry or {}
         self.english_name, self.cjk_name, self.stylized_name, self.aka, self._info = None, None, None, None, None
@@ -1106,11 +1112,12 @@ class WikiSongCollection(WikiEntity):
 
             if len(albums) > 1:
                 err_base = "{} contains both original+repackaged album info on the same page".format(uri_path)
-                if not disco_entry:
+                if not (disco_entry or version_title):
                     msg = "{} - a discography entry is required to identify it".format(err_base)
                     raise WikiEntityIdentificationException(msg)
 
-                d_title = disco_entry.get("title")
+                disco_entry = disco_entry or {}
+                d_title = disco_entry.get("title") or version_title
                 d_lc_title = d_title.lower()
                 try:
                     d_artist_name, d_artist_uri_path = disco_entry.get("primary_artist")    # tuple(name, uri_path)
@@ -1160,6 +1167,18 @@ class WikiSongCollection(WikiEntity):
             album_tracks = self._album_info.get("tracks")
             if album_tracks:
                 self._track_lists = [album_tracks]
+
+        if not self.cjk_name and self._track_lists:
+            for track_list in self._track_lists:
+                for track in track_list.get('tracks', []):
+                    try:
+                        eng, cjk = track.get('name_parts')
+                    except Exception as e:
+                        pass
+                    else:
+                        if eng == self.english_name:
+                            self.cjk_name = cjk
+                            break
 
         self.name = multi_lang_name(self.english_name, self.cjk_name)
         if self._info:
@@ -1476,6 +1495,21 @@ class WikiSongCollection(WikiEntity):
 class WikiAlbum(WikiSongCollection):
     _category = "album"
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        repackage_title = self._album_info.get("repackage_of_title")
+        if self.name == repackage_title:
+            self.name += ' (Repackage)'
+            self.english_name += ' (Repackage)'
+
+    def _aliases(self):
+        aliases = super()._aliases()
+        if self.repackage_of:
+            for alias in list(aliases):
+                if 'repackage' not in alias.lower():
+                    aliases.add('{} (Repackage)'.format(alias))
+        return aliases
+
     @cached_property
     def num_and_type(self):
         base = super().num_and_type
@@ -1483,16 +1517,18 @@ class WikiAlbum(WikiSongCollection):
 
     @cached_property
     def repackaged_version(self):
+        title = self._album_info.get("repackage_title")
         href = self._album_info.get("repackage_href")
         if href:
-            return WikiAlbum(href)
+            return WikiAlbum(href, client=self._client, version_title=title)
         return None
 
     @cached_property
     def repackage_of(self):
+        title = self._album_info.get("repackage_of_title")
         href = self._album_info.get("repackage_of_href")
         if href:
-            return WikiAlbum(href)
+            return WikiAlbum(href, client=self._client, version_title=title)
         return None
 
 

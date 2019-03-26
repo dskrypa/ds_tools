@@ -12,7 +12,7 @@ from bs4.element import NavigableString
 
 from ....utils import ParentheticalParser, DASH_CHARS, num_suffix, QMARKS
 from ...name_processing import has_parens, parse_name, split_name, str2list
-from ..utils import synonym_pattern
+from ..utils import synonym_pattern, get_page_category
 from .common import (
     album_num_type, first_side_info_val, LANG_ABBREV_MAP, link_tuples, NUM2INT, parse_track_info, unsurround,
     parse_date, TrackListParser
@@ -106,7 +106,7 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artist, compilation=Fa
     return track_lists
 
 
-def parse_album_page(uri_path, clean_soup, side_info):
+def parse_album_page(uri_path, clean_soup, side_info, client):
     """
     :param clean_soup: The :attr:`WikiEntity._clean_soup` value for an album
     :param dict side_info: Parsed 'aside' element contents
@@ -118,14 +118,24 @@ def parse_album_page(uri_path, clean_soup, side_info):
     intro_text = clean_soup.text.strip()
     try:
         intro_rx = parse_album_page._intro_rx
+        title_rx = parse_album_page._title_rx
     except AttributeError:
         intro_rx = parse_album_page._intro_rx = re.compile(r'^(.*?)\s+is\s+(?:a|the)\s+(.*?)\.\s')
+        title_rx = parse_album_page._title_rx = re.compile(
+            r'^The \S+ Album ([{}])(.*)\1(.*)'.format(QMARKS + "'"), re.IGNORECASE
+        )
 
     intro_match = intro_rx.match(intro_text)
     if not intro_match:
         raise WikiEntityParseException(bad_intro_fmt.format(uri_path, intro_text[:200]))
+
+    orig_title_part = title_part = intro_match.group(1).strip()
+    m = title_rx.match(title_part)
+    if m:
+        title_part = ''.join(m.groups()[1:])
+        log.debug('Changed pre-parsed title from {!r} to {!r}'.format(orig_title_part, title_part))
     # log.debug('{}: intro match group(len={}): {!r}'.format(uri_path, len(intro_match.group(1)), intro_match.group(1)))
-    album0['title_parts'] = parse_name(intro_match.group(1))  # base, cjk, stylized, aka, info
+    album0['title_parts'] = parse_name(title_part)  # base, cjk, stylized, aka, info
     details_str = intro_match.group(2)
     details_str = details_str.replace('full length', 'full-length').replace('mini-album', 'mini album')
     details = list(details_str.split())
@@ -143,12 +153,21 @@ def parse_album_page(uri_path, clean_soup, side_info):
         except ValueError as e:
             raise WikiEntityParseException(bad_intro_fmt.format(uri_path, intro_text[:200])) from e
 
-        for a in clean_soup.find_all('a'):
+        for i, a in enumerate(clean_soup.find_all('a')):
             if details_str.endswith(a.text):
-                href = a.get('href')
+                href = (a.get('href') or '')[6:]
                 if href:
-                    album0['repackage_of_href'] = href[6:]
-                    album0['repackage_of_title'] = a.text
+                    try:
+                        raw, cats = client.get_entity_base(href)
+                        category = get_page_category(client.url_for(uri_path), cats, no_debug=True)
+                    except Exception as e:
+                        pass
+                    else:
+                        if category in ('album', 'soundtrack'):
+                            album0['repackage_of_href'] = href
+                            album0['repackage_of_title'] = a.text
+                            break
+            elif i > 2:
                 break
         else:
             fmt = 'Unable to find link to repackaged version of {}; details={}'
