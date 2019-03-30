@@ -27,11 +27,11 @@ from ..caching import cached, DBCache, CacheKey, ClearableCachedPropertyMixin
 from ..core import cached_property, get_user_cache_dir, format_duration
 from ..http import CodeBasedRestException
 from ..unicode import contains_hangul
-from ..utils import ParentheticalParser
+# from ..utils import ParentheticalParser
 from .patches import tag_repr
 from .name_processing import split_names
-from .wiki import WikiArtist
-from .wiki.old import Artist, CollaborationSong, split_name
+from .wiki import WikiArtist, WikiEntityIdentificationException
+# from .wiki.old import Artist, CollaborationSong, split_name
 
 __all__ = [
     "SongFile", "FakeMusicFile", "iter_music_files", "load_tags", "iter_music_albums",
@@ -288,16 +288,17 @@ class AlbumDir(ClearableCachedPropertyMixin):
         if len(artists) == 1:
             return artists.pop()
         elif len(artists) > 1:
-            log.warning("Conflicting wiki_artist matches were found for {}: {}".format(self, ", ".join(map(str, artists))))
+            log.warning("Conflicting wik_artist matches were found for {}: {}".format(self, ", ".join(map(str, artists))))
         else:
-            artist_path = self.artist_path
-            if artist_path is not None:
-                try:
-                    return Artist(artist_path.name)
-                except Exception as e:
-                    log.error("Error determining artist for {} based on path {}: {}".format(self, artist_path, e))
-            else:
-                log.debug("No wiki_artist match was found for {}".format(self))
+            # artist_path = self.artist_path
+            # if artist_path is not None:
+            #     try:
+            #         return Artist(artist_path.name)
+            #     except Exception as e:
+            #         log.error("Error determining artist for {} based on path {}: {}".format(self, artist_path, e))
+            # else:
+            #     log.debug("No wiki_artist match was found for {}".format(self))
+            log.debug("No wiki_artist match was found for {}".format(self))
         return None
 
     @cached_property
@@ -321,7 +322,8 @@ class AlbumDir(ClearableCachedPropertyMixin):
         if self.wiki_album:
             return self.wiki_album.expected_rel_path
         elif self.wiki_artist:
-            artist_dir = self.wiki_artist.expected_dirname
+            artist_dir = self.wiki_artist.expected_rel_path.name
+            # artist_dir = self.wiki_artist.expected_dirname
             lc_name = self.path.name.lower()
             if any(val in lc_name for val in ("ost", "soundtrack", "part", "episode")):
                 type_dir = "Soundtracks"
@@ -538,7 +540,14 @@ class AlbumDir(ClearableCachedPropertyMixin):
                 file_value = music_file.tag_text("artist")
                 wiki_artist = music_file.wiki_artist
                 if wiki_artist:
-                    wiki_value = wiki_artist.name_with_context
+                    # wiki_value = wiki_artist.name_with_context
+                    try:
+                        member_of = wiki_artist.member_of
+                    except AttributeError:
+                        wiki_value = wiki_artist.name
+                    else:
+                        wiki_value = '{} [{}]'.format(wiki_artist.name, member_of.name)
+
                     if (file_value != wiki_value) and (file_value.count(",") == wiki_value.count(",")):
                         to_update["artist"] = (file_value, wiki_value)
             else:
@@ -884,6 +893,10 @@ class SongFile(ClearableCachedPropertyMixin):
         if m:
             album = " ".join(map(str.strip, m.groups())).strip()
 
+        m = re.search(r'((?:^|\s+)\d+\s*집(?:$|\s+))', album)   # {num}집 == nth album
+        if m:
+            album = album.replace(m.group(1), ' ').strip()
+
         # m = re.search("(?:the)?\s*[0-9](?:st|nd|rd|th)\s+\S*\s*album(.*)$", album, re.IGNORECASE)
         # if m:
         #     group = m.group(1).strip()
@@ -933,7 +946,19 @@ class SongFile(ClearableCachedPropertyMixin):
         return False
 
     @cached_property
-    def wiki_artist_new(self):
+    def track_num(self):
+        track = self.tag_text("track", default=None)
+        if track:
+            if "/" in track:
+                track = track.split("/")[0].strip()
+            if "," in track:
+                track = track.split(",")[0].strip()
+            if track.startswith("("):
+                track = track[1:].strip()
+        return track
+
+    @cached_property
+    def wiki_artist(self):
         artists = split_names(self.tag_artist)
         exc = None
         for eng, cjk, of_group in artists:
@@ -941,6 +966,8 @@ class SongFile(ClearableCachedPropertyMixin):
                 return WikiArtist(name=eng or cjk, no_fetch=True)
             try:
                 return WikiArtist(of_group=of_group, aliases=tuple(filter(None, (eng, cjk))))
+            except WikiEntityIdentificationException as e:
+                log.error('Error matching artist {} for {}: {}'.format((eng, cjk, of_group), self, e))
             except CodeBasedRestException as e:
                 exc = e
             except AttributeError as e:
@@ -956,15 +983,53 @@ class SongFile(ClearableCachedPropertyMixin):
             raise exc
 
     @cached_property
-    def wiki_album_new(self):
+    def wiki_album(self):
+        self.wiki_scores["album"] = -1
         try:
-            return self.wiki_artist_new.find_song_collection(self.album_name_cleaned)
-        except AttributeError as e:
+            artist = self.wiki_artist
+        except Exception as e:
+            log.error('Error determining artist for {}: {}'.format(self, e))
             traceback.print_exc()
             raise e
+        else:
+            try:
+                album, score = artist.find_song_collection(self.album_name_cleaned, include_score=True)
+            except Exception as e:
+                log.error('Error determining album for {} from {}: {}'.format(self, artist, e))
+                traceback.print_exc()
+                raise e
+            self.wiki_scores["album"] = score
+            if album is None:
+                fmt = 'Unable to find album {!r} from {} to match {}'
+                log.warning(fmt.format(self.album_name_cleaned, artist, self), extra={'color': 9})
+            return album
 
     @cached_property
-    def wiki_artist(self):
+    def wiki_song(self):
+        self.wiki_scores["song"] = -1
+        name = self.tag_title
+        num = self.track_num
+        try:
+            album = self.wiki_album
+        except Exception as e:
+            log.error('Error determining album for {}: {}'.format(self, e))
+            traceback.print_exc()
+            raise e
+        else:
+            if not album:
+                return None
+            try:
+                track, score = album.find_track(name, track=num, include_score=True)
+            except Exception as e:
+                log.error('Error determining track for {} from {}: {}'.format(self, album, e))
+                traceback.print_exc()
+                raise e
+            else:
+                self.wiki_scores["song"] = score
+                return track
+
+    @cached_property
+    def wiki_artist_old(self):
         eng, han = None, None
         try:
             eng, han = split_name(self.tag_artist, is_artist=True)
@@ -1020,7 +1085,7 @@ class SongFile(ClearableCachedPropertyMixin):
             return None
 
     @cached_property
-    def wiki_album(self):
+    def wiki_album_old(self):
         self.wiki_scores["album"] = -1
         try:
             artist = self.wiki_artist
@@ -1070,7 +1135,7 @@ class SongFile(ClearableCachedPropertyMixin):
             raise e
 
     @cached_property
-    def wiki_song(self):
+    def wiki_song_old(self):
         self.wiki_scores["song"] = -1
         artist = self.wiki_artist
         # noinspection PyTypeChecker
@@ -1104,7 +1169,8 @@ class SongFile(ClearableCachedPropertyMixin):
         elif self.wiki_album:
             return os.path.join(self.wiki_album.expected_rel_path, self.basename())
         elif self.wiki_artist and ("single" in self.album_type_dir.lower()):
-            artist_dir = self.wiki_artist.expected_dirname
+            artist_dir = self.wiki_artist.expected_rel_path.name
+            # artist_dir = self.wiki_artist.expected_dirname
             dest = os.path.join(artist_dir, self.path.parents[1].name, self.path.parent.name, self.basename())
             log.warning("{}.wiki_expected_rel_path defaulting to {!r}".format(self, dest))
             return dest

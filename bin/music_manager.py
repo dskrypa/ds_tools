@@ -205,15 +205,18 @@ def match_wiki(path):
                 "File Album": music_file.album_name_cleaned,
                 "Wiki Album": music_file.wiki_album.name if music_file.wiki_album else "",
                 "File Alb Type": music_file.album_type_dir,
-                "Wiki Alb Type": music_file.wiki_album.type if music_file.wiki_album else "",
+                # "Wiki Alb Type": music_file.wiki_album.type if music_file.wiki_album else "",
+                "Wiki Alb Type": music_file.wiki_album.album_type if music_file.wiki_album else "",
                 "Album Score": music_file.wiki_scores.get("album", -1),
 
                 "File Title": music_file.tag_title,
-                "Wiki Title": music_file.wiki_song.file_title if music_file.wiki_song else "",
+                # "Wiki Title": music_file.wiki_song.file_title if music_file.wiki_song else "",
+                "Wiki Title": music_file.wiki_song.long_name if music_file.wiki_song else "",
                 "Title Score": music_file.wiki_scores.get("song", -1),
 
                 "File Track": str(music_file.tag_text("track", default="")),
-                "Wiki Track": str(getattr(music_file.wiki_song, "track", "")) if music_file.wiki_song else "",
+                # "Wiki Track": str(getattr(music_file.wiki_song, "track", "")) if music_file.wiki_song else "",
+                "Wiki Track": str(music_file.wiki_song.num) if music_file.wiki_song else "",
             })
         except AttributeError as e:
             log.error("Error processing {}: {}".format(music_file, e))
