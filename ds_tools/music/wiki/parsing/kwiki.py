@@ -269,7 +269,7 @@ def parse_album_page(uri_path, clean_soup, side_info, client):
     return albums
 
 
-def parse_aside(aside):
+def parse_aside(aside, uri_path):
     """
     Parse the 'aside' element from a wiki page into a more easily used data format
 
@@ -343,7 +343,7 @@ def parse_aside(aside):
                         elif value and value[-1] and not value[-1][1]:
                             value[-1] = (value[-1][0], unsurround(s))
                         else:
-                            raise ValueError('Unexpected length format in: {}'.format(val_ele))
+                            raise WikiEntityParseException('Unexpected length format on {} in: {}'.format(uri_path, val_ele))
             elif key in ('agency', 'artist', 'associated', 'composer', 'current', 'label', 'writer'):
                 anchors = list(val_ele.find_all('a'))
                 if anchors:

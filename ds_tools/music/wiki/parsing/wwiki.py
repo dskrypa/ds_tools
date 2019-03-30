@@ -238,7 +238,7 @@ def parse_wikipedia_album_page(uri_path, clean_soup, side_info):
     return albums
 
 
-def parse_infobox(infobox):
+def parse_infobox(infobox, uri_path):
     """
     Parse the 'infobox' element from a wiki page into a more easily used data format
 

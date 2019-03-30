@@ -31,7 +31,7 @@ IMITATE_HEADERS = {
         'Cache-Control': 'no-cache',
         'Pragma': 'no-cache',
         'Upgrade-Insecure-Requests': '1',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:62.0) Gecko/20100101 Firefox/62.0'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:66.0) Gecko/20100101 Firefox/66.0'
     }
 }
 

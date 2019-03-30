@@ -125,7 +125,7 @@ class WikiClient(RestClient):
 
     normalize_artist = normalize_name
 
-    def parse_side_info(self, soup):
+    def parse_side_info(self, soup, uri_path):
         return {}
 
     def parse_album_page(self, uri_path, clean_soup, side_info):
@@ -147,8 +147,8 @@ class KpopWikiClient(WikiClient):
         # cat_ul = soupify(raw).find('ul', class_='categories')
         return raw, {li.text.lower() for li in cat_ul.find_all('li')} if cat_ul else set()
 
-    def parse_side_info(self, soup):
-        return parse_aside(soup)
+    def parse_side_info(self, soup, uri_path):
+        return parse_aside(soup, uri_path)
 
     def parse_album_page(self, uri_path, clean_soup, side_info):
         return parse_album_page(uri_path, clean_soup, side_info, self)
@@ -216,8 +216,8 @@ class WikipediaClient(WikiClient):
             raise AmbiguousEntityException(uri_path, raw, obj_type)
         return raw, cats
 
-    def parse_side_info(self, soup):
-        return parse_infobox(soup)
+    def parse_side_info(self, soup, uri_path):
+        return parse_infobox(soup, uri_path)
 
     def parse_album_page(self, uri_path, clean_soup, side_info):
         return parse_wikipedia_album_page(uri_path, clean_soup, side_info)
