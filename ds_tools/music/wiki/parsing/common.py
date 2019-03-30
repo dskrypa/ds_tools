@@ -79,10 +79,13 @@ def split_artist_list(artist_list, context=None, link_dict=None):
                             artist_dict[key] = split_name(val, require_preceder=False)
                     artists.append(artist_dict)
         else:
-            try:
-                artists.append({'artist': split_name(artist), 'artist_href': links.get(artist)})
-            except ValueError:
-                artists.append({'artist': split_name(artist, require_preceder=False), 'artist_href': links.get(artist)})
+            for _artist in re.split(' and | & ', artist):
+                try:
+                    artists.append({'artist': split_name(_artist), 'artist_href': links.get(_artist)})
+                except ValueError:
+                    artists.append({
+                        'artist': split_name(_artist, require_preceder=False), 'artist_href': links.get(_artist)
+                    })
 
     return artists, producers
 
