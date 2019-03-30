@@ -14,12 +14,11 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import bs4
-from fuzzywuzzy import fuzz, utils as fuzz_utils
 
 from ...caching import cached, DictAttrProperty, DictAttrPropertyMixin
 from ...core import cached_property
 from ...http import CodeBasedRestException
-from ...unicode import LangCat
+from ...unicode import LangCat, romanized_permutations
 from ...utils import soupify
 from ..name_processing import eng_cjk_sort, fuzz_process, parse_name, revised_weighted_ratio, split_name
 from .exceptions import *
@@ -264,39 +263,8 @@ class WikiEntityMeta(type):
             raise WikiTypeError(url, article, category, cls_cat, cls)
 
 
-class WikiEntity(metaclass=WikiEntityMeta):
-    _int_pat = re.compile(r'(?P<int>\d+)|(?P<other>\D+)')
-    __instances = {}
-    _categories = {}
+class WikiMatchable:
     _category = None
-
-    def __init__(self, uri_path=None, client=None, *, name=None, raw=None, no_fetch=False, **kwargs):
-        self._client = client
-        self._uri_path = uri_path
-        self._raw = raw if raw is not None else client.get_page(uri_path) if uri_path and not no_fetch else None
-        self.name = name or uri_path
-        if isinstance(self._client, DramaWikiClient) and self._raw:
-            self._header_title = soupify(self._raw, parse_only=bs4.SoupStrainer('h2', class_='title')).text
-        else:
-            self._header_title = None
-
-    def __repr__(self):
-        return "<{}({!r})>".format(type(self).__name__, self.name)
-
-    def __eq__(self, other):
-        if not isinstance(other, WikiEntity):
-            return False
-        return self.name == other.name and self._raw == other._raw
-
-    def __hash__(self):
-        return hash((self.name, self._raw))
-
-    @cached_property
-    def url(self):
-        return self._client.url_for(self._uri_path)
-
-    def _additional_aliases(self):
-        return None
 
     def _aliases(self):
         _aliases = (
@@ -315,6 +283,9 @@ class WikiEntity(metaclass=WikiEntityMeta):
                 else:
                     aliases.extend(aka)
         return set(aliases)
+
+    def _additional_aliases(self):
+        return None
 
     @cached_property
     def aliases(self):
@@ -341,6 +312,8 @@ class WikiEntity(metaclass=WikiEntityMeta):
     @cached_property
     def _fuzzed_aliases(self):
         try:
+            if isinstance(self, WikiSongCollection):
+                return set(filter(None, (fuzz_process(a, strip_special=False) for a in self.aliases)))
             return set(filter(None, (fuzz_process(a) for a in self.aliases)))
         except Exception as e:
             log.error('{}: Error fuzzing aliases: {}'.format(self, self.aliases))
@@ -384,10 +357,14 @@ class WikiEntity(metaclass=WikiEntityMeta):
             other = other[0]
         if isinstance(other, str):
             if LangCat.categorize(other) == LangCat.MIX:
+                original = other
                 try:
                     others = split_name(other)
                 except ValueError:
                     others = (other,)
+                else:
+                    if others[0].lower() == 'live':
+                        others = (original,)
             else:
                 others = (other,)
         elif isinstance(other, WikiEntity):
@@ -399,25 +376,25 @@ class WikiEntity(metaclass=WikiEntityMeta):
         else:
             others = other
 
-        fuzzed_others = tuple(filter(None, (fuzz_process(o) for o in others) if process else others))
+        if isinstance(self, WikiSongCollection):
+            fuzzed_others = tuple(filter(None, (fuzz_process(o, strip_special=False) for o in others) if process else others))
+        else:
+            fuzzed_others = tuple(filter(None, (fuzz_process(o) for o in others) if process else others))
         if not fuzzed_others:
             log.warning('Unable to compare {} to {!r}: nothing to compare after processing'.format(self, other))
             return 0, None, None
 
         # scorer = fuzz.WRatio if isinstance(self, WikiSongCollection) else fuzz.token_sort_ratio
         scorer = revised_weighted_ratio
-        int_pat = self._int_pat
-        # noinspection PyUnresolvedReferences
-        self_nums = ''.join(m.groups()[0] for m in iter(int_pat.scanner(self.name).match, None) if m.groups()[0])
 
         score_mod = 0
         if track is not None and isinstance(self, WikiTrack):
-            score_mod += 15 if self.num == track else -15
+            score_mod += 15 if str(self.num) == str(track) else -15
         if disk is not None and isinstance(self, WikiTrack):
-            score_mod += 15 if self.disk == disk else -15
+            score_mod += 15 if str(self.disk) == str(disk) else -15
         if year is not None and isinstance(self, WikiSongCollection):
             try:
-                years_match = self.released.year == int(year)
+                years_match = str(self.released.year) == str(year)
             except Exception:
                 pass
             else:
@@ -430,18 +407,46 @@ class WikiEntity(metaclass=WikiEntityMeta):
                     break
                 # score = scorer(alias, val, force_ascii=False, full_process=False)
                 score = scorer(alias, val)
-                # noinspection PyUnresolvedReferences
-                val_nums = ''.join(m.groups()[0] for m in iter(int_pat.scanner(val).match, None) if m.groups()[0])
-                if val_nums != self_nums:
-                    score -= 40
                 if ("live" in alias and "live" not in val) or ("live" in val and "live" not in alias):
                     score -= 25
 
-                # log.debug('{!r}=?={!r}: score={}, alias={!r}, val={!r}'.format(self, other, score, alias, val))
+                other_repr = other if isinstance(other, WikiEntity) else val
+                log.debug('{!r}=?={!r}: score={}, alias={!r}, val={!r}'.format(self, other_repr, score, alias, val))
                 if score > best_score:
                     best_score, best_alias, best_val = score, alias, val
 
         return best_score + score_mod, best_alias, best_val
+
+
+class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
+    __instances = {}
+    _categories = {}
+    _category = None
+
+    def __init__(self, uri_path=None, client=None, *, name=None, raw=None, no_fetch=False, **kwargs):
+        self._client = client
+        self._uri_path = uri_path
+        self._raw = raw if raw is not None else client.get_page(uri_path) if uri_path and not no_fetch else None
+        self.name = name or uri_path
+        if isinstance(self._client, DramaWikiClient) and self._raw:
+            self._header_title = soupify(self._raw, parse_only=bs4.SoupStrainer('h2', class_='title')).text
+        else:
+            self._header_title = None
+
+    def __repr__(self):
+        return "<{}({!r})>".format(type(self).__name__, self.name)
+
+    def __eq__(self, other):
+        if not isinstance(other, WikiEntity):
+            return False
+        return self.name == other.name and self._raw == other._raw
+
+    def __hash__(self):
+        return hash((self.name, self._raw))
+
+    @cached_property
+    def url(self):
+        return self._client.url_for(self._uri_path)
 
     @property
     def _soup(self):
@@ -455,7 +460,7 @@ class WikiEntity(metaclass=WikiEntityMeta):
             _ = self._clean_soup
 
         try:
-            return {} if not self.__side_info else self._client.parse_side_info(self.__side_info)
+            return {} if not self.__side_info else self._client.parse_side_info(self.__side_info, self._uri_path)
         except Exception as e:
             log.error("Error processing side bar info for {}: {}".format(self._uri_path, e))
             raise e
@@ -521,7 +526,7 @@ class WikiEntity(metaclass=WikiEntityMeta):
                 for rm_ele in content.find_all(class_=clz):
                     rm_ele.extract()
 
-            for clz in ("shortdescription",):
+            for clz in ("shortdescription", "box-More_citations_needed"):
                 rm_ele = content.find(class_=clz)
                 if rm_ele:
                     rm_ele.extract()
@@ -814,22 +819,22 @@ class WikiArtist(WikiEntity):
             associated.append(WikiArtist(href, name=text, client=self._client))
         return associated
 
-    def find_song_collection(self, name, min_score=75):
+    def find_song_collection(self, name, min_score=75, include_score=False, **kwargs):
         match_fmt = '{}: {} matched {!r} with score={} because its alias={!r} =~= {!r}'
         best_score, best_alias, best_val, best_coll = 0, None, None, None
         for collection in self.discography:
-            score, alias, val = collection.score_match(name)
+            score, alias, val = collection.score_match(name, **kwargs)
             if score >= 100:
                 # log.debug(match_fmt.format(self, collection, name, score, alias, val))
-                return collection
+                return (collection, score) if include_score else collection
             elif score > best_score:
                 best_score, best_alias, best_val, best_coll = score, alias, val, collection
 
         if best_score > min_score:
             if best_score < 95:
                 log.debug(match_fmt.format(self, best_coll, name, best_score, best_alias, best_val))
-            return best_coll
-        return None
+            return (best_coll, best_score) if include_score else best_coll
+        return (None, -1) if include_score else None
 
     @cached_property
     def _soundtracks(self):
@@ -1491,6 +1496,24 @@ class WikiSongCollection(WikiEntity):
             packages.append(tmp)
         return packages
 
+    def find_track(self, name, min_score=75, include_score=False, **kwargs):
+        match_fmt = '{}: {} matched {!r} with score={} because its alias={!r} =~= {!r}'
+        best_score, best_alias, best_val, best_track = 0, None, None, None
+
+        for track in self.get_tracks():
+            score, alias, val = track.score_match(name, **kwargs)
+            if score >= 100:
+                # log.debug(match_fmt.format(self, track, name, score, alias, val))
+                return (track, score) if include_score else track
+            elif score > best_score:
+                best_score, best_alias, best_val, best_track = score, alias, val, track
+
+        if best_score > min_score:
+            if best_score < 95:
+                log.debug(match_fmt.format(self, best_track, name, best_score, best_alias, best_val))
+            return (best_track, best_score) if include_score else best_track
+        return (None, -1) if include_score else None
+
 
 class WikiAlbum(WikiSongCollection):
     _category = "album"
@@ -1743,7 +1766,8 @@ class WikiFeatureOrSingle(WikiSongCollection):
         return {"tracks": tracks}
 
 
-class WikiTrack(DictAttrPropertyMixin):
+class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
+    _category = '__track__'
     disk = DictAttrProperty("_info", "disk", type=int, default=1)
     num = DictAttrProperty("_info", "num", type=lambda x: x if x is None else int(x), default=None)
     length_str = DictAttrProperty("_info", "length", default="-1:00")
@@ -1853,7 +1877,15 @@ class WikiTrack(DictAttrPropertyMixin):
 
     @cached_property
     def long_name(self):
-        return " ".join(chain((self.name,), self._formatted_name_parts))
+        return ' '.join(chain((self.name,), self._formatted_name_parts))
+
+    def _additional_aliases(self):
+        name_end = ' '.join(self._formatted_name_parts)
+        aliases = [self.long_name]
+        for val in self.english_name, self.cjk_name:
+            if val:
+                aliases.append('{} {}'.format(val, name_end))
+        return aliases
 
     @property
     def seconds(self):
@@ -1866,6 +1898,30 @@ class WikiTrack(DictAttrPropertyMixin):
 
     def expected_rel_path(self, ext='mp3'):
         return self._collection.expected_rel_path.joinpath(self.expected_filename(ext))
+
+    def score_match(self, other, *args, **kwargs):
+        if isinstance(other, str):
+            feat_rx = re.compile(r'\((?:with|feat\.?|featuring)\s+(.*?)\)', re.IGNORECASE)
+            m = feat_rx.search(other)
+            if m:
+                feat = m.group(1)
+                if ' of ' in feat:
+                    full_feat = feat
+                    feat, of_group = feat.split(' of ', 1)
+                else:
+                    full_feat = None
+
+                if LangCat.contains_any(feat, LangCat.HAN):
+                    other_str = other
+                    if full_feat:
+                        other = {other_str.replace(feat, val) for val in romanized_permutations(feat)}
+                        # The replacement of the full text below is intentional
+                        other.update(other_str.replace(full_feat, val) for val in romanized_permutations(feat))
+                    else:
+                        other = {other_str.replace(feat, val) for val in romanized_permutations(feat)}
+
+                    other.add(other_str)
+        return super().score_match(other, *args, **kwargs)
 
 
 def find_ost(artist, title, disco_entry):
