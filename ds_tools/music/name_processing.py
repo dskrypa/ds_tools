@@ -20,7 +20,7 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 
-def fuzz_process(text):
+def fuzz_process(text, strip_special=True):
     """
     Performs the same functions as :func:`full_process<fuzzywuzzy.utils.full_process>`, with some additional steps.
     Consecutive spaces are condensed, and diacritical marks are stripped.  Example::\n
@@ -28,6 +28,7 @@ def fuzz_process(text):
         'rose 한'
 
     :param str text: A string to be processed
+    :param bool strip_special: Strip special characters (defaults to True - set to False to preserve them)
     :return str: The processed string
     """
     try:
@@ -38,7 +39,8 @@ def fuzz_process(text):
         ost_rx = fuzz_process._ost_rx = re.compile(r'\sOST(?:$|\s)', re.IGNORECASE)
 
     original = text
-    text = non_letter_non_num_rx.sub(' ', text)     # Convert non-letter/numeric characters to spaces
+    if strip_special:                               # Some titles are only differentiable by special characters
+        text = non_letter_non_num_rx.sub(' ', text) # Convert non-letter/numeric characters to spaces
     text = ' '.join(text.split())                   # Condense sets of consecutive spaces to 1 space (faster than regex)
     text = ost_rx.sub('', text)                     # Remove 'OST' to prevent false positives based only on that
     text = text.lower().strip()                     # Convert to lower case & strip leading/trailing whitespace
@@ -70,6 +72,19 @@ def revised_weighted_ratio(p1, p2):
     """
     if not p1 or not p2:
         return 0
+    elif p1 == p2:
+        return 100
+
+    try:
+        int_pat = revised_weighted_ratio._int_pat
+    except AttributeError:
+        int_pat = revised_weighted_ratio._int_pat = re.compile(r'(?P<int>\d+)|(?P<other>\D+)')
+
+    # noinspection PyUnresolvedReferences
+    p1_nums = ''.join(m.groups()[0] for m in iter(int_pat.scanner(p1).match, None) if m.groups()[0])
+    # noinspection PyUnresolvedReferences
+    p2_nums = ''.join(m.groups()[0] for m in iter(int_pat.scanner(p2).match, None) if m.groups()[0])
+    num_mod = -30 if p1_nums != p2_nums else 0
 
     # should we look at partials?
     try_partial = True
@@ -98,12 +113,12 @@ def revised_weighted_ratio(p1, p2):
         ptsor = fuzz.partial_token_sort_ratio(p1, p2, full_process=False) * unbase_scale * partial_scale
         ptser = fuzz.partial_token_set_ratio(p1, p2, full_process=False) * unbase_scale * partial_scale
         # log.debug('{!r}=?={!r}: ratio={}, len_ratio={}, part_ratio={}, tok_sort_ratio={}, tok_set_ratio={}'.format(p1, p2, base, len_ratio, partial, ptsor, ptser))
-        return int(round(max(base, partial, ptsor, ptser)))
+        return int(round(max(base, partial, ptsor, ptser))) + num_mod
     else:
         tsor = fuzz.token_sort_ratio(p1, p2, full_process=False) * unbase_scale
         tser = fuzz.token_set_ratio(p1, p2, full_process=False) * unbase_scale
         # log.debug('{!r}=?={!r}: ratio={}, len_ratio={}, tok_sort_ratio={}, tok_set_ratio={}'.format(p1, p2, base, len_ratio, tsor, tser))
-        return int(round(max(base, tsor, tser)))
+        return int(round(max(base, tsor, tser))) + num_mod
 
 
 def parse_name(text):
@@ -226,8 +241,8 @@ def split_names(text):
             if 'feat. ' in text:
                 parser = ParentheticalParser()
                 return [split_name(part, True, permissive=True) for part in parser.parse(text)]
-            elif LangCat.categorize(text) == LangCat.MIX and has_parens(text):
-                return [split_name(text, True, require_preceder=False)]
+            # elif LangCat.categorize(text) == LangCat.MIX and has_parens(text):
+            #     return [split_name(text, True, require_preceder=False)]
             else:
                 raise e
     elif is_unzipped_name(text):
@@ -292,8 +307,16 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
     s = 's' if len(parts) > 1 else ''
     log.log(9, 'ParentheticalParser().parse({!r}) => {} part{}: {} ({})'.format(name, len(parts), s, parts, langs))
     if len(parts) == 1:
+        part = parts[0]
+        lang = langs[0]
+        if lang == LangCat.MIX:
+            if has_parens(part) and require_preceder:
+                return split_name(part, unused, check_keywords, permissive, require_preceder=False)
+            elif ' / ' in part:
+                parts = tuple(map(str.strip, part.split(' / ', 1)))
+                return split_name(parts, unused, check_keywords, permissive, require_preceder)
         try:
-            eng, cjk = eng_cjk_sort(parts[0], langs[0])
+            eng, cjk = eng_cjk_sort(part, lang)
         except ValueError as e:
             raise ValueError('Unable to split {!r} into separate English/CJK strings'.format(name)) from e
     elif len(parts) == 2:
@@ -327,17 +350,22 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
             except Exception:
                 not_used = parts[1]
         elif langs == (LangCat.ENG, LangCat.MIX):
-            common_suffix = ''.join(reversed(os.path.commonprefix(list(map(lambda x: ''.join(reversed(x)), parts)))))
-            if common_suffix and LangCat.categorize(parts[1][:-len(common_suffix)]) in LangCat.asian_cats:
-            # if len(common_suffix) > 3 and LangCat.categorize(parts[1], True).intersection(LangCat.asian_cats):
-                eng, cjk = parts
-            elif ' / ' in parts[1]:                         # Soloist (Group / soloist other lang)
+            if ' / ' in parts[1]:                         # Soloist (Group / soloist other lang)
                 try:
                     not_used, cjk = eng_cjk_sort(parts[1].split(' / '))
                 except Exception:
                     pass
                 else:
                     eng = parts[0]
+            else:
+                common_suffix = ''.join(reversed(os.path.commonprefix(list(map(lambda x: ''.join(reversed(x)), parts)))))
+                if common_suffix and LangCat.categorize(parts[1][:-len(common_suffix)]) in LangCat.asian_cats:
+                # if len(common_suffix) > 3 and LangCat.categorize(parts[1], True).intersection(LangCat.asian_cats):
+                    eng, cjk = parts
+                else:
+                    common_prefix = os.path.commonprefix(parts)
+                    if common_prefix and LangCat.categorize(parts[1][len(common_prefix):]) in LangCat.asian_cats:
+                        eng, cjk = parts
         elif langs == (LangCat.MIX, LangCat.MIX) and ' X ' in parts[1]:
             if LangCat.categorize(parts[0], True).intersection(LangCat.asian_cats):
                 eng, cjk = '', parts[0]
