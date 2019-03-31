@@ -23,7 +23,7 @@ NUMS = {
 }
 PAGE_CATEGORIES = OrderedDict([
     ('album', ('albums', 'discography article stubs')),
-    ('group', ('group', 'group article stubs')),
+    ('group', ('group', 'group article stubs', 'bands')),
     ('singer', ('singer', 'person article stubs', 'actor', 'actress')),
     ('soundtrack', ('osts', 'kost', 'jost', 'cost')),
     ('tv_series', ('television series', 'television drama', 'kdrama', 'competition shows', 'jdrama')),

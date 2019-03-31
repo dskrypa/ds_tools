@@ -13,8 +13,9 @@ from itertools import chain
 from unicodedata import category as unicode_cat
 
 __all__ = [
-    "Token", "RecursiveDescentParser", "UnexpectedTokenError", "strip_punctuation", "ParentheticalParser", "DASH_CHARS",
-    "QMARKS", "ALL_WHITESPACE", "CHARS_BY_CATEGORY", "ListBasedRecursiveDescentParser", "ALL_PUNCTUATION", "ALL_SYMBOLS"
+    'Token', 'RecursiveDescentParser', 'UnexpectedTokenError', 'strip_punctuation', 'ParentheticalParser', 'DASH_CHARS',
+    'QMARKS', 'ALL_WHITESPACE', 'CHARS_BY_CATEGORY', 'ListBasedRecursiveDescentParser', 'ALL_PUNCTUATION',
+    'ALL_SYMBOLS', 'ParentheticalListParser'
 ]
 log = logging.getLogger(__name__)
 
@@ -23,40 +24,44 @@ def _chars_by_category():
     chars_by_cat = defaultdict(list)
     for c in map(chr, range(sys.maxunicode + 1)):
         chars_by_cat[unicode_cat(c)].append(c)
-    return {cat: "".join(chars) for cat, chars in chars_by_cat.items()}
+    return {cat: ''.join(chars) for cat, chars in chars_by_cat.items()}
 
 
-# ALL_NUMS = "".join(re.findall(r"\d", "".join(chr(c) for c in range(sys.maxunicode + 1))))
-ALL_WHITESPACE = "".join(re.findall(r"\s", "".join(chr(c) for c in range(sys.maxunicode + 1))))
-CHARS_BY_CATEGORY = _chars_by_category()    # Note: ALL_WHITESPACE is a superset of CHARS_BY_CATEGORY["Zs"]
-DASH_CHARS = CHARS_BY_CATEGORY["Pd"] + "~"
-ALL_PUNCTUATION = "".join(chain.from_iterable(chars for cat, chars in CHARS_BY_CATEGORY.items() if cat.startswith("P")))
-ALL_SYMBOLS = "".join(chain.from_iterable(chars for cat, chars in CHARS_BY_CATEGORY.items() if cat.startswith("S")))
-PUNC_STRIP_TBL = str.maketrans({c: "" for c in string.punctuation})
-QMARKS = "\"“"
+# ALL_NUMS = ''.join(re.findall(r'\d', ''.join(chr(c) for c in range(sys.maxunicode + 1))))
+ALL_WHITESPACE = ''.join(re.findall(r'\s', ''.join(chr(c) for c in range(sys.maxunicode + 1))))
+CHARS_BY_CATEGORY = _chars_by_category()    # Note: ALL_WHITESPACE is a superset of CHARS_BY_CATEGORY['Zs']
+DASH_CHARS = CHARS_BY_CATEGORY['Pd'] + '~'
+ALL_PUNCTUATION = ''.join(chain.from_iterable(chars for cat, chars in CHARS_BY_CATEGORY.items() if cat.startswith('P')))
+ALL_SYMBOLS = ''.join(chain.from_iterable(chars for cat, chars in CHARS_BY_CATEGORY.items() if cat.startswith('S')))
+PUNC_STRIP_TBL = str.maketrans({c: '' for c in string.punctuation})
+QMARKS = '\"“'
 
 
 def strip_punctuation(a_str):
-    return re.sub(r"\s+", "", a_str).translate(PUNC_STRIP_TBL)
+    return re.sub(r'\s+', '', a_str).translate(PUNC_STRIP_TBL)
 
 
 class Token:
     def __init__(self, tok_type, value):
         self.type = tok_type
         self.value = value
-        # log.debug("Found {!r}".format(self))
+        # log.debug('Found {!r}'.format(self))
 
     def __repr__(self):
-        return "<{}({!r}:{!r})>".format(type(self).__name__, self.type, self.value)
+        return '<{}({!r}:{!r})>'.format(type(self).__name__, self.type, self.value)
 
 
 class RecursiveDescentParser:
     _entry_point = None
     _strip = False
+    _ignore_case = False
     TOKENS = {}
 
     def __init_subclass__(cls, **kwargs):                                                               # Python 3.6+
-        cls.pattern = re.compile("|".join("(?P<{}>{})".format(k, v) for k, v in cls.TOKENS.items()))
+        if cls._ignore_case:
+            cls.pattern = re.compile('|'.join('(?P<{}>{})'.format(k, v) for k, v in cls.TOKENS.items()), re.IGNORECASE)
+        else:
+            cls.pattern = re.compile('|'.join('(?P<{}>{})'.format(k, v) for k, v in cls.TOKENS.items()))
 
     def tokenize(self, text):
         # noinspection PyUnresolvedReferences
@@ -77,7 +82,7 @@ class RecursiveDescentParser:
         try:
             return getattr(self, self._entry_point)()
         except AttributeError as e:
-            raise AttributeError("{} requires a valid _entry_point".format(type(self).__name__)) from e
+            raise AttributeError('{} requires a valid _entry_point'.format(type(self).__name__)) from e
 
     @property
     def _remaining(self):
@@ -124,10 +129,12 @@ class RecursiveDescentParser:
 
     def _expect(self, token_type):
         if not self._accept(token_type):
-            raise UnexpectedTokenError("Expected {}".format(token_type))
+            raise UnexpectedTokenError('Expected {}'.format(token_type))
 
 
 class ListBasedRecursiveDescentParser(RecursiveDescentParser):
+    _opener2closer = {}
+
     def tokenize(self, text):
         # noinspection PyUnresolvedReferences
         scanner = self.pattern.scanner(text.strip() if self._strip else text)
@@ -163,47 +170,174 @@ class ListBasedRecursiveDescentParser(RecursiveDescentParser):
         return -1
 
     # noinspection PyTypeChecker, PyUnresolvedReferences
-    def _lookahead_any(self, token_types):
+    def _lookahead_any(self, token_types, with_tok=False):
         last = len(self.tokens) - 1
         i = self._idx
         while i <= last:
             pos, token = self.tokens[i]
             if token.type in token_types:
-                return pos
+                return (pos, token) if with_tok else pos
             i += 1
+        return (-1, None) if with_tok else -1
+
+    def _peek_seq(self, token_types):
+        """
+        :param Iterable token_types: Iterable object that yields token type strings
+        :return: True if all of the provided tokens occur from the current point in parsing forward in the order they
+          were given, False otherwise
+        """
+        expected = iter(token_types)
+        matched_one = False
+        for pos, token in self.tokens[self._idx:]:
+            try:
+                if next(expected) != token.type:
+                    return False
+            except StopIteration:
+                return matched_one
+            else:
+                matched_one = True
+
+        try:
+            next(expected)
+        except StopIteration:
+            return matched_one
+        else:
+            return False
+
+    def _lookahead_unpaired(self, closer):
+        """Find the position of the next closer that does not have a preceding opener in the remaining tokens"""
+        openers = {opener for opener, _closer in self._opener2closer.items() if _closer == closer}
+        opened = 0
+        closed = 0
+        # log.debug('Looking for next {!r} from idx={} in {}'.format(closer, self._idx, self.tokens))
+        for pos, token in self.tokens[self._idx:]:
+            if token.type == closer:
+                closed += 1
+                if closed > opened:
+                    return pos
+            elif token.type in openers:
+                opened += 1
         return -1
 
 
-class ParentheticalParser(RecursiveDescentParser):
-    _entry_point = "content"
+class ParentheticalListParser(RecursiveDescentParser):
+    _entry_point = 'content'
     _strip = True
-    _opener2closer = {"LPAREN": "RPAREN", "LBPAREN": "RBPAREN", "LBRKT": "RBRKT", "QUOTE": "QUOTE", "DASH": "DASH"}
-    _nested_fmts = {"LPAREN": "({})", "LBPAREN": "({})", "LBRKT": "[{}]", "QUOTE": "{!r}", "DASH": "({})"}
-    _content_tokens = ["TEXT", "WS"] + [v for k, v in _opener2closer.items() if k != v]
-    _req_preceders = ["WS"] + list(_opener2closer.values())
+    _opener2closer = {'LPAREN': 'RPAREN', 'LBPAREN': 'RBPAREN', 'LBRKT': 'RBRKT'}
+    _nested_fmts = {'LPAREN': '({})', 'LBPAREN': '({})', 'LBRKT': '[{}]'}
+    _content_tokens = ['TEXT', 'WS'] + [v for k, v in _opener2closer.items() if k != v]
+    _req_preceders = ['WS'] + list(_opener2closer.values())
     TOKENS = OrderedDict([
-        ("QUOTE", "[{}]".format(QMARKS)),
-        ("LPAREN", "\("),
-        ("RPAREN", "\)"),
-        ("LBPAREN", "（"),
-        ("RBPAREN", "）"),
-        ("LBRKT", "\["),
-        ("RBRKT", "\]"),
-        ("WS", "\s+"),
-        ("DASH", "[{}]".format(DASH_CHARS)),
-        ("TEXT", "[^{}{}()（）\[\]{}]+".format(DASH_CHARS, QMARKS, ALL_WHITESPACE)),
+        ('LPAREN', '\('),
+        ('RPAREN', '\)'),
+        ('LBPAREN', '（'),
+        ('RBPAREN', '）'),
+        ('LBRKT', '\['),
+        ('RBRKT', '\]'),
+        ('DELIM', '[,;]'),
+        ('WS', '\s+'),
+        ('TEXT', '[^,;()（）\[\]{}]+'.format(ALL_WHITESPACE)),
+    ])
+
+    def __init__(self, require_preceder=True):
+        self._require_preceder = require_preceder
+
+    def parenthetical(self, closer='RPAREN'):
+        """
+        parenthetical ::= ( { text | WS | ( parenthetical ) }* )
+        """
+        text = ''
+        nested = False
+        while self.next_tok:
+            if self._accept(closer):
+                return text, nested
+            elif self._accept_any(self._opener2closer):
+                tok_type = self.tok.type
+                text += self._nested_fmts[tok_type].format(self.parenthetical(self._opener2closer[tok_type])[0])
+                nested = True
+            else:
+                self._advance()
+                text += self.tok.value
+        return text, nested
+
+    def _should_not_enter(self):
+        return self._require_preceder and self.prev_tok.type not in self._req_preceders and self._peek('TEXT')
+
+    def content(self):
+        """
+        item ::= text { (parenthetical) }*
+        content :: = item {delim item}*
+        """
+        text = ''
+        item = []
+        parts = []
+        while self.next_tok:
+            if self._accept_any(self._opener2closer):
+                tok_type = self.tok.type
+                if text and self._should_not_enter():
+                    text += self.tok.value
+                    continue
+
+                text = text.strip()
+                if text:
+                    item.append(text)
+                    text = ''
+                parenthetical, nested = self.parenthetical(self._opener2closer[tok_type])
+                item.append(parenthetical)
+            elif self._accept('DELIM'):
+                text = text.strip()
+                if text:
+                    item.append(text)
+                    text = ''
+                if item:
+                    parts.append(item)
+                    item = []
+            elif self._accept_any(self._content_tokens):
+                text += self.tok.value
+            else:
+                raise UnexpectedTokenError('Unexpected {!r} token {!r} in {!r}'.format(
+                    self.next_tok.type, self.next_tok.value, self._full
+                ))
+
+        text = text.strip()
+        if text:
+            item.append(text)
+        if item:
+            parts.append(item)
+
+        return parts
+
+
+class ParentheticalParser(RecursiveDescentParser):
+    _entry_point = 'content'
+    _strip = True
+    _opener2closer = {'LPAREN': 'RPAREN', 'LBPAREN': 'RBPAREN', 'LBRKT': 'RBRKT', 'QUOTE': 'QUOTE', 'DASH': 'DASH'}
+    _nested_fmts = {'LPAREN': '({})', 'LBPAREN': '({})', 'LBRKT': '[{}]', 'QUOTE': '{!r}', 'DASH': '({})'}
+    _content_tokens = ['TEXT', 'WS'] + [v for k, v in _opener2closer.items() if k != v]
+    _req_preceders = ['WS'] + list(_opener2closer.values())
+    TOKENS = OrderedDict([
+        ('QUOTE', '[{}]'.format(QMARKS)),
+        ('LPAREN', '\('),
+        ('RPAREN', '\)'),
+        ('LBPAREN', '（'),
+        ('RBPAREN', '）'),
+        ('LBRKT', '\['),
+        ('RBRKT', '\]'),
+        ('WS', '\s+'),
+        ('DASH', '[{}]'.format(DASH_CHARS)),
+        ('TEXT', '[^{}{}()（）\[\]{}]+'.format(DASH_CHARS, QMARKS, ALL_WHITESPACE)),
     ])
 
     def __init__(self, selective_recombine=True, require_preceder=True):
         self._selective_recombine = selective_recombine
         self._require_preceder = require_preceder
 
-    def parenthetical(self, closer="RPAREN"):
+    def parenthetical(self, closer='RPAREN'):
         """
         parenthetical ::= ( { text | WS | ( parenthetical ) }* )
         """
         # log.debug('Opening {}'.format(closer))
-        text = ""
+        text = ''
         nested = False
         while self.next_tok:
             if self._accept(closer):
@@ -211,11 +345,11 @@ class ParentheticalParser(RecursiveDescentParser):
                 return text, nested
             elif self._accept_any(self._opener2closer):
                 tok_type = self.tok.type
-                if tok_type == "DASH":
+                if tok_type == 'DASH':
                     if self.tok.value not in self._remaining:
                         text += self.tok.value
                         continue
-                    elif text and self.prev_tok.type != "WS" and self._peek("TEXT"):
+                    elif text and self.prev_tok.type != 'WS' and self._peek('TEXT'):
                         text += self.tok.value
                         continue
                 text += self._nested_fmts[tok_type].format(self.parenthetical(self._opener2closer[tok_type])[0])
@@ -227,13 +361,13 @@ class ParentheticalParser(RecursiveDescentParser):
         return text, nested
 
     def _should_not_enter(self):
-        return self._require_preceder and self.prev_tok.type not in self._req_preceders and self._peek("TEXT")
+        return self._require_preceder and self.prev_tok.type not in self._req_preceders and self._peek('TEXT')
 
     def content(self):
         """
         content :: = text { (parenthetical) }* { text }*
         """
-        text = ""
+        text = ''
         parts = []
         while self.next_tok:
             if self._accept_any(self._opener2closer):
@@ -241,35 +375,35 @@ class ParentheticalParser(RecursiveDescentParser):
                 if text and self._should_not_enter():
                     text += self.tok.value
                     continue
-                elif tok_type == "QUOTE":
+                elif tok_type == 'QUOTE':
                     if any((c not in self._remaining) and (self._full.count(c) % 2 == 1) for c in QMARKS):
-                        log.debug("Unpaired quote found in {!r}".format(self._full))
+                        log.debug('Unpaired quote found in {!r}'.format(self._full))
                         continue
-                elif tok_type == "DASH":
-                    # log.debug("Found DASH ({!r}={}); remaining: {!r}".format(self.tok.value, ord(self.tok.value), self._remaining))
-                    if self._peek("WS") or self.tok.value not in self._remaining:
-                        # log.debug("Appending DASH because WS did not follow it or the value does not occur again")
+                elif tok_type == 'DASH':
+                    # log.debug('Found DASH ({!r}={}); remaining: {!r}'.format(self.tok.value, ord(self.tok.value), self._remaining))
+                    if self._peek('WS') or self.tok.value not in self._remaining:
+                        # log.debug('Appending DASH because WS did not follow it or the value does not occur again')
                         text += self.tok.value
                         continue
-                    # elif text and self.prev_tok.type != "WS" and self._peek("TEXT"):
-                    #     # log.debug("Appending DASH because text, previous token was {}={!r}, and the next token is TEXT".format(self.prev_tok.type, self.prev_tok.value))
+                    # elif text and self.prev_tok.type != 'WS' and self._peek('TEXT'):
+                    #     # log.debug('Appending DASH because text, previous token was {}={!r}, and the next token is TEXT'.format(self.prev_tok.type, self.prev_tok.value))
                     #     text += self.tok.value
                     #     continue
 
                 if text:
                     parts.append(text)
-                    text = ""
+                    text = ''
                 parenthetical, nested = self.parenthetical(self._opener2closer[tok_type])
-                # log.debug("Parsed {!r} (nested={}); next token={!r}".format(parenthetical, nested, self.next_tok))
-                # if not parts and not nested and not self._peek("WS"):
-                if not nested and not self._peek("WS") and self.next_tok is not None:
+                # log.debug('Parsed {!r} (nested={}); next token={!r}'.format(parenthetical, nested, self.next_tok))
+                # if not parts and not nested and not self._peek('WS'):
+                if not nested and not self._peek('WS') and self.next_tok is not None:
                     text += self._nested_fmts[tok_type].format(parenthetical)
                 else:
                     parts.append((parenthetical, nested, tok_type))
             elif self._accept_any(self._content_tokens):
                 text += self.tok.value
             else:
-                raise UnexpectedTokenError("Unexpected {!r} token {!r} in {!r}".format(
+                raise UnexpectedTokenError('Unexpected {!r} token {!r} in {!r}'.format(
                     self.next_tok.type, self.next_tok.value, self._full
                 ))
 
@@ -286,7 +420,7 @@ class ParentheticalParser(RecursiveDescentParser):
                     if not nested:
                         single_idxs.add(i)
 
-            # log.debug("{!r} => {} [nested: {}][singles: {}]".format(self._full, parts, had_nested, sorted(single_idxs)))
+            # log.debug('{!r} => {} [nested: {}][singles: {}]'.format(self._full, parts, had_nested, sorted(single_idxs)))
             if had_nested and single_idxs:
                 single_idxs = sorted(single_idxs)
                 while single_idxs:
@@ -303,7 +437,7 @@ class ParentheticalParser(RecursiveDescentParser):
                             break
 
         cleaned = (part for part in map(str.strip, (p[0] if isinstance(p, tuple) else p for p in parts)) if part)
-        return [part for part in cleaned if part not in "\"“()（）[]"]
+        return [part for part in cleaned if part not in '\"“()（）[]']
 
 
 class UnexpectedTokenError(SyntaxError):

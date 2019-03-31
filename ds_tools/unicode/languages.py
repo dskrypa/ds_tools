@@ -112,7 +112,7 @@ class LangCat(Enum):
 
 def _strip_non_word_chars(text):
     # original = text
-    text = re.sub('[\d\s]+', '', text).translate(PUNC_SYMBOL_STRIP_TBL)
+    text = re.sub(r'[\d\s]+', '', text).translate(PUNC_SYMBOL_STRIP_TBL)
     # log.debug('_strip_non_word_chars({!r}) => {!r}'.format(original, text))
     return text
 

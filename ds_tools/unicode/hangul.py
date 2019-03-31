@@ -313,7 +313,7 @@ def romanized_permutations(text):
     if simple:
         combined_1.append(''.join(simple))
 
-    log.debug('{!r} => {}'.format(text, combined_1))
+    # log.debug('{!r} => {}'.format(text, combined_1))
 
     return list(map(str.strip, combo_options(combined_1)))
 
