@@ -30,7 +30,7 @@ from ..unicode import contains_hangul
 # from ..utils import ParentheticalParser
 from .patches import tag_repr
 from .name_processing import split_names
-from .wiki import WikiArtist, WikiEntityIdentificationException
+from .wiki import WikiArtist, WikiEntityIdentificationException, KpopWikiClient
 # from .wiki.old import Artist, CollaborationSong, split_name
 
 __all__ = [
@@ -139,10 +139,11 @@ def _iter_music_files(_path, include_backups=False):
                 for sha256sum, tags in load_tags(file_path).items():
                     found_backup = True
                     yield FakeMusicFile(sha256sum, tags)
-                if not found_backup:
+                if not found_backup and not file_path.endswith('.jpg'):
                     log.debug("Not a music file: {}".format(file_path))
             else:
-                log.debug("Not a music file: {}".format(file_path))
+                if not file_path.endswith('.jpg'):
+                    log.debug("Not a music file: {}".format(file_path))
 
 
 def iter_album_dirs(paths):
@@ -541,13 +542,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
                 wiki_artist = music_file.wiki_artist
                 if wiki_artist:
                     # wiki_value = wiki_artist.name_with_context
-                    try:
-                        member_of = wiki_artist.member_of
-                    except AttributeError:
-                        wiki_value = wiki_artist.name
-                    else:
-                        wiki_value = '{} [{}]'.format(wiki_artist.name, member_of.name)
-
+                    wiki_value = wiki_artist.qualname()
                     if (file_value != wiki_value) and (file_value.count(",") == wiki_value.count(",")):
                         to_update["artist"] = (file_value, wiki_value)
             else:
@@ -959,13 +954,15 @@ class SongFile(ClearableCachedPropertyMixin):
 
     @cached_property
     def wiki_artist(self):
-        artists = split_names(self.tag_artist)
+        _artists = split_names(self.tag_artist)
+        artists = []
         exc = None
-        for eng, cjk, of_group in artists:
+        for eng, cjk, of_group in _artists:
             if self.in_competition_album:
                 return WikiArtist(name=eng or cjk, no_fetch=True)
+
             try:
-                return WikiArtist(of_group=of_group, aliases=tuple(filter(None, (eng, cjk))))
+                artist = WikiArtist(of_group=of_group, aliases=tuple(filter(None, (eng, cjk))))
             except WikiEntityIdentificationException as e:
                 log.error('Error matching artist {} for {}: {}'.format((eng, cjk, of_group), self, e))
             except CodeBasedRestException as e:
@@ -975,11 +972,19 @@ class SongFile(ClearableCachedPropertyMixin):
                 traceback.print_exc()
             except Exception as e:
                 log.error('Error matching artist {} for {}: {}'.format((eng, cjk, of_group), self, e))
-                if len(artists) > 1:
-                    log.info('{} has additional artists: {}'.format(self, artists))
+                if len(_artists) > 1:
+                    log.info('{} has additional artists: {}'.format(self, _artists))
                 raise e
+            else:
+                artists.append(artist)
+                if isinstance(artist._client, KpopWikiClient):
+                    return artist
+
+        if artists:
+            return artist[0]
+
         if exc:
-            log.error('Error matching artist {} for {}: {}'.format(artists, self, exc))
+            log.error('Error matching artist {} for {}: {}'.format(_artists, self, exc))
             raise exc
 
     @cached_property

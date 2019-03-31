@@ -113,6 +113,9 @@ class WikiEntityMeta(type):
         orig_client = client
         # noinspection PyUnresolvedReferences
         cls_cat = cls._category
+        if not aliases and not isinstance(name, str):
+            aliases, name = name, None
+
         if not no_fetch:
             if aliases and not name:
                 name = aliases if isinstance(aliases, str) else next(filter(None, aliases), None)
@@ -356,15 +359,18 @@ class WikiMatchable:
         if not isinstance(other, (str, WikiEntity)) and len(other) == 1:
             other = other[0]
         if isinstance(other, str):
-            if LangCat.categorize(other) == LangCat.MIX:
-                original = other
+            lang = LangCat.categorize(other)
+            if lang == LangCat.MIX:
                 try:
                     others = split_name(other)
                 except ValueError:
                     others = (other,)
                 else:
                     if others[0].lower() == 'live':
-                        others = (original,)
+                        others = (other,)
+            elif lang == LangCat.HAN:
+                others = romanized_permutations(other)
+                others.insert(0, other)
             else:
                 others = (other,)
         elif isinstance(other, WikiEntity):
@@ -392,6 +398,17 @@ class WikiMatchable:
             score_mod += 15 if str(self.num) == str(track) else -15
         if disk is not None and isinstance(self, WikiTrack):
             score_mod += 15 if str(self.disk) == str(disk) else -15
+        if isinstance(self, WikiTrack):
+            self_has_inst = 'inst' in self.long_name.lower()
+            if isinstance(other, str):
+                other_has_inst = 'inst' in other.lower()
+            else:
+                other_has_inst = any('inst' in other for other in fuzzed_others)
+            if (self_has_inst and not other_has_inst) or (not self_has_inst and other_has_inst):
+                # other_repr = other if isinstance(other, WikiEntity) else others
+                # log.debug('{!r}=?={!r}: score_mod-=25 (no inst)'.format(self, other_repr))
+                score_mod -= 25
+
         if year is not None and isinstance(self, WikiSongCollection):
             try:
                 years_match = str(self.released.year) == str(year)
@@ -410,8 +427,8 @@ class WikiMatchable:
                 if ("live" in alias and "live" not in val) or ("live" in val and "live" not in alias):
                     score -= 25
 
-                other_repr = other if isinstance(other, WikiEntity) else val
-                log.debug('{!r}=?={!r}: score={}, alias={!r}, val={!r}'.format(self, other_repr, score, alias, val))
+                # other_repr = other if isinstance(other, WikiEntity) else val
+                # log.debug('{!r}=?={!r}: score={}, alias={!r}, val={!r}'.format(self, other_repr, score, alias, val))
                 if score > best_score:
                     best_score, best_alias, best_val = score, alias, val
 
@@ -556,6 +573,52 @@ class WikiDiscography(WikiEntity):
                     soundtracks[track["album"]].append(track)
         return soundtracks
 
+    @cached_property
+    def features(self):
+        singles = []
+        for group in self._singles:
+            if group['sub_type'] == 'as featured artist':
+                for track in group["tracks"]:
+                    collabs = set(track.get('collaborators', []))
+                    collabs.update(l[0] for l in track.get('links', []))
+                    if collabs:
+                        collabs = [{'artist': eng_cjk_sort(collab)} for collab in collabs]
+
+                    track['collaborators'] = collabs
+                    disco_entry = {'title': track['name_parts'], 'collaborators': collabs}
+                    try:
+                        single = WikiFeatureOrSingle(
+                            None, name=track['name_parts'], no_fetch=True, disco_entry=disco_entry,
+                            artist_context=self.artist
+                        )
+                    except WikiEntityInitException as e:
+                        disco_entry['title'] = track['name_parts'][0]
+                        single = WikiFeatureOrSingle(
+                            None, name=track['name_parts'][0], no_fetch=True, disco_entry=disco_entry,
+                            artist_context=self.artist
+                        )
+
+                    single._track_lists = [{'tracks':[track]}]
+                    singles.append(single)
+        return singles
+
+    def find_single(self, name, min_score=75, include_score=False, **kwargs):
+        match_fmt = '{}: {} matched {!r} with score={} because its alias={!r} =~= {!r}'
+        best_score, best_alias, best_val, best_coll = 0, None, None, None
+        for collection in self.features:
+            score, alias, val = collection.score_match(name, **kwargs)
+            if score >= 100:
+                # log.debug(match_fmt.format(self, collection, name, score, alias, val))
+                return (collection, score) if include_score else collection
+            elif score > best_score:
+                best_score, best_alias, best_val, best_coll = score, alias, val, collection
+
+        if best_score > min_score:
+            if best_score < 95:
+                log.debug(match_fmt.format(self, best_coll, name, best_score, best_alias, best_val))
+            return (best_coll, best_score) if include_score else best_coll
+        return (None, -1) if include_score else None
+
 
 class WikiTVSeries(WikiEntity):
     _category = "tv_series"
@@ -570,7 +633,7 @@ class WikiTVSeries(WikiEntity):
         elif isinstance(self._client, DramaWikiClient):
             self.name = self._header_title
             ul = self._clean_soup.find(id="Details").parent.find_next("ul")
-            self._info = parse_drama_wiki_info_list(self._uri_path, ul)
+            self._info = parse_drama_wiki_info_list(self._uri_path, ul, client)
             self.english_name, self.cjk_name = self._info["title"]
             # self.name = multi_lang_name(self.english_name, self.cjk_name)
             self.aka = self._info.get("also known as", [])
@@ -592,7 +655,7 @@ class WikiArtist(WikiEntity):
         if self._raw and not kwargs.get("no_init"):
             if isinstance(self._client, DramaWikiClient):
                 ul = self._clean_soup.find(id="Profile").parent.find_next("ul")
-                self._profile = parse_drama_wiki_info_list(self._uri_path, ul)
+                self._profile = parse_drama_wiki_info_list(self._uri_path, ul, client)
                 self.english_name, self.cjk_name = self._profile.get('name', self._profile.get('group name'))
             elif isinstance(self._client, WikipediaClient):
                 self.english_name = self._side_info['name']
@@ -679,16 +742,16 @@ class WikiArtist(WikiEntity):
 
     @cached_property
     def _disco_page(self):
-        name = self._uri_path.title() + "_discography"
-        try:
-            return WikiDiscography(None, WikipediaClient(), name=name, artist=self)
-        except WikiTypeError as e:
-            return WikiArtist(None, WikipediaClient(), name=name)
-        except Exception as e:
-            # fmt = 'Unable to retrieve alternate discography page for {}: {}{}'
-            # log.debug(fmt.format(self, e, "\n" + traceback.format_exc()))
-            # log.debug('Unable to retrieve alternate discography page for {}: {}'.format(self, e))
-            pass
+        for name in (self._uri_path.title(), self.english_name):
+            try:
+                return WikiDiscography(name + "_discography", WikipediaClient(), artist=self)
+            except WikiTypeError as e:
+                return WikiArtist(name + "_discography", WikipediaClient())
+            except Exception as e:
+                # fmt = 'Unable to retrieve alternate discography page for {}: {}{}'
+                # log.debug(fmt.format(self, e, "\n" + traceback.format_exc()))
+                # log.debug('Unable to retrieve alternate discography page for {}: {}'.format(self, e))
+                pass
         return None
 
     @property
@@ -834,6 +897,11 @@ class WikiArtist(WikiEntity):
             if best_score < 95:
                 log.debug(match_fmt.format(self, best_coll, name, best_score, best_alias, best_val))
             return (best_coll, best_score) if include_score else best_coll
+
+        disco_page = self._disco_page
+        if disco_page:
+            return disco_page.find_single(name, min_score, include_score, **kwargs)
+
         return (None, -1) if include_score else None
 
     @cached_property
@@ -844,6 +912,14 @@ class WikiArtist(WikiEntity):
                 for track in group["tracks"]:
                     soundtracks[track["album"]].append(track)
         return soundtracks
+
+    @cached_property
+    def qualname(self):
+        """Like an FQDN for artists - if this is a WikiSinger, include the group they are a member of"""
+        return self.name
+
+    def _as_collab(self):
+        return {'artist': (self.english_name, self.cjk_name), 'artist_href': self._uri_path}
 
 
 class WikiGroup(WikiArtist):
@@ -1089,6 +1165,29 @@ class WikiSinger(WikiArtist):
             return self.birthday == other.birthday
         return is_name_match
 
+    @cached_property
+    def qualname(self):
+        """Like an FQDN for artists - if this is a WikiSinger, include the group they are a member of"""
+        try:
+            member_of = self.member_of
+        except AttributeError:
+            pass
+        else:
+            if member_of:
+                return '{} [{}]'.format(self.name, member_of.name)
+        return self.name
+
+    def _as_collab(self):
+        collab_dict = {'artist': (self.english_name, self.cjk_name), 'artist_href': self._uri_path}
+        try:
+            group = self.member_of
+        except AttributeError:
+            pass
+        else:
+            if group:
+                collab_dict.update(of_group=(group.english_name, group.cjk_name), group_href=group._uri_path)
+        return collab_dict
+
 
 class WikiSongCollection(WikiEntity):
     _category = ("album", "soundtrack", "collab/feature/single")
@@ -1114,6 +1213,11 @@ class WikiSongCollection(WikiEntity):
             artist = self._side_info.get("artist", {})
             if len(artist) == 1:
                 self._primary_artist = next(iter(artist.items()))
+                if not self._primary_artist[1]:
+                    anchors = list(self._clean_soup.find_all('a'))
+                    primary_artist = self._primary_artist[0]
+                    href = find_href(self._client, anchors, primary_artist, ('group', 'singer'))
+                    self._primary_artist = (primary_artist, href)
 
             if len(albums) > 1:
                 err_base = "{} contains both original+repackaged album info on the same page".format(uri_path)
@@ -1160,7 +1264,8 @@ class WikiSongCollection(WikiEntity):
             try:
                 self.english_name, self.cjk_name = eng_cjk_sort(disco_entry["title"])
             except Exception as e:
-                log.error('Error processing disco entry title: {}'.format(e))
+                if not kwargs.get('no_fetch'):
+                    log.error('Error processing disco entry title: {}'.format(e))
                 msg = "Unable to find valid title in discography entry: {}".format(disco_entry)
                 raise WikiEntityInitException(msg) from e
         else:
@@ -1237,7 +1342,13 @@ class WikiSongCollection(WikiEntity):
 
     @cached_property
     def album_type(self):
-        return DISCOGRAPHY_TYPE_MAP[self._discography_entry.get("base_type")]
+        base_type = self._discography_entry.get("base_type")
+        try:
+            return DISCOGRAPHY_TYPE_MAP[base_type]
+        except KeyError as e:
+            if base_type is None:
+                return None
+            raise e
 
     @cached_property
     def album_num(self):
@@ -1275,34 +1386,56 @@ class WikiSongCollection(WikiEntity):
 
     @cached_property
     def _artists(self):
-        """dict(artist.lower(): uri_path)"""
-        artists = {self._primary_artist[0].lower(): self._primary_artist[1]} if self._primary_artist else {}
-        # d_collabs = self._discography_entry.get("collaborators", {})
+        if self._primary_artist:
+            artists = {tuple(sorted(
+                {'artist': eng_cjk_sort(self._primary_artist[0]), 'artist_href': self._primary_artist[1]}.items()
+            ))}
+        else:
+            artists = set()
+
         d_collabs = self._discography_entry.get("collaborators", [])
+        a_artists = self._album_info.get("artists", [])
+        for artist in chain(a_artists, d_collabs):
+            artists.add(tuple(sorted(artist.items())))
 
-        a_artists = self._album_info.get("artists", {})
-        # for artist, href in chain(d_collabs.items(), a_artists.items()):
-        for artist, href in a_artists.items():
-            artist = artist.lower()
-            if not artists.get(artist):
-                artists[artist] = href[6:] if href and href.startswith("/wiki/") else href
-
-        for collab in d_collabs:
-            artist = collab["artist"][0].lower()
-            if not artists.get(artist):
-                artists[artist] = collab.get("artist_href")
-
-        return artists
+        # for artist, href in a_artists.items():
+        #     artist = artist.lower()
+        #     if not artists.get(artist):
+        #         artists[artist] = href[6:] if href and href.startswith("/wiki/") else href
+        #
+        # for collab in d_collabs:
+        #     artist = collab["artist"][0].lower()
+        #     if not artists.get(artist):
+        #         artists[artist] = collab.get("artist_href")
+        artists = [dict(artist) for artist in artists]
+        artist_map = {}
+        for artist in artists:
+            artist_name = artist['artist']
+            if artist_name in artist_map:
+                current = artist_map[artist_name]
+                for key, val in artist.items():
+                    if current[key] is None and val is not None:
+                        current[key] = val
+            else:
+                artist_map[artist_name] = artist
+        return list(artist_map.values())
 
     @cached_property
     def artists(self):
         artists = set()
-        for name, href in self._artists.items():
-            if name.lower() in ("various artists", "various"):
+        for artist in self._artists:
+            # log.debug('{}: Processing artist: {}'.format(self, artist))
+            name = artist['artist']
+            if name[0].lower() in ("various artists", "various"):
                 continue
+
+            href = artist.get('artist_href')
+            of_group = artist.get('of_group')
+            group_href = artist.get('group_href')
             try:
-                artist = WikiArtist(href, name=name)
+                artist = WikiArtist(href, name=name, of_group=of_group)
             except AmbiguousEntityException as e:
+                # log.debug('{}: artist={} => ambiguous'.format(self, artist))
                 if self._artist_context and isinstance(self._artist_context, WikiGroup):
                     found = False
                     for member in self._artist_context.members:
@@ -1334,23 +1467,25 @@ class WikiSongCollection(WikiEntity):
 
                 artists.add(WikiArtist(href, name=name, no_fetch=True))
             except CodeBasedRestException as e:
+                # log.debug('{}: artist={} => {}'.format(self, artist, e))
                 if not isinstance(self._client, KpopWikiClient):
                     try:
                         artist = WikiArtist(name=name, client=self._client)
                     except CodeBasedRestException as e2:
                         fmt = "Error retrieving info for {}'s artist={!r} (href={!r}) from both {} and {}: {}"
-                        log.error(fmt.format(self, name, href, self._client, KpopWikiClient(), e), extra={"color": 13})
+                        log.debug(fmt.format(self, name, href, self._client, KpopWikiClient(), e), extra={"color": 13})
                         artists.add(WikiArtist(href, name=name, no_fetch=True))
                     else:
                         artists.add(artist)
                 else:
                     msg = "Error retrieving info for {}'s artist={!r} (href={!r}): {}".format(self, name, href, e)
                     if href is None:
-                        log.log(9, msg)
+                        log.log(10, msg)
                     else:
                         log.error(msg, extra={"color": 13})
                     artists.add(WikiArtist(href, name=name, no_fetch=True))
             except WikiTypeError as e:
+                # log.debug('{}: artist={} => {}'.format(self, artist, e))
                 #no_type_check
                 if e.category == "disambiguation":
                     fmt = "{}'s artist={!r} has an ambiguous href={}"
@@ -1359,6 +1494,7 @@ class WikiSongCollection(WikiEntity):
                 else:
                     raise e
             else:
+                # log.debug('{}: artist={} => adding'.format(self, artist))
                 artists.add(artist)
         return sorted(artists)
 
@@ -1372,7 +1508,38 @@ class WikiSongCollection(WikiEntity):
             return artists[0]
         elif self._artist_context:
             return self._artist_context
+
+        if self._raw:
+            artist_raw = self._side_info.get('artist_raw')
+            if artist_raw:
+                lc_artist_raw = artist_raw.lower()
+                feat_indicators = ('feat. ', 'featuring ', 'with ')
+                kw_idx = next((lc_artist_raw.index(val) for val in feat_indicators if val in lc_artist_raw), None)
+                if kw_idx is not None:
+                    before = artist_raw[:kw_idx].strip()
+                    primary = {artist for artist in artists if artist.matches(before)}
+                    if len(primary) == 1:
+                        return primary.pop()
+                    else:
+                        fmt = '{}: Unable to determine primary artist based on side info - pre-feat matches: {}'
+                        log.debug(fmt.format(self, primary))
+
         raise AttributeError("{} has multiple contributing artists and no artist context".format(self))
+
+    @cached_property
+    def collaborators(self):
+        artists = self.artists
+        try:
+            primary = self.artist
+        except AttributeError:
+            primary = None
+
+        if len(artists) < 2:
+            return []
+        elif primary:
+            return [artist for artist in artists if artist != primary]
+        else:
+            return artists
 
     @cached_property
     def _editions_by_disk(self):
@@ -1480,11 +1647,12 @@ class WikiSongCollection(WikiEntity):
         if len(self._albums) == 1:
             return [self]
         elif len(self._artists) > 1:
-            fmt = "Packages can only be retrieved for {} objects with 1 packaging or a primary artist"
-            raise AttributeError(fmt.format(type(self).__name__))
+            fmt = 'Packages can only be retrieved for {} objects with 1 packaging or a primary artist'
+            fmt += '; {}\'s artists: {}'
+            raise AttributeError(fmt.format(type(self).__name__, self, self._artists))
 
         try:
-            artist = next(iter(self._artists.items()))
+            artist = self._artists[0]['artist']
         except Exception as e:
             log.error("Unable to get artist from {} / {}".format(self, self._artists))
             raise e
@@ -1566,7 +1734,7 @@ class WikiSoundtrack(WikiSongCollection):
         if isinstance(self._client, DramaWikiClient):
             if not self._raw:
                 raise WikiEntityInitException('WikiSoundtrack requires a valid uri_path')
-            self._track_lists = parse_ost_page(self._uri_path, self._clean_soup)
+            self._track_lists = parse_ost_page(self._uri_path, self._clean_soup, client)
             self._album_info = {
                 'track_lists': self._track_lists, 'num': None, 'type': 'OST', 'repackage': False, 'length': None,
                 'released': None, 'links': []
@@ -1732,12 +1900,14 @@ class WikiFeatureOrSingle(WikiSongCollection):
     _category = "collab/feature/single"
 
     def _get_tracks(self, edition_or_part=None, disk=None):
-        if self._raw and self._track_lists:
-            log.log(9, "Skipping WikiFeatureOrSingle _get_tracks()")
+        if self._raw and self._track_lists and not self._album_info.get('fake_track_list'):
+            # log.log(9, "{}: Skipping WikiFeatureOrSingle _get_tracks()".format(self)
+            log.debug("{}: Skipping WikiFeatureOrSingle _get_tracks()".format(self))
             return super()._get_tracks(edition_or_part, disk)
 
         track_info = self._discography_entry.get("track_info")
-        if track_info:
+        if track_info and not self._raw:
+            # log.debug('{}: Using discography track info'.format(self))
             _tracks = (track_info,) if isinstance(track_info, dict) else track_info
             tracks = []
             for _track in _tracks:
@@ -1746,22 +1916,20 @@ class WikiFeatureOrSingle(WikiSongCollection):
                 collabs = track.get("collaborators") or []
                 collabs.extend(self._discography_entry.get("collaborators", []))
                 track["collaborators"] = strify_collabs(collabs)
-
-                # collabs = set(track.get("collaborators") or [])
-                # collabs.update(c["artist"][0] for c in self._discography_entry.get("collaborators", []))
-                # track["collaborators"] = sorted(collabs)
                 misc = track.get("misc") or []
                 if self._info:
                     misc.extend(self._info)
                 track["misc"] = misc
                 tracks.append(track)
-        else:
-            single = {
-                "name_parts": (self.english_name, self.cjk_name), "num": 1,
-                # "collaborators": list(self._discography_entry.get("collaborators", {}))
-                "collaborators": [c["artist"][0] for c in self._discography_entry.get("collaborators", [])],
-                "misc": self._info
-            }
+        else:   # self._raw exists, but it had no track list
+            single = None
+            if self._track_lists:
+                # log.debug('{}: Using album page track info'.format(self))
+                single = self._track_lists[0]['tracks'][0]
+            if not single:
+                # log.debug('{}: Using side bar track info'.format(self))
+                single = {"name_parts": (self.english_name, self.cjk_name), "num": 1, "misc": self._info}
+            single["collaborators"] = [a._as_collab() for a in self.collaborators]
             tracks = [single]
         return {"tracks": tracks}
 
@@ -1786,7 +1954,12 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
         self._collection = collection
         self.english_name, self.cjk_name = self._info["name_parts"]
         self.name = multi_lang_name(self.english_name, self.cjk_name)
+        self.__processed_collabs = False
 
+    def __process_collabs(self):
+        if self.__processed_collabs:
+            return
+        self.__processed_collabs = True
         if self.from_ost and self._artist_context:
             # log.debug("Comparing collabs={} to aliases={}".format(self._collaborators, self._artist_context.aliases))
             if not self._from_disco_info:
@@ -1806,17 +1979,25 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                     self._collaborators.pop(self._artist.lower())
                 elif self._collection:
                     try:
-                        artists = self._collection.artists
+                        artist = self._collection.artist
                     except Exception as e:
-                        fmt = 'Error processing artists for track {!r} from {}: {}'
+                        fmt = 'Error processing artist for track {!r} from {}: {}'
                         log.debug(fmt.format(self.name, self._collection, e))
                     else:
-                        for artist in artists:
-                            for lc_alias in artist.lc_aliases:
-                                try:
-                                    self._collaborators.pop(lc_alias)
-                                except KeyError:
-                                    pass
+                        for lc_alias in artist.lc_aliases:
+                            try:
+                                self._collaborators.pop(lc_alias)
+                            except KeyError:
+                                pass
+
+    @cached_property
+    def _repr(self):
+        if self.num is not None:
+            name = "{}[{:2d}][{!r}]".format(type(self).__name__, self.num, self.name)
+        else:
+            name = "{}[??][{!r}]".format(type(self).__name__, self.name)
+        len_str = "[{}]".format(self.length_str) if self.length_str != "-1:00" else ""
+        return "<{}{}>".format(name, len_str)
 
     def __repr__(self):
         if self.num is not None:
@@ -1832,6 +2013,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
         addl_collabs = []
         for collab in chain(self.__collaborators, addl_collabs):
             if collab:
+                # log.debug('WikiTrack[{!r}]: processing collaborator: {}'.format(self.name, collab))
                 if isinstance(collab, dict):
                     eng, cjk = collab['artist']
                     name = eng or cjk
@@ -1840,6 +2022,32 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                     addl_collabs.extend(collab)
                 else:
                     collabs[collab.lower()] = {'artist': collab}
+        return collabs
+
+    @cached_property
+    def collaborators(self):
+        self.__process_collabs()
+        collabs = []
+        for collab in self._collaborators.values():
+            try:
+                artist = WikiArtist(
+                    collab.get('artist_href'), aliases=collab['artist'], of_group=collab.get('of_group')
+                )
+            except Exception as e:
+                artist = collab['artist']
+                if not isinstance(artist, str):
+                    eng, cjk = artist
+                    if eng and cjk:
+                        artist = '{} ({})'.format(eng, cjk)
+                    else:
+                        artist = eng or cjk
+                of_group = collab.get('of_group')
+                if of_group:
+                    artist = '{} [{}]'.format(artist, of_group)
+            else:
+                artist = artist.qualname if collab.get('of_group') else artist.name
+
+            collabs.append(artist)
         return collabs
 
     @property
@@ -1856,6 +2064,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
 
     @cached_property
     def _formatted_name_parts(self):
+        self.__process_collabs()
         parts = []
         if self.version:
             parts.append("{} ver.".format(self.version) if not self.version.lower().startswith("inst") else self.version)
@@ -1868,11 +2077,11 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
             if self._artist not in artist_aliases:
                 parts.append("{} solo".format(self._artist))
         if self._collaborators:
-            collabs = ", ".join(self._collaborators)
+            collabs = ", ".join(self.collaborators)
             if self.from_compilation or (self.from_ost and self._artist_context is None):
                 parts.insert(0, "by {}".format(collabs))
             else:
-                parts.append("with {}".format(collabs))
+                parts.append("Feat. {}".format(collabs))
         return tuple(map("({})".format, parts))
 
     @cached_property
