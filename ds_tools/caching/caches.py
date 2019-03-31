@@ -218,8 +218,10 @@ class DBCache:
         with synchronized(self):
             with self.db_session as session:
                 try:
+                    # log.debug('Trying to return {!r}'.format(item))
                     return session.query(DBCacheEntry).filter_by(key=item).one().value
                 except (NoResultFound, OperationalError) as e:
+                    # log.debug('Did not have cached: {!r}'.format(item))
                     raise KeyError(item) from e
 
     def __setitem__(self, key, value):

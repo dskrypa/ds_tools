@@ -76,7 +76,7 @@ class WikiClient(RestClient):
     def get_page(self, endpoint, **kwargs):
         return self.get(endpoint, **kwargs).text
 
-    @cached('_name_cache', lock=True, key=lambda s, a: '{}: {}'.format(s.host, a))
+    @cached('_name_cache', lock=True, key=lambda s, a: '{}: {}'.format(s.host, a), optional=True)
     def normalize_name(self, name):
         name = name.strip()
         if not name:
@@ -103,17 +103,18 @@ class WikiClient(RestClient):
                     except Exception as pe:
                         pass
                     else:
-                        _log.debug('{}: Checking {!r} for {!r}'.format(self._site, name, _name))
-                        try:
-                            return self._name_cache['{}: {}'.format(self.host, name)]
-                        except KeyError as ke:
-                            pass
+                        if name != _name:
+                            _log.debug('{}: Checking {!r} for {!r}'.format(self._site, name, _name))
+                            try:
+                                return self._name_cache['{}: {}'.format(self.host, name)]
+                            except KeyError as ke:
+                                pass
 
-                    _log.debug('{}: Searching for {!r}'.format(self._site, name))
-                    uri_path = self.title_search(name)
-                    _log.debug('{}: Found search match for {!r}: {}'.format(self._site, name, uri_path))
-                    if uri_path is not None:
-                        return uri_path
+                    # _log.debug('{}: Searching for {!r}'.format(self._site, name))
+                    # uri_path = self.title_search(name)
+                    # _log.debug('{}: Found search match for {!r}: {}'.format(self._site, name, uri_path))
+                    # if uri_path is not None:
+                    #     return uri_path
 
             raise e
         else:
@@ -133,6 +134,15 @@ class WikiClient(RestClient):
 
     def title_search(self, title):
         raise NotImplementedError()
+
+    def get_entity_base(self, uri_path, obj_type=None):
+        raise NotImplementedError()
+
+    def is_any_category(self, uri_path, categories):
+        if isinstance(categories, str):
+            categories = (categories,)
+        raw, cats = self.get_entity_base(uri_path)
+        return get_page_category(uri_path, cats, no_debug=True) in categories
 
 
 class KpopWikiClient(WikiClient):
@@ -161,7 +171,6 @@ class KpopWikiClient(WikiClient):
             raise e
 
         lc_title = title.lower()
-        results = []
         soup = soupify(resp.text, parse_only=bs4.SoupStrainer('ul', class_='Results'))
         for i, li in enumerate(soup.find_all('li', class_='result')):
             if i > 10:
