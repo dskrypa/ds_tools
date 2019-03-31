@@ -8,8 +8,10 @@ import re
 import types
 from unicodedata import normalize, combining
 
+from cachetools import LRUCache
 from fuzzywuzzy import fuzz
 
+from ..caching import cached
 from ..unicode import is_any_cjk, contains_any_cjk, is_hangul, LangCat
 from ..utils import ParentheticalParser
 
@@ -281,6 +283,7 @@ def split_names(text):
     return unique_split
 
 
+@cached(LRUCache(100))
 def split_name(name, unused=False, check_keywords=True, permissive=False, require_preceder=True):
     """
     :param str|tuple name: A song/album/artist title
@@ -401,7 +404,7 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
         lc_eng = eng.lower()
         if lc_eng.startswith(keywords):
             if not cjk and not not_used:
-                keyword = next((val for val in keywords if val in lc_eng), None)
+                keyword = next((val for val in keywords if lc_eng.startswith(val)), None)
                 if keyword:
                     eng = eng[len(keyword):].strip()
             else:
@@ -441,9 +444,13 @@ def eng_cjk_sort(strs, langs=None, permissive=False):
 
     if not isinstance(langs, LangCat) and len(langs) == 2:
         a, b = langs
-        if a in (LangCat.ENG, LangCat.NUL) and (b in LangCat.non_eng_cats or permissive and b == LangCat.MIX):
+        if a in (LangCat.ENG, LangCat.NUL) and (b in LangCat.non_eng_cats or (permissive and b == LangCat.MIX)):
             return strs
-        elif b in (LangCat.ENG, LangCat.NUL) and (a in LangCat.non_eng_cats or permissive and a == LangCat.MIX):
+        elif a == LangCat.ENG and b == LangCat.NUL:
+            return strs
+        elif b in (LangCat.ENG, LangCat.NUL) and (a in LangCat.non_eng_cats or (permissive and a == LangCat.MIX)):
+            return tuple(reversed(strs))
+        elif b == LangCat.ENG and a == LangCat.NUL:
             return tuple(reversed(strs))
     elif isinstance(strs, str):
         if langs in (LangCat.ENG, LangCat.NUL):

@@ -5,6 +5,7 @@ Utilities for parsing Wiki pages for music entities
 """
 
 from .exceptions import *
+from .common import *
 from .dwiki import *
 from .kwiki import *
 from .wwiki import *

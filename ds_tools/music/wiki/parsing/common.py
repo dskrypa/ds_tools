@@ -8,13 +8,15 @@ from collections import OrderedDict
 
 from ....core import datetime_with_tz
 from ....unicode import LangCat
-from ....utils import DASH_CHARS, QMARKS, ListBasedRecursiveDescentParser, ALL_WHITESPACE, UnexpectedTokenError
+from ....utils import (
+    DASH_CHARS, QMARKS, ListBasedRecursiveDescentParser, ALL_WHITESPACE, UnexpectedTokenError, ParentheticalListParser
+)
 from ...name_processing import categorize_langs, combine_name_parts, eng_cjk_sort, str2list, split_name
 from .exceptions import *
 
 __all__ = [
     'album_num_type', 'first_side_info_val', 'LANG_ABBREV_MAP', 'link_tuples', 'NUM2INT', 'parse_date',
-    'parse_track_info', 'split_artist_list', 'TrackInfoParser', 'TrackListParser', 'unsurround'
+    'parse_track_info', 'split_artist_list', 'TrackInfoParser', 'TrackListParser', 'unsurround', 'find_href'
 ]
 log = logging.getLogger(__name__)
 
@@ -27,14 +29,45 @@ LANG_ABBREV_MAP = {
     'spanish': 'Spanish',
     'mandarin': 'Mandarin'
 }
-NUM2INT = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
+NUM2INT = {'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9}
 NUMS = {
     'first': '1st', 'second': '2nd', 'third': '3rd', 'fourth': '4th', 'fifth': '5th', 'sixth': '6th',
     'seventh': '7th', 'eighth': '8th', 'ninth': '9th', 'tenth': '10th', 'debut': '1st'
 }
 
 
-def split_artist_list(artist_list, context=None, link_dict=None):
+def find_href(client, anchors, texts, categories):
+    if not client or not anchors:
+        return None
+    elif isinstance(texts, str):
+        texts = (texts,)
+    lc_texts = tuple(filter(None, (t.strip().lower() for t in texts)))
+    for a in anchors:
+        if a.text and a.text.strip().lower() in lc_texts:
+            href = a.get('href') or ''
+            href = href[6:] if href.startswith('/wiki/') else href
+            if href and 'redlink=1' not in href and client.is_any_category(href, categories):
+                return href
+    return None
+
+
+def split_artist_list(artist_list, context=None, anchors=None, client=None):
+    """
+    feat_indicator ::= feat\.? | featuring | with
+    prod_indicator ::= prod(?:\.|uced)? by
+    , => delim ::= ,|;[|&|and]  # &|and require special handling...
+    group_members ::= member1, member2, ..., memberN
+    artist ::= group (group_members) | member (group) |  member_eng (member_cjk) (group_eng (group_cjk)) | group
+                | member of group | member1 and member2 of group
+    # if artist has parens, if content in parens has a delim: group is before parens, else, group is inside parans
+    artists ::= artist and artist | artist[,;&] artist | artist? feat_indicator artists
+
+    :param str artist_list: A list of artists
+    :param context: Source of the content being parsed
+    :param anchors: List of bs4 'a' elements from a web page
+    :param client: WikiClient
+    :return tuple: A tuple of (list(artists), list(producers))
+    """
     try:
         prod_by_rx = split_artist_list._prod_by_rx
         delim_rx = split_artist_list._delim_rx
@@ -46,17 +79,36 @@ def split_artist_list(artist_list, context=None, link_dict=None):
         delim_rx = split_artist_list._delim_rx = re.compile(
             r'(?:,\s*|;\s*|(?:^|\s)(?:,|;|as|feat\.?|featuring|with)\s+)', re.IGNORECASE
         )
-        group_paren_members_rx = split_artist_list._group_paren_members_rx = re.compile(r'^([^(]+)\s+\((.*,.*)\)$')
+        group_paren_members_rx = split_artist_list._group_paren_members_rx = re.compile(r'^([^(]+)\s+\(([^,]+,.*)\)$')
 
     artists = []
     producers = []
-    links = link_dict or {}
 
     m = group_paren_members_rx.match(artist_list)
     if m:
-        fake_show_group, artist_list = m.groups()
+        group, artist_list = m.groups()
+        try:
+            group_name = split_name(group)
+        except ValueError:
+            group_name = split_name(group, require_preceder=False)
+        group_href = find_href(client, anchors, group_name, 'group')
+    else:
+        group = None
+        group_href = None
 
-    for artist in delim_rx.split(artist_list):
+    for i, artist in enumerate(delim_rx.split(artist_list)):
+        m = group_paren_members_rx.match(artist_list)
+        if m:
+            group, artist_list = m.groups()
+            try:
+                group_name = split_name(group)
+            except ValueError:
+                group_name = split_name(group, require_preceder=False)
+            group_href = find_href(client, anchors, group_name, 'group')
+        elif i:
+            group = None
+            group_href = None
+
         m = prod_by_rx.match(artist)
         if m:
             artist, prod_by = m.groups()
@@ -68,10 +120,13 @@ def split_artist_list(artist_list, context=None, link_dict=None):
             except ValueError as e:
                 for _artist in re.split(' and | & ', artist):
                     # log.debug('Extending with {!r}'.format(_artist))
-                    artists.extend(split_artist_list(_artist, context, link_dict))
+                    artists.extend(split_artist_list(_artist, context, anchors, client))
             else:
+                group_href = find_href(client, anchors, of_group, 'group')
                 for soloist in re.split(' and | & ', soloists):
-                    artist_dict = {'artist_href': links.get(soloist), 'group_href': links.get(of_group)}
+                    artist_dict = {
+                        'artist_href': find_href(client, anchors, soloist, 'singer'), 'group_href': group_href
+                    }
                     for key, val in (('artist', soloist), ('of_group', of_group)):
                         try:
                             artist_dict[key] = split_name(val)
@@ -81,11 +136,15 @@ def split_artist_list(artist_list, context=None, link_dict=None):
         else:
             for _artist in re.split(' and | & ', artist):
                 try:
-                    artists.append({'artist': split_name(_artist), 'artist_href': links.get(_artist)})
+                    name = split_name(_artist)
                 except ValueError:
-                    artists.append({
-                        'artist': split_name(_artist, require_preceder=False), 'artist_href': links.get(_artist)
-                    })
+                    name = split_name(_artist, require_preceder=False)
+
+                artist_dict = {'artist': name, 'artist_href': find_href(client, anchors, name, ('singer', 'group'))}
+                if group:
+                    artist_dict['of_group'] = group
+                    artist_dict['group_href'] = group_href
+                artists.append(artist_dict)
 
     return artists, producers
 
@@ -191,21 +250,6 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
     def parse(self, text, context=None):
         self._context = context
         return super().parse(text)
-
-    def _lookahead_unpaired(self, closer):
-        """Find the position of the next closer that does not have a preceding opener in the remaining tokens"""
-        openers = {opener for opener, _closer in self._opener2closer.items() if _closer == closer}
-        opened = 0
-        closed = 0
-        # log.debug("Looking for next {!r} from idx={} in {}".format(closer, self._idx, self.tokens))
-        for pos, token in self.tokens[self._idx:]:
-            if token.type == closer:
-                closed += 1
-                if closed > opened:
-                    return pos
-            elif token.type in openers:
-                opened += 1
-        return -1
 
     def parenthetical(self, closer='RPAREN'):
         """

@@ -44,7 +44,7 @@ def parse_artist_osts(uri_path, clean_soup, artist):
     return albums
 
 
-def parse_ost_page(uri_path, clean_soup):
+def parse_ost_page(uri_path, clean_soup, client):
     try:
         first_h2 = clean_soup.find('h2')
     except AttributeError:
@@ -52,6 +52,7 @@ def parse_ost_page(uri_path, clean_soup):
     if not first_h2:
         raise WikiEntityParseException('Unable to find first OST part section in {}'.format(uri_path))
 
+    anchors = list(clean_soup.find_all('a'))
     track_lists = []
     h2 = first_h2
     while True:
@@ -63,7 +64,7 @@ def parse_ost_page(uri_path, clean_soup):
         info_ul = h2.find_next_sibling('ul')
         if not info_ul:
             break
-        info = parse_drama_wiki_info_list(uri_path, info_ul)
+        info = parse_drama_wiki_info_list(uri_path, info_ul, client)
         if info is None:
             return track_lists
 
@@ -81,7 +82,9 @@ def parse_ost_page(uri_path, clean_soup):
 
                 track = parse_track_info(tds[0].text, name_parts, uri_path, include={'from_ost': True})
                 # track['collaborators'] = str2list(tds[2].text.strip())
-                track['collaborators'], track['produced_by'] = split_artist_list(tds[2].text.strip(), context=uri_path)
+                track['collaborators'], track['produced_by'] = split_artist_list(
+                    tds[2].text.strip(), context=uri_path, anchors=anchors, client=client
+                )
                 tracks.append(track)
 
         track_lists.append({'section': section, 'tracks': tracks, 'info': info})
@@ -90,7 +93,7 @@ def parse_ost_page(uri_path, clean_soup):
     return track_lists
 
 
-def parse_drama_wiki_info_list(uri_path, info_ul):
+def parse_drama_wiki_info_list(uri_path, info_ul, client):
     info = {}
     for i, li in enumerate(info_ul.find_all('li')):
         try:
@@ -131,8 +134,9 @@ def parse_drama_wiki_info_list(uri_path, info_ul):
             #     prod_by_rx = parse_drama_wiki_info_list._prod_by_rx = re.compile(
             #         r'^(.*)\s\(Prod(?:\.|uced)? by\s+(.*)\)$', re.IGNORECASE
             #     )
-            links = dict(link_tuples(li.find_all('a')))
-            value, info['produced_by'] = split_artist_list(value, context=uri_path, link_dict=links)
+            # links = dict(link_tuples(li.find_all('a')))
+            anchors = list(li.find_all('a'))
+            value, info['produced_by'] = split_artist_list(value, context=uri_path, anchors=anchors, client=client)
             # artists = str2list(value)
             # value = []
             # for artist in artists:

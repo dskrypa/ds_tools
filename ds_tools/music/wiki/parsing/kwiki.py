@@ -15,7 +15,7 @@ from ...name_processing import has_parens, parse_name, split_name, str2list
 from ..utils import synonym_pattern, get_page_category
 from .common import (
     album_num_type, first_side_info_val, LANG_ABBREV_MAP, link_tuples, NUM2INT, parse_track_info, unsurround,
-    parse_date, TrackListParser
+    parse_date, TrackListParser, split_artist_list
 )
 from .exceptions import NoTrackListException, WikiEntityParseException, UnexpectedDateFormat
 
@@ -232,12 +232,20 @@ def parse_album_page(uri_path, clean_soup, side_info, client):
     album0['name'] = side_info.get('name')
 
     albums = [album0, album1] if album1 else [album0]
-    artist = side_info.get('artist', {})
+
+    artist_raw = side_info.get('artist_raw')
+    if artist_raw:
+        artists = split_artist_list(artist_raw, uri_path, list(clean_soup.find_all('a')), client=client)[0]
+    else:
+        artists = []
+    # else:
+    #     artists = side_info.get('artist', {})
+
     for album in albums:
-        album['artists'] = artist
+        album['artists'] = artists
 
     try:
-        track_lists = parse_album_tracks(uri_path, clean_soup, links, artist, 'compilation' in album0['type'].lower())
+        track_lists = parse_album_tracks(uri_path, clean_soup, links, artists, 'compilation' in album0['type'].lower())
     except NoTrackListException as e:
         if not album1 and 'single' in album0['type'].lower():
             eng, cjk = album0['title_parts'][:2]
@@ -251,6 +259,7 @@ def parse_album_page(uri_path, clean_soup, side_info, client):
                     parse_track_info(1, _name, uri_path, album0['length'] or '-1:00')
                 ]
             }
+            album0['fake_track_list'] = True
         else:
             raise e
     else:
@@ -345,6 +354,9 @@ def parse_aside(aside, uri_path):
                         else:
                             raise WikiEntityParseException('Unexpected length format on {} in: {}'.format(uri_path, val_ele))
             elif key in ('agency', 'artist', 'associated', 'composer', 'current', 'label', 'writer'):
+                if key == 'artist':
+                    parsed['artist_raw'] = val_ele.text
+
                 anchors = list(val_ele.find_all('a'))
                 if anchors:
                     value = dict(link_tuples(anchors))
