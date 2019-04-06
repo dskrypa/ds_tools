@@ -742,7 +742,8 @@ class WikiArtist(WikiEntity):
 
     @cached_property
     def _disco_page(self):
-        for name in (self._uri_path.title(), self.english_name):
+        names = (self._uri_path.title(), self.english_name) if self._uri_path else (self.english_name,)
+        for name in names:
             try:
                 return WikiDiscography(name + "_discography", WikipediaClient(), artist=self)
             except WikiTypeError as e:
@@ -758,6 +759,8 @@ class WikiArtist(WikiEntity):
     def _discography(self):
         if self._albums:            # Will only be set for non-kwiki sources
             return self._albums
+        elif not isinstance(self._client, KpopWikiClient):
+            return []
 
         try:
             discography_h2 = self._clean_soup.find("span", id="Discography").parent
@@ -796,7 +799,11 @@ class WikiArtist(WikiEntity):
                         num += 1
                     ul = li.find("ul")
                     if ul:
-                        ul.extract()                            # remove nested list from tree
+                        try:
+                            ul.extract()                            # remove nested list from tree
+                        except AttributeError as e:
+                            log.error('{}: Error processing discography in ele: {}'.format(self.url, ele))
+                            raise e
                         li_eles = list(ul.children) + li_eles   # insert elements from the nested list at top
 
                     entry = parse_discography_entry(self, li, album_type, lang, num)
@@ -1333,6 +1340,10 @@ class WikiSongCollection(WikiEntity):
             return ['{} {}'.format(artist.english_name, a) for a in self._aliases()]
 
     @cached_property
+    def language(self):
+        return self._discography_entry.get('language')
+
+    @cached_property
     def released(self):
         return self._album_info.get('released')
 
@@ -1370,11 +1381,15 @@ class WikiSongCollection(WikiEntity):
     def expected_rel_dir(self):
         numbered_type = self.album_type in ALBUM_NUMBERED_TYPES
         if numbered_type or self.album_type in ('Single', ):
-            release_date = self._album_info["released"].strftime("%Y.%m.%d")
+            try:
+                release_date = '[{}] '.format(self._album_info["released"].strftime("%Y.%m.%d"))
+            except KeyError:
+                release_date = ''
+
             if numbered_type:
-                title = '[{}] {} [{}]'.format(release_date, self.title, self.num_and_type)
+                title = '{}{} [{}]'.format(release_date, self.title, self.num_and_type)
             else:
-                title = '[{}] {}'.format(release_date, self.title)
+                title = '{}{}'.format(release_date, self.title)
         else:
             title = self.title
 
@@ -1951,7 +1966,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
     def __init__(self, info, collection, artist_context):
         self._info = info   # num, length, language, version, name_parts, collaborators, misc, artist
         self._artist_context = artist_context
-        self._collection = collection
+        self.collection = collection
         self.english_name, self.cjk_name = self._info["name_parts"]
         self.name = multi_lang_name(self.english_name, self.cjk_name)
         self.__processed_collabs = False
@@ -1977,12 +1992,12 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
             if self._collaborators:
                 if self._artist and self._artist.lower() in self._collaborators:
                     self._collaborators.pop(self._artist.lower())
-                elif self._collection:
+                elif self.collection:
                     try:
-                        artist = self._collection.artist
+                        artist = self.collection.artist
                     except Exception as e:
                         fmt = 'Error processing artist for track {!r} from {}: {}'
-                        log.debug(fmt.format(self.name, self._collection, e))
+                        log.debug(fmt.format(self.name, self.collection, e))
                     else:
                         for lc_alias in artist.lc_aliases:
                             try:
@@ -2050,9 +2065,16 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
             collabs.append(artist)
         return collabs
 
+    @cached_property
+    def artist(self):
+        if self._artist_context:
+            return self._artist_context
+        else:
+            return self.collection.artist
+
     @property
     def _cmp_attrs(self):
-        return self._collection, self.disk, self.num, self.long_name
+        return self.collection, self.disk, self.num, self.long_name
 
     def __lt__(self, other):
         comparison_type_check(self, other, WikiTrack, "<")
@@ -2073,7 +2095,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
         if self.misc:
             parts.extend(self.misc)
         if self._artist:
-            artist_aliases = set(chain.from_iterable(artist.aliases for artist in self._collection.artists))
+            artist_aliases = set(chain.from_iterable(artist.aliases for artist in self.collection.artists))
             if self._artist not in artist_aliases:
                 parts.append("{} solo".format(self._artist))
         if self._collaborators:
@@ -2106,7 +2128,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
         return '{:02d}. {}'.format(self.num, base) if self.num else base
 
     def expected_rel_path(self, ext='mp3'):
-        return self._collection.expected_rel_path.joinpath(self.expected_filename(ext))
+        return self.collection.expected_rel_path.joinpath(self.expected_filename(ext))
 
     def score_match(self, other, *args, **kwargs):
         if isinstance(other, str):

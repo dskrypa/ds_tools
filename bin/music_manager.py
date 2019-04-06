@@ -99,6 +99,7 @@ def parser():
     wiki_sort_parser.add_argument("--move_unknown", "-u", action="store_true", help="Move albums that would end up in the UNKNOWN_FIXME subdirectory")
     wiki_sort_parser.add_argument("--allow_incomplete", "-i", action="store_true", help="Allow updating tags when there is an incomplete match (such as artist but no album/song)")
     wiki_sort_parser.add_argument("--unmatched_cleanup", "-C", action="store_true", help="Run cleanup tasks for unmatched files (commonly OSTs/collaborations)")
+    wiki_sort_parser.add_argument("--no_qualnames", "-Q", action="store_true", help="For solo artists, use only their name instead of including their group")
 
     p2t_parser = parser.add_subparser("action", "path2tag", help="Update tags based on the path to each file")
     p2t_parser.add_argument("path", help="A directory that contains directories that contain music files")
@@ -162,7 +163,7 @@ def main():
     elif args.action == "wiki_sort":
         sort_by_wiki(
             args.source, args.destination or args.source, args.allow_no_dest, args.basic_cleanup, args.move_unknown,
-            args.allow_incomplete, args.unmatched_cleanup, args.dry_run
+            args.allow_incomplete, args.unmatched_cleanup, args.no_qualnames, args.dry_run
         )
     elif args.action == "path2tag":
         path2tag(args.path, args.dry_run, args.title)
@@ -186,12 +187,12 @@ def match_wiki(path):
     tbl = Table(
         SimpleColumn("File Artist", formatter=cyan), SimpleColumn("Wiki Artist", formatter=green),
         SimpleColumn("File Album", formatter=cyan), SimpleColumn("Wiki Album", formatter=green),
-        SimpleColumn("Album Score", formatter=yellow),
+        SimpleColumn("AScore", formatter=yellow),
         SimpleColumn("File Alb Type", formatter=cyan), SimpleColumn("Wiki Alb Type", formatter=green),
-        SimpleColumn("File Track", formatter=cyan), SimpleColumn("Wiki Track", formatter=green),
+        SimpleColumn("F.Trck", formatter=cyan), SimpleColumn("W.Trck", formatter=green),
         SimpleColumn("File Title", formatter=cyan), SimpleColumn("Wiki Title", formatter=green),
-        SimpleColumn("Title Score", formatter=yellow),
-        sort_by=("Wiki Artist", "Wiki Album", "File Track", "File Artist", "File Album", "File Title"),
+        SimpleColumn("TScore", formatter=yellow),
+        sort_by=("Wiki Artist", "Wiki Album", "F.Trck", "File Artist", "File Album", "File Title"),
         update_width=True
     )
 
@@ -207,16 +208,16 @@ def match_wiki(path):
                 "File Alb Type": music_file.album_type_dir,
                 # "Wiki Alb Type": music_file.wiki_album.type if music_file.wiki_album else "",
                 "Wiki Alb Type": music_file.wiki_album.album_type if music_file.wiki_album else "",
-                "Album Score": music_file.wiki_scores.get("album", -1),
+                "AScore": music_file.wiki_scores.get("album", -1),
 
                 "File Title": music_file.tag_title,
                 # "Wiki Title": music_file.wiki_song.file_title if music_file.wiki_song else "",
                 "Wiki Title": music_file.wiki_song.long_name if music_file.wiki_song else "",
-                "Title Score": music_file.wiki_scores.get("song", -1),
+                "TScore": music_file.wiki_scores.get("song", -1),
 
-                "File Track": str(music_file.tag_text("track", default="")),
+                "F.Trck": str(music_file.tag_text("track", default="")),
                 # "Wiki Track": str(getattr(music_file.wiki_song, "track", "")) if music_file.wiki_song else "",
-                "Wiki Track": str(music_file.wiki_song.num) if music_file.wiki_song else "",
+                "W.Trck": str(music_file.wiki_song.num) if music_file.wiki_song else "",
             })
         except AttributeError as e:
             log.error("Error processing {}: {}".format(music_file, e))
@@ -378,7 +379,10 @@ def wiki_list(path):
             log.info("#\"{}\" - {}".format(song.tag_title, song.length_str))
 
 
-def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, move_unknown, allow_incomplete, unmatched_cleanup, dry_run):
+def sort_by_wiki(
+    source_path, dest_dir, allow_no_dest, basic_cleanup, move_unknown, allow_incomplete, unmatched_cleanup,
+    no_qualnames, dry_run
+):
     _dest_dir = dest_dir
     mv_prefix = "[DRY RUN] Would move" if dry_run else "Moving"
     rm_prefix = "[DRY RUN] Would remove" if dry_run else "Removing"
@@ -398,7 +402,7 @@ def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, move_unkno
             continue
 
         rel_path = album_dir.expected_rel_path
-        if rel_path and ("UNKNOWN_FIXME" in rel_path) and not move_unknown:
+        if rel_path and ("UNKNOWN_FIXME" in rel_path.as_posix()) and not move_unknown:
             log.log(19, "Skipping {} because a proper location could not be determined".format(album_dir))
             continue
 
@@ -458,7 +462,7 @@ def sort_by_wiki(source_path, dest_dir, allow_no_dest, basic_cleanup, move_unkno
     for i, album_dir in enumerate(album_dirs):
         if i and logged_messages:
             print()
-        logged_messages = album_dir.update_song_tags_and_names(allow_incomplete, dry_run)
+        logged_messages = album_dir.update_song_tags_and_names(allow_incomplete, no_qualnames, dry_run)
         if unmatched_cleanup and not album_dir.wiki_album:
             if logged_messages:
                 print()

@@ -330,7 +330,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
                 type_dir = "Soundtracks"
             else:
                 type_dir = "UNKNOWN_FIXME"
-            return os.path.join(artist_dir, type_dir, self.path.name)
+            return Path(artist_dir).joinpath(type_dir, self.path.name)
         log.error("Unable to find an album or artist match for {}".format(self))
         return None
 
@@ -501,7 +501,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
             log.log(19, "No changes necessary for {}".format(self))
         return logged_messages
 
-    def update_song_tags_and_names(self, allow_incomplete, dry_run):
+    def update_song_tags_and_names(self, allow_incomplete, no_qualnames, dry_run):
         logged_messages = 0
         if not self.wiki_artist:
             log.error("Unable to find wiki artist match for {} - skipping tag updates".format(self), extra={"red": True})
@@ -515,8 +515,8 @@ class AlbumDir(ClearableCachedPropertyMixin):
                 return 1
 
         updatable = [
-            ("title", "file_title"), ("artist", "name_with_context"), ("album_artist", "name_with_context"),
-            ("album", "name")
+            ("title", "long_name"), ("artist", "name" if no_qualnames else "qualname"),
+            ("album_artist", "name" if no_qualnames else "qualname"), ("album", "name")
         ]
         upd_prefix = "[DRY RUN] Would update" if dry_run else "Updating"
         rnm_prefix = "[DRY RUN] Would rename" if dry_run else "Renaming"
@@ -547,8 +547,14 @@ class AlbumDir(ClearableCachedPropertyMixin):
                         to_update["artist"] = (file_value, wiki_value)
             else:
                 for field, attr in updatable:
+                    # TODO: If wiki match is eng only, and file title has eng+cjk, take cjk from file
                     file_value = music_file.tag_text(field, default=None)
-                    wiki_field = "artist" if field == "album_artist" else field
+                    if field == 'album_artist':
+                        wiki_field = 'artist'
+                    elif field == 'album':
+                        wiki_field = 'collection'
+                    else:
+                        wiki_field = field
                     wiki_value = getattr(wiki_song if field == "title" else getattr(wiki_song, wiki_field), attr)
                     if file_value != wiki_value:
                         to_update[field] = (file_value, wiki_value)
@@ -892,6 +898,10 @@ class SongFile(ClearableCachedPropertyMixin):
         if m:
             album = album.replace(m.group(1), ' ').strip()
 
+        m = re.match(r'(.*)(\s[^a-zA-Z]?\s*EP)$', album, re.IGNORECASE)
+        if m:
+            album = m.group(1)
+
         # m = re.search("(?:the)?\s*[0-9](?:st|nd|rd|th)\s+\S*\s*album(.*)$", album, re.IGNORECASE)
         # if m:
         #     group = m.group(1).strip()
@@ -981,7 +991,7 @@ class SongFile(ClearableCachedPropertyMixin):
                     return artist
 
         if artists:
-            return artist[0]
+            return artists[0]
 
         if exc:
             log.error('Error matching artist {} for {}: {}'.format(_artists, self, exc))
