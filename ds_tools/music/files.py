@@ -559,7 +559,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
                     if file_value != wiki_value:
                         to_update[field] = (file_value, wiki_value)
 
-                file_genre = music_file.tag_text("genre")
+                file_genre = music_file.tag_text("genre", default=None)
                 if genre and file_genre != genre:
                     to_update["genre"] = (file_genre, genre)
 
@@ -890,7 +890,7 @@ class SongFile(ClearableCachedPropertyMixin):
         if m:
             album = m.group(1).strip()
 
-        m = re.match("^(.*?)\s*(?:the)?\s*[0-9](?:st|nd|rd|th)\s+\S*\s*album\s*(?:repackage)?\s*(.*)$", album, re.I)
+        m = re.match("^(.*?)-?\s*(?:the)?\s*[0-9](?:st|nd|rd|th)\s+\S*\s*album\s*(?:repackage)?\s*(.*)$", album, re.I)
         if m:
             album = " ".join(map(str.strip, m.groups())).strip()
 
@@ -898,7 +898,7 @@ class SongFile(ClearableCachedPropertyMixin):
         if m:
             album = album.replace(m.group(1), ' ').strip()
 
-        m = re.match(r'(.*)(\s[^a-zA-Z]?\s*EP)$', album, re.IGNORECASE)
+        m = re.match(r'(.*)(\s-\s*EP)$', album, re.IGNORECASE)
         if m:
             album = m.group(1)
 

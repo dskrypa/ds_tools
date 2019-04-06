@@ -47,7 +47,7 @@ def find_href(client, anchors, texts, categories):
             href = a.get('href') or ''
             href = href[6:] if href.startswith('/wiki/') else href
             if href and 'redlink=1' not in href:
-                if href.startswith('http'):
+                if href.startswith(('http', '//')):
                     client = client.for_site(href)
                 if client.is_any_category(href, categories):
                     return href
@@ -75,6 +75,7 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
         prod_by_rx = split_artist_list._prod_by_rx
         delim_rx = split_artist_list._delim_rx
         group_paren_members_rx = split_artist_list._group_paren_members_rx
+        double_of_rx = split_artist_list._double_of_rx
     except AttributeError:
         prod_by_rx = split_artist_list._prod_by_rx = re.compile(
             r'^(.*)\s\(Prod(?:\.|uced)? by\s+(.*)\)$', re.IGNORECASE
@@ -83,6 +84,9 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
             r'(?:,\s*|;\s*|(?:^|\s)(?:,|;|as|feat\.?|featuring|with)\s+)', re.IGNORECASE
         )
         group_paren_members_rx = split_artist_list._group_paren_members_rx = re.compile(r'^([^(]+)\s+\(([^,]+,.*)\)$')
+        double_of_rx = split_artist_list._double_of_rx = re.compile(
+            r'^(.*?) of (.*?)\s+\((.*?) of (.*)\)$', re.IGNORECASE
+        )
 
     artists = []
     producers = []
@@ -121,9 +125,24 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
             try:
                 soloists, of_group = artist.split(' of ')
             except ValueError as e:
-                for _artist in re.split(' and | & ', artist):
-                    # log.debug('Extending with {!r}'.format(_artist))
-                    artists.extend(split_artist_list(_artist, context, anchors, client))
+                if any(val in artist for val in (' and ', ' & ')):
+                    for _artist in re.split(' and | & ', artist):
+                        # log.debug('Extending with {!r}'.format(_artist))
+                        artists.extend(split_artist_list(_artist, context, anchors, client))
+                else:
+                    m = double_of_rx.match(artist)
+                    if m:
+                        soloist_a, group_a, soloist_b, group_b = m.groups()
+                        soloist = split_name((soloist_a, soloist_b))
+                        group = split_name((group_a, group_b))
+                        artist_dict = {
+                            'artist': soloist, 'artist_href': find_href(client, anchors, soloist, 'singer'),
+                            'of_group': group, 'group_href': find_href(client, anchors, group, 'group'),
+                        }
+                        artists.append(artist_dict)
+                    else:
+                        msg = 'Unexpected artist name format in {}: {!r}'.format(context, artist)
+                        raise WikiEntityParseException(msg) from e
             else:
                 group_href = find_href(client, anchors, of_group, 'group')
                 for soloist in re.split(' and | & ', soloists):
@@ -579,6 +598,10 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
         else:
             if len(set(name_langs)) < 2:
                 # log.debug('{!r}: Adding to name parts: {!r}'.format(text, part))
+                if '; lit. ' in part:
+                    part = part.partition('; lit. ')[0]
+                    log.log(9, 'Discarding literal translation from {}: {!r}'.format(source, part))
+
                 name_parts.append(part)
                 name_langs.append(LangCat.categorize(part))
             else:

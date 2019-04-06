@@ -62,7 +62,7 @@ class WikiClient(RestClient):
 
     @classmethod
     def for_site(cls, site):
-        if site.startswith('http'):
+        if site.startswith(('http', '//')):
             site = urlparse(site).hostname
         try:
             return cls._sites[site]()
@@ -141,9 +141,11 @@ class WikiClient(RestClient):
         raise NotImplementedError()
 
     def is_any_category(self, uri_path, categories):
+        if 'action=edit&redlink=1' in uri_path:
+            return False
         if isinstance(categories, str):
             categories = (categories,)
-        if uri_path.startswith('http'):
+        if uri_path.startswith(('http', '//')):
             uri_path = urlparse(uri_path).path
         if uri_path.startswith((self.path_prefix, '/' + self.path_prefix)):
             uri_path = uri_path[len(self.path_prefix)+1:]

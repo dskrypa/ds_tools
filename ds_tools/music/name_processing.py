@@ -181,18 +181,45 @@ def parse_name(text):
     stylized = None
     aka = None
     aka_leads = ('aka', 'a.k.a.', 'also known as', 'or simply')
+    style_leads = ('stylized as', 'sometimes styled as')
     info = []
-    for part in map(str.strip, re.split('[;,]', details)):
+    details_parts = list(map(str.strip, re.split('[;,]', details)))
+    while details_parts:
+        part = details_parts.pop(0)
         # log.debug('Processing part of details: {!r}'.format(part))
         lc_part = part.lower()
-        if lc_part.startswith('stylized as'):
-            stylized = part[11:].strip()
+        if any(lead for lead in style_leads if lc_part.startswith(lead)):
+            style_lead = next((lead for lead in style_leads if lc_part.startswith(lead)), None)
+            stylized = part[len(style_lead):].strip()
         elif is_any_cjk(part) and not found_hangul:
             found_hangul = is_hangul(part)
             cjk = part
         elif ':' in part and not found_hangul:
             _lang_name, cjk = eng_cjk_sort(tuple(map(str.strip, part.split(':', 1))))
             found_hangul = is_hangul(cjk)
+        elif ':' in part and contains_any_cjk(part):
+            try:
+                pronounced_rx = parse_name._pronounced_rx
+            except AttributeError:
+                pronounced_rx = parse_name._pronounced_rx = re.compile(r'(pronounced ".*")\s+(\S:.*)', re.IGNORECASE)
+
+            m = pronounced_rx.match(part)
+            if m:
+                info.extend(m.groups())
+            else:
+                info.append(part)
+        elif lc_part.endswith((' ver.', ' ver')):
+            info.append(part)
+        elif not aka and any(lead for lead in aka_leads if lc_part.startswith(lead)):
+            aka_lead = next((lead for lead in aka_leads if lc_part.startswith(lead)), None)
+            part = part[len(aka_lead):].strip()
+            if not found_hangul and not cjk and contains_any_cjk(part) and has_parens(part):
+                aka, part = map(str.strip, part.split())
+                if part.startswith('(') and part.endswith(')'):
+                    part = part[1:-1]
+                details_parts.insert(0, part)
+            else:
+                aka = part
         elif not found_hangul and not cjk and contains_any_cjk(part):
             part_parts = part.split()
             if is_hangul(part_parts[0]) and LangCat.categorize(part_parts[1]) == LangCat.ENG:
@@ -208,13 +235,8 @@ def parse_name(text):
             else:
                 found_hangul = LangCat.HAN in LangCat.categorize(part, True)
                 cjk = part
-        elif lc_part.endswith((' ver.', ' ver')):
-            info.append(part)
-        elif not aka:
-            for lead in aka_leads:
-                if lc_part.startswith(lead):
-                    aka = part[len(lead):].strip()
-                    break
+        else:
+            raise ValueError('Unexpected part: {!r}'.format(part))
 
     return base, cjk, stylized, aka, info
 

@@ -17,7 +17,7 @@ from .common import (
     album_num_type, first_side_info_val, LANG_ABBREV_MAP, link_tuples, NUM2INT, parse_track_info, unsurround,
     parse_date, TrackListParser, split_artist_list
 )
-from .exceptions import NoTrackListException, WikiEntityParseException, UnexpectedDateFormat
+from .exceptions import NoTrackListException, WikiEntityParseException, UnexpectedDateFormat, TrackInfoParseException
 
 __all__ = ['parse_album_page', 'parse_album_tracks', 'parse_aside', 'parse_discography_entry']
 log = logging.getLogger(__name__)
@@ -124,6 +124,8 @@ def parse_album_page(uri_path, clean_soup, side_info, client):
         title_rx = parse_album_page._title_rx = re.compile(
             r'^The \S+ Album ([{}])(.*)\1(.*)'.format(QMARKS + "'"), re.IGNORECASE
         )
+
+    # TODO: Handle deluxe edition as repackage: https://kpop.fandom.com/wiki/My_Voice
 
     intro_match = intro_rx.match(intro_text)
     if not intro_match:
@@ -429,7 +431,15 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
     elif not is_feature and not ele_text.startswith('"') and len(parsed) == 1 and '"' in ele_text:
         title = '{} "{}"'.format(title, parsed.pop(0))  # Special case for album name ending in quoted word
     elif 'singles' in base_type:
-        track_info = parse_track_info(1, title, ele)
+        try:
+            track_info = parse_track_info(1, title, ele)
+        except TrackInfoParseException as e:
+            if ':' in title and all(val.isdigit() for val in title.split(':')):
+                track_info = {'num': 1, 'length': '-1:00', 'name_parts': (title,)}
+            else:
+                msg = '{}: Error processing single {!r} from {!r}'.format(artist, title, ele)
+                raise WikiEntityParseException(msg) from e
+
         # log.debug('{!r} is a single - track info: {}'.format(title, track_info))
         if len(track_info['name_parts']) == 1:
             title = track_info['name_parts'][0]
@@ -573,10 +583,12 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
             else:
                 log.debug('Found link from {}\'s discography to unexpected site: {}'.format(artist, link_href))
                 uri_path = None
-                wiki = 'kpop.fandom.com'
+                wiki = artist._client.host
+                # wiki = 'kpop.fandom.com'
         else:
             uri_path = link_href or None
-            wiki = 'kpop.fandom.com'
+            wiki = artist._client.host
+            # wiki = 'kpop.fandom.com'
     else:
         if is_ost:
             try:
@@ -592,11 +604,13 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
             wiki = 'wiki.d-addicts.com'
         elif is_feature_or_collab:
             uri_path = None
-            wiki = 'kpop.fandom.com'
+            # wiki = 'kpop.fandom.com'
+            wiki = artist._client.host
             # Probably a collaboration song, so title is likely a song and not the album title
         else:
             uri_path = None
-            wiki = 'kpop.fandom.com'
+            # wiki = 'kpop.fandom.com'
+            wiki = artist._client.host
             # May be an album without a link, or a repackage detailed on the same page as the original
 
     info = {

@@ -173,8 +173,12 @@ class WikiEntityMeta(type):
                         raise e
                     except CodeBasedRestException as e:
                         if e.code == 404 and orig_client is None:   # For cases where it's a non-Kpop artist
-                            client = WikipediaClient()
-                            uri_path = client.normalize_name(name)
+                            try:
+                                client = KindieWikiClient()
+                                uri_path = client.normalize_name(name)
+                            except CodeBasedRestException:
+                                client = WikipediaClient()
+                                uri_path = client.normalize_name(name)
                         else:
                             raise e
             elif name and uri_path and uri_path.startswith("//"):   # Alternate subdomain of fandom.com
@@ -621,23 +625,27 @@ class WikiDiscography(WikiEntity):
 
 
 class WikiTVSeries(WikiEntity):
-    _category = "tv_series"
+    _category = 'tv_series'
 
     def __init__(self, uri_path=None, client=None, **kwargs):
         super().__init__(uri_path, client, **kwargs)
 
         self.ost_href = None
         if self._side_info:
-            self.name = self._side_info["name"]
-            self.aka = self._side_info.get("also known as", [])
+            self.name = self._side_info['name']
+            self.aka = self._side_info.get('also known as', [])
         elif isinstance(self._client, DramaWikiClient):
             self.name = self._header_title
-            ul = self._clean_soup.find(id="Details").parent.find_next("ul")
+            ul = self._clean_soup.find(id='Details').parent.find_next('ul')
             self._info = parse_drama_wiki_info_list(self._uri_path, ul, client)
-            self.english_name, self.cjk_name = self._info["title"]
+            try:
+                self.english_name, self.cjk_name = self._info['title']
+            except ValueError as e:
+                log.error('Unexpected show title for {}: {!r}'.format(self.url, self._info['title']))
+
             # self.name = multi_lang_name(self.english_name, self.cjk_name)
-            self.aka = self._info.get("also known as", [])
-            ost = self._info.get("original soundtrack")
+            self.aka = self._info.get('also known as', [])
+            ost = self._info.get('original soundtrack')
             if ost:
                 self.ost_href = list(ost.values())[0]
         else:
@@ -906,7 +914,7 @@ class WikiArtist(WikiEntity):
             return (best_coll, best_score) if include_score else best_coll
 
         disco_page = self._disco_page
-        if disco_page:
+        if disco_page and (not self._uri_path or not self._uri_path.lower().endswith('_discography')):
             return disco_page.find_single(name, min_score, include_score, **kwargs)
 
         return (None, -1) if include_score else None
@@ -1269,7 +1277,11 @@ class WikiSongCollection(WikiEntity):
         elif disco_entry:
             self._primary_artist = disco_entry.get("primary_artist")
             try:
-                self.english_name, self.cjk_name = eng_cjk_sort(disco_entry["title"])
+                try:
+                    self.english_name, self.cjk_name = eng_cjk_sort(disco_entry["title"])
+                except ValueError as e1:
+                    log.debug('Unexpected disco_entry title for {}: {!r}; retrying'.format(self.url, disco_entry["title"]))
+                    self.english_name, self.cjk_name = split_name(disco_entry["title"])
             except Exception as e:
                 if not kwargs.get('no_fetch'):
                     log.error('Error processing disco entry title: {}'.format(e))
@@ -1480,7 +1492,7 @@ class WikiSongCollection(WikiEntity):
                 if not no_warn:
                     log.warning(fmt.format(self, name), extra={"color": (11, 9)})
 
-                artists.add(WikiArtist(href, name=name, no_fetch=True))
+                artists.add(WikiArtist(href, name=name, no_fetch=True, client=self._client))
             except CodeBasedRestException as e:
                 # log.debug('{}: artist={} => {}'.format(self, artist, e))
                 if not isinstance(self._client, KpopWikiClient):
@@ -1682,9 +1694,9 @@ class WikiSongCollection(WikiEntity):
     def find_track(self, name, min_score=75, include_score=False, **kwargs):
         match_fmt = '{}: {} matched {!r} with score={} because its alias={!r} =~= {!r}'
         best_score, best_alias, best_val, best_track = 0, None, None, None
-
+        normalized = WikiTrack._normalize_for_matching(name)
         for track in self.get_tracks():
-            score, alias, val = track.score_match(name, **kwargs)
+            score, alias, val = track.score_match(normalized, normalize=False, **kwargs)
             if score >= 100:
                 # log.debug(match_fmt.format(self, track, name, score, alias, val))
                 return (track, score) if include_score else track
@@ -1951,6 +1963,7 @@ class WikiFeatureOrSingle(WikiSongCollection):
 
 class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
     _category = '__track__'
+    __feat_rx = re.compile(r'\((?:with|feat\.?|featuring)\s+(.*?)\)', re.IGNORECASE)
     disk = DictAttrProperty("_info", "disk", type=int, default=1)
     num = DictAttrProperty("_info", "num", type=lambda x: x if x is None else int(x), default=None)
     length_str = DictAttrProperty("_info", "length", default="-1:00")
@@ -2124,16 +2137,16 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
         return (s + (m * 60)) if m > -1 else 0
 
     def expected_filename(self, ext='mp3'):
-        base = '{}.{}'.format(self.long_name, ext)
+        base = sanitize_path('{}.{}'.format(self.long_name, ext))
         return '{:02d}. {}'.format(self.num, base) if self.num else base
 
     def expected_rel_path(self, ext='mp3'):
         return self.collection.expected_rel_path.joinpath(self.expected_filename(ext))
 
-    def score_match(self, other, *args, **kwargs):
+    @classmethod
+    def _normalize_for_matching(cls, other):
         if isinstance(other, str):
-            feat_rx = re.compile(r'\((?:with|feat\.?|featuring)\s+(.*?)\)', re.IGNORECASE)
-            m = feat_rx.search(other)
+            m = cls.__feat_rx.search(other)
             if m:
                 feat = m.group(1)
                 if ' of ' in feat:
@@ -2152,30 +2165,36 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                         other = {other_str.replace(feat, val) for val in romanized_permutations(feat)}
 
                     other.add(other_str)
+        return other
+
+    def score_match(self, other, *args, normalize=True, **kwargs):
+        if normalize:
+            other = self._normalize_for_matching(other)
         return super().score_match(other, *args, **kwargs)
 
 
 def find_ost(artist, title, disco_entry):
     d_client = DramaWikiClient()
-    try:
-        d_artist = artist.for_alt_site(d_client)
-    except WikiTypeError:
-        pass
-    except Exception as e:
-        log.debug('Error finding {} version of {}: {}\n{}'.format(d_client._site, artist, e, traceback.format_exc()))
-    else:
-        ost_match = d_artist.find_song_collection(title)
-        if ost_match:
-            log.debug('{}: Found OST fuzzy match {!r}={} via artist'.format(artist, title, ost_match), extra={'color': 10})
-            return ost_match
-        # else:
-        #     log.debug('{}: No OST match found for {!r} via new method'.format(artist, title))
+    if not isinstance(artist._client, DramaWikiClient):
+        try:
+            d_artist = artist.for_alt_site(d_client)
+        except WikiTypeError:
+            pass
+        except Exception as e:
+            log.debug('Error finding {} version of {}: {}\n{}'.format(d_client._site, artist, e, traceback.format_exc()))
+        else:
+            ost_match = d_artist.find_song_collection(title)
+            if ost_match:
+                log.debug('{}: Found OST fuzzy match {!r}={} via artist'.format(artist, title, ost_match), extra={'color': 10})
+                return ost_match
+            # else:
+            #     log.debug('{}: No OST match found for {!r} via new method'.format(artist, title))
 
-        # for ost in d_artist.discography:
-        #     log.debug('Comparing {!r} to {} via new method'.format(title, ost), extra={'color': 22})
-        #     if ost.matches(title):
-        #         log.debug('Found OST match {!r}={} via new method'.format(title, ost), extra={'color': 10})
-        #         return ost
+            # for ost in d_artist.discography:
+            #     log.debug('Comparing {!r} to {} via new method'.format(title, ost), extra={'color': 22})
+            #     if ost.matches(title):
+            #         log.debug('Found OST match {!r}={} via new method'.format(title, ost), extra={'color': 10})
+            #         return ost
 
     b_client = WikiClient()
     k_client = KpopWikiClient()
