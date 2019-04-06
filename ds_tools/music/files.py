@@ -902,18 +902,6 @@ class SongFile(ClearableCachedPropertyMixin):
         if m:
             album = m.group(1)
 
-        # m = re.search("(?:the)?\s*[0-9](?:st|nd|rd|th)\s+\S*\s*album(.*)$", album, re.IGNORECASE)
-        # if m:
-        #     group = m.group(1).strip()
-        #     if group:
-        #         album = group
-        #
-        # m = re.match("^(.*?)\s*[-:] (?:the)?\s*[0-9](?:st|nd|rd|th)\s+\S*\s*album\s*(?:repackage)?$", album, re.IGNORECASE)
-        # if m:
-        #     group = m.group(1).strip()
-        #     if group:
-        #         album = group
-
         return album
 
     @cached_property
