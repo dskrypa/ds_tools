@@ -1,5 +1,6 @@
 beautifulsoup4>=4.7.1
 bs4>=0.0.1
+cachetools>=3.0.0
 certifi>=2018.11.29
 chardet>=3.0.4
 Click>=7.0
@@ -10,6 +11,7 @@ Flask>=1.0.2
 Flask-SocketIO>=3.3.2
 Flask-SQLAlchemy>=2.3.2
 fuzzywuzzy>=0.17.0
+googletrans>=2.4.0
 grapheme>=0.4.0
 greenlet>=0.4.15
 idna>=2.8
