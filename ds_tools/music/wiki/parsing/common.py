@@ -46,8 +46,11 @@ def find_href(client, anchors, texts, categories):
         if a.text and a.text.strip().lower() in lc_texts:
             href = a.get('href') or ''
             href = href[6:] if href.startswith('/wiki/') else href
-            if href and 'redlink=1' not in href and client.is_any_category(href, categories):
-                return href
+            if href and 'redlink=1' not in href:
+                if href.startswith('http'):
+                    client = client.for_site(href)
+                if client.is_any_category(href, categories):
+                    return href
     return None
 
 

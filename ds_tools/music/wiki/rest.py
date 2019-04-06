@@ -62,6 +62,8 @@ class WikiClient(RestClient):
 
     @classmethod
     def for_site(cls, site):
+        if site.startswith('http'):
+            site = urlparse(site).hostname
         try:
             return cls._sites[site]()
         except KeyError as e:
@@ -141,6 +143,10 @@ class WikiClient(RestClient):
     def is_any_category(self, uri_path, categories):
         if isinstance(categories, str):
             categories = (categories,)
+        if uri_path.startswith('http'):
+            uri_path = urlparse(uri_path).path
+        if uri_path.startswith((self.path_prefix, '/' + self.path_prefix)):
+            uri_path = uri_path[len(self.path_prefix)+1:]
         raw, cats = self.get_entity_base(uri_path)
         return get_page_category(uri_path, cats, no_debug=True) in categories
 
