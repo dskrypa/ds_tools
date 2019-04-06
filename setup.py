@@ -15,5 +15,5 @@ setup(
     packages=find_packages(),
     classifiers=['Programming Language :: Python :: 3'],
     python_requires='~=3.5',
-    install_requires=requirements
+    install_requires=['wheel'] + requirements
 )
