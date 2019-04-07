@@ -12,7 +12,7 @@ sys.path.append(BASE_DIR)
 from ds_tools.logging import LogManager
 from ds_tools.concurrency.ipc_process import InvalidRequest, IpcConnection, RequestType, WorkerProcess
 
-log = logging.getLogger("ds_tools.{}".format(__name__))
+log = logging.getLogger('ds_tools.{}'.format(__name__))
 
 
 class IpcTester(unittest.TestCase):
@@ -56,7 +56,7 @@ class IpcTester(unittest.TestCase):
         self.assertFalse(proc.is_alive())
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     try:
         unittest.main(warnings='ignore', verbosity=2, exit=False)
     except KeyboardInterrupt:

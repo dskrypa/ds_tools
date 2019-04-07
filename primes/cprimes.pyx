@@ -1,4 +1,3 @@
-
 """
 Rebuild:
 ./setup.py build_ext --inplace && cython -a ./cprimes.pyx
@@ -43,19 +42,19 @@ def chunked_indexes(int seq_len, int n):
 #
 #     def is_prime(self, n):
 #         if n > 2**32-1:
-#             print("Using 32 bit integers")
+#             print('Using 32 bit integers')
 #             return self.pf32.is_prime(n)
-#         print("Using 64 bit integers")
+#         print('Using 64 bit integers')
 #         return self.pf64.is_prime(n)
 
 
 class PrimeFinder32:
     """Prime finder using unsigned long (32 bit integer)"""
     def __init__(self, cache_file=None):
-        self.primes = array("L")    # unsigned long (32 bit)
+        self.primes = array('L')    # unsigned long (32 bit)
         if cache_file is not None:
             if os.path.exists(cache_file):
-                with gzip.open(cache_file, "rb") as f:
+                with gzip.open(cache_file, 'rb') as f:
                     self.primes.frombytes(f.read())
         if not self.primes:
             self.primes.extend(PRIMES)
@@ -63,7 +62,7 @@ class PrimeFinder32:
         self.values_checked = 0
 
     def save(self, save_path):
-        with gzip.open(save_path, "wb") as f:
+        with gzip.open(save_path, 'wb') as f:
             f.write(self.primes.tobytes())
 
     def next_prime(self):
@@ -180,10 +179,10 @@ class PrimeFinder32:
 class PrimeFinder64:
     """Prime finder using unsigned long long (64 bit integer)"""
     def __init__(self, cache_file=None):
-        self.primes = array("Q")  # unsigned long long (64 bit)
+        self.primes = array('Q')  # unsigned long long (64 bit)
         if cache_file is not None:
             if os.path.exists(cache_file):
-                with gzip.open(cache_file, "rb") as f:
+                with gzip.open(cache_file, 'rb') as f:
                     self.primes.frombytes(f.read())
         if not self.primes:
             self.primes.extend(PRIMES)
@@ -191,7 +190,7 @@ class PrimeFinder64:
         self.values_checked = 0
 
     def save(self, save_path):
-        with gzip.open(save_path, "wb") as f:
+        with gzip.open(save_path, 'wb') as f:
             f.write(self.primes.tobytes())
 
     def next_prime(self):
@@ -309,5 +308,5 @@ class TooFewPrimesKnown(Exception):
     """Exception to be raised when too few primes are known - only meant to be used internally"""
     def __init__(self, last, n, i):
         self.last = last
-        fmt = "Too few primes known to determine primality of sqrt({:,d})+1 = {:,d} via pure sieve; last known prime: {:,d}"
+        fmt = 'Too few primes known to determine primality of sqrt({:,d})+1 = {:,d} via pure sieve; last known prime: {:,d}'
         print(fmt.format(n, last, i))

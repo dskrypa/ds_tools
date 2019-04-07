@@ -6,15 +6,15 @@ from Cython.Distutils import build_ext
 import numpy
 
 setup(
-    cmdclass={"build_ext": build_ext},
+    cmdclass={'build_ext': build_ext},
     ext_modules=[
         Extension(
-            "cprimes",
-            sources=["cprimes.pyx"],
+            'cprimes',
+            sources=['cprimes.pyx'],
             include_dirs=[numpy.get_include()],
-            # extra_compile_args=["/openmp"],
-            # extra_link_args=["/openmp"]
-            # libraries=["m"]
+            # extra_compile_args=['/openmp'],
+            # extra_link_args=['/openmp']
+            # libraries=['m']
         )
     ]
 )

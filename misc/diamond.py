@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 import sys
 
@@ -12,16 +11,16 @@ def diamond():
 
     :return: Generator that yields lines (str) from stdin or the files with the names in sys.argv
     """
-    nlstrip = lambda s: s.rstrip("\n")
+    nlstrip = lambda s: s.rstrip('\n')
 
     if len(sys.argv) == 1:
         yield from map(nlstrip, sys.stdin.readlines())
     else:
         for file in sys.argv[1:]:
-            if file == "-":
+            if file == '-':
                 yield from map(nlstrip, sys.stdin.readlines())
             else:
-                with open(file, "r") as f:
+                with open(file, 'r') as f:
                     yield from map(nlstrip, f.readlines())
 
 
@@ -30,5 +29,5 @@ def test_diamond():
         print(line)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     test_diamond()
