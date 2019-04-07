@@ -13,25 +13,21 @@ from fnmatch import fnmatch
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
-from weakref import WeakValueDictionary
 
 # import acoustid
 import mutagen
 import mutagen.id3._frames
-from fuzzywuzzy import fuzz
-from mutagen.id3 import ID3, TDRC, TIT2, TALB, TPE1, POPM
-from mutagen.id3._frames import Frame, TextFrame
-from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
+from mutagen.id3 import ID3, TDRC, POPM
+# from mutagen.id3._frames import Frame, TextFrame
+from mutagen.mp4 import MP4Tags
 
-from ..caching import cached, DBCache, CacheKey, ClearableCachedPropertyMixin
-from ..core import cached_property, get_user_cache_dir, format_duration
+from ..caching import ClearableCachedPropertyMixin
+from ..core import cached_property, format_duration
 from ..http import CodeBasedRestException
 from ..unicode import contains_hangul
-# from ..utils import ParentheticalParser
 from .patches import tag_repr
-from .name_processing import split_names
+from .name_processing import split_names, split_name
 from .wiki import WikiArtist, WikiEntityIdentificationException, KpopWikiClient
-# from .wiki.old import Artist, CollaborationSong, split_name
 
 __all__ = [
     "SongFile", "FakeMusicFile", "iter_music_files", "load_tags", "iter_music_albums",
@@ -1030,139 +1026,6 @@ class SongFile(ClearableCachedPropertyMixin):
             else:
                 self.wiki_scores["song"] = score
                 return track
-
-    @cached_property
-    def wiki_artist_old(self):
-        eng, han = None, None
-        try:
-            eng, han = split_name(self.tag_artist, is_artist=True)
-        except ValueError as e:
-            ap = self._artist_path
-            if ap and "," in self.tag_artist:
-                try:
-                    artists = map(split_name, map(str.strip, self.tag_artist.split(",")))
-                except Exception as e1:
-                    pass
-                else:
-                    lc_artist_dir = ap.name.lower()
-                    for _eng, _han in artists:
-                        if _eng.lower() in lc_artist_dir:
-                            eng, han = _eng, _han
-                            log.warning("Using artist {!r} instead of {!r} for {}".format(eng, self.tag_artist, self), extra={"color": "cyan"})
-                            break
-            if not eng:
-                log.error("Error splitting into eng+han: {!r} [for {}]".format(self.tag_artist, self))
-                return None
-        else:
-            if not eng:
-                return None
-
-        lc_eng = eng.lower()
-        collab_indicators = ("and", "&", "feat", ",")
-        if any(i in lc_eng for i in collab_indicators):
-            for lc_artist in sorted(Artist.known_artist_names()):
-                if lc_artist in lc_eng:
-                    log.warning("Using artist {!r} instead of {!r} for {}".format(lc_artist, eng, self), extra={"color": "cyan"})
-                    return Artist(lc_artist)
-
-        try:
-            return Artist(eng)
-        except CodeBasedRestException as e:
-            m = re.match("^(.*?)\s*\((.*)\)$", eng)
-            if m:
-                name = m.group(1).strip().lower()
-                group_name = m.group(2).strip()
-                try:
-                    group = Artist(group_name)
-                except CodeBasedRestException as e2:
-                    log.error("Error retrieving information from wiki about artist {!r} for {}: {}".format(group_name, self, e))
-                else:
-                    for member in group.members:
-                        if isinstance(member, Artist) and member.english_name.lower() == name:
-                            return member
-
-            log.error("Error retrieving information from wiki about artist {!r} for {}: {}".format(eng, self, e))
-            return None
-        except Exception as e:
-            log.error("Error processing {}: {}\n{}".format(self, e, traceback.format_exc()))
-            return None
-
-    @cached_property
-    def wiki_album_old(self):
-        self.wiki_scores["album"] = -1
-        try:
-            artist = self.wiki_artist
-            album, score = artist._find_album(self.album_name_cleaned) if artist else (None, -1)
-            if album:
-                if score < 100:
-                    song, song_score = artist._find_song(self.tag_title, album=album)
-                    if not song:
-                        log.debug("{} was a match for album {} with score {}, but the song title did not match a song in that album".format(self, album, score))
-                    else:
-                        self.wiki_scores["album"] = score
-                        return album
-                else:
-                    self.wiki_scores["album"] = score
-                    return album
-
-            if artist:
-                song, song_score = artist._find_song(self.tag_title)
-                if song:
-                    try:
-                        album_score = fuzz.token_sort_ratio(song.album.title, self.album_name_cleaned, force_ascii=False)
-                    except AttributeError as e:
-                        pass                        # If it was a CollaborationSong
-                    else:
-                        if album_score < 60:
-                            log.debug("{} was a match for song {} with score {}, but the album title did not match closely enough ({})".format(self, song, song_score, album_score))
-                            return None
-
-                    self.__dict__["wiki_song"] = song
-                    self.wiki_scores["song"] = song_score
-                    try:
-                        album = song.album
-                    except AttributeError as e:
-                        return None                 # It's a CollaborationSong
-                    log.debug("Matched {} to {} via song".format(self, album))
-                    return album
-
-            msg = "Unable to match album {!r} for {}".format(self.album_name_cleaned, self)
-            lc_name = self.album_name_cleaned.lower()
-            if any(val in lc_name for val in ("ost", "soundtrack", "part", "episode")):
-                log.debug(msg)
-            else:
-                log.warning(msg)
-            return None
-        except Exception as e:
-            log.error("Encountered {} while trying to find wiki album for {}: {}\n{}".format(type(e).__name__, self, e, traceback.format_exc()))
-            raise e
-
-    @cached_property
-    def wiki_song_old(self):
-        self.wiki_scores["song"] = -1
-        artist = self.wiki_artist
-        # noinspection PyTypeChecker
-        track = self.tag_text("track", default=None)
-        if track:
-            if "/" in track:
-                track = track.split("/")[0].strip()
-            if "," in track:
-                track = track.split(",")[0].strip()
-            if track.startswith("("):
-                track = track[1:].strip()
-        try:
-            song, score = artist._find_song(self.tag_title, album=self.wiki_album, track=track) if artist else (None, -1)
-        except Exception as e:
-            log.error("Encountered {} while processing {}: {}".format(type(e).__name__, self, e))
-            raise e
-        else:
-            if song and not self.wiki_album and not isinstance(song, CollaborationSong):
-                fmt = "Song {} on album {} was closest to {}, but it is not a CollaborationSong, and no album-level match was found"
-                log.debug(fmt.format(song, song.album, self))
-                return None
-
-            self.wiki_scores["song"] = score
-            return song
 
     @cached_property
     def wiki_expected_rel_path(self):
