@@ -45,7 +45,7 @@ SYNONYM_SETS = [{'and', '&', '+'}, {'version', 'ver.'}]
 def normalize_href(href):
     if not href:
         return None
-    href = href[6:] if href.startswith("/wiki/") else href
+    href = href[6:] if href.startswith('/wiki/') else href
     return None if 'redlink=1' in href else href
 
 

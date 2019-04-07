@@ -27,7 +27,7 @@ AMBIGUOUS_URI_PATH_TEXT = [
     'This disambiguation page lists articles associated with'
 ]
 JUNK_CHARS = string.whitespace + string.punctuation
-STRIP_TBL = str.maketrans({c: "" for c in JUNK_CHARS})
+STRIP_TBL = str.maketrans({c: '' for c in JUNK_CHARS})
 
 
 def http_req_cache_key(self, endpoint, *args, **kwargs):
@@ -229,7 +229,7 @@ class WikipediaClient(WikiClient):
         cat_ul = cat_links.find('ul') if cat_links else None
         cats = {li.text.lower() for li in cat_ul.find_all('li')} if cat_ul else set()
         cat = get_page_category(uri_path, cats, no_debug=True)
-        if cat is None and re.search('For other uses, see.*?\(disambiguation\)', raw, re.IGNORECASE):
+        if cat is None and re.search(r'For other uses, see.*?\(disambiguation\)', raw, re.IGNORECASE):
             raise AmbiguousEntityException(uri_path, raw, obj_type)
         return raw, cats
 
@@ -272,7 +272,7 @@ class WikipediaClient(WikiClient):
         soup = soupify(resp.text, parse_only=bs4.SoupStrainer('ul', class_='mw-search-results'))
         for a in soup.find_all('a'):
             if a.text.translate(STRIP_TBL).lower() == clean_title:
-                href = a.get('href') or ""
+                href = a.get('href') or ''
                 if href and 'redlink=1' not in href:
                     return href[6:] if href.startswith('/wiki/') else href
         return None
@@ -283,7 +283,7 @@ class DramaWikiClient(WikiClient):
 
     def __init__(self):
         if not getattr(self, '_DramaWikiClient__initialized', False):
-            super().__init__(prefix="")
+            super().__init__(prefix='')
             self.__initialized = True
 
     @cached(True)
@@ -328,7 +328,7 @@ class DramaWikiClient(WikiClient):
         for a in soup.find_all('a'):
             clean_a = a.text.translate(STRIP_TBL).lower()
             if clean_a == clean_title or clean_title in clean_a:
-                href = a.get('href') or ""
+                href = a.get('href') or ''
                 if href and 'redlink=1' not in href:
                     return href
 
