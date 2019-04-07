@@ -87,25 +87,25 @@ from bs4 import BeautifulSoup, DEFAULT_OUTPUT_ENCODING
 from bs4.element import AttributeValueWithCharsetSubstitution, EntitySubstitution, NavigableString, Tag, PageElement
 from requests import Response
 
-__all__ = ["soupify", "fix_html_prettify", "HtmlSoup"]
+__all__ = ['soupify', 'fix_html_prettify', 'HtmlSoup']
 
 log = logging.getLogger(__name__)
 
-_regex_pattern_type = type(re.compile(""))
+_regex_pattern_type = type(re.compile(''))
 
 
-def soupify(html, mode="lxml", *args, **kwargs):
+def soupify(html, mode='lxml', *args, **kwargs):
     if not isinstance(html, str):
         try:
             html = html.text
         except AttributeError as e:
-            raise TypeError("Only strings or Requests library response objects are supported") from e
+            raise TypeError('Only strings or Requests library response objects are supported') from e
     return BeautifulSoup(html, mode, *args, **kwargs)
 
 
 def fix_html_prettify():
     """
-    Monkey-patch key components of BeautifulSoup 4 to cause ``soup.prettify(formatter="html")`` to produce better
+    Monkey-patch key components of BeautifulSoup 4 to cause ``soup.prettify(formatter='html')`` to produce better
     results
     """
     PageElement.decode = decode
@@ -129,13 +129,13 @@ def _should_skip(content, match_value):
 
 
 class HtmlSoup:
-    def __init__(self, content, mode="html.parser"):
+    def __init__(self, content, mode='html.parser'):
         if isinstance(content, Response):
             content = content.text
         if isinstance(content, str):
             content = BeautifulSoup(content, mode)
         if not isinstance(content, BeautifulSoup):
-            raise TypeError("Unexpected HTML content type: {}".format(type(content).__name__))
+            raise TypeError('Unexpected HTML content type: {}'.format(type(content).__name__))
 
         self.soup = content
 
@@ -146,18 +146,18 @@ class HtmlSoup:
         All filter values may be provided as a bool / str / compiled regex pattern / iterable / container / callable.
         """
         filters = OrderedDict((
-            ("scheme", scheme), ("hostname", host), ("path", path), ("query", query), ("fragment", fragment)
+            ('scheme', scheme), ('hostname', host), ('path', path), ('query', query), ('fragment', fragment)
         ))
 
-        for a in self.soup.find_all("a"):
-            a_href = a.get("href")
+        for a in self.soup.find_all('a'):
+            a_href = a.get('href')
             if (href is not None) and _should_skip(a_href, href):
                 continue
             elif any(val is not None for val in filters.values()):
                 try:
                     url = urlparse(a_href)
                 except Exception as e:
-                    log.error("Unable to parse URL from href in anchor: {}".format(a))
+                    log.error('Unable to parse URL from href in anchor: {}'.format(a))
                     continue
 
                 skip = False
@@ -174,17 +174,17 @@ class HtmlSoup:
 
     def hrefs(self, *args, **kwargs):
         for a in self.links(*args, **kwargs):
-            yield a["href"]
+            yield a['href']
 
     def urls(self, *args, **kwargs):
         for a in self.links(*args, **kwargs):
-            yield urlparse(a["href"])
+            yield urlparse(a['href'])
 
 
 # Monkey patches for formatting BeautifulSoup objects back into HTML follow ============================================
 
 
-def decode(self, indent_level=None, eventual_encoding=DEFAULT_OUTPUT_ENCODING, formatter="minimal"):
+def decode(self, indent_level=None, eventual_encoding=DEFAULT_OUTPUT_ENCODING, formatter='minimal'):
     """Returns a Unicode representation of this tag and its contents.
 
     :param eventual_encoding: The tag is destined to be encoded into this encoding. This method is _not_ responsible
@@ -202,31 +202,31 @@ def decode(self, indent_level=None, eventual_encoding=DEFAULT_OUTPUT_ENCODING, f
                 decoded = key
             else:
                 if isinstance(val, list) or isinstance(val, tuple):
-                    val = " ".join(val)
+                    val = ' '.join(val)
                 elif not isinstance(val, str):
                     val = str(val)
                 elif isinstance(val, AttributeValueWithCharsetSubstitution) and eventual_encoding is not None:
                     val = val.encode(eventual_encoding)
 
                 text = self.format_string(val, formatter)
-                decoded = str(key) + "=" + EntitySubstitution.quoted_attribute_value(text)
+                decoded = str(key) + '=' + EntitySubstitution.quoted_attribute_value(text)
             attrs.append(decoded)
 
-    close, closeTag, prefix, space, indent_space = "", "", "", "", ""
+    close, closeTag, prefix, space, indent_space = '', '', '', '', ''
 
     if self.prefix:
-        prefix = self.prefix + ":"
+        prefix = self.prefix + ':'
 
     if self.is_empty_element:
-        close = "/"
+        close = '/'
     else:
-        closeTag = "</%s%s>" % (prefix, self.name)
+        closeTag = '</%s%s>' % (prefix, self.name)
 
     pretty_print = self._should_pretty_print(indent_level)
     has_nested = any(isinstance(c, Tag) for c in self)
 
     if indent_level is not None:
-        indent_space = "    " * (indent_level - 1)
+        indent_space = '    ' * (indent_level - 1)
 
     if pretty_print:
         space = indent_space
@@ -245,21 +245,21 @@ def decode(self, indent_level=None, eventual_encoding=DEFAULT_OUTPUT_ENCODING, f
             # Even if this particular tag is not pretty-printed, we should indent up to the start of the tag.
             s.append(indent_space)
 
-        attribute_string = ""
+        attribute_string = ''
         if attrs:
-            attribute_string = " " + " ".join(attrs)
-        s.append("<%s%s%s%s>" % (prefix, self.name, attribute_string, close))
+            attribute_string = ' ' + ' '.join(attrs)
+        s.append('<%s%s%s%s>' % (prefix, self.name, attribute_string, close))
         if close:
-            s.append("\n")
+            s.append('\n')
 
         if has_nested and pretty_print:
-            s.append("\n")
+            s.append('\n')
 
         s.append(contents)
 
         if has_nested and pretty_print:
-            if contents and contents[-1] != "\n":
-                s.append("\n")
+            if contents and contents[-1] != '\n':
+                s.append('\n')
             if closeTag:
                 s.append(space)
         s.append(closeTag)
@@ -267,12 +267,12 @@ def decode(self, indent_level=None, eventual_encoding=DEFAULT_OUTPUT_ENCODING, f
         if indent_level is not None and closeTag and self.next_sibling:
             # Even if this particular tag is not pretty-printed, we're now done with the tag, and we should add a
             # newline if appropriate.
-            s.append("\n")
-        s = "".join(s)
+            s.append('\n')
+        s = ''.join(s)
     return s
 
 
-def decode_contents(self, indent_level=None, eventual_encoding=DEFAULT_OUTPUT_ENCODING, formatter="minimal"):
+def decode_contents(self, indent_level=None, eventual_encoding=DEFAULT_OUTPUT_ENCODING, formatter='minimal'):
     """Renders the contents of this tag as a Unicode string.
 
     :param indent_level: Each line of the rendering will be indented this many spaces.
@@ -293,12 +293,12 @@ def decode_contents(self, indent_level=None, eventual_encoding=DEFAULT_OUTPUT_EN
             text = c.output_ready(formatter)
         elif isinstance(c, Tag):
             s.append(c.decode(indent_level, eventual_encoding, formatter))
-        if text and indent_level and not self.name == "pre":
+        if text and indent_level and not self.name == 'pre':
             text = text.strip()
         if text:
-            if pretty_print and not self.name == "pre":
-                s.append("    " * (indent_level - 1))
+            if pretty_print and not self.name == 'pre':
+                s.append('    ' * (indent_level - 1))
             s.append(text)
-            if pretty_print and not self.name == "pre":
-                s.append("\n")
-    return "".join(s)
+            if pretty_print and not self.name == 'pre':
+                s.append('\n')
+    return ''.join(s)

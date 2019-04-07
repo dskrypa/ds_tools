@@ -15,13 +15,13 @@ from io import StringIO
 from .core import kwmerge
 from .output import to_str
 
-__all__ = ["exec_local", "exec_via_ssh", "tee", "psg", "ExternalProcessException"]
+__all__ = ['exec_local', 'exec_via_ssh', 'tee', 'psg', 'ExternalProcessException']
 log = logging.getLogger(__name__)
 
-SSH = "/usr/bin/ssh"
+SSH = '/usr/bin/ssh'
 
 
-def exec_local(*cmd, mode="capture", raise_nonzero=False, debug=False, pybuf=False, env=None):
+def exec_local(*cmd, mode='capture', raise_nonzero=False, debug=False, pybuf=False, env=None):
     """
     Execute a shell command in a subprocess
 
@@ -37,47 +37,47 @@ def exec_local(*cmd, mode="capture", raise_nonzero=False, debug=False, pybuf=Fal
     if (len(cmd) == 1) and not isinstance(cmd, str):
         cmd = cmd[0]
     cmd_arr = list(map(str, cmd)) if not isinstance(cmd, str) else shlex.split(cmd)
-    cmd_str = " ".join(map(str, cmd_arr))
-    log.debug("Executing: {}".format(cmd_str))
+    cmd_str = ' '.join(map(str, cmd_arr))
+    log.debug('Executing: {}'.format(cmd_str))
 
-    proc_env = kwmerge(os.environ, env, PYTHONUNBUFFERED="1" if not pybuf else "0")
+    proc_env = kwmerge(os.environ, env, PYTHONUNBUFFERED='1' if not pybuf else '0')
 
-    if mode == "raw":
+    if mode == 'raw':
         p = Popen(cmd_arr, env=proc_env)
         stdout, stderr = None, None
-    elif mode == "capture":
+    elif mode == 'capture':
         p = Popen(cmd_arr, stdout=PIPE, stderr=PIPE, env=proc_env)
         stdout, stderr = p.communicate()
-    elif mode == "combined":
+    elif mode == 'combined':
         p = Popen(cmd_arr, stdout=PIPE, stderr=STDOUT, env=proc_env)
         stdout, stderr = p.communicate()    # stderr will be None
-    elif mode == "tee":
+    elif mode == 'tee':
         p = Popen(cmd_arr, stdout=PIPE, stderr=PIPE, env=proc_env)
         outstr, errstr = StringIO(), StringIO()
         for t in [tee(p.stdout, outstr, sys.stdout), tee(p.stderr, errstr, sys.stderr)]:
             t.join()
         stdout, stderr = outstr.getvalue(), errstr.getvalue()
-    elif mode == "binary":
+    elif mode == 'binary':
         p = Popen(cmd_arr, stdout=PIPE, stderr=PIPE, env=proc_env)
         stdout, stderr = p.communicate()
         exit_code = p.wait()
         if raise_nonzero and exit_code != 0:
-            streams = {"stdout": stdout, "stderr": stderr}
-            raise ExternalProcessException("`{}` exited with code {}".format(cmd_str, exit_code), streams)
+            streams = {'stdout': stdout, 'stderr': stderr}
+            raise ExternalProcessException('`{}` exited with code {}'.format(cmd_str, exit_code), streams)
         return exit_code, stdout, stderr
     else:
-        raise ValueError("Invalid exec_local output handling mode: {}".format(mode))
+        raise ValueError('Invalid exec_local output handling mode: {}'.format(mode))
     exit_code = p.wait()
 
     stdout = to_str(stdout)
     stderr = to_str(stderr)
 
     if debug:
-        log.debug("`{}` exited with code {}\n\tstdout: {}\n\tstderr: {}".format(cmd_str, exit_code, stdout, stderr))
+        log.debug('`{}` exited with code {}\n\tstdout: {}\n\tstderr: {}'.format(cmd_str, exit_code, stdout, stderr))
 
     if raise_nonzero and exit_code != 0:
-        streams = {"stdout": stdout, "stderr": stderr}
-        raise ExternalProcessException("`{}` exited with code {}".format(cmd_str, exit_code), streams)
+        streams = {'stdout': stdout, 'stderr': stderr}
+        raise ExternalProcessException('`{}` exited with code {}'.format(cmd_str, exit_code), streams)
     return exit_code, stdout, stderr
 
 
@@ -95,14 +95,14 @@ def exec_via_ssh(host, *args, no_host_check=False, **kwargs):
     if not no_host_check and socket.gethostname() == host:
         return exec_local(*args, **kwargs)
 
-    cmd = " ".join(map(str, args))
-    cmd_args = [SSH, host, "-q", "-o", "UserKnownHostsFile=/dev/null", "-o", "StrictHostKeyChecking=no", cmd]
+    cmd = ' '.join(map(str, args))
+    cmd_args = [SSH, host, '-q', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'StrictHostKeyChecking=no', cmd]
     return exec_local(*cmd_args, **kwargs)
 
 
 def tee(in_pipe, *out_pipes):
     def _tee(in_pipe, *out_pipes):
-        for line in iter(in_pipe.readline, b""):
+        for line in iter(in_pipe.readline, b''):
             for p in out_pipes:
                 p.write(to_str(line))
                 if (p is sys.stdout) or (p is sys.stderr):
@@ -115,10 +115,10 @@ def tee(in_pipe, *out_pipes):
 
 
 def psg(search_term):
-    exit_code, stdout, stderr = exec_local("ps", "-efww")
+    exit_code, stdout, stderr = exec_local('ps', '-efww')
     raw_lines = list(map(str.strip, stdout.splitlines()))
-    lines = [line for line in raw_lines[1:] if (search_term in line) and not line.endswith("ps -efww")]
-    psg_rx = re.compile("(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)")
+    lines = [line for line in raw_lines[1:] if (search_term in line) and not line.endswith('ps -efww')]
+    psg_rx = re.compile(r'(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)')
     psg_fields = raw_lines[0].split()
     return [dict(zip(psg_fields, psg_rx.match(line).groups())) for line in lines]
 

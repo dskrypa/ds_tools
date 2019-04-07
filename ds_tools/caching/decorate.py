@@ -30,7 +30,7 @@ from ..core import (
 from .caches import DBCache
 from .exceptions import CacheLockWarning
 
-__all__ = ["cached", "CacheKey", "disk_cached"]
+__all__ = ['cached', 'CacheKey', 'disk_cached']
 log = logging.getLogger(__name__)
 
 
@@ -85,7 +85,7 @@ def cached(cache=True, *, key=None, lock=None, optional=None, default=True, meth
       exception is too complex, unpickling from a DB-based cache may not be possible.
     :return: The decorated function / method
     """
-    optional = "use_cached" if optional is True else optional
+    optional = 'use_cached' if optional is True else optional
     method = True if isinstance(cache, (attrgetter, str)) else method
     if lock is True:
         lock_type = RLock
@@ -238,24 +238,24 @@ def cached(cache=True, *, key=None, lock=None, optional=None, default=True, meth
         wrapper = update_wrapper(wrapper, func)
         if optional:    # insert the param and docstring in the wrapper, not the original function
             new_param = Parameter(optional, Parameter.KEYWORD_ONLY, default=default)
-            description = "Use cached return values for previously used arguments if they exist"
-            insert_kwonly_arg(wrapper, new_param, description, "bool", sig=sig)
+            description = 'Use cached return values for previously used arguments if they exist'
+            insert_kwonly_arg(wrapper, new_param, description, 'bool', sig=sig)
         return wrapper
     return decorator
 
 
-def disk_cached(prefix="/var/tmp/script_cache/", ext=None, date_fmt="%Y-%m-%d", compress=True):
+def disk_cached(prefix='/var/tmp/script_cache/', ext=None, date_fmt='%Y-%m-%d', compress=True):
     open_func = gzip.open if compress else open
-    ext = ext or ("json.gz" if compress else "json")
+    ext = ext or ('json.gz' if compress else 'json')
 
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            if prefix.endswith("/"):
-                cache_file_base = "{}{}_{}_".format(prefix, func.__name__, getuser())
+            if prefix.endswith('/'):
+                cache_file_base = '{}{}_{}_'.format(prefix, func.__name__, getuser())
             else:
-                cache_file_base = "{}_{}_".format(prefix, getuser())
-            cache_file = cache_file_base + "{}.{}".format(now(date_fmt), ext)
+                cache_file_base = '{}_{}_'.format(prefix, getuser())
+            cache_file = cache_file_base + '{}.{}'.format(now(date_fmt), ext)
             cache_dir = os.path.dirname(cache_file)
             validate_or_make_dir(cache_dir, permissions=0o17777)
 
@@ -263,22 +263,22 @@ def disk_cached(prefix="/var/tmp/script_cache/", ext=None, date_fmt="%Y-%m-%d", 
             with suppress(ValueError):
                 existing_files.remove(cache_file)
 
-            for file_path in fnmatch.filter(existing_files, cache_file_base + "*"):
+            for file_path in fnmatch.filter(existing_files, cache_file_base + '*'):
                 try:
                     if os.path.isfile(file_path):
-                        log.debug("Deleting old cache file: {}".format(file_path))
+                        log.debug('Deleting old cache file: {}'.format(file_path))
                         os.remove(file_path)
                 except OSError as e:
-                    log.debug("Error deleting old cache file {}: [{}] {}".format(file_path, type(e).__name__, e))
+                    log.debug('Error deleting old cache file {}: [{}] {}'.format(file_path, type(e).__name__, e))
 
             # Note: rb/wb and to_str/to_bytes are used below to handle reading/writing gzip files
             if os.path.exists(cache_file):
-                with open_func(cache_file, "rb") as f:
-                    return json.loads(f.read().decode("utf-8"))
+                with open_func(cache_file, 'rb') as f:
+                    return json.loads(f.read().decode('utf-8'))
 
             resp = func(*args, **kwargs)
-            with open_func(cache_file, "wb") as f:
-                f.write(json.dumps(resp, indent=4, sort_keys=True, cls=PermissiveJSONEncoder).encode("utf-8"))
+            with open_func(cache_file, 'wb') as f:
+                f.write(json.dumps(resp, indent=4, sort_keys=True, cls=PermissiveJSONEncoder).encode('utf-8'))
             return resp
         return wrapper
     return decorator
@@ -299,7 +299,7 @@ class CacheKey:
     This class should not be instantiated directly - use the :func:`CacheKey.simple` and :func:`CacheKey.typed`
     classmethods as key functions.
     """
-    __slots__ = ("_hash", "_vals")
+    __slots__ = ('_hash', '_vals')
     _kwmark = (object(),)
 
     def __init__(self, tup):
@@ -348,4 +348,4 @@ def is_lock(obj):
     :param obj: An object
     :return bool: True if the object appears to be a lock instance, False otherwise
     """
-    return hasattr(obj, "acquire") and hasattr(obj, "release")
+    return hasattr(obj, 'acquire') and hasattr(obj, 'release')

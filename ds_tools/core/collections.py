@@ -12,7 +12,7 @@ __all__ = ['DefaultOrderedDict']
 class DefaultOrderedDict(OrderedDict):
     def __init__(self, default_factory=None, *args, **kwargs):
         if (default_factory is not None) and (not isinstance(default_factory, Callable)):
-            raise TypeError("first argument must be callable")
+            raise TypeError('first argument must be callable')
         OrderedDict.__init__(self, *args, **kwargs)
         self.default_factory = default_factory
 

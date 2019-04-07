@@ -20,7 +20,7 @@ from .terminal import uprint, _uout, Terminal
 __all__ = ['Column', 'SimpleColumn', 'Table', 'TableBar']
 log = logging.getLogger(__name__)
 
-ANSI_COLOR_RX = re.compile("(\033\[\d+;?\d*;?\d*m)(.*)(\033\[\d+;?\d*;?\d*m)")
+ANSI_COLOR_RX = re.compile('(\033\[\d+;?\d*;?\d*m)(.*)(\033\[\d+;?\d*;?\d*m)')
 TERM = Terminal()
 
 
@@ -41,11 +41,11 @@ class Column:
     :param str title: Column header
     :param width: Width of this column (can auto-detect if passed values for this column)
     :param bool display: Include this column in output (default: True)
-    :param str align: String formatting alignment indicator (default: left; example: ">" for right)
-    :param str ftype: String formatting type/format indicator (default: none; example: ",d" for thousands indicator)
+    :param str align: String formatting alignment indicator (default: left; example: '>' for right)
+    :param str ftype: String formatting type/format indicator (default: none; example: ',d' for thousands indicator)
     """
 
-    def __init__(self, key, title, width, display=True, align="", ftype="", formatter=None):
+    def __init__(self, key, title, width, display=True, align='', ftype='', formatter=None):
         self.key = key
         self.title = str(title)
         self._width = 0
@@ -56,19 +56,19 @@ class Column:
         self.width = width
 
     def __repr__(self):
-        return "<{}('{}', '{}')>".format(type(self).__name__, self.key, self.title)
+        return '<{}({!r}, {!r})>'.format(type(self).__name__, self.key, self.title)
 
     @property
     def _test_fmt(self):
-        return "{{:{}{}}}".format(self.align, self.ftype)
+        return '{{:{}{}}}'.format(self.align, self.ftype)
 
     @property
     def row_fmt(self):
-        return "{{0[{}]:{}{}{}}}".format(self.key, self.align, self.width, self.ftype)
+        return '{{0[{}]:{}{}{}}}'.format(self.key, self.align, self.width, self.ftype)
 
     @property
     def header_fmt(self):
-        return "{{0[{}]:{}{}}}".format(self.key, self.align, self.width)
+        return '{{0[{}]:{}{}}}'.format(self.key, self.align, self.width)
 
     def format(self, value):
         orig_width = self._width
@@ -87,7 +87,7 @@ class Column:
                     col = self.header_fmt.format({self.key: value})
                 return self.formatter(value, col)
             else:
-                prefix, suffix = "", ""
+                prefix, suffix = '', ''
                 if isinstance(value, str):
                     m = ANSI_COLOR_RX.match(value)
                     if m:
@@ -97,7 +97,7 @@ class Column:
                 except ValueError:
                     return prefix + self.header_fmt.format({self.key: value}) + suffix
         except TypeError as e:
-            raise TableFormatException("column", self.row_fmt, value, e) from e
+            raise TableFormatException('column', self.row_fmt, value, e) from e
         finally:
             self._width = orig_width
 
@@ -111,9 +111,9 @@ class Column:
             self._width = max(self._calc_width(value), mono_width(self.title))
         except (ValueError, TypeError) as e:
             try:
-                raise ValueError("{}: Unable to determine width (likely no values were found)".format(self)) from e
+                raise ValueError('{}: Unable to determine width (likely no values were found)'.format(self)) from e
             except ValueError as e2:
-                raise ValueError("No results.") from e2
+                raise ValueError('No results.') from e2
 
     def _len(self, text):
         char_count = len(text)
@@ -143,11 +143,11 @@ class SimpleColumn(Column):
     :param str title: Column header & row key associated with this column
     :param width: Width of this column (can auto-detect if passed values for this column)
     :param bool display: Include this column in output (default: True)
-    :param str align: String formatting alignment indicator (default: left; example: ">" for right)
-    :param str ftype: String formatting type/format indicator (default: none; example: ",d" for thousands indicator)
+    :param str align: String formatting alignment indicator (default: left; example: '>' for right)
+    :param str ftype: String formatting type/format indicator (default: none; example: ',d' for thousands indicator)
     """
 
-    def __init__(self, title, width=0, display=True, align="", ftype="", formatter=None):
+    def __init__(self, title, width=0, display=True, align='', ftype='', formatter=None):
         super().__init__(title, title, width, display, align, ftype, formatter)
 
 
@@ -157,10 +157,10 @@ class TableBar:
 
 
 class Table:
-    def __init__(self, *columns, mode="table", auto_header=True, auto_bar=True, sort=False, sort_by=None,
+    def __init__(self, *columns, mode='table', auto_header=True, auto_bar=True, sort=False, sort_by=None,
                  update_width=False, fix_ansi_width=False):
-        if mode not in ("table", "csv"):
-            raise ValueError("Invalid output mode: {}".format(mode))
+        if mode not in ('table', 'csv'):
+            raise ValueError('Invalid output mode: {}'.format(mode))
         self.mode = mode
         self.columns = [c for c in columns if c.display]
         self.auto_header = auto_header
@@ -186,7 +186,7 @@ class Table:
 
     @cached_property
     def header_fmt(self):
-        return "  ".join(c.header_fmt for c in self.columns)
+        return '  '.join(c.header_fmt for c in self.columns)
 
     @cached_property
     def headers(self):
@@ -194,7 +194,7 @@ class Table:
 
     @cached_property
     def row_fmt(self):
-        return "  ".join(c.row_fmt for c in self.columns)
+        return '  '.join(c.row_fmt for c in self.columns)
 
     @cached_property
     def has_custom_formatter(self):
@@ -202,19 +202,19 @@ class Table:
 
     @cached_property
     def header_row(self):
-        if self.mode == "csv":
+        if self.mode == 'csv':
             return self.format_row(self.headers)
-        elif self.mode == "table":
+        elif self.mode == 'table':
             return self.header_fmt.format(self.headers)
 
     @cached_property
     def header_bar(self):
-        if self.mode == "table":
-            return "-" * len(self.header_row)
+        if self.mode == 'table':
+            return '-' * len(self.header_row)
         return None
 
     @classmethod
-    def auto_print_rows(cls, rows, header=True, bar=True, sort=False, sort_by=None, mode="table"):
+    def auto_print_rows(cls, rows, header=True, bar=True, sort=False, sort_by=None, mode='table'):
         if len(rows) < 1:
             return
         if isinstance(rows, dict):
@@ -226,7 +226,7 @@ class Table:
         tbl.print_rows(rows)
 
     @classmethod
-    def auto_format_rows(cls, rows, header=True, bar=True, sort=False, sort_by=None, mode="table"):
+    def auto_format_rows(cls, rows, header=True, bar=True, sort=False, sort_by=None, mode='table'):
         if len(rows) < 1:
             return
         if isinstance(rows, dict):
@@ -236,23 +236,23 @@ class Table:
         tbl = Table(*[Column(k, k, rows) for k in keys], mode=mode, sort=sort, sort_by=sort_by)
         output_rows = tbl.format_rows(rows)
         if header:
-            if bar and mode == "table":
+            if bar and mode == 'table':
                 output_rows.insert(0, tbl.header_bar)
             output_rows.insert(0, tbl.header_row)
         return output_rows
 
     def print_header(self, add_bar=True):
         self.auto_header = False
-        if self.mode == "csv":
+        if self.mode == 'csv':
             self.print_row(self.headers)
-        elif self.mode == "table":
+        elif self.mode == 'table':
             uprint(self.header_row.rstrip())
             if add_bar or self.auto_bar:
                 self.print_bar()
 
     def print_bar(self):
         self.auto_bar = False
-        if self.mode == "table":
+        if self.mode == 'table':
             uprint(self.header_bar[:TERM.width])
 
     def _csv_str(self, content):
@@ -277,33 +277,33 @@ class Table:
         :return str: The formatted row
         :raises TypeError: if one of the values has a type that is incompatible with the format string
         """
-        if self.mode == "csv":
+        if self.mode == 'csv':
             return self._csv_str(row_dict)
-        elif self.mode == "table":
+        elif self.mode == 'table':
             # Don't str() the row_dict[k] value! That will break type-specific format strings (e.g., int/float)
-            row = {k: row_dict[k] if row_dict[k] is not None else "" for k in self.keys}
+            row = {k: row_dict[k] if row_dict[k] is not None else '' for k in self.keys}
 
             if self.has_custom_formatter:
-                row_str = "  ".join(c.format(row[c.key]) for c in self.columns)
+                row_str = '  '.join(c.format(row[c.key]) for c in self.columns)
             else:
                 try:
                     row_str = self.row_fmt.format(row)
                     if self.fix_ansi_width and ANSI_COLOR_RX.search(row_str):
-                        row_str = "  ".join(c.format(row[c.key]) for c in self.columns)
+                        row_str = '  '.join(c.format(row[c.key]) for c in self.columns)
                 except TypeError as e:
-                    raise TableFormatException("row", self.row_fmt, row, e) from e
+                    raise TableFormatException('row', self.row_fmt, row, e) from e
                 except ValueError:
                     row_str = self.header_fmt.format(row)
                     if self.fix_ansi_width and ANSI_COLOR_RX.search(row_str):
-                        row_str = "  ".join(c.format(row[c.key]) for c in self.columns)
+                        row_str = '  '.join(c.format(row[c.key]) for c in self.columns)
             return row_str.rstrip()
 
     def print_row(self, row_dict, color=None):
         if self.auto_header:
             self.print_header()
-        if self.mode == "csv":
+        if self.mode == 'csv':
             self.csv_writer.writerow({k: row_dict[k] for k in self.keys})
-        elif self.mode == "table":
+        elif self.mode == 'table':
             if color is not None:
                 uprint(colored(self.format_row(row_dict), color))
             else:
@@ -318,19 +318,19 @@ class Table:
             try:
                 rows = sorted(rows, key=replacement_itemgetter(*sort_by, replacements={None: -1}))
             except TypeError:
-                rows = sorted(rows, key=replacement_itemgetter(*sort_by, replacements={None: ""}))
+                rows = sorted(rows, key=replacement_itemgetter(*sort_by, replacements={None: ''}))
         elif self.sort:
             rows = sorted(rows)
 
-        if self.mode == "csv":
+        if self.mode == 'csv':
             rows = [{k: row[k] for k in self.keys} for row in rows]
         return rows
 
     def format_rows(self, rows):
         rows = self.sorted(rows)
-        if self.mode == "csv":
+        if self.mode == 'csv':
             return list(self._csv_str(rows).splitlines())
-        elif self.mode == "table":
+        elif self.mode == 'table':
             return [self.format_row(row) for row in rows]
 
     def print_rows(self, rows):
@@ -342,9 +342,9 @@ class Table:
         if self.auto_header:
             self.print_header()
         try:
-            if self.mode == "csv":
+            if self.mode == 'csv':
                 self.csv_writer.writerows(rows)
-            elif self.mode == "table":
+            elif self.mode == 'table':
                 for row in rows:
                     if isinstance(row, TableBar) or row is TableBar:
                         self.print_bar()
@@ -356,7 +356,7 @@ class Table:
 
 
 def mono_width(text):
-    return wcswidth(normalize("NFC", text))
+    return wcswidth(normalize('NFC', text))
 
 
 class replacement_itemgetter:
@@ -365,7 +365,7 @@ class replacement_itemgetter:
     After f = itemgetter(2), the call f(r) returns r[2].
     After g = itemgetter(2, 5, 3), the call g(r) returns (r[2], r[5], r[3])
     """
-    __slots__ = ("_items", "_call", "_repl")
+    __slots__ = ('_items', '_call', '_repl')
 
     def __init__(self, item, *items, replacements=None):
         self._repl = replacements or {}

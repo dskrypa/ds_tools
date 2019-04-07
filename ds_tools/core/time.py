@@ -7,7 +7,7 @@ Library to facilitate working with timezone-aware datetimes
     timezone to reflect the new one.
 
     Example (with ways to fix it) - midnight on 2018-11-04 is in EDT, but 3 hours later is actually 2:00 EST::\n
-        >>> pre_dst = datetime_with_tz("2018-11-04 00:00:00 America/New_York")
+        >>> pre_dst = datetime_with_tz('2018-11-04 00:00:00 America/New_York')
         >>> pre_dst.strftime(DATETIME_FMT)
         '2018-11-04 00:00:00 EDT'
 

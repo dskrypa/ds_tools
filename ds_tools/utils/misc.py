@@ -29,7 +29,7 @@ class MatchHolder:
 >>> match = MatchHolder()
 >>> match
 MatchHolder(None)
->>> if match(re.search("some (string)", "some string")):
+>>> if match(re.search('some (string)', 'some string')):
 ...     dir(match)
 ...     match.groups()
 ...     match.span()
@@ -55,21 +55,21 @@ MatchHolder(<_sre.SRE_Match object; span=(0, 11), match='some string'>)
         return dir(self._match)
 
     def __repr__(self):
-        return "{}({})".format(type(self).__name__, repr(self._match))
+        return '{}({})'.format(type(self).__name__, repr(self._match))
 
 
 class PseudoJQ:
     ALL = (None,)
 
     def __init__(self, key_str, printer=None):
-        if not key_str.startswith("."):
-            raise ValueError("Invalid key string: {}".format(key_str))
+        if not key_str.startswith('.'):
+            raise ValueError('Invalid key string: {}'.format(key_str))
         try:
             self.keys = self.parse_keys(key_str)
         except Exception as e:
             if isinstance(e, KeyboardInterrupt):
                 raise e
-            raise ValueError("Invalid key string: {}".format(key_str))
+            raise ValueError('Invalid key string: {}'.format(key_str))
         self.p = printer
 
     @classmethod
@@ -78,20 +78,20 @@ class PseudoJQ:
 
     @classmethod
     def parse_keys(cls, key_str):
-        key_list = key_str.split(".")
+        key_list = key_str.split('.')
         keys = []
         for k in key_list[1:]:
-            if "[" in k:
-                subkeys = re.split("[\[\]]", k)
+            if '[' in k:
+                subkeys = re.split('[\[\]]', k)
                 keys.append(subkeys.pop(0))
-                if subkeys == ["", ""]:
+                if subkeys == ['', '']:
                     keys.append(cls.ALL)
                 else:
                     sk_list = []
-                    subkeys = subkeys[0].split(",")
+                    subkeys = subkeys[0].split(',')
                     for sk in subkeys:
-                        if "-" in sk:
-                            a, b = map(int, sk.split("-"))
+                        if '-' in sk:
+                            a, b = map(int, sk.split('-'))
                             sk_list.extend(range(a, b + 1))
                         else:
                             sk_list.append(int(sk))
@@ -112,7 +112,7 @@ class PseudoJQ:
             try:
                 return (self._extract(content[i], k) for i in key)
             except IndexError:
-                raise ValueError("One or more list indexes out of range: {}".format(key))
+                raise ValueError('One or more list indexes out of range: {}'.format(key))
         else:
             return self._extract(content[key], k)
 
@@ -127,13 +127,13 @@ def bracket_dict_to_list(obj):
 
     Example:
     'some_key_to_a_list':
-       - "[1]": value
-       - "[2]": value
+       - '[1]': value
+       - '[2]': value
 
     Translated to json, that's
-    {"some_key_to_a_list": [
-        {"[1]": value},
-        {"[2]": value}
+    {'some_key_to_a_list': [
+        {'[1]': value},
+        {'[2]': value}
     ]}
 
     Expected:
@@ -149,7 +149,7 @@ def bracket_dict_to_list(obj):
         if len(obj) < 1:
             return obj
         if functools.reduce(lambda a, b: a and b, [isinstance(v, dict) and (len(v) == 1) for v in obj]):
-            if functools.reduce(lambda a, b: a and b, [obj[i].keys()[0] == "[{}]".format(i) for i in range(len(obj))]):
+            if functools.reduce(lambda a, b: a and b, [obj[i].keys()[0] == '[{}]'.format(i) for i in range(len(obj))]):
                 return [v.values()[0] for v in obj]
         return [bracket_dict_to_list(v) for v in obj]
     else:
