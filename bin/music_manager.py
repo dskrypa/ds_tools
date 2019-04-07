@@ -78,7 +78,7 @@ def parser():
     sort_parser = parser.add_subparser('action', 'sort', help='Sort music into directories based on tag info')
     sort_parser.add_argument('path', help='A directory that contains directories that contain music files')
 
-    wiki_sort_parser = parser.add_subparser('action', 'wiki_sort', help='Sort music into directories based on tag info')
+    wiki_sort_parser = parser.add_subparser('action', 'wiki_sort', help='Cleanup & sort files based on the information found when matching them to artists / albums / songs in various wikis')
     wiki_sort_parser.add_argument('source', metavar='path', help='A directory that contains directories that contain music files')
     wiki_sort_parser.add_argument('destination', metavar='path', nargs='?', help='The destination directory for the top-level artist directories of the sorted files')
     wiki_sort_parser.add_argument('--allow_no_dest', '-N', action='store_true', help='Allow sorting to continue even if there are some files that do not have a new destination')
@@ -193,17 +193,14 @@ def match_wiki(path):
                 'File Album': music_file.album_name_cleaned,
                 'Wiki Album': music_file.wiki_album.name if music_file.wiki_album else "",
                 'File Alb Type': music_file.album_type_dir,
-                # 'Wiki Alb Type': music_file.wiki_album.type if music_file.wiki_album else "",
                 'Wiki Alb Type': music_file.wiki_album.album_type if music_file.wiki_album else "",
                 'AScore': music_file.wiki_scores.get('album', -1),
 
                 'File Title': music_file.tag_title,
-                # 'Wiki Title': music_file.wiki_song.file_title if music_file.wiki_song else "",
                 'Wiki Title': music_file.wiki_song.long_name if music_file.wiki_song else "",
                 'TScore': music_file.wiki_scores.get('song', -1),
 
                 'F.Trck': str(music_file.tag_text('track', default="")),
-                # 'Wiki Track': str(getattr(music_file.wiki_song, 'track', "")) if music_file.wiki_song else "",
                 'W.Trck': str(music_file.wiki_song.num) if music_file.wiki_song else "",
             })
         except AttributeError as e:
@@ -238,6 +235,13 @@ def list_dir2artist(path):
 
 
 def path2tag(path, dry_run, incl_title):
+    """
+    Update tags based on the path to each file
+
+    :param str path: A directory that contains directories that contain music files
+    :param bool dry_run: Print the actions that would be taken instead of taking them
+    :param bool incl_title: Update title based on filename
+    """
     # TODO: Add prompt / default yes for individual files
     prefix = '[DRY RUN] Would update' if dry_run else 'Updating'
 
@@ -354,6 +358,12 @@ def sort_albums(path, dry_run):
 
 
 def wiki_list(path):
+    """
+    List album/song metadata in the format expected in the wiki
+
+    :param str path: A directory that contains directories that contain music files
+    """
+    # Note: using log instead of print since it's configured to use UTF-8 already
     for i, album_dir in enumerate(iter_album_dirs(path)):
         if i:
             log.info('\n')
@@ -370,6 +380,22 @@ def sort_by_wiki(
     source_path, dest_dir, allow_no_dest, basic_cleanup, move_unknown, allow_incomplete, unmatched_cleanup,
     no_qualnames, dry_run
 ):
+    """
+    Cleanup & sort files based on the information found when matching them to artists / albums / songs in various wikis
+
+    :param str source_path: A directory that contains directories that contain music files
+    :param str dest_dir: The destination directory for the top-level artist directories of the sorted files
+    :param bool allow_no_dest: Allow sorting to continue even if there are some files that do not have a new destination
+    :param bool basic_cleanup: Only run basic cleanup tasks, no wiki updates (remove bad tags, fix tags using outdated
+      tag types, remove URLs from the end of lyrics, etc).  These actions are still performed during a normal run -
+      specifying this argument only skips the steps that would come after this cleanup.
+    :param bool move_unknown: Move albums that would end up in the UNKNOWN_FIXME subdirectory
+    :param bool allow_incomplete: Allow updating tags when there is an incomplete match (such as artist but no
+      album/song)
+    :param bool unmatched_cleanup: Run cleanup tasks for unmatched files (commonly OSTs/collaborations)
+    :param bool no_qualnames: For solo artists, use only their name instead of including their group
+    :param bool dry_run: Print the actions that would be taken instead of taking them
+    """
     _dest_dir = dest_dir
     mv_prefix = '[DRY RUN] Would move' if dry_run else 'Moving'
     rm_prefix = '[DRY RUN] Would remove' if dry_run else 'Removing'
