@@ -60,7 +60,11 @@ class WorkerProcess:
         log.info('request_processor: started')
         while True:
             self.req_event.wait()
+            if not self.can_run:
+                log.debug('request_processor: exiting')
+                break
             req_type, request = self.conn.recv()
+            self.req_event.clear()
             log.debug('request_processor: Received request: {}'.format(req_type))
             if req_type == RequestType.ECHO:
                 self.conn.send(request)
