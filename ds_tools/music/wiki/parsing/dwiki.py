@@ -179,7 +179,7 @@ def parse_drama_wiki_info_list(uri_path, info_ul, client):
             #             raise WikiEntityParseException('Error parsing info list in {}: {}'.format(uri_path, e)) from e
         elif key == 'also known as':
             value = str2list(value)
-        elif key == 'original soundtrack':
+        elif key in ('original soundtrack', 'original soundtracks'):
             links = dict(link_tuples(li.find_all('a')))
             value = {value: links.get(value)}
 

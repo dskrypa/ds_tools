@@ -678,7 +678,7 @@ class WikiTVSeries(WikiEntity):
                 if self.english_name and self.cjk_name:
                     self.name = multi_lang_name(self.english_name, self.cjk_name)
                 self.aka = self._info.get('also known as', [])
-                ost = self._info.get('original soundtrack')
+                ost = self._info.get('original soundtrack') or self._info.get('original soundtracks')
                 if ost:
                     self.ost_href = list(ost.values())[0]
         else:
@@ -767,14 +767,23 @@ class WikiArtist(WikiEntity):
         if self._client._site == client._site:
             return self
         try:
-            return type(self)(name=self.english_name or self.cjk_name, client=client)
+            candidate = type(self)(name=self.english_name or self.cjk_name, client=client)
         except CodeBasedRestException as e:
-            for i, (text, uri_path) in enumerate(client.search('|'.join(self.aliases))):
-                candidate = type(self)(uri_path, client=client)
-                if candidate.matches(self):
-                    return candidate
-                elif i > 4:
-                    break
+            pass
+        else:
+            if candidate._uri_path and candidate._raw:
+                return candidate
+
+        # log.debug('{}: Could not find {} version by name'.format(self, client))
+        for i, (text, uri_path) in enumerate(client.search('|'.join(self.aliases))):
+            candidate = type(self)(uri_path, client=client)
+            # log.debug('{}: Validating candidate={}'.format(self, candidate))
+            if candidate.matches(self):
+                return candidate
+            elif i > 4:
+                break
+
+        raise WikiEntityInitException('Unable to find valid {} version of {}'.format(client, self))
 
     @cached_property
     def _alt_entities(self):
@@ -2255,11 +2264,19 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
 
 
 def find_ost(artist, title, disco_entry):
+    orig_title = title
+    m = re.match(r'^(.*)\s+(?:Part|Code No)\.?\s*\d+$', title, re.IGNORECASE)
+    if m:
+        title = m.group(1).strip()
+        if title.endswith(' -'):
+            title = title[:-1].strip()
+        log.log(9, 'find_ost: normalized {!r} -> {!r}'.format(orig_title, title))
+
     d_client = DramaWikiClient()
     if artist is not None and not isinstance(artist._client, DramaWikiClient):
         try:
             d_artist = artist.for_alt_site(d_client)
-        except WikiTypeError:
+        except (WikiTypeError, WikiEntityInitException):
             pass
         except Exception as e:
             log.debug('Error finding {} version of {}: {}\n{}'.format(d_client._site, artist, e, traceback.format_exc()))
@@ -2280,7 +2297,10 @@ def find_ost(artist, title, disco_entry):
     b_client = WikiClient()
     k_client = KpopWikiClient()
     w_client = WikipediaClient()
-    show_title = ' '.join(title.split()[:-1])  # Search without 'OST' suffix
+    if title.endswith(' OST'):
+        show_title = ' '.join(title.split()[:-1])  # Search without 'OST' suffix
+    else:
+        show_title = title
     # log.debug('{}: Searching for show {!r} for OST {!r}'.format(artist, show_title, title))
 
     for client in (d_client, w_client):

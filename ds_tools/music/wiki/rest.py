@@ -249,6 +249,13 @@ class DramaWikiClient(WikiClient):
             super().__init__(prefix='')
             self.__initialized = True
 
+    def get(self, *args, **kwargs):
+        resp = super().get(*args, **kwargs)
+        if 'There is currently no text in this page.' in resp.text:
+            resp.status_code = 404
+            raise CodeBasedRestException(resp, resp.url)
+        return resp
+
     @cached(True)
     def get_entity_base(self, uri_path, obj_type=None):
         raw = self.get_page(uri_path)
@@ -258,11 +265,16 @@ class DramaWikiClient(WikiClient):
         return raw, {li.text.lower() for li in cat_ul.find_all('li')} if cat_ul else set()
 
     def search(self, query):
+        log.log(9, 'Searching {} for: {!r}'.format(self.host, query))
         try:
             resp = self.get('index.php', params={'search': query, 'title': 'Special:Search'})#, use_cached=False)
         except CodeBasedRestException as e:
             log.debug('Error retrieving results for query {!r}: {}'.format(query, e))
             raise e
+
+        url = urlparse(resp.url)
+        if url.path != '/index.php':    # If there's an exact match, it redirects to that page
+            return [('', url.path[1:])]
 
         results = []
         soup = soupify(resp.text, parse_only=bs4.SoupStrainer('ul', class_='mw-search-results'))
