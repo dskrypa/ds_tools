@@ -22,7 +22,7 @@ from mutagen.id3 import ID3, TDRC, POPM
 from mutagen.mp4 import MP4Tags
 
 from ..caching import ClearableCachedPropertyMixin, cached
-from ..core import cached_property, format_duration
+from ..core import cached_property, format_duration, datetime_with_tz
 from ..http import CodeBasedRestException
 from ..unicode import contains_hangul
 from .exceptions import NoArtistsFoundException, NoAlbumFoundException
@@ -101,7 +101,10 @@ class AlbumDir(ClearableCachedPropertyMixin):
 
     @cached_property
     def songs(self):
-        return list(_iter_music_files(self.path.as_posix()))
+        songs = list(_iter_music_files(self.path.as_posix()))
+        for song in songs:
+            song._in_album_dir = True
+        return songs
 
     @cached_property
     def name(self):
@@ -192,8 +195,34 @@ class AlbumDir(ClearableCachedPropertyMixin):
             return albums.pop()
         elif len(albums) > 1:
             log.warning('Conflicting wiki_album matches were found for {}: {}'.format(self, ', '.join(map(str, albums))))
+        elif self.wiki_artist and self.tag_release_date:
+            for album in self.wiki_artist.discography:
+                if album.released == self.tag_release_date and len(self.songs) == len(album.get_tracks()):
+                    for song in self.songs:
+                        song.wiki_scores['song'] = -1
+                        try:
+                            track, score = album.find_track(song.tag_title, track=song.track_num, include_score=True)
+                        except Exception as e:
+                            log.error('Error determining track for {} from {}: {}'.format(self, album, e))
+                            traceback.print_exc()
+                            raise e
+                        else:
+                            song.wiki_scores['song'] = score
+                            song.wiki_scores['album'] = int(score * 3/4)
+                            song.__dict__['wiki_song'] = track
+                    return album
+        log.warning('No wiki_album match was found for {}'.format(self))
+        return None
+
+    @cached_property
+    def tag_release_date(self):
+        try:
+            dates = {f.date for f in self.songs}
+        except Exception as e:
+            pass
         else:
-            log.debug('No wiki_album match was found for {}'.format(self))
+            if len(dates) == 1:
+                return dates.pop()
         return None
 
     @cached()
@@ -599,6 +628,7 @@ class SongFile(ClearableCachedPropertyMixin):
     def __init__(self, file_path, *args, **kwargs):
         if not getattr(self, '_SongFile__initialized', False):
             self.wiki_scores = {}
+            self._in_album_dir = False
             self.__initialized = True
 
     def __getattr__(self, item):
@@ -757,6 +787,11 @@ class SongFile(ClearableCachedPropertyMixin):
         if length.startswith('0'):
             length = length[1:]
         return length
+
+    @cached_property
+    def date(self):
+        date_str = self.tag_text('date')
+        return datetime_with_tz(date_str, '%Y%m%d')
 
     @cached_property
     def album_name_cleaned(self):
@@ -920,8 +955,11 @@ class SongFile(ClearableCachedPropertyMixin):
                     raise e
                 self.wiki_scores['album'] = score
                 if album is None:
+                    if not self._in_album_dir:
+                        alb_dir = AlbumDir(self.path.parent)
+                        return alb_dir.wiki_album
                     fmt = 'Unable to find album {!r} from {} to match {}'
-                    log.warning(fmt.format(self.album_name_cleaned, artist, self), extra={'color': 9})
+                    log.debug(fmt.format(self.album_name_cleaned, artist, self), extra={'color': 9})
                 return album
 
     @cached_property
