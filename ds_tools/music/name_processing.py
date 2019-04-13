@@ -405,6 +405,17 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
                     common_prefix = os.path.commonprefix(parts)
                     if common_prefix and LangCat.categorize(parts[1][len(common_prefix):]) in LangCat.asian_cats:
                         eng, cjk = parts
+                    elif '/' in parts[1]:
+                        p1_parts = parts[1].split('/', 1)
+                        p1_langs = categorize_langs(p1_parts)
+                        if len(set(p1_langs)) == 2 and LangCat.ENG not in p1_langs:     # artist lang / hangul
+                            try:
+                                han_idx = p1_langs.index(LangCat.HAN)
+                            except ValueError:
+                                pass
+                            else:
+                                eng = parts[0]
+                                cjk = p1_parts[han_idx]
         elif langs == (LangCat.MIX, LangCat.MIX) and ' X ' in parts[1]:
             if LangCat.categorize(parts[0], True).intersection(LangCat.asian_cats):
                 eng, cjk = '', parts[0]
