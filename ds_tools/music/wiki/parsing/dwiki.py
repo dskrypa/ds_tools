@@ -75,7 +75,24 @@ def parse_ost_page(uri_path, clean_soup, client):
             if tds:
                 name_parts = list(tds[1].stripped_strings)
                 if len(name_parts) == 1 and LangCat.categorize(name_parts[0]) == LangCat.MIX:
-                    name_parts = split_name(name_parts[0], unused=True)
+                    try:
+                        name_parts = split_name(name_parts[0], unused=True)
+                    except ValueError as e:
+                        err_msg = 'Error splitting name={!r} from {}'.format(name_parts[0], uri_path)
+                        _eng = []
+                        _cjk = []
+                        for part in name_parts[0].split():
+                            if LangCat.categorize(part) == LangCat.ENG:
+                                if _cjk:
+                                    raise WikiEntityParseException(err_msg) from e
+                                _eng.append(part)
+                            else:
+                                _cjk.append(part)
+
+                        if _eng and _cjk:
+                            name_parts = [' '.join(_eng), ' '.join(_cjk)]
+                        else:
+                            raise WikiEntityParseException(err_msg) from e
                 elif all(part.lower().endswith('(inst.)') for part in name_parts):
                     name_parts = [part[:-7].strip() for part in name_parts]
                     name_parts.append('Inst.')
