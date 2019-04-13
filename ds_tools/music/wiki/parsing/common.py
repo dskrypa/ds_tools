@@ -58,6 +58,24 @@ def find_href(client, anchors, texts, categories):
     return None
 
 
+def _is_invalid_group(text):
+    """
+    :param text: Text that should be examined for whether it is definitely not a group name or not
+    :return bool: True if the given text should be ignored and the group should be set to None, False otherwise
+    """
+    try:
+        part_num_rx = _is_invalid_group._part_num_rx
+    except AttributeError:
+        part_num_rx = _is_invalid_group._part_num_rx = re.compile(r'^part \d+$', re.IGNORECASE)
+
+    if part_num_rx.match(text):
+        return True
+    lc_text = text.lower()
+    if lc_text in ('full ost only', ):
+        return True
+    return False
+
+
 def split_artist_list(artist_list, context=None, anchors=None, client=None):
     """
     feat_indicator ::= feat\.? | featuring | with
@@ -98,11 +116,14 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
     m = group_paren_members_rx.match(artist_list)
     if m:
         group, artist_list = m.groups()
-        try:
-            group_name = split_name(group)
-        except ValueError:
-            group_name = split_name(group, require_preceder=False)
-        group_href = find_href(client, anchors, group_name, 'group')
+        if _is_invalid_group(group):
+            group, group_href = None, None
+        else:
+            try:
+                group_name = split_name(group)
+            except ValueError:
+                group_name = split_name(group, require_preceder=False)
+            group_href = find_href(client, anchors, group_name, 'group')
     else:
         group = None
         group_href = None
@@ -110,12 +131,16 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
     for i, artist in enumerate(delim_rx.split(artist_list)):
         m = group_paren_members_rx.match(artist_list)
         if m:
+            # noinspection PyUnresolvedReferences
             group, artist_list = m.groups()
-            try:
-                group_name = split_name(group)
-            except ValueError:
-                group_name = split_name(group, require_preceder=False)
-            group_href = find_href(client, anchors, group_name, 'group')
+            if _is_invalid_group(group):
+                group, group_href = None, None
+            else:
+                try:
+                    group_name = split_name(group)
+                except ValueError:
+                    group_name = split_name(group, require_preceder=False)
+                group_href = find_href(client, anchors, group_name, 'group')
         elif i:
             group = None
             group_href = None
@@ -175,11 +200,14 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
                                 raise WikiEntityParseException(err_msg) from e1
                             else:
                                 name = split_name(_name)
-                                try:
-                                    group_name = split_name(group)
-                                except ValueError:
-                                    group_name = split_name(group, require_preceder=False)
-                                group_href = find_href(client, anchors, group_name, 'group')
+                                if _is_invalid_group(group):
+                                    group, group_href = None, None
+                                else:
+                                    try:
+                                        group_name = split_name(group)
+                                    except ValueError:
+                                        group_name = split_name(group, require_preceder=False)
+                                    group_href = find_href(client, anchors, group_name, 'group')
                         else:
                             err_msg = 'Unable to parse artist name={!r} from {}'.format(_artist, context)
                             raise WikiEntityParseException(err_msg) from e
@@ -536,7 +564,7 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
         version_types = parse_track_info._version_types = (
             'inst', 'acoustic', 'ballad', 'original', 'remix', 'r&b', 'band', 'karaoke', 'special', 'full length',
             'single', 'album', 'radio', 'limited', 'normal', 'english rap', 'rap', 'piano', 'acapella', 'edm', 'stage',
-            'live', 'rock', 'director\'s', 'cd', 'solo', 'classical orchestra'
+            'live', 'rock', 'director\'s', 'cd', 'solo', 'classical orchestra', 'orchestra', 'drama'
         )
         misc_indicators = parse_track_info._misc_indicators = ( # spaces intentional
             'bonus', ' ost', ' mix', 'remix', 'special track', 'prod. by', 'produced by', 'director\'s', ' only',

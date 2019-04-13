@@ -131,7 +131,7 @@ def parse_name(text):
     """
     stripped = text.strip()
     first_sentence, period, stripped = stripped.partition('. ')     # Note: space is intentional
-    if ' ' not in first_sentence:
+    if (' ' not in first_sentence) or (first_sentence.count('"') == 1 and stripped.count('"') % 2 == 1):
         first_sentence += period + stripped.partition('. ')[0].strip()
     first_sentence = first_sentence.replace('\xa0', ' ')
     parser = ParentheticalParser()
@@ -180,7 +180,7 @@ def parse_name(text):
     found_hangul = False
     stylized = None
     aka = None
-    aka_leads = ('aka', 'a.k.a.', 'also known as', 'or simply', 'an acronym for')
+    aka_leads = ('aka', 'a.k.a.', 'also known as', 'or simply', 'an acronym for', 'short for', 'or ')
     style_leads = ('stylized as', 'sometimes styled as')
     info = []
     details_parts = list(map(str.strip, re.split('[;,]', details)))
@@ -215,9 +215,7 @@ def parse_name(text):
             part = part[len(aka_lead):].strip()
             if not found_hangul and not cjk and contains_any_cjk(part) and has_parens(part):
                 aka, part = map(str.strip, part.split())
-                if part.startswith('(') and part.endswith(')'):
-                    part = part[1:-1]
-                details_parts.insert(0, part)
+                details_parts.insert(0, unsurround(part))
             else:
                 aka = part
         elif not found_hangul and not cjk and contains_any_cjk(part):
@@ -237,6 +235,8 @@ def parse_name(text):
                 cjk = part
         elif part.startswith(('pronounced', 'previously known as')):
             pass
+        elif part.startswith('is a ') and not details_parts:
+            pass
         else:
             _details_parts = list(map(str.strip, re.split('[;,]', details)))
             if len(_details_parts) == 2 and cjk and re.match(r'{}\s*[;,]\s*{}'.format(cjk, part), details):
@@ -245,6 +245,14 @@ def parse_name(text):
                 raise ValueError('Unexpected part: {!r}'.format(part))
 
     return base, cjk, stylized, aka, info
+
+
+def unsurround(a_str, *chars):
+    chars = chars or (('"', '"'), ('(', ')'), ('“', '“'), ("'", "'"))
+    for a, b in chars:
+        if a_str.startswith(a) and a_str.endswith(b):
+            a_str = a_str[1:-1].strip()
+    return a_str
 
 
 def is_unzipped_name(text):

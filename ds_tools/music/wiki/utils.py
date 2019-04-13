@@ -33,6 +33,8 @@ PAGE_CATEGORIES = OrderedDict([
     ('sports team', ('sports team',)),
     ('movie', ('movies', 'films')),
     ('play', ('plays',)),
+    ('characters', ('fictional characters', 'film characters')),
+    ('filmography', ('filmographies',)),
 ])
 PATH_SANITIZATION_DICT = {c: '' for c in '*;?<>"'}
 PATH_SANITIZATION_DICT.update({'/': '_', ':': '-', '\\': '_', '|': '-'})

@@ -76,6 +76,10 @@ class WikiClient(RestClient):
 
     @cached(True, exc=True)  # Prevent needing to repeatedly unpickle
     def get_page(self, endpoint, **kwargs):
+        # url = self.url_for(endpoint)
+        # log.debug('GET -> {}'.format(url))
+        # if '/Part_' in url:
+        #     raise BaseException('Invalid path requires investigation: {}'.format(url))
         return self.get(endpoint, **kwargs).text
 
     @cached('_name_cache', lock=True, key=lambda s, a: '{}: {}'.format(s.host, a), optional=True)

@@ -25,10 +25,10 @@ from ..caching import ClearableCachedPropertyMixin, cached
 from ..core import cached_property, format_duration
 from ..http import CodeBasedRestException
 from ..unicode import contains_hangul
-from .exceptions import NoArtistsFoundException
+from .exceptions import NoArtistsFoundException, NoAlbumFoundException
 from .patches import tag_repr
 from .name_processing import split_names, split_name
-from .wiki import WikiArtist, WikiEntityIdentificationException, KpopWikiClient, WikiSongCollection
+from .wiki import WikiArtist, WikiEntityIdentificationException, KpopWikiClient, WikiSongCollection, find_ost
 
 __all__ = [
     'SongFile', 'FakeMusicFile', 'iter_music_files', 'load_tags', 'iter_music_albums',
@@ -651,7 +651,7 @@ class SongFile(ClearableCachedPropertyMixin):
         self._f = mutagen.File(dest_path.as_posix())
 
     def save(self):
-        self.tags.save(self._f.filename)
+        self._f.tags.save(self._f.filename)
 
     @cached_property
     def path(self):
@@ -660,9 +660,9 @@ class SongFile(ClearableCachedPropertyMixin):
     @property
     def rating(self):
         """The rating for this track on a scale of 1-255"""
-        if isinstance(self.tags, MP4Tags):
+        if isinstance(self._f.tags, MP4Tags):
             try:
-                return self.tags['POPM'][0]
+                return self._f.tags['POPM'][0]
             except KeyError:
                 return None
         else:
@@ -673,13 +673,13 @@ class SongFile(ClearableCachedPropertyMixin):
 
     @rating.setter
     def rating(self, value):
-        if isinstance(self.tags, MP4Tags):
-            self.tags['POPM'] = [value]
+        if isinstance(self._f.tags, MP4Tags):
+            self._f.tags['POPM'] = [value]
         else:
             try:
                 tag = self.get_tag('POPM', True)
             except TagNotFound:
-                self.tags.add(POPM(rating=value))
+                self._f.tags.add(POPM(rating=value))
             else:
                 tag.rating = value
         self.save()
@@ -860,31 +860,69 @@ class SongFile(ClearableCachedPropertyMixin):
             log.error('Error matching artist {} for {}: {}'.format(_artists, self, exc))
             raise exc
         else:
-            raise NoArtistsFoundException('{}: Could not find an artist matching {!r}'.format(self, self.tag_artist))
+            err_msg = '{}: Could not find an artist matching {!r}'.format(self, self.tag_artist)
+            log.warning(err_msg, extra={'color': (11, 9)})
+            # raise NoArtistsFoundException(err_msg)
+            return None
 
     @cached_property
     def wiki_album(self):
         self.wiki_scores['album'] = -1
         try:
             artist = self.wiki_artist
-        except NoArtistsFoundException as e:
-            return WikiSongCollection(name=self.album_name_cleaned)
         except Exception as e:
             log.error('Error determining artist for {}: {}'.format(self, e))
             traceback.print_exc()
             raise e
         else:
-            try:
-                album, score = artist.find_song_collection(self.album_name_cleaned, include_score=True)
-            except Exception as e:
-                log.error('Error determining album for {} from {}: {}'.format(self, artist, e))
-                traceback.print_exc()
-                raise e
-            self.wiki_scores['album'] = score
-            if album is None:
-                fmt = 'Unable to find album {!r} from {} to match {}'
-                log.warning(fmt.format(self.album_name_cleaned, artist, self), extra={'color': 9})
-            return album
+            if artist is None:
+                alb_name = self.album_name_cleaned
+                log.debug('{}: No artist found; attemping lookup by name={!r}'.format(self, alb_name))
+                if 'OST' in alb_name.upper():
+                    log.debug('{}: Searching for OST matches...'.format(self))
+                    title = alb_name
+                    m = re.match(r'^(.*)\s+((?:Part|Code No)\.?\s*\d+)$', title, re.IGNORECASE)
+                    if m:
+                        title = m.group(1).strip()
+                        part = m.group(2).strip()
+                    else:
+                        part = None
+                    if title.endswith(' -'):
+                        title = title[:-1].strip()
+                    log.debug('{}: Trying to match album title={!r}'.format(self, title))
+                    try:
+                        ost = find_ost(None, title, {'title': alb_name})
+                    except CodeBasedRestException as e:
+                        ost = None
+                    if ost is None:
+                        m = re.match(r'^(.*) \(.*\) OST$', title)
+                        if m:
+                            title = '{} OST'.format(m.group(1).strip())
+                            log.debug('{}: Trying again to match album title={!r}'.format(self, title))
+                            ost = find_ost(None, title, {'title': '{} {}'.format(title, part) if part else alb_name})
+                            if ost:
+                                return ost
+                            raise NoAlbumFoundException('Unable to find album for {} / {!r}'.format(self, alb_name))
+                    else:
+                        return ost
+                else:
+                    try:
+                        return WikiSongCollection(name=self.album_name_cleaned)
+                    except Exception as e:
+                        log.error('{}: Unable to find match for album name={!r}'.format(self, self.album_name_cleaned))
+                        raise e
+            else:
+                try:
+                    album, score = artist.find_song_collection(self.album_name_cleaned, include_score=True)
+                except Exception as e:
+                    log.error('Error determining album for {} from {}: {}'.format(self, artist, e))
+                    traceback.print_exc()
+                    raise e
+                self.wiki_scores['album'] = score
+                if album is None:
+                    fmt = 'Unable to find album {!r} from {} to match {}'
+                    log.warning(fmt.format(self.album_name_cleaned, artist, self), extra={'color': 9})
+                return album
 
     @cached_property
     def wiki_song(self):
@@ -948,17 +986,17 @@ class SongFile(ClearableCachedPropertyMixin):
 
     @cached_property
     def ext(self):
-        if isinstance(self.tags, MP4Tags):
+        if isinstance(self._f.tags, MP4Tags):
             return self.path.suffix[1:]
-        elif isinstance(self.tags, ID3):
+        elif isinstance(self._f.tags, ID3):
             return 'mp3'
         return None
 
     @cached_property
     def _tag_type(self):
-        if isinstance(self.tags, MP4Tags):
+        if isinstance(self._f.tags, MP4Tags):
             return 'mp4'
-        elif isinstance(self.tags, ID3):
+        elif isinstance(self._f.tags, ID3):
             return 'mp3'
         return None
 
@@ -972,15 +1010,15 @@ class SongFile(ClearableCachedPropertyMixin):
 
     def set_text_tag(self, tag, value, by_id=False):
         tag_id = tag if by_id else self.tag_name_to_id(tag)
-        if isinstance(self.tags, MP4Tags):
-            self.tags[tag_id] = value
+        if isinstance(self._f.tags, MP4Tags):
+            self._f.tags[tag_id] = value
         elif self.ext == 'mp3':
             try:
                 tag_cls = getattr(mutagen.id3._frames, tag_id.upper())
             except AttributeError as e:
                 raise ValueError('Invalid tag for {}: {} (no frame class found for it)'.format(self, tag)) from e
             else:
-                self.tags[tag_id] = tag_cls(text=value)
+                self._f.tags[tag_id] = tag_cls(text=value)
         else:
             raise TypeError('Unable to set {!r} for {} because its extension is {!r}'.format(tag, self, self.ext))
 
@@ -1004,8 +1042,8 @@ class SongFile(ClearableCachedPropertyMixin):
         :return list: All tags from this file with the given ID
         """
         if self.ext == 'mp3':
-            return self.tags.getall(tag_id.upper())         # all MP3 tags are uppercase; some MP4 tags are mixed case
-        return self.tags.get(tag_id, [])                    # MP4Tags doesn't have getall() and always returns a list
+            return self._f.tags.getall(tag_id.upper())         # all MP3 tags are uppercase; some MP4 tags are mixed case
+        return self._f.tags.get(tag_id, [])                    # MP4Tags doesn't have getall() and always returns a list
 
     def tags_named(self, tag_name):
         """
@@ -1078,8 +1116,8 @@ class SongFile(ClearableCachedPropertyMixin):
         try:
             mutagen.File(tmp).tags.delete(tmp)
         except AttributeError as e:
-            log.error('Error determining tagless sha256sum for {}: {}'.format(self.filename, e))
-            return self.filename
+            log.error('Error determining tagless sha256sum for {}: {}'.format(self._f.filename, e))
+            return self._f.filename
 
         tmp.seek(0)
         return sha256(tmp.read()).hexdigest()

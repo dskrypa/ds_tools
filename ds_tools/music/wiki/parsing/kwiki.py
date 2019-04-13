@@ -235,7 +235,8 @@ def parse_album_page(uri_path, clean_soup, side_info, client):
 
     albums = [album0, album1] if album1 else [album0]
 
-    artists_raw = side_info.get('artists_raw')
+    # artists_raw = side_info.get('artists_raw')
+    artists_raw = side_info.get('artist')
     artists = []
     if artists_raw:
         _anchors = list(clean_soup.find_all('a'))
@@ -293,11 +294,13 @@ def parse_aside(aside, uri_path):
         date_comment_rx = parse_aside._date_comment_rx
         len_rx = parse_aside._len_rx
         len_comment_rx = parse_aside._len_comment_rx
+        br_split_rx = parse_aside._br_split_rx
     except AttributeError:
         comma_fix_rx = parse_aside._comma_fix_rx = re.compile(r'\s+,')
         date_comment_rx = parse_aside._date_comment_rx = re.compile(r'^(\S+ \d+\s*, \d{4})\s*\((.*)\)$')
         len_rx = parse_aside._len_rx = re.compile(r'^\d*:?\d+:\d{2}$')
         len_comment_rx = parse_aside._len_comment_rx = re.compile(r'^(\d*:?\d+:\d{2})\s*\((.*)\)$')
+        br_split_rx = parse_aside._br_split_rx = re.compile(r'<br/?>')
 
     unexpected_date_fmt = 'Unexpected release date format in: {}'
     parsed = {}
@@ -356,11 +359,15 @@ def parse_aside(aside, uri_path):
                             value[-1] = (value[-1][0], unsurround(s))
                         else:
                             raise WikiEntityParseException('Unexpected length format on {} in: {}'.format(uri_path, val_ele))
-            elif key in ('agency', 'artist', 'associated', 'composer', 'current', 'label', 'writer'):
-                if key == 'artist':
-                    val_strs = [soupify(line).text for line in str(val_ele).split('<br/>')]
-                    parsed['artists_raw'] = val_strs
-
+            elif key == 'artist':
+                value = list(map(str.strip, (soupify(line).text for line in br_split_rx.split(str(val_ele)))))
+                # parsed['artists_raw'] = val_strs
+                # anchors = list(val_ele.find_all('a'))
+                # if anchors:
+                #     value = dict(link_tuples(anchors))
+                # else:
+                #     value = {name: None for name in val_strs}
+            elif key in ('agency', 'associated', 'composer', 'current', 'label', 'writer'):
                 anchors = list(val_ele.find_all('a'))
                 if anchors:
                     value = dict(link_tuples(anchors))

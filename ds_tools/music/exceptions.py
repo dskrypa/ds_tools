@@ -2,7 +2,7 @@
 :author: Doug Skrypa
 """
 
-__all__ = ['MusicException', 'NoArtistsFoundException', 'TrackDiscoveryException']
+__all__ = ['MusicException', 'NoAlbumFoundException', 'NoArtistsFoundException', 'TrackDiscoveryException']
 
 
 class MusicException(Exception):
@@ -15,3 +15,7 @@ class TrackDiscoveryException(MusicException):
 
 class NoArtistsFoundException(MusicException):
     """Exception to be raised when no artist could be found for a given album/track"""
+
+
+class NoAlbumFoundException(MusicException):
+    """Exception to be raised when an album cannot be found for a given album/track"""

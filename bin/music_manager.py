@@ -203,7 +203,7 @@ def match_wiki(path):
                 'F.Trck': str(music_file.tag_text('track', default="")),
                 'W.Trck': str(music_file.wiki_song.num) if music_file.wiki_song else "",
             })
-        except AttributeError as e:
+        except Exception as e:
             log.error('Error processing {}: {}'.format(music_file, e))
             raise e
 
