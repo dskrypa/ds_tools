@@ -233,7 +233,7 @@ def parse_wikipedia_album_page(uri_path, clean_soup, side_info):
         album['track_lists'].append({'section': section, 'tracks': tracks, 'disk': disk})
 
     for album in albums:
-        album['artists'] = side_info.get('artist', {})
+        album['artists'] = side_info.get('artist', [])
 
     return albums
 
@@ -247,7 +247,7 @@ def parse_infobox(infobox, uri_path):
     """
     parsed = {}
     for i, tr in enumerate(infobox.find_all('tr')):
-        # log.debug('Processing tr: {}'.format(tr))
+        # log.debug('Processing tr {}: {}'.format(i, tr))
         if i == 0:
             parsed['name'] = tr.text.strip()
             continue
@@ -270,16 +270,20 @@ def parse_infobox(infobox, uri_path):
                     for a in tr.find_all('a'):
                         if a.text == artist:
                             href = a.get('href') or ''
-                            parsed['artist'] = {artist: href[6:] if href.startswith('/wiki/') else href}
+                            href = href[6:] if href.startswith('/wiki/') else href
+                            parsed['artist'] = [{'artist': artist, 'artist_href': href}]
                             break
                     else:
-                        parsed['artist'] = {artist: None}
+                        parsed['artist'] = [{'artist': artist, 'artist_href': None}]
 
                     continue
             else:
                 continue
 
         val_ele = tr.find('td')
+        if val_ele is None:
+            continue
+
         if key == 'released':
             value = []
             val = val_ele.text.strip()
@@ -328,7 +332,11 @@ def parse_infobox(infobox, uri_path):
                 else:
                     value = {name: None for name in str2list(val_ele.text)}
         else:
-            value = val_ele.text.strip()
+            try:
+                value = val_ele.text.strip()
+            except AttributeError as e:
+                log.error('Error parsing ele on {}'.format(uri_path))
+                raise e
 
         parsed[key] = value
     return parsed
