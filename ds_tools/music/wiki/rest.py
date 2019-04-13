@@ -60,6 +60,13 @@ class WikiClient(RestClient):
             self._bad_name_cache = DBCache('invalid_names', cache_subdir='kpop_wiki')
             self.__initialized = True
 
+    def url_for(self, endpoint, allow_alt_sites=False):
+        if allow_alt_sites and endpoint.startswith(('http://', 'https://', '//')):
+            _url = urlparse(endpoint)
+            uri_path = _url.path[6:] if _url.path.startswith('/wiki/') else _url.path
+            return self.for_site(_url.hostname).url_for(uri_path)
+        return super().url_for(endpoint)
+
     @classmethod
     def for_site(cls, site):
         if site.startswith(('http', '//')):
@@ -76,8 +83,8 @@ class WikiClient(RestClient):
 
     @cached(True, exc=True)  # Prevent needing to repeatedly unpickle
     def get_page(self, endpoint, **kwargs):
-        # url = self.url_for(endpoint)
-        # log.debug('GET -> {}'.format(url))
+        url = self.url_for(endpoint)
+        log.log(8, 'GET -> {}'.format(url))
         # if '/Part_' in url:
         #     raise BaseException('Invalid path requires investigation: {}'.format(url))
         return self.get(endpoint, **kwargs).text
@@ -115,13 +122,6 @@ class WikiClient(RestClient):
                                 return self._name_cache['{}: {}'.format(self.host, name)]
                             except KeyError as ke:
                                 pass
-
-                    # _log.debug('{}: Searching for {!r}'.format(self._site, name))
-                    # uri_path = self.title_search(name)
-                    # _log.debug('{}: Found search match for {!r}: {}'.format(self._site, name, uri_path))
-                    # if uri_path is not None:
-                    #     return uri_path
-
             raise e
         else:
             if any(val in html for val in AMBIGUOUS_URI_PATH_TEXT):
@@ -137,9 +137,6 @@ class WikiClient(RestClient):
 
     def parse_album_page(self, uri_path, clean_soup, side_info):
         return []
-
-    def title_search(self, title):
-        raise NotImplementedError()
 
     def get_entity_base(self, uri_path, obj_type=None):
         raise NotImplementedError()
@@ -174,27 +171,6 @@ class KpopWikiClient(WikiClient):
 
     def parse_album_page(self, uri_path, clean_soup, side_info):
         return parse_album_page(uri_path, clean_soup, side_info, self)
-
-    def title_search(self, title):
-        try:
-            resp = self.get('Special:Search', params={'query': title})
-        except CodeBasedRestException as e:
-            log.debug('Error retrieving results for query {!r}: {}'.format(title, e))
-            raise e
-
-        lc_title = title.lower()
-        soup = soupify(resp.text, parse_only=bs4.SoupStrainer('ul', class_='Results'))
-        for i, li in enumerate(soup.find_all('li', class_='result')):
-            if i > 10:
-                return None
-            a = li.find('a', class_='result-link')
-            if a:
-                href = a.get('href')
-                if href and lc_title in li.text.lower():
-                    url = urlparse(href)
-                    uri_path = url.path
-                    return uri_path[6:] if uri_path.startswith('/wiki/') else uri_path
-        return None
 
     def search(self, query):
         try:
@@ -263,23 +239,6 @@ class WikipediaClient(WikiClient):
                     uri_path = uri_path[6:] if uri_path.startswith('/wiki/') else uri_path
                     results.append((a.text, uri_path))
         return results
-
-    def title_search(self, title):
-        params = {'search': title, 'title': 'Special:Search', 'fulltext': 'Search'}
-        try:
-            resp = self.get('index.php', params=params)#, use_cached=False)
-        except CodeBasedRestException as e:
-            log.debug('Error searching for title {!r}: {}'.format(title, e))
-            raise e
-
-        clean_title = title.translate(STRIP_TBL).lower()
-        soup = soupify(resp.text, parse_only=bs4.SoupStrainer('ul', class_='mw-search-results'))
-        for a in soup.find_all('a'):
-            if a.text.translate(STRIP_TBL).lower() == clean_title:
-                href = a.get('href') or ''
-                if href and 'redlink=1' not in href:
-                    return href[6:] if href.startswith('/wiki/') else href
-        return None
 
 
 class DramaWikiClient(WikiClient):
