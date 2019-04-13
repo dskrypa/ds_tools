@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from bs4.element import NavigableString
 
-from ....utils import ParentheticalParser, DASH_CHARS, num_suffix, QMARKS
+from ....utils import ParentheticalParser, DASH_CHARS, num_suffix, QMARKS, soupify
 from ...name_processing import has_parens, parse_name, split_name, str2list
 from ..utils import synonym_pattern, get_page_category
 from .common import (
@@ -235,11 +235,12 @@ def parse_album_page(uri_path, clean_soup, side_info, client):
 
     albums = [album0, album1] if album1 else [album0]
 
-    artist_raw = side_info.get('artist_raw')
-    if artist_raw:
-        artists = split_artist_list(artist_raw, uri_path, list(clean_soup.find_all('a')), client=client)[0]
-    else:
-        artists = []
+    artists_raw = side_info.get('artists_raw')
+    artists = []
+    if artists_raw:
+        _anchors = list(clean_soup.find_all('a'))
+        for _raw_artist in artists_raw:
+            artists.extend(split_artist_list(_raw_artist, uri_path, _anchors, client=client)[0])
     # else:
     #     artists = side_info.get('artist', {})
 
@@ -357,7 +358,8 @@ def parse_aside(aside, uri_path):
                             raise WikiEntityParseException('Unexpected length format on {} in: {}'.format(uri_path, val_ele))
             elif key in ('agency', 'artist', 'associated', 'composer', 'current', 'label', 'writer'):
                 if key == 'artist':
-                    parsed['artist_raw'] = val_ele.text
+                    val_strs = [soupify(line).text for line in str(val_ele).split('<br/>')]
+                    parsed['artists_raw'] = val_strs
 
                 anchors = list(val_ele.find_all('a'))
                 if anchors:

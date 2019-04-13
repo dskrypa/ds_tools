@@ -21,13 +21,14 @@ from mutagen.id3 import ID3, TDRC, POPM
 # from mutagen.id3._frames import Frame, TextFrame
 from mutagen.mp4 import MP4Tags
 
-from ..caching import ClearableCachedPropertyMixin
+from ..caching import ClearableCachedPropertyMixin, cached
 from ..core import cached_property, format_duration
 from ..http import CodeBasedRestException
 from ..unicode import contains_hangul
+from .exceptions import NoArtistsFoundException
 from .patches import tag_repr
 from .name_processing import split_names, split_name
-from .wiki import WikiArtist, WikiEntityIdentificationException, KpopWikiClient
+from .wiki import WikiArtist, WikiEntityIdentificationException, KpopWikiClient, WikiSongCollection
 
 __all__ = [
     'SongFile', 'FakeMusicFile', 'iter_music_files', 'load_tags', 'iter_music_albums',
@@ -195,12 +196,12 @@ class AlbumDir(ClearableCachedPropertyMixin):
             log.debug('No wiki_album match was found for {}'.format(self))
         return None
 
-    @cached_property
+    @cached()
     def expected_rel_path(self):
         if self.wiki_album:
-            return self.wiki_album.expected_rel_path
+            return self.wiki_album.expected_rel_path()
         elif self.wiki_artist:
-            artist_dir = self.wiki_artist.expected_rel_path.name
+            artist_dir = self.wiki_artist.expected_rel_path().name
             lc_name = self.path.name.lower()
             if any(val in lc_name for val in ('ost', 'soundtrack', 'part', 'episode')):
                 type_dir = 'Soundtracks'
@@ -858,12 +859,16 @@ class SongFile(ClearableCachedPropertyMixin):
         if exc:
             log.error('Error matching artist {} for {}: {}'.format(_artists, self, exc))
             raise exc
+        else:
+            raise NoArtistsFoundException('{}: Could not find an artist matching {!r}'.format(self, self.tag_artist))
 
     @cached_property
     def wiki_album(self):
         self.wiki_scores['album'] = -1
         try:
             artist = self.wiki_artist
+        except NoArtistsFoundException as e:
+            return WikiSongCollection(name=self.album_name_cleaned)
         except Exception as e:
             log.error('Error determining artist for {}: {}'.format(self, e))
             traceback.print_exc()
@@ -905,17 +910,17 @@ class SongFile(ClearableCachedPropertyMixin):
                 self.wiki_scores['song'] = score
                 return track
 
-    @cached_property
+    @cached()
     def wiki_expected_rel_path(self):
         ext = self.ext
         if self.wiki_song:
             return self.wiki_song.expected_rel_path(ext)
         elif self.wiki_album:
-            return os.path.join(self.wiki_album.expected_rel_path, self.basename())
+            return os.path.join(self.wiki_album.expected_rel_path(), self.basename())
         elif self.wiki_artist and ('single' in self.album_type_dir.lower()):
-            artist_dir = self.wiki_artist.expected_rel_path.name
+            artist_dir = self.wiki_artist.expected_rel_path().name
             dest = os.path.join(artist_dir, self.path.parents[1].name, self.path.parent.name, self.basename())
-            log.warning('{}.wiki_expected_rel_path defaulting to {!r}'.format(self, dest))
+            log.warning('{}.wiki_expected_rel_path() defaulting to {!r}'.format(self, dest))
             return dest
         return None
 

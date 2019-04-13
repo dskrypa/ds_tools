@@ -416,7 +416,7 @@ def sort_by_wiki(
 
         # TODO: (if not no_qualnames:) Soloists: /Group/AlbType/[Date] Soloist - AlbumTitle/Num. TrackName.ext
 
-        rel_path = album_dir.expected_rel_path
+        rel_path = album_dir.expected_rel_path()
         if rel_path and ('UNKNOWN_FIXME' in rel_path.as_posix()) and not move_unknown:
             log.log(19, 'Skipping {} because a proper location could not be determined'.format(album_dir))
             continue
@@ -493,7 +493,7 @@ def _original_sort_by_wiki(source_path, dest_dir, allow_no_dest, dry_run):
     exists = set()
     for music_file in iter_music_files(source_path):
         try:
-            rel_path = music_file.wiki_expected_rel_path
+            rel_path = music_file.wiki_expected_rel_path()
         except Exception as e:
             log.error('Unable to determine destination for {}: {}'.format(music_file, e))
             raise e

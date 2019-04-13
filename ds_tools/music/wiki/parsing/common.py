@@ -7,11 +7,12 @@ import re
 from collections import OrderedDict
 
 from ....core import datetime_with_tz
+from ....http import CodeBasedRestException
 from ....unicode import LangCat
 from ....utils import (
-    DASH_CHARS, QMARKS, ListBasedRecursiveDescentParser, ALL_WHITESPACE, UnexpectedTokenError, ParentheticalListParser
+    DASH_CHARS, QMARKS, ListBasedRecursiveDescentParser, ALL_WHITESPACE, UnexpectedTokenError, ParentheticalParser
 )
-from ...name_processing import categorize_langs, combine_name_parts, eng_cjk_sort, str2list, split_name
+from ...name_processing import categorize_langs, combine_name_parts, eng_cjk_sort, str2list, split_name, has_parens
 from .exceptions import *
 
 __all__ = [
@@ -49,8 +50,11 @@ def find_href(client, anchors, texts, categories):
             if href and 'redlink=1' not in href:
                 if href.startswith(('http', '//')):
                     client = client.for_site(href)
-                if client.is_any_category(href, categories):
-                    return href
+                try:
+                    if client.is_any_category(href, categories):
+                        return href
+                except CodeBasedRestException as e:
+                    log.log(9, 'Invalid link found: {}'.format(href))
     return None
 
 
@@ -90,7 +94,7 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
 
     artists = []
     producers = []
-
+    # log.debug('split_artist_list({!r}, context={}, anchors={}, client={})'.format(artist_list, context, anchors, client))
     m = group_paren_members_rx.match(artist_list)
     if m:
         group, artist_list = m.groups()
@@ -160,9 +164,33 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
                 try:
                     name = split_name(_artist)
                 except ValueError:
-                    name = split_name(_artist, require_preceder=False)
+                    try:
+                        name = split_name(_artist, require_preceder=False)
+                    except ValueError as e:
+                        if not group and LangCat.categorize(_artist) == LangCat.ENG and has_parens(_artist):
+                            try:
+                                _name, group = ParentheticalParser().parse(_artist)
+                            except Exception as e1:
+                                err_msg = 'Unable to parse artist name={!r} from {}'.format(_artist, context)
+                                raise WikiEntityParseException(err_msg) from e1
+                            else:
+                                name = split_name(_name)
+                                try:
+                                    group_name = split_name(group)
+                                except ValueError:
+                                    group_name = split_name(group, require_preceder=False)
+                                group_href = find_href(client, anchors, group_name, 'group')
+                        else:
+                            err_msg = 'Unable to parse artist name={!r} from {}'.format(_artist, context)
+                            raise WikiEntityParseException(err_msg) from e
 
-                artist_dict = {'artist': name, 'artist_href': find_href(client, anchors, name, ('singer', 'group'))}
+                try:
+                    artist_dict = {'artist': name, 'artist_href': find_href(client, anchors, name, ('singer', 'group'))}
+                except Exception as e:
+                    fmt = 'While processing {!r}, error finding href for artist={!r} from {}: {}'
+                    log.error(fmt.format(context, name, anchors, e), extra={'color': 'red'})
+                    raise e
+
                 if group:
                     artist_dict['of_group'] = group
                     artist_dict['group_href'] = group_href

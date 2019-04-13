@@ -180,7 +180,7 @@ def parse_name(text):
     found_hangul = False
     stylized = None
     aka = None
-    aka_leads = ('aka', 'a.k.a.', 'also known as', 'or simply')
+    aka_leads = ('aka', 'a.k.a.', 'also known as', 'or simply', 'an acronym for')
     style_leads = ('stylized as', 'sometimes styled as')
     info = []
     details_parts = list(map(str.strip, re.split('[;,]', details)))
@@ -235,8 +235,14 @@ def parse_name(text):
             else:
                 found_hangul = LangCat.HAN in LangCat.categorize(part, True)
                 cjk = part
+        elif part.startswith(('pronounced', 'previously known as')):
+            pass
         else:
-            raise ValueError('Unexpected part: {!r}'.format(part))
+            _details_parts = list(map(str.strip, re.split('[;,]', details)))
+            if len(_details_parts) == 2 and cjk and re.match(r'{}\s*[;,]\s*{}'.format(cjk, part), details):
+                pass    # (cjk; pronunciation of cjk)
+            else:
+                raise ValueError('Unexpected part: {!r}'.format(part))
 
     return base, cjk, stylized, aka, info
 

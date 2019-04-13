@@ -42,7 +42,7 @@ DISCOGRAPHY_TYPE_MAP = {
     'best_albums': 'Compilation',
     'collaborations': 'Collaboration',
     'collaborations_and_features': 'Collaboration',
-    'collaboration_single': 'Collaboration',
+    'collaboration_singles': 'Collaboration',
     'digital_singles': 'Single',
     'eps': 'Extended Play',
     'features': 'Collaboration',
@@ -251,7 +251,8 @@ class WikiEntityMeta(type):
             if cls_cat and ((inst._category == cls_cat) or (inst._category in cls_cat)):
                 return inst
             else:
-                WikiEntityMeta._check_type(cls, client.url_for(inst._uri_path), inst._category, cls_cat, inst._raw)
+                url = client.url_for(inst._uri_path) if inst._uri_path is not None else None
+                WikiEntityMeta._check_type(cls, url, inst._category, cls_cat, inst._raw)
         return None
 
     @staticmethod
@@ -860,7 +861,7 @@ class WikiArtist(WikiEntity):
                         fmt = '{}: Error processing discography entry for {!r} / {!r}: {}'
                         log.error(fmt.format(self, entry['uri_path'], entry['title'], e), extra={'color': 13})
                 except CodeBasedRestException as http_e:
-                    if entry['is_ost']:
+                    if entry['is_ost'] and not isinstance(self._client, DramaWikiClient):
                         ost = find_ost(self, title, entry)
                         if ost:
                             discography.append(ost)
@@ -886,7 +887,7 @@ class WikiArtist(WikiEntity):
     def soundtracks(self):
         return [album for album in self.discography if isinstance(album, WikiSoundtrack)]
 
-    @cached_property
+    @cached()
     def expected_rel_path(self):
         return Path(sanitize_path(self.english_name))
 
@@ -1371,7 +1372,7 @@ class WikiSongCollection(WikiEntity):
         except KeyError as e:
             if base_type is None:
                 return None
-            raise e
+            raise MusicWikiException('{}: Unexpected album base_type: {!r}'.format(self, base_type)) from e
 
     @cached_property
     def album_num(self):
@@ -1389,7 +1390,7 @@ class WikiSongCollection(WikiEntity):
         extra = ' '.join(map('({})'.format, self._info)) if self._info else ''
         return '{} {}'.format(self.name, extra) if extra else self.name
 
-    @cached_property
+    @cached()
     def expected_rel_dir(self):
         numbered_type = self.album_type in ALBUM_NUMBERED_TYPES
         if numbered_type or self.album_type in ('Single', ):
@@ -1407,9 +1408,9 @@ class WikiSongCollection(WikiEntity):
 
         return Path(self.album_type + 's').joinpath(sanitize_path(title)).as_posix()
 
-    @cached_property
+    @cached()
     def expected_rel_path(self):
-        return self.artist.expected_rel_path.joinpath(self.expected_rel_dir)
+        return self.artist.expected_rel_path().joinpath(self.expected_rel_dir())
 
     @cached_property
     def _artists(self):
@@ -1537,13 +1538,14 @@ class WikiSongCollection(WikiEntity):
             return self._artist_context
 
         if self._raw:
-            artist_raw = self._side_info.get('artist_raw')
-            if artist_raw:
-                lc_artist_raw = artist_raw.lower()
+            artists_raw = self._side_info.get('artists_raw')
+            if artists_raw and len(artists_raw) == 1:
+                lc_artist_raw = artists_raw[0].lower()
                 feat_indicators = ('feat. ', 'featuring ', 'with ')
                 kw_idx = next((lc_artist_raw.index(val) for val in feat_indicators if val in lc_artist_raw), None)
                 if kw_idx is not None:
-                    before = artist_raw[:kw_idx].strip()
+                    before = artists_raw[0][:kw_idx].strip()
+                    log.debug('{}: Trying to find primary artist from side info: {!r}'.format(self, before))
                     primary = {artist for artist in artists if artist.matches(before)}
                     if len(primary) == 1:
                         return primary.pop()
@@ -1663,7 +1665,13 @@ class WikiSongCollection(WikiEntity):
         editions = []
         for edition in self._track_lists:
             section = edition.get('section')
-            m = bonus_rx.match(section or "")
+            if section and not isinstance(section, str):
+                section = section[0]
+            try:
+                m = bonus_rx.match(section or "")
+            except TypeError as e:
+                log.error('{}: Unexpected section value in {}: {}'.format(self, self.url, section))
+                raise e
             name = m.group(1).strip() if m else section
             disk = edition.get('disk')
             editions.append((name, disk, self.get_tracks(name, disk)))
@@ -2141,7 +2149,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
         return '{:02d}. {}'.format(self.num, base) if self.num else base
 
     def expected_rel_path(self, ext='mp3'):
-        return self.collection.expected_rel_path.joinpath(self.expected_filename(ext))
+        return self.collection.expected_rel_path().joinpath(self.expected_filename(ext))
 
     @classmethod
     def _normalize_for_matching(cls, other):
