@@ -183,15 +183,23 @@ class WikiEntityMeta(type):
                         else:
                             raise e
             elif name and uri_path and uri_path.startswith('//'):   # Alternate subdomain of fandom.com
-                uri_path = None
-
-            if uri_path and uri_path.startswith(('http://', 'https://')):
                 _url = urlparse(uri_path)
-                if client is None:
+                if client:
+                    fmt = 'Changing client for uri_path={!r} from {} because it is using a different domain'
+                    log.log(9, fmt.format(uri_path, client))
+                try:
                     client = WikiClient.for_site(_url.hostname)
-                elif client and client._site != _url.hostname:
-                    fmt = 'The provided client is for {!r}, but the URL requires a client for {!r}: {}'
-                    raise ValueError(fmt.format(client._site, _url.hostname, uri_path))
+                except Exception as e:
+                    raise WikiEntityInitException('No client configured for {}'.format(_url.hostname)) from e
+                uri_path = _url.path[6:] if _url.path.startswith('/wiki/') else _url.path
+
+            if uri_path and uri_path.startswith(('http://', 'https://', '//')):
+                _url = urlparse(uri_path)
+                if client:
+                    fmt = 'Changing client for uri_path={!r} from {} because it is using a different domain'
+                    log.log(9, fmt.format(uri_path, client))
+
+                client = WikiClient.for_site(_url.hostname)
                 uri_path = _url.path[6:] if _url.path.startswith('/wiki/') else _url.path
             elif client is None:
                 client = KpopWikiClient()
@@ -236,12 +244,14 @@ class WikiEntityMeta(type):
             obj = WikiEntityMeta._instances[key]
 
         if of_group:
-            if hasattr(obj, 'member_of') and obj.member_of is None or not obj.member_of.matches(of_group):
-                fmt = 'Found {} for uri_path={!r}, name={!r}, but they are a member_of={}, not of_group={!r}'
-                raise WikiEntityIdentificationException(fmt.format(obj, uri_path, name, obj.member_of, of_group))
-            elif hasattr(obj, 'subunit_of') and obj.subunit_of is None or not obj.subunit_of.matches(of_group):
-                fmt = 'Found {} for uri_path={!r}, name={!r}, but they are a subunit_of={}, not of_group={!r}'
-                raise WikiEntityIdentificationException(fmt.format(obj, uri_path, name, obj.subunit_of, of_group))
+            if isinstance(obj, WikiSinger):
+                if obj.member_of is None or not obj.member_of.matches(of_group):
+                    fmt = 'Found {} for uri_path={!r}, name={!r}, but they are a member_of={}, not of_group={!r}'
+                    raise WikiEntityIdentificationException(fmt.format(obj, uri_path, name, obj.member_of, of_group))
+            elif isinstance(obj, WikiGroup):
+                if obj.subunit_of is None or not obj.subunit_of.matches(of_group):
+                    fmt = 'Found {} for uri_path={!r}, name={!r}, but they are a subunit_of={}, not of_group={!r}'
+                    raise WikiEntityIdentificationException(fmt.format(obj, uri_path, name, obj.subunit_of, of_group))
             else:
                 raise WikiTypeError('{} is a {}, so cannot be of_group={}'.format(obj, type(obj).__name__, of_group))
 
@@ -756,7 +766,15 @@ class WikiArtist(WikiEntity):
         client = WikiClient.for_site(site_or_client) if isinstance(site_or_client, str) else site_or_client
         if self._client._site == client._site:
             return self
-        return type(self)(name=self.english_name or self.cjk_name, client=client)
+        try:
+            return type(self)(name=self.english_name or self.cjk_name, client=client)
+        except CodeBasedRestException as e:
+            for i, (text, uri_path) in enumerate(client.search('|'.join(self.aliases))):
+                candidate = type(self)(uri_path, client=client)
+                if candidate.matches(self):
+                    return candidate
+                elif i > 4:
+                    break
 
     @cached_property
     def _alt_entities(self):
@@ -893,8 +911,12 @@ class WikiArtist(WikiEntity):
                             discography.append(ost)
                             # raise http_e
                     else:
-                        fmt = '{}: Unable to find wiki page for {} via {}\n{}'
-                        log.debug(fmt.format(self, entry, client.url_for(uri_path), traceback.format_exc()))
+                        url = client.url_for(uri_path, allow_alt_sites=True)
+                        if urlparse(url).hostname != self._client.host:
+                            log.debug('{}: {} has a bad link for {} to {}'.format(self, self.url, entry['title'], url))
+                        else:
+                            fmt = '{}: Unable to find wiki page for {} via {}\n{}'
+                            log.debug(fmt.format(self, entry, url, traceback.format_exc()))
                         alb = cls(uri_path, client, disco_entry=entry, artist_context=self, no_fetch=True)
                         discography.append(alb)
                         # raise http_e
@@ -921,6 +943,9 @@ class WikiArtist(WikiEntity):
         return associated
 
     def find_song_collection(self, name, min_score=75, include_score=False, **kwargs):
+        if isinstance(name, str):
+            if name.lower().startswith('full album'):
+                name = (name, name[10:].strip())
         match_fmt = '{}: {} matched {!r} with score={} because its alias={!r} =~= {!r}'
         best_score, best_alias, best_val, best_coll = 0, None, None, None
         for collection in self.discography:
@@ -1248,11 +1273,18 @@ class WikiSongCollection(WikiEntity):
             return
         elif self._raw:
             self._albums = albums = self._client.parse_album_page(self._uri_path, self._clean_soup, self._side_info)
-            artist = self._side_info.get('artist', [])
-            if len(artist) == 1:
-                _artist = next(iter(artist))
-                href = find_href(self._client, list(self._clean_soup.find_all('a')), _artist, ('group', 'singer'))
-                self._primary_artist = (_artist, href)
+            artists = albums[0]['artists']
+            # artists = self._side_info.get('artist', [])
+            try:
+                artists_hrefs = list(filter(None, (a.get('artist_href') for a in artists)))
+                artists_names = list(filter(None, (a.get('artist')[0] for a in artists)))
+            except AttributeError as e:
+                log.error('Error processing artists for {}: {}'.format(self.url, artists))
+                raise e
+            # if len(artist) == 1:
+            #     _artist = next(iter(artist))
+            #     href = find_href(self._client, list(self._clean_soup.find_all('a')), _artist, ('group', 'singer'))
+            #     self._primary_artist = (_artist, href)
 
                 # self._primary_artist = next(iter(artist.items()))
                 # if not self._primary_artist[1]:
@@ -1277,9 +1309,9 @@ class WikiSongCollection(WikiEntity):
                     d_no_artist = True
                 else:
                     d_no_artist = False
-                d_lc_artist = d_artist_name.lower() if d_artist_name else ""
+                d_lc_artist = d_artist_name.lower() if d_artist_name else ''
 
-                if d_no_artist or d_artist_uri_path in artist.values() or d_lc_artist in map(str.lower, artist.keys()):
+                if d_no_artist or d_artist_uri_path in artists_hrefs or d_lc_artist in map(str.lower, artists_names):
                     for album in albums:
                         if d_lc_title in map(str.lower, map(str, album['title_parts'])):
                             self._album_info = album
@@ -1451,7 +1483,11 @@ class WikiSongCollection(WikiEntity):
         d_collabs = self._discography_entry.get('collaborators', [])
         a_artists = self._album_info.get('artists', [])
         for artist in chain(a_artists, d_collabs):
-            artists.add(tuple(sorted(artist.items())))
+            try:
+                artists.add(tuple(sorted(artist.items())))
+            except Exception as e:
+                log.error('Error processing artists for {}'.format(self))
+                raise e
 
         artists = [dict(artist) for artist in artists]
         artist_map = {}
@@ -1460,7 +1496,7 @@ class WikiSongCollection(WikiEntity):
             if artist_name in artist_map:
                 current = artist_map[artist_name]
                 for key, val in artist.items():
-                    if current[key] is None and val is not None:
+                    if current.get(key) is None and val is not None:
                         current[key] = val
             else:
                 artist_map[artist_name] = artist
@@ -1480,7 +1516,7 @@ class WikiSongCollection(WikiEntity):
             # group_href = artist.get('group_href')
             try:
                 # log.debug('{}: Looking for artist href={!r} name={!r} of_group={!r}'.format(self, href, name, of_group))
-                artist = WikiArtist(href, name=name, of_group=of_group)
+                artist = WikiArtist(href, name=name, of_group=of_group, client=self._client)
             except AmbiguousEntityException as e:
                 # log.debug('{}: artist={} => ambiguous'.format(self, artist))
                 if self._artist_context and isinstance(self._artist_context, WikiGroup):
@@ -1547,12 +1583,12 @@ class WikiSongCollection(WikiEntity):
 
     @cached_property
     def artist(self):
-        if self._primary_artist:
-            try:
-                return WikiArtist(self._primary_artist[1], name=self._primary_artist[0], client=self._client)
-            except CodeBasedRestException as e:
-                log.error('{}: Error retrieving primary artist {}: {}'.format(self, self._primary_artist, e))
-                raise e
+        # if self._primary_artist:
+        #     try:
+        #         return WikiArtist(self._primary_artist[1], name=self._primary_artist[0], client=self._client)
+        #     except CodeBasedRestException as e:
+        #         log.error('{}: Error retrieving primary artist {}: {}'.format(self, self._primary_artist, e))
+        #         raise e
 
         artists = self.artists
         if len(artists) == 1:
