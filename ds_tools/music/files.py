@@ -211,6 +211,19 @@ class AlbumDir(ClearableCachedPropertyMixin):
                             song.wiki_scores['album'] = int(score * 3/4)
                             song.__dict__['wiki_song'] = track
                     return album
+
+        if len(self.songs) == 1 and self.wiki_artist:
+            song = next(iter(self.songs))
+            try:
+                track = song.wiki_song
+            except Exception as e:
+                log.error('{}: Error matching track {}: {}'.format(self, song, e))
+                traceback.print_exc()
+                raise e
+            else:
+                if track:
+                    return song.wiki_album
+
         log.warning('No wiki_album match was found for {}'.format(self))
         return None
 
@@ -794,6 +807,13 @@ class SongFile(ClearableCachedPropertyMixin):
         return datetime_with_tz(date_str, '%Y%m%d')
 
     @cached_property
+    def year(self):
+        try:
+            return self.date.year
+        except Exception:
+            return None
+
+    @cached_property
     def album_name_cleaned(self):
         album = self.tag_text('album')
         m = re.match('(.*)\s*\[.*Album\]', album)
@@ -948,7 +968,9 @@ class SongFile(ClearableCachedPropertyMixin):
                         raise e
             else:
                 try:
-                    album, score = artist.find_song_collection(self.album_name_cleaned, include_score=True)
+                    album, score = artist.find_song_collection(
+                        self.album_name_cleaned, include_score=True, year=self.year
+                    )
                 except Exception as e:
                     log.error('Error determining album for {} from {}: {}'.format(self, artist, e))
                     traceback.print_exc()
@@ -974,17 +996,31 @@ class SongFile(ClearableCachedPropertyMixin):
             traceback.print_exc()
             raise e
         else:
-            if not album:
-                return None
-            try:
-                track, score = album.find_track(name, track=num, include_score=True)
-            except Exception as e:
-                log.error('Error determining track for {} from {}: {}'.format(self, album, e))
-                traceback.print_exc()
-                raise e
+            if album:
+                try:
+                    track, score = album.find_track(name, track=num, include_score=True)
+                except Exception as e:
+                    log.error('Error determining track for {} from {}: {}'.format(self, album, e))
+                    traceback.print_exc()
+                    raise e
+                else:
+                    self.wiki_scores['song'] = score
+                    return track
             else:
-                self.wiki_scores['song'] = score
-                return track
+                try:
+                    artist = self.wiki_artist
+                except Exception as e:
+                    log.error('Error determining artist for {}: {}'.format(self, e))
+                    traceback.print_exc()
+                    raise e
+                else:
+                    track, score = artist.find_track(
+                        name, self.album_name_cleaned, year=self.year, track=num, include_score=True
+                    )
+                    self.__dict__['wiki_album'] = track.collection
+                    self.wiki_scores['album'] = score * 3/4
+                    self.wiki_scores['song'] = score
+                    return track
 
     @cached()
     def wiki_expected_rel_path(self):
