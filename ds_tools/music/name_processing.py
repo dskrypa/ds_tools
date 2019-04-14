@@ -233,7 +233,7 @@ def parse_name(text):
             else:
                 found_hangul = LangCat.HAN in LangCat.categorize(part, True)
                 cjk = part
-        elif part.startswith(('pronounced', 'previously known as')):
+        elif part.startswith(('pronounced', 'previously known as', 'formerly known as')):
             pass
         elif part.startswith('is a ') and not details_parts:
             pass

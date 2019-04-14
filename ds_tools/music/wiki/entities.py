@@ -410,7 +410,7 @@ class WikiMatchable:
         if isinstance(self, WikiSongCollection):
             fuzzed_others = tuple(filter(None, (fuzz_process(o, strip_special=False) for o in others) if process else others))
         else:
-            fuzzed_others = tuple(filter(None, (fuzz_process(o) for o in others) if process else others))
+            fuzzed_others = tuple(filter(None, (fuzz_process(o) for o in others if o) if process else others))
         if not fuzzed_others:
             log.warning('Unable to compare {} to {!r}: nothing to compare after processing'.format(self, other))
             return 0, None, None
@@ -1979,20 +1979,35 @@ class WikiSoundtrack(WikiSongCollection):
                 d_artist_href = _artist.get('artist_href')
                 if d_artist_href:
                     d_artist = WikiArtist(d_artist_href, client=self._client)
-                    for alt_href in e.alternatives:
-                        client = WikiClient.for_site(e.site) if e.site else None
-                        tmp_artist = WikiArtist(alt_href, client=client)
-                        if tmp_artist.matches(d_artist):
-                            log.debug('{}: Matched {} to {}'.format(self, d_artist, tmp_artist))
-                            artists.add(tmp_artist)
-                            break
+                    if e.alternatives:
+                        alternatives = []
+                        _alts = list(e.alternatives)
+                        for alt_href in e.alternatives:
+                            if 'singer' in alt_href:
+                                _alts.remove(alt_href)
+                                alternatives.append(alt_href)
+                        alternatives.extend(_alts)
+                    else:
+                        alternatives = e.alternatives
+
+                    for i, alt_href in enumerate(alternatives):
+                        if i > 3:
+                            fmt = '{}: Skipping alt href comparison for {} =?= {} because it has too many alternatives'
+                            log.warning(fmt.format(self, d_artist, alt_href))
                         else:
-                            log.debug('{}: {} != {}'.format(self, d_artist, tmp_artist))
+                            client = WikiClient.for_site(e.site) if e.site else None
+                            tmp_artist = WikiArtist(alt_href, client=client)
+                            if tmp_artist.matches(d_artist):
+                                log.debug('{}: Matched {} to {}'.format(self, d_artist, tmp_artist))
+                                artists.add(tmp_artist)
+                                break
+                            else:
+                                log.debug('{}: {} != {}'.format(self, d_artist, tmp_artist))
                     else:
                         fmt = '{}\'s artist={!r} is ambiguous'
                         if e.alternatives:
                             fmt += ' - it could be one of: {}'.format(' | '.join(e.alternatives))
-                        log.warning(fmt.format(self, eng, group_eng), extra={'color': (11, 9)})
+                        log.log(19, fmt.format(self, eng, group_eng), extra={'color': (11, 9)})
                         artists.add(WikiArtist(name=eng, no_fetch=True))
                 else:
                     fmt = '{}\'s artist={!r} is ambiguous'
