@@ -13,7 +13,7 @@ from fuzzywuzzy import fuzz
 
 from ..caching import cached
 from ..unicode import is_any_cjk, contains_any_cjk, is_hangul, LangCat
-from ..utils import ParentheticalParser
+from ..utils import ParentheticalParser, unsurround
 
 __all__ = [
     'categorize_langs', 'combine_name_parts', 'eng_cjk_sort', 'fuzz_process', 'has_parens', 'parse_name',
@@ -245,14 +245,6 @@ def parse_name(text):
                 raise ValueError('Unexpected part: {!r}'.format(part))
 
     return base, cjk, stylized, aka, info
-
-
-def unsurround(a_str, *chars):
-    chars = chars or (('"', '"'), ('(', ')'), ('“', '“'), ("'", "'"))
-    for a, b in chars:
-        if a_str.startswith(a) and a_str.endswith(b):
-            a_str = a_str[1:-1].strip()
-    return a_str
 
 
 def is_unzipped_name(text):

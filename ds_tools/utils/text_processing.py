@@ -15,7 +15,7 @@ from unicodedata import category as unicode_cat
 __all__ = [
     'Token', 'RecursiveDescentParser', 'UnexpectedTokenError', 'strip_punctuation', 'ParentheticalParser', 'DASH_CHARS',
     'QMARKS', 'ALL_WHITESPACE', 'CHARS_BY_CATEGORY', 'ListBasedRecursiveDescentParser', 'ALL_PUNCTUATION',
-    'ALL_SYMBOLS', 'ParentheticalListParser'
+    'ALL_SYMBOLS', 'ParentheticalListParser', 'unsurround'
 ]
 log = logging.getLogger(__name__)
 
@@ -35,6 +35,15 @@ ALL_PUNCTUATION = ''.join(chain.from_iterable(chars for cat, chars in CHARS_BY_C
 ALL_SYMBOLS = ''.join(chain.from_iterable(chars for cat, chars in CHARS_BY_CATEGORY.items() if cat.startswith('S')))
 PUNC_STRIP_TBL = str.maketrans({c: '' for c in string.punctuation})
 QMARKS = '\"“'
+
+
+def unsurround(a_str, *chars):
+    a_str = a_str.strip()
+    chars = chars or (('"', '"'), ('(', ')'), ('“', '“'), ("'", "'"))
+    for a, b in chars:
+        if a_str.startswith(a) and a_str.endswith(b):
+            a_str = a_str[1:-1].strip()
+    return a_str
 
 
 def strip_punctuation(a_str):

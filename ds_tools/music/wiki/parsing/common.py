@@ -10,14 +10,15 @@ from ....core import datetime_with_tz
 from ....http import CodeBasedRestException
 from ....unicode import LangCat
 from ....utils import (
-    DASH_CHARS, QMARKS, ListBasedRecursiveDescentParser, ALL_WHITESPACE, UnexpectedTokenError, ParentheticalParser
+    DASH_CHARS, QMARKS, ListBasedRecursiveDescentParser, ALL_WHITESPACE, UnexpectedTokenError, ParentheticalParser,
+    unsurround
 )
 from ...name_processing import categorize_langs, combine_name_parts, eng_cjk_sort, str2list, split_name, has_parens
 from .exceptions import *
 
 __all__ = [
     'album_num_type', 'first_side_info_val', 'LANG_ABBREV_MAP', 'link_tuples', 'NUM2INT', 'parse_date',
-    'parse_track_info', 'split_artist_list', 'TrackInfoParser', 'TrackListParser', 'unsurround', 'find_href'
+    'parse_track_info', 'split_artist_list', 'TrackInfoParser', 'TrackListParser', 'find_href'
 ]
 log = logging.getLogger(__name__)
 
@@ -493,14 +494,6 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
         return [part for part in cleaned if part not in '"“()（）[]'], time_part
 
 
-def unsurround(a_str, *chars):
-    chars = chars or (('"', '"'), ('(', ')'), ('“', '“'))
-    for a, b in chars:
-        if a_str.startswith(a) and a_str.endswith(b):
-            a_str = a_str[1:-1].strip()
-    return a_str
-
-
 def first_side_info_val(side_info, key):
     try:
         return side_info.get(key, [])[0][0]
@@ -510,6 +503,7 @@ def first_side_info_val(side_info, key):
 
 def link_tuples(anchors):
     tuple_gen = ((a.text, a.get('href') or '') for a in anchors)
+    tuple_gen = ((text, href) for text, href in tuple_gen if '&redlink=1' not in href)
     return [(text, href[6:] if href.startswith('/wiki/') else href) for text, href in tuple_gen if href]
 
 
