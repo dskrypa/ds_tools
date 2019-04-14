@@ -180,7 +180,7 @@ def parse_name(text):
     found_hangul = False
     stylized = None
     aka = None
-    aka_leads = ('aka', 'a.k.a.', 'also known as', 'or simply', 'an acronym for', 'short for', 'or ')
+    aka_leads = ('aka', 'a.k.a.', 'also known as', 'or simply', 'an acronym for', 'short for', 'or ', 'better known as')
     style_leads = ('stylized as', 'sometimes styled as')
     info = []
     details_parts = list(map(str.strip, re.split('[;,]', details)))
