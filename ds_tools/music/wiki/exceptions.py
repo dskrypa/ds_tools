@@ -2,6 +2,7 @@
 :author: Doug Skrypa
 """
 
+import re
 from urllib.parse import urlparse
 
 from ...core import cached_property
@@ -60,33 +61,39 @@ class AmbiguousEntityException(MusicWikiException):
         alts = self.alternatives
         return alts[0] if len(alts) == 1 else None
 
+    @staticmethod
+    def _alt_text(anchor):
+        href = anchor.get('href') or ''
+        href = href[6:] if href.startswith('/wiki/') else href
+        return href if href else anchor.text.strip()
+
     @cached_property
     def alternatives(self):
         soup = soupify(self.html)
         try:
             a = soup.find('span', class_='alternative-suggestion').find('a')
-            return [a.get('href')[6:] if a.get('href') else a.text.strip()]
         except Exception as e:
             pass
+        else:
+            if a:
+                return [self._alt_text(a)]
 
         disambig_div = soup.find('div', id='disambig')
         if disambig_div:
-            return [
-                a.get('href')[6:] if a.get('href') else a.text.strip()
-                for li in disambig_div.parent.find('ul')
-                for a in li.find_all('a', limit=1)
-            ]
-        else:
+            return [self._alt_text(a) for li in disambig_div.parent.find('ul') for a in li.find_all('a', limit=1)]
+
+        #if re.search(r'For other uses, see.*?\(disambiguation\)', self.html, re.IGNORECASE):
+        disambig_a = soup.find('a', class_='mw-disambig')
+        if disambig_a:
+            return [self._alt_text(disambig_a)]
+
+        if not re.search(r'For other uses, see.*?\(disambiguation\)', self.html, re.IGNORECASE):
             try:
                 ul = soup.find('div', class_='mw-parser-output').find('ul')
             except Exception:
                 pass
             else:
-                return [
-                    a.get('href')[6:] if a.get('href') else a.text.strip()
-                    for li in ul.find_all('li')
-                    for a in li.find_all('a', limit=1)
-                ]
+                return [self._alt_text(a) for li in ul.find_all('li') for a in li.find_all('a', limit=1)]
         return []
 
     def __str__(self):
