@@ -55,17 +55,28 @@ class AmbiguousEntityException(MusicWikiException):
         self.uri_path = parsed_url.path
         self.html = html
         self.obj_type = obj_type or 'Page'
+        self._alt_texts = None
 
     @cached_property
     def alternative(self):
         alts = self.alternatives
         return alts[0] if len(alts) == 1 else None
 
-    @staticmethod
-    def _alt_text(anchor):
+    def _alt_text(self, anchor):
         href = anchor.get('href') or ''
         href = href[6:] if href.startswith('/wiki/') else href
-        return href if href else anchor.text.strip()
+        if self._alt_texts is None:
+            self._alt_texts = [anchor.text.strip()]
+        else:
+            self._alt_texts.append(anchor.text.strip())
+        return None if '&redlink=1' in href else href
+
+    @cached_property
+    def alternative_texts(self):
+        if self._alt_texts is None:
+            # noinspection PyStatementEffect
+            self.alternatives
+        return self._alt_texts
 
     @cached_property
     def alternatives(self):
@@ -76,16 +87,17 @@ class AmbiguousEntityException(MusicWikiException):
             pass
         else:
             if a:
-                return [self._alt_text(a)]
+                return list(filter(None, self._alt_text(a)))
 
         disambig_div = soup.find('div', id='disambig')
         if disambig_div:
-            return [self._alt_text(a) for li in disambig_div.parent.find('ul') for a in li.find_all('a', limit=1)]
+            anchors = (self._alt_text(a) for li in disambig_div.parent.find('ul') for a in li.find_all('a', limit=1))
+            return list(filter(None, anchors))
 
         #if re.search(r'For other uses, see.*?\(disambiguation\)', self.html, re.IGNORECASE):
         disambig_a = soup.find('a', class_='mw-disambig')
         if disambig_a:
-            return [self._alt_text(disambig_a)]
+            return list(filter(None, self._alt_text(disambig_a)))
 
         if not re.search(r'For other uses, see.*?\(disambiguation\)', self.html, re.IGNORECASE):
             try:
@@ -93,11 +105,12 @@ class AmbiguousEntityException(MusicWikiException):
             except Exception:
                 pass
             else:
-                return [self._alt_text(a) for li in ul.find_all('li') for a in li.find_all('a', limit=1)]
+                anchors = (self._alt_text(a) for li in ul.find_all('li') for a in li.find_all('a', limit=1))
+                return list(filter(None, anchors))
         return []
 
     def __str__(self):
-        alts = self.alternatives
+        alts = self.alternative_texts
         base = '{} {!r} doesn\'t exist'.format(self.obj_type, self.uri_path)
         if len(alts) == 1:
             return '{} - did you mean {!r}?'.format(base, alts[0])
