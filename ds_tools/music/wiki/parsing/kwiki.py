@@ -8,18 +8,18 @@ from collections import defaultdict
 from itertools import chain
 from urllib.parse import urlparse
 
-from bs4.element import NavigableString
+from bs4.element import NavigableString, Tag
 
-from ....utils import ParentheticalParser, DASH_CHARS, num_suffix, QMARKS, soupify
+from ....utils import ParentheticalParser, DASH_CHARS, num_suffix, QMARKS, soupify, unsurround
 from ...name_processing import has_parens, parse_name, split_name, str2list
-from ..utils import synonym_pattern, get_page_category
+from ..utils import synonym_pattern, get_page_category, normalize_href
 from .common import (
-    album_num_type, first_side_info_val, LANG_ABBREV_MAP, link_tuples, NUM2INT, parse_track_info, unsurround,
-    parse_date, TrackListParser, split_artist_list
+    album_num_type, first_side_info_val, LANG_ABBREV_MAP, link_tuples, NUM2INT, parse_track_info, parse_date,
+    TrackListParser, split_artist_list
 )
 from .exceptions import NoTrackListException, WikiEntityParseException, UnexpectedDateFormat, TrackInfoParseException
 
-__all__ = ['parse_album_page', 'parse_album_tracks', 'parse_aside', 'parse_discography_entry']
+__all__ = ['find_group_members', 'parse_album_page', 'parse_album_tracks', 'parse_aside', 'parse_discography_section']
 log = logging.getLogger(__name__)
 
 
@@ -630,3 +630,134 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
     }
     return info
 
+
+def parse_discography_section(artist, clean_soup):
+    try:
+        discography_h2 = clean_soup.find('span', id='Discography').parent
+    except AttributeError as e:
+        log.log(9, 'No page content / discography was found for {}'.format(artist))
+        return []
+
+    entries = []
+    h_levels = {'h3': 'language', 'h4': 'type'}
+    lang, album_type = 'Korean', 'Unknown'
+    ele = discography_h2.next_sibling
+    while True:
+        while not isinstance(ele, Tag):     # Skip past NavigableString objects
+            if ele is None:
+                return entries
+            ele = ele.next_sibling
+
+        val_type = h_levels.get(ele.name)
+        if val_type == 'language':  # *almost* always h3, but sometimes type is h3
+            val = next(ele.children).get('id')
+            val_lc = val.lower()
+            if any(v in val_lc for v in ('album', 'single', 'collaboration', 'feature')):
+                h_levels[ele.name] = 'type'
+                album_type = val
+            else:
+                lang = val
+        elif val_type == 'type':
+            album_type = next(ele.children).get('id')
+        elif ele.name == 'ul':
+            li_eles = list(ele.children)
+            top_level_li_eles = li_eles.copy()
+            num = 0
+            while li_eles:
+                li = li_eles.pop(0)
+                if li in top_level_li_eles:
+                    num += 1
+                ul = li.find('ul')
+                if ul:
+                    try:
+                        ul.extract()  # remove nested list from tree
+                    except AttributeError as e:
+                        log.error('{}: Error processing discography in ele: {}'.format(artist.url, ele))
+                        raise e
+                    li_eles = list(ul.children) + li_eles  # insert elements from the nested list at top
+
+                entry = parse_discography_entry(artist, li, album_type, lang, num)
+                if entry:
+                    entries.append(entry)
+
+        elif ele.name in ('h2', 'div'):
+            break
+        ele = ele.next_sibling
+    return entries
+
+
+def find_group_members(artist, clean_soup):
+    """
+    Find names and links to members of a group.
+
+    :param WikiGroup artist:
+    :param clean_soup: The :attr:`WikiEntity._clean_soup` value for an artist
+    :return: Generator that yields 2-tuples of (uri_path, name (None|str|2-tuple of (eng, cjk)))
+    """
+    try:
+        member_li_rx0 = find_group_members._member_li_rx0
+        member_li_rx1 = find_group_members._member_li_rx1
+    except AttributeError:
+        member_li_rx0 = find_group_members._member_li_rx0 = re.compile(r'^([^(]+)\(([^,;]+)[,;]\s+([^,;]+)\)\s*-.*')
+        member_li_rx1 = find_group_members._member_li_rx1 = re.compile(r'(.*?)\s*-\s*(.*)')
+
+    members_span = clean_soup.find('span', id='Members')
+    if members_span:
+        members_h2 = members_span.parent
+        members_container = members_h2
+        for sibling in members_h2.next_siblings:
+            if sibling.name in ('ul', 'table'):
+                members_container = sibling
+                break
+
+        if members_container.name == 'ul':
+            for li in members_container.find_all('li'):
+                a = li.find('a')
+                href = normalize_href(a.get('href') if a else None)
+                if href:
+                    yield href, None
+                else:
+                    m = member_li_rx0.match(li.text)
+                    if m:
+                        a, b, cjk = m.groups()
+                        yield None, split_name((a if len(a) > len(b) else b, cjk))
+                    else:
+                        m = member_li_rx1.match(li.text)
+                        yield None, list(map(str.strip, m.groups()))[0]
+        elif members_container.name == 'table':
+            for tr in members_container.find_all('tr'):
+                if tr.find('th'):
+                    continue
+                a = tr.find('a')
+                href = normalize_href(a.get('href') if a else None)
+                # log.debug('{}: Found member tr={}, href={!r}'.format(artist, tr, href))
+                if href:
+                    yield href, None
+                else:
+                    yield None, list(map(str.strip, (td.text.strip() for td in tr.find_all('td'))))[0]
+    else:
+        members_h2 = clean_soup.find('span', id='Graduated_members').parent
+        for sibling in members_h2.next_siblings:
+            if sibling.name == 'h3':
+                pass  # Group name
+            elif sibling.name == 'ul':
+                for li in sibling.find_all('li'):
+                    a = li.find('a')
+                    href = normalize_href(a.get('href') if a else None)
+                    if href:
+                        yield href, None
+                    else:
+                        m = member_li_rx0.match(li.text)
+                        if m:
+                            a, b, cjk = m.groups()
+                            yield None, split_name((a if len(a) > len(b) else b, cjk))
+                        else:
+                            yield None, split_name(li.text)
+                            # m = self._member_li_rx1.match(li.text)
+                            # try:
+                            #     yield None, list(map(str.strip, m.groups()))[0]
+                            # except AttributeError as e:
+                            #     yield None, split_name(li.text)
+            elif sibling.name == 'h2':
+                if not sibling.find('span', id='Past_members'):
+                    break

@@ -8,12 +8,15 @@ from itertools import chain
 
 from bs4.element import NavigableString
 
-from ....utils import DASH_CHARS, num_suffix
+from ....utils import DASH_CHARS, num_suffix, soupify, unsurround
 from ...name_processing import parse_name, str2list, split_name
 from .exceptions import *
 from .common import *
 
-__all__ = ['expanded_wiki_table', 'parse_discography_page', 'parse_infobox', 'parse_wikipedia_album_page']
+__all__ = [
+    'expanded_wiki_table', 'parse_discography_page', 'parse_infobox', 'parse_wikipedia_album_page',
+    'parse_wikipedia_group_members'
+]
 log = logging.getLogger(__name__)
 
 
@@ -21,8 +24,10 @@ def parse_discography_page(uri_path, clean_soup, artist):
     albums, singles = [], []
     try:
         date_comment_rx = parse_discography_page._date_comment_rx
+        br_split_rx = parse_discography_page._br_split_rx
     except AttributeError:
         date_comment_rx = parse_discography_page._date_comment_rx = re.compile(r'^(\S+ \d+\s*, \d{4}).*')
+        br_split_rx = parse_discography_page._br_split_rx = re.compile(r'<br/?>')
 
     if clean_soup.find('span', id='Discography'):
         top_lvl_h, sub_h = 'h3', 'h4'
@@ -60,8 +65,18 @@ def parse_discography_page(uri_path, clean_soup, artist):
                         if album_title.lower() == 'non-album single':
                             album_title = None
                         links = link_tuples(chain(title_ele.find_all('a'), album_ele.find_all('a')))
+
+                        lines = list(map(unsurround, (soupify(ln).text for ln in br_split_rx.split(str(title_ele)))))
+                        while any(line.endswith(',') for line in lines):
+                            for i, line in enumerate(lines):
+                                if line.endswith(',') and i != len(lines):
+                                    lines[i] = '{} {}'.format(line, lines.pop(i+1))
+                            else:
+                                if lines[-1].endswith(','):
+                                    break
+
                         track = parse_track_info(
-                            1, title_ele.text, uri_path, links=links,
+                            1, lines, uri_path, links=links,
                             include={'links': links, 'album': album_title, 'year': int(year_ele.text.strip())}
                         )
                         # log.debug('Adding type={!r}, sub_type={!r}, track: {}'.format(album_type, sub_type, track))
@@ -340,3 +355,23 @@ def parse_infobox(infobox, uri_path):
 
         parsed[key] = value
     return parsed
+
+
+def parse_wikipedia_group_members(artist, clean_soup):
+    members_span = clean_soup.find('span', id='Members')
+    if members_span:
+        members_h2 = members_span.parent
+        members_container = members_h2
+        for sibling in members_h2.next_siblings:
+            if sibling.name in ('ul', 'table'):
+                members_container = sibling
+                break
+
+        if members_container.name == 'ul':
+            for li in members_container.find_all('li'):
+                member, roles = li.text.split('—', 1)
+                base, cjk, stylized, aka, info = parse_name(member)
+                yield None, (base, cjk)
+        elif members_container.name == 'table':
+            fmt = '{}: Found unexpected/unencountered member table on page: {}'
+            raise WikiEntityParseException(fmt.format(artist, artist.url))

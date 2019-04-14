@@ -145,38 +145,8 @@ def parse_drama_wiki_info_list(uri_path, info_ul, client):
         elif key == 'language':
             value = str2list(value)
         elif key == 'artist':
-            # try:
-            #     prod_by_rx = parse_drama_wiki_info_list._prod_by_rx
-            # except AttributeError:
-            #     prod_by_rx = parse_drama_wiki_info_list._prod_by_rx = re.compile(
-            #         r'^(.*)\s\(Prod(?:\.|uced)? by\s+(.*)\)$', re.IGNORECASE
-            #     )
-            # links = dict(link_tuples(li.find_all('a')))
             anchors = list(li.find_all('a'))
             value, info['produced_by'] = split_artist_list(value, context=uri_path, anchors=anchors, client=client)
-            # artists = str2list(value)
-            # value = []
-            # for artist in artists:
-            #     m = prod_by_rx.match(artist)
-            #     if m:
-            #         artist, prod_by = m.groups()
-            #     else:
-            #         prod_by = None
-            #
-            #     try:
-            #         soloist, of_group = artist.split(' of ')
-            #     except Exception as e:
-            #         try:
-            #             value.append({'artist': split_name(artist, permissive=True), 'prod_by': prod_by})
-            #         except ValueError as e1:
-            #             raise WikiEntityParseException('Error parsing info list in {}: {}'.format(uri_path, e1)) from e1
-            #     else:
-            #         try:
-            #             value.append({
-            #                 'artist': split_name(soloist), 'of_group': split_name(of_group), 'prod_by': prod_by
-            #             })
-            #         except ValueError as e:
-            #             raise WikiEntityParseException('Error parsing info list in {}: {}'.format(uri_path, e)) from e
         elif key == 'also known as':
             value = str2list(value)
         elif key in ('original soundtrack', 'original soundtracks'):
