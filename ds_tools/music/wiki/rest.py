@@ -214,7 +214,7 @@ class WikipediaClient(WikiClient):
         return raw, cats
 
     def parse_side_info(self, soup, uri_path):
-        return parse_infobox(soup, uri_path)
+        return parse_infobox(soup, uri_path, self)
 
     def parse_album_page(self, uri_path, clean_soup, side_info):
         return parse_wikipedia_album_page(uri_path, clean_soup, side_info)

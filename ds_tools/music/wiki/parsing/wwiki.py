@@ -253,7 +253,7 @@ def parse_wikipedia_album_page(uri_path, clean_soup, side_info):
     return albums
 
 
-def parse_infobox(infobox, uri_path):
+def parse_infobox(infobox, uri_path, client):
     """
     Parse the 'infobox' element from a wiki page into a more easily used data format
 
@@ -320,6 +320,8 @@ def parse_infobox(infobox, uri_path):
                     try:
                         dt = parse_date(val)
                     except Exception as e:
+                        if client.is_any_category(uri_path, ['group']):
+                            break
                         parsed['birth_name'] = [split_name(val)]
                     else:
                         parsed['birth_date'] = dt
