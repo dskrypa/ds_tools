@@ -62,6 +62,7 @@ DISCOGRAPHY_TYPE_MAP = {
     'studio_albums': 'Album'
 }
 SINGLE_TYPE_TO_BASE_TYPE = {
+    None: 'singles',
     'as lead artist': 'singles',
     'collaborations': 'collaborations',
     'as featured artist': 'features',
@@ -536,6 +537,8 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
 
     @cached_property
     def url(self):
+        if self._uri_path is None:
+            return None
         return self._client.url_for(self._uri_path)
 
     @property
@@ -673,7 +676,7 @@ class WikiTVSeries(WikiEntity):
     def __init__(self, uri_path=None, client=None, **kwargs):
         super().__init__(uri_path, client, **kwargs)
 
-        self.ost_href = None
+        self.ost_hrefs = []
         if self._side_info:
             self.name = self._side_info['name']
             self.aka = self._side_info.get('also known as', [])
@@ -707,7 +710,17 @@ class WikiTVSeries(WikiEntity):
                 self.aka = self._info.get('also known as', [])
                 ost = self._info.get('original soundtrack') or self._info.get('original soundtracks')
                 if ost:
-                    self.ost_href = list(ost.values())[0]
+                    self.ost_hrefs.append(list(ost.values())[0])
+
+                ost_tag_func = lambda tag: tag.name == 'li' and tag.text.lower().startswith('original soundtrack')
+                try:
+                    for li in self._clean_soup.find_all(ost_tag_func):
+                        href = li.find('a').get('href')
+                        if href and href not in self.ost_hrefs:
+                            self.ost_hrefs.append(href)
+                except Exception as e:
+                    msg = 'Error processing OST links for {} from {}'.format(self, self.url)
+                    raise WikiEntityParseException(msg) from e
         else:
             self.aka = []
 
@@ -890,7 +903,8 @@ class WikiArtist(WikiEntity):
         elif isinstance(self._client, DramaWikiClient):
             try:
                 self._albums = parse_artist_osts(self._uri_path, self._clean_soup, self)
-            except WikiEntityParseException:
+            except WikiEntityParseException as e:
+                log.debug('{}: Error parsing discography from {}: {}'.format(self, self.url, e))
                 self._albums = None
 
         if self._albums:
@@ -932,7 +946,21 @@ class WikiArtist(WikiEntity):
                 try:
                     discography.append(cls(uri_path, client, disco_entry=entry, artist_context=self))
                 except WikiTypeError as e:
-                    if not isinstance(client, DramaWikiClient):
+                    if isinstance(client, DramaWikiClient):
+                        if e.category == 'tv_series':
+                            series = WikiTVSeries(uri_path, client)
+                            found = False
+                            if series.ost_hrefs:
+                                for ost_href in series.ost_hrefs:
+                                    ost = WikiSongCollection(ost_href, client, disco_entry=entry, artist_context=self)
+                                    if len(series.ost_hrefs) == 1 or ost.matches(title):
+                                        discography.append(ost)
+                                        found = True
+                                        break
+                            if not found:
+                                fmt = '{}: Error processing discography entry for {!r} / {!r}: {}'
+                                log.error(fmt.format(self, entry['uri_path'], entry['title'], e), extra={'color': 13})
+                    else:
                         fmt = '{}: Error processing discography entry for {!r} / {!r}: {}'
                         log.error(fmt.format(self, entry['uri_path'], entry['title'], e), extra={'color': 13})
                 except CodeBasedRestException as http_e:
@@ -1047,6 +1075,16 @@ class WikiArtist(WikiEntity):
             return (best_coll, best_score) if include_score else best_coll
         elif isinstance(self._client, KpopWikiClient):
             site = WikipediaClient._site
+            try:
+                alt_artist = self.for_alt_site(site)
+            except Exception as e:
+                log.debug('{}: Error finding {} version: {}'.format(self, site, e))
+            else:
+                return alt_artist.find_song_collection(name, min_score=min_score, include_score=include_score, **kwargs)
+
+        aliases = (name,) if isinstance(name, str) else name
+        if isinstance(self._client, (KpopWikiClient, WikipediaClient)) and any('OST' in a.upper() for a in aliases):
+            site = DramaWikiClient._site
             try:
                 alt_artist = self.for_alt_site(site)
             except Exception as e:
@@ -1390,17 +1428,21 @@ class WikiSongCollection(WikiEntity):
             self.english_name, self.cjk_name, self.stylized_name, self.aka, self._info = self._album_info['title_parts']
         elif disco_entry:
             self._primary_artist = disco_entry.get('primary_artist')
-            try:
+            if 'title_parts' in disco_entry:
+                self.english_name, self.cjk_name, self.stylized_name, self.aka, self._info = disco_entry['title_parts']
+            else:
                 try:
-                    self.english_name, self.cjk_name = eng_cjk_sort(disco_entry['title'])
-                except ValueError as e1:
-                    log.debug('Unexpected disco_entry title for {}: {!r}; retrying'.format(self.url, disco_entry['title']))
-                    self.english_name, self.cjk_name = split_name(disco_entry['title'])
-            except Exception as e:
-                if not kwargs.get('no_fetch'):
-                    log.error('Error processing disco entry title: {}'.format(e))
-                msg = 'Unable to find valid title in discography entry: {}'.format(disco_entry)
-                raise WikiEntityInitException(msg) from e
+                    try:
+                        self.english_name, self.cjk_name = eng_cjk_sort(disco_entry['title'])
+                    except ValueError as e1:
+                        fmt = 'Unexpected disco_entry title for {}: {!r}; retrying'
+                        log.debug(fmt.format(self.url, disco_entry['title']))
+                        self.english_name, self.cjk_name = split_name(disco_entry['title'], allow_cjk_mix=True)
+                except Exception as e:
+                    if not kwargs.get('no_fetch'):
+                        log.error('Error processing disco entry title: {}'.format(e))
+                    msg = 'Unable to find valid title in discography entry: {}'.format(disco_entry)
+                    raise WikiEntityInitException(msg) from e
         else:
             msg = 'A valid uri_path / discography entry are required to initialize a {}'.format(type(self).__name__)
             raise WikiEntityInitException(msg)
@@ -1481,6 +1523,16 @@ class WikiSongCollection(WikiEntity):
     @cached_property
     def album_type(self):
         base_type = self._discography_entry.get('base_type')
+        if isinstance(self._client, WikipediaClient):
+            sub_type = self._discography_entry.get('sub_type')
+            if base_type == 'albums':
+                if sub_type == 'reissues':
+                    base_type = 'repackage_albums'
+                elif sub_type == 'compilation albums':
+                    base_type = 'best_albums'
+                else:
+                    base_type = sub_type.replace(' ', '_')
+
         try:
             return DISCOGRAPHY_TYPE_MAP[base_type]
         except KeyError as e0:
@@ -2390,10 +2442,11 @@ def find_ost(artist, title, disco_entry):
             else:
                 if not series.matches(show_title):
                     continue
-                elif series.ost_href:
-                    return WikiSongCollection(
-                        series.ost_href, d_client, disco_entry=disco_entry, artist_context=artist
-                    )
+                elif series.ost_hrefs:
+                    for ost_href in series.ost_hrefs:
+                        ost = WikiSongCollection(ost_href, d_client, disco_entry=disco_entry, artist_context=artist)
+                        if len(series.ost_hrefs) == 1 or ost.matches(title):
+                            return ost
 
                 for alt_title in series.aka:
                     # log.debug('Found AKA for {!r}: {!r}'.format(show_title, alt_title))

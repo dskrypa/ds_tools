@@ -15,10 +15,16 @@ log = logging.getLogger(__name__)
 
 
 def parse_artist_osts(uri_path, clean_soup, artist):
-    try:
-        ost_ul = clean_soup.find('span', id='TV_Show_Theme_Songs').parent.find_next('ul')
-    except Exception as e:
-        raise WikiEntityParseException('Unable to find TV_Show_Theme_Songs section in {}'.format(uri_path)) from e
+    excs = []
+    for span_id in ('TV_Show_Theme_Songs', 'TV_Shows_Theme_Songs'):
+        try:
+            ost_ul = clean_soup.find('span', id=span_id).parent.find_next('ul')
+        except Exception as e:
+            excs.append(e)
+        else:
+            break
+    else:
+        raise WikiEntityParseException('Unable to find TV_Show_Theme_Songs section in {}'.format(uri_path)) from excs[0]
 
     albums = []
     for li in ost_ul.find_all('li'):
@@ -82,18 +88,28 @@ def parse_ost_page(uri_path, clean_soup, client):
                         err_msg = 'Error splitting name={!r} from {}'.format(name_parts[0], uri_path)
                         _eng = []
                         _cjk = []
+                        lang_sort_worked = False
                         for part in name_parts[0].split():
                             if LangCat.categorize(part) == LangCat.ENG:
                                 if _cjk:
-                                    raise WikiEntityParseException(err_msg) from e
+                                    break
                                 _eng.append(part)
                             else:
                                 _cjk.append(part)
-
-                        if _eng and _cjk:
-                            name_parts = [' '.join(_eng), ' '.join(_cjk)]
                         else:
-                            raise WikiEntityParseException(err_msg) from e
+                            lang_sort_worked = True
+
+                        if lang_sort_worked:
+                            if _eng and _cjk:
+                                name_parts = [' '.join(_eng), ' '.join(_cjk)]
+                            else:
+                                raise WikiEntityParseException(err_msg) from e
+                        else:
+                            lc_name = name_parts[0].lower()
+                            if lc_name.count('(') > 2 and ' ver.)' in lc_name and '(inst.)' in lc_name:
+                                name_parts = name_parts[0]  # Let parse_track_info split the string
+                            else:
+                                raise WikiEntityParseException(err_msg) from e
                 elif all(part.lower().endswith('(inst.)') for part in name_parts):
                     name_parts = [part[:-7].strip() for part in name_parts]
                     name_parts.append('Inst.')
