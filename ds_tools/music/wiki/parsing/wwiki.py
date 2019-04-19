@@ -8,6 +8,7 @@ from itertools import chain
 
 from bs4.element import NavigableString
 
+from ....unicode import LangCat
 from ....utils import DASH_CHARS, num_suffix, soupify, unsurround
 from ...name_processing import parse_name, str2list, split_name
 from .exceptions import *
@@ -49,7 +50,7 @@ def parse_discography_page(uri_path, clean_soup, artist):
                 sub_type = ele.text.strip().lower()
             elif ele.name == 'table':
                 columns = [th.text.strip() for th in ele.find('tr').find_all('th')]
-                if columns[-1] in ('Album', 'Drama'):
+                if columns[-1] in ('Album', 'Drama'):                                               # It is a single
                     tracks = []
                     expanded = expanded_wiki_table(ele)
                     # log.debug('Expanded table: {}'.format(expanded))
@@ -60,10 +61,12 @@ def parse_discography_page(uri_path, clean_soup, artist):
                         else:
                             title_ele = row[0]
                             year_ele = row[1]
+
                         album_ele = row[-1]
                         album_title = album_ele.text.strip()
                         if album_title.lower() == 'non-album single':
                             album_title = None
+
                         links = link_tuples(chain(title_ele.find_all('a'), album_ele.find_all('a')))
 
                         lines = list(map(unsurround, (soupify(ln).text for ln in br_split_rx.split(str(title_ele)))))
@@ -75,23 +78,29 @@ def parse_discography_page(uri_path, clean_soup, artist):
                                 if lines[-1].endswith(','):
                                     break
 
+                        if LangCat.categorize(lines[0]) == LangCat.MIX:
+                            line = lines.pop(0)
+                            lines = list(split_name(line, allow_cjk_mix=True)) + lines
+
                         track = parse_track_info(
                             1, lines, uri_path, links=links,
                             include={'links': links, 'album': album_title, 'year': int(year_ele.text.strip())}
                         )
-                        # log.debug('Adding type={!r}, sub_type={!r}, track: {}'.format(album_type, sub_type, track))
+                        # fmt = 'Single info from {} - {} - type={!r} sub_type={!r} album={!r} lines={!r}\n==> track={}'
+                        # log.debug(fmt.format(artist, uri_path, album_type, sub_type, album_title, lines, track))
                         tracks.append(track)
                     singles.append({'type': album_type, 'sub_type': sub_type, 'tracks': tracks})
-                else:
+                else:                                                                               # It is an album
                     for i, th in enumerate(ele.find_all('th', scope='row')):
-                        links = [(a.text, a.get('href') or '') for a in th.find_all('a')]
+                        links = link_tuples(th.find_all('a'))
+                        # links = [(a.text, a.get('href') or '') for a in th.find_all('a')]
                         title = th.text.strip()
                         album = {
                             'title': title, 'links': links, 'type': album_type, 'sub_type': sub_type, 'is_ost': False,
                             'primary_artist': (artist.name, artist._uri_path) if artist else (None, None),
                             'uri_path': dict(links).get(title), 'base_type': album_type, 'wiki': 'en.wikipedia.org',
                             'num': '{}{}'.format(i, num_suffix(i)), 'collaborators': {}, 'misc_info': [],
-                            'language': None, 'is_feature_or_collab': None
+                            'language': None, 'is_feature_or_collab': None, 'title_parts': parse_name(title)
                         }
 
                         for li in th.parent.find('td').find('ul').find_all('li'):
@@ -190,6 +199,7 @@ def parse_wikipedia_album_page(uri_path, clean_soup, side_info):
     try:
         album0['num'], album0['type'] = album_num_type(details)
     except ValueError as e:
+        log.debug('In {}, parsed: title_parts={!r}, details={!r}'.format(uri_path, album0['title_parts'], details))
         raise WikiEntityParseException(bad_intro_fmt.format(uri_path, intro_text[:200])) from e
 
     # links = []
@@ -301,15 +311,19 @@ def parse_infobox(infobox, uri_path, client):
 
         if key == 'released':
             value = []
-            val = val_ele.text.strip()
-            try:
-                dt = parse_date(val)
-            except UnexpectedDateFormat as e:
-                raise e
-            except Exception as e:
-                raise UnexpectedDateFormat('Unexpected release date format: {!r}'.format(val)) from e
-            else:
-                value.append((dt, None))
+            for val in val_ele.stripped_strings:
+                val = re.sub('\s+', ' ', val)
+                try:
+                    dt = parse_date(val)
+                except UnexpectedDateFormat as e:
+                    if value and not value[-1][1]:
+                        value[-1] = (value[-1][0], unsurround(val))
+                    else:
+                        raise e
+                except Exception as e:
+                    raise UnexpectedDateFormat('Unexpected release date format: {!r}'.format(val)) from e
+                else:
+                    value.append((dt, None))
         elif key == 'length':
             value = [(val_ele.text.strip(), None)]
         elif key == 'also known as':
@@ -371,7 +385,12 @@ def parse_wikipedia_group_members(artist, clean_soup):
 
         if members_container.name == 'ul':
             for li in members_container.find_all('li'):
-                member, roles = li.text.split('—', 1)
+                li_text = li.text.strip()
+                if '—' in li_text:
+                    member, roles = li_text.split('—', 1)
+                else:
+                    member = li_text
+
                 base, cjk, stylized, aka, info = parse_name(member)
                 yield None, (base, cjk)
         elif members_container.name == 'table':
