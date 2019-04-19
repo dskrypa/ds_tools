@@ -19,7 +19,7 @@ from ...caching import cached, DictAttrProperty, DictAttrPropertyMixin
 from ...core import cached_property
 from ...http import CodeBasedRestException
 from ...unicode import LangCat, romanized_permutations
-from ...utils import soupify
+from ...utils import soupify, normalize_roman_numerals
 from ..name_processing import eng_cjk_sort, fuzz_process, parse_name, revised_weighted_ratio, split_name
 from .exceptions import *
 from .utils import (
@@ -403,22 +403,27 @@ class WikiMatchable:
         :param int|None year: The release year if other represents an album
         :return tuple: (score, best alias of this WikiEntity, best value from other)
         """
+        eng, cjk = None, None
         if not isinstance(other, (str, WikiEntity)) and len(other) == 1:
             other = other[0]
         if isinstance(other, str):
             lang = LangCat.categorize(other)
             if lang == LangCat.MIX:
                 try:
-                    others = split_name(other)
+                    eng, cjk = split_name(other)
                 except ValueError:
                     others = (other,)
                 else:
+                    others = (eng, cjk)
                     if others[0].lower() == 'live':
                         others = (other,)
             elif lang == LangCat.HAN:
+                cjk = other
                 others = romanized_permutations(other)
                 others.insert(0, other)
             else:
+                if lang in LangCat.asian_cats:
+                    cjk = other
                 others = (other,)
         elif isinstance(other, WikiEntity):
             if self._category != other._category and self._category is not None and other._category is not None:
@@ -479,7 +484,15 @@ class WikiMatchable:
                 if score > best_score:
                     best_score, best_alias, best_val = score, alias, val
 
-        return best_score + score_mod, best_alias, best_val
+        final_score = best_score + score_mod
+        if final_score >= 100 and cjk and not getattr(self, 'cjk_name', None):
+            log.debug('Updating {!r}.cjk_name => {!r}'.format(self, cjk))
+            try:
+                self.update_name(None, cjk)
+            except AttributeError:
+                pass
+
+        return final_score, best_alias, best_val
 
 
 class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
@@ -502,8 +515,8 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
             self._header_title = None
 
     def update_name(self, eng_name, cjk_name):
-        self.english_name = eng_name or self.english_name
-        self.cjk_name = cjk_name or self.cjk_name
+        self.english_name = normalize_roman_numerals(eng_name) if eng_name else self.english_name
+        self.cjk_name = normalize_roman_numerals(cjk_name) if cjk_name else self.cjk_name
         self.name = multi_lang_name(self.english_name, self.cjk_name)
         try:
             del self.__dict__['aliases']

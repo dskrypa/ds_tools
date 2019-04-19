@@ -24,7 +24,7 @@ from mutagen.mp4 import MP4Tags
 from ..caching import ClearableCachedPropertyMixin, cached
 from ..core import cached_property, format_duration, datetime_with_tz
 from ..http import CodeBasedRestException
-from ..unicode import contains_hangul
+from ..unicode import contains_hangul, LangCat
 from .exceptions import NoArtistsFoundException, NoAlbumFoundException
 from .patches import tag_repr
 from .name_processing import split_names, split_name
@@ -184,6 +184,18 @@ class AlbumDir(ClearableCachedPropertyMixin):
         return None
 
     @cached_property
+    def title(self):
+        titles = {f.album_name_cleaned_plus_and_part[0] for f in self.songs}
+        title = None
+        if len(titles) == 1:
+            title = titles.pop()
+        elif len(titles) > 1:
+            log.warning('Conflicting album titles were found for {}: {}'.format(self, ', '.join(map(str, titles))))
+        elif not titles:
+            log.warning('No album titles were found for {}'.format(self))
+        return title
+
+    @cached_property
     def wiki_album(self):
         try:
             albums = {f.wiki_album for f in self.songs if f.wiki_album}
@@ -196,8 +208,11 @@ class AlbumDir(ClearableCachedPropertyMixin):
         elif len(albums) > 1:
             log.warning('Conflicting wiki_album matches were found for {}: {}'.format(self, ', '.join(map(str, albums))))
         elif self.wiki_artist and self.tag_release_date:
+
+
             for album in self.wiki_artist.discography:
                 if album.released == self.tag_release_date and len(self.songs) == len(album.get_tracks()):
+                    scores = []
                     for song in self.songs:
                         song.wiki_scores['song'] = -1
                         try:
@@ -207,22 +222,30 @@ class AlbumDir(ClearableCachedPropertyMixin):
                             traceback.print_exc()
                             raise e
                         else:
+                            scores.append(score)
                             song.wiki_scores['song'] = score
                             song.wiki_scores['album'] = int(score * 3/4)
                             song.__dict__['wiki_song'] = track
-                    return album
+
+                    if all(s >= 95 for s in scores):
+                        if self.title and LangCat.contains_any_not(self.title, LangCat.ENG) and not album.cjk_name:
+                            album.update_name(None, self.title)
+                        return album
 
         if len(self.songs) == 1 and self.wiki_artist:
-            song = next(iter(self.songs))
+            song_file = next(iter(self.songs))
             try:
-                track = song.wiki_song
+                wiki_track = song_file.wiki_song
             except Exception as e:
-                log.error('{}: Error matching track {}: {}'.format(self, song, e))
+                log.error('{}: Error matching track {}: {}'.format(self, song_file, e))
                 traceback.print_exc()
                 raise e
             else:
-                if track:
-                    return song.wiki_album
+                if wiki_track:
+                    album = song_file.wiki_album
+                    if self.title and LangCat.contains_any_not(self.title, LangCat.ENG) and not album.cjk_name:
+                        album.update_name(None, self.title)
+                    return album
 
         log.warning('No wiki_album match was found for {}'.format(self))
         return None
@@ -832,7 +855,21 @@ class SongFile(ClearableCachedPropertyMixin):
         if m:
             album = m.group(1)
 
-        return album
+        return album.replace(' : ', ': ')
+
+    @cached_property
+    def album_name_cleaned_plus_and_part(self):
+        title = self.album_name_cleaned
+        part = None
+        if 'OST' in title.upper():
+            m = re.match(r'^(.*)\s+((?:Part|Code No)\.?\s*\d+)$', title, re.IGNORECASE)
+            if m:
+                title = m.group(1).strip()
+                part = m.group(2).strip()
+
+            if title.endswith(' -'):
+                title = title[:-1].strip()
+        return title, part
 
     @cached_property
     def album_from_dir(self):
@@ -935,15 +972,7 @@ class SongFile(ClearableCachedPropertyMixin):
                 log.debug('{}: No artist found; attemping lookup by name={!r}'.format(self, alb_name))
                 if 'OST' in alb_name.upper():
                     log.debug('{}: Searching for OST matches...'.format(self))
-                    title = alb_name
-                    m = re.match(r'^(.*)\s+((?:Part|Code No)\.?\s*\d+)$', title, re.IGNORECASE)
-                    if m:
-                        title = m.group(1).strip()
-                        part = m.group(2).strip()
-                    else:
-                        part = None
-                    if title.endswith(' -'):
-                        title = title[:-1].strip()
+                    title, part = self.album_name_cleaned_plus_and_part
                     log.debug('{}: Trying to match album title={!r}'.format(self, title))
                     try:
                         ost = find_ost(None, title, {'title': alb_name})
@@ -957,6 +986,7 @@ class SongFile(ClearableCachedPropertyMixin):
                             ost = find_ost(None, title, {'title': '{} {}'.format(title, part) if part else alb_name})
                             if ost:
                                 return ost
+
                             raise NoAlbumFoundException('Unable to find album for {} / {!r}'.format(self, alb_name))
                     else:
                         return ost
