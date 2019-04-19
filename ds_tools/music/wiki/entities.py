@@ -493,11 +493,22 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
         self._client = client
         self._uri_path = uri_path
         self._raw = raw if raw is not None else client.get_page(uri_path) if uri_path and not no_fetch else None
+        self.english_name = None
+        self.cjk_name = None
         self.name = name or uri_path
         if isinstance(self._client, DramaWikiClient) and self._raw:
             self._header_title = soupify(self._raw, parse_only=bs4.SoupStrainer('h2', class_='title')).text
         else:
             self._header_title = None
+
+    def update_name(self, eng_name, cjk_name):
+        self.english_name = eng_name or self.english_name
+        self.cjk_name = cjk_name or self.cjk_name
+        self.name = multi_lang_name(self.english_name, self.cjk_name)
+        try:
+            del self.__dict__['aliases']
+        except KeyError:
+            pass
 
     def __repr__(self):
         return '<{}({!r})>'.format(type(self).__name__, self.name)
@@ -775,6 +786,10 @@ class WikiArtist(WikiEntity):
             if candidate._uri_path and candidate._raw:
                 candidate.__additional_aliases.extend(self._aliases())
                 self.__additional_aliases.extend(candidate._aliases())
+                if self.english_name and self.cjk_name and (not candidate.english_name or not candidate.cjk_name):
+                    candidate.update_name(self.english_name, self.cjk_name)
+                elif candidate.english_name and candidate.cjk_name and (not self.english_name or not self.cjk_name):
+                    self.update_name(candidate.english_name, candidate.cjk_name)
                 return candidate
 
         # log.debug('{}: Could not find {} version by name'.format(self, client))
@@ -784,6 +799,10 @@ class WikiArtist(WikiEntity):
             if candidate.matches(self):
                 candidate.__additional_aliases.extend(self._aliases())
                 self.__additional_aliases.extend(candidate._aliases())
+                if self.english_name and self.cjk_name and (not candidate.english_name or not candidate.cjk_name):
+                    candidate.update_name(self.english_name, self.cjk_name)
+                elif candidate.english_name and candidate.cjk_name and (not self.english_name or not self.cjk_name):
+                    self.update_name(candidate.english_name, candidate.cjk_name)
                 return candidate
             elif i > 4:
                 break
