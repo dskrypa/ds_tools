@@ -25,7 +25,7 @@ from ..caching import ClearableCachedPropertyMixin, cached
 from ..core import cached_property, format_duration, datetime_with_tz
 from ..http import CodeBasedRestException
 from ..unicode import contains_hangul, LangCat
-from .exceptions import NoArtistsFoundException, NoAlbumFoundException
+from .exceptions import NoArtistsFoundException, NoAlbumFoundException, NoTrackFoundException, NoMatchFoundException
 from .patches import tag_repr
 from .name_processing import split_names, split_name
 from .wiki import WikiArtist, WikiEntityIdentificationException, KpopWikiClient, WikiSongCollection, find_ost
@@ -208,8 +208,6 @@ class AlbumDir(ClearableCachedPropertyMixin):
         elif len(albums) > 1:
             log.warning('Conflicting wiki_album matches were found for {}: {}'.format(self, ', '.join(map(str, albums))))
         elif self.wiki_artist and self.tag_release_date:
-
-
             for album in self.wiki_artist.discography:
                 if album.released == self.tag_release_date and len(self.songs) == len(album.get_tracks()):
                     scores = []
@@ -676,6 +674,14 @@ class SongFile(ClearableCachedPropertyMixin):
     def __repr__(self):
         return '<{}({!r})>'.format(type(self).__name__, self.rel_path)
 
+    @property
+    def tags(self):
+        return self._f.tags
+
+    @property
+    def filename(self):
+        return self._f.filename
+
     @classmethod
     def for_plex_track(cls, track, root=None):
         if root is None:
@@ -1047,10 +1053,14 @@ class SongFile(ClearableCachedPropertyMixin):
                     track, score = artist.find_track(
                         name, self.album_name_cleaned, year=self.year, track=num, include_score=True
                     )
-                    self.__dict__['wiki_album'] = track.collection
-                    self.wiki_scores['album'] = score * 3/4
-                    self.wiki_scores['song'] = score
-                    return track
+                    if track:
+                        self.__dict__['wiki_album'] = track.collection
+                        self.wiki_scores['album'] = score * 3/4
+                        self.wiki_scores['song'] = score
+                        return track
+                    else:
+                        fmt = 'File {} matched wiki_artist={}, but no album or track match could be found'
+                        raise NoTrackFoundException(fmt.format(self, artist))
 
     @cached()
     def wiki_expected_rel_path(self):
