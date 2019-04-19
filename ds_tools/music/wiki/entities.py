@@ -739,6 +739,15 @@ class WikiArtist(WikiEntity):
                 ul = self._clean_soup.find(id='Profile').parent.find_next('ul')
                 self._profile = parse_drama_wiki_info_list(self._uri_path, ul, client)
                 self.english_name, self.cjk_name = self._profile.get('name', self._profile.get('group name'))
+                # If eng name has proper eng name + romanized hangul name, remove the romanized part
+                if self.english_name and self.cjk_name and '(' in self.english_name and self.english_name.endswith(')'):
+                    m = re.match(r'^(.*)\((.*)\)$', self.english_name)
+                    if m:
+                        lc_nospace_rom = ''.join(m.group(1).lower().split())
+                        for permutation in romanized_permutations(self.cjk_name):
+                            if ''.join(permutation.split()) == lc_nospace_rom:
+                                self.english_name = m.group(2).strip()
+                                break
             elif isinstance(self._client, WikipediaClient):
                 self.english_name = self._side_info['name']
             else:
