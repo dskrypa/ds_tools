@@ -2,6 +2,7 @@
 :author: Doug Skrypa
 """
 
+import logging
 import re
 from urllib.parse import urlparse
 
@@ -13,6 +14,7 @@ __all__ = [
     'AmbiguousEntityException', 'InvalidTrackListException', 'MemberDiscoveryException', 'MusicWikiException',
     'WikiEntityIdentificationException', 'WikiEntityInitException', 'WikiTypeError'
 ]
+log = logging.getLogger(__name__)
 
 
 class MusicWikiException(MusicException):
@@ -76,7 +78,7 @@ class AmbiguousEntityException(MusicWikiException):
         if self._alt_texts is None:
             # noinspection PyStatementEffect
             self.alternatives
-        return self._alt_texts
+        return []
 
     @cached_property
     def alternatives(self):
@@ -99,7 +101,10 @@ class AmbiguousEntityException(MusicWikiException):
         if disambig_a:
             return list(filter(None, self._alt_text(disambig_a)))
 
-        if not re.search(r'For other uses, see.*?\(disambiguation\)', self.html, re.IGNORECASE):
+        r'redirects here.\s+For the .*?, see'
+
+        pats = (r'For other uses, see.*?\(disambiguation\)', r'redirects here.\s+For the .*?, see')
+        if not any(re.search(pat, self.html, re.IGNORECASE) for pat in pats):
             try:
                 ul = soup.find('div', class_='mw-parser-output').find('ul')
             except Exception:
@@ -107,6 +112,12 @@ class AmbiguousEntityException(MusicWikiException):
             else:
                 anchors = (self._alt_text(a) for li in ul.find_all('li') for a in li.find_all('a', limit=1))
                 return list(filter(None, anchors))
+
+        if re.search(r'redirects here.\s+For the pop music group, see', self.html, re.IGNORECASE):
+            for div in soup.find_all('div', class_='hatnote'):
+                if 'For the pop music group' in div.text:
+                    anchors = (self._alt_text(a) for a in div.find_all('a', limit=1))
+                    return list(filter(None, anchors))
         return []
 
     def __str__(self):

@@ -209,8 +209,11 @@ class WikipediaClient(WikiClient):
         cat_ul = cat_links.find('ul') if cat_links else None
         cats = {li.text.lower() for li in cat_ul.find_all('li')} if cat_ul else set()
         cat = get_page_category(uri_path, cats, no_debug=True)
-        if cat is None and re.search(r'For other uses, see.*?\(disambiguation\)', raw, re.IGNORECASE):
-            raise AmbiguousEntityException(uri_path, raw, obj_type)
+        if cat is None:
+            if re.search(r'For other uses, see.*?\(disambiguation\)', raw, re.IGNORECASE):
+                raise AmbiguousEntityException(uri_path, raw, obj_type)
+            elif re.search(r'redirects here.\s+For the .*?, see', raw, re.IGNORECASE):
+                raise AmbiguousEntityException(uri_path, raw, obj_type)
         return raw, cats
 
     def parse_side_info(self, soup, uri_path):
