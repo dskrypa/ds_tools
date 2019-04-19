@@ -10,12 +10,13 @@ import string
 import sys
 from collections import OrderedDict, defaultdict
 from itertools import chain
+from os.path import commonprefix
 from unicodedata import normalize, category as unicode_cat
 
 __all__ = [
     'Token', 'RecursiveDescentParser', 'UnexpectedTokenError', 'strip_punctuation', 'ParentheticalParser', 'DASH_CHARS',
     'QMARKS', 'ALL_WHITESPACE', 'CHARS_BY_CATEGORY', 'ListBasedRecursiveDescentParser', 'ALL_PUNCTUATION',
-    'ALL_SYMBOLS', 'ParentheticalListParser', 'unsurround', 'normalize_roman_numerals'
+    'ALL_SYMBOLS', 'ParentheticalListParser', 'unsurround', 'normalize_roman_numerals', 'common_suffix'
 ]
 log = logging.getLogger(__name__)
 
@@ -35,6 +36,10 @@ ALL_PUNCTUATION = ''.join(chain.from_iterable(chars for cat, chars in CHARS_BY_C
 ALL_SYMBOLS = ''.join(chain.from_iterable(chars for cat, chars in CHARS_BY_CATEGORY.items() if cat.startswith('S')))
 PUNC_STRIP_TBL = str.maketrans({c: '' for c in string.punctuation})
 QMARKS = '\"“'
+
+
+def common_suffix(strs):
+    return ''.join(reversed(commonprefix(list(map(lambda x: ''.join(reversed(x)), strs)))))
 
 
 def normalize_roman_numerals(text):

@@ -13,7 +13,7 @@ from fuzzywuzzy import fuzz
 
 from ..caching import cached
 from ..unicode import is_any_cjk, contains_any_cjk, is_hangul, LangCat
-from ..utils import ParentheticalParser, unsurround, normalize_roman_numerals
+from ..utils import ParentheticalParser, unsurround, normalize_roman_numerals, common_suffix
 
 __all__ = [
     'categorize_langs', 'combine_name_parts', 'eng_cjk_sort', 'fuzz_process', 'has_parens', 'parse_name',
@@ -389,9 +389,8 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
                 else:
                     eng = parts[0]
             else:
-                common_suffix = ''.join(reversed(os.path.commonprefix(list(map(lambda x: ''.join(reversed(x)), parts)))))
-                if common_suffix and LangCat.categorize(parts[1][:-len(common_suffix)]) in LangCat.asian_cats:
-                # if len(common_suffix) > 3 and LangCat.categorize(parts[1], True).intersection(LangCat.asian_cats):
+                common_part_suffix = common_suffix(parts)
+                if common_part_suffix and LangCat.categorize(parts[1][:-len(common_part_suffix)]) in LangCat.asian_cats:
                     eng, cjk = parts
                 else:
                     common_prefix = os.path.commonprefix(parts)
