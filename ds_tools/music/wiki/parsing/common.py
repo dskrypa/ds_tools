@@ -11,7 +11,7 @@ from ....http import CodeBasedRestException
 from ....unicode import LangCat
 from ....utils import (
     DASH_CHARS, QMARKS, ListBasedRecursiveDescentParser, ALL_WHITESPACE, UnexpectedTokenError, ParentheticalParser,
-    unsurround
+    unsurround, has_unpaired
 )
 from ...name_processing import categorize_langs, combine_name_parts, eng_cjk_sort, str2list, split_name, has_parens
 from .exceptions import *
@@ -114,17 +114,20 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
     artists = []
     producers = []
     # log.debug('split_artist_list({!r}, context={}, anchors={}, client={})'.format(artist_list, context, anchors, client))
+    # log.debug('split_artist_list({!r}, context={}, client={})'.format(artist_list, context, client))
     m = group_paren_members_rx.match(artist_list)
     if m:
-        group, artist_list = m.groups()
-        if _is_invalid_group(group):
-            group, group_href = None, None
-        else:
-            try:
-                group_name = split_name(group)
-            except ValueError:
-                group_name = split_name(group, require_preceder=False)
-            group_href = find_href(client, anchors, group_name, 'group')
+        if not has_unpaired(m.group(2)):
+            # log.debug('{!r} => group={!r}, artist_list={!r}'.format(artist_list, *m.groups()))
+            group, artist_list = m.groups()
+            if _is_invalid_group(group):
+                group, group_href = None, None
+            else:
+                try:
+                    group_name = split_name(group)
+                except ValueError:
+                    group_name = split_name(group, require_preceder=False)
+                group_href = find_href(client, anchors, group_name, 'group')
     else:
         group = None
         group_href = None
@@ -155,6 +158,7 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
             try:
                 soloists, of_group = artist.split(' of ')
             except ValueError as e:
+                log.debug('Error splitting {!r} on "of": {}'.format(artist, e))
                 if any(val in artist for val in (' and ', ' & ')):
                     for _artist in re.split(' and | & ', artist):
                         # log.debug('Extending with {!r}'.format(_artist))
@@ -171,8 +175,19 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
                         }
                         artists.append(artist_dict)
                     else:
-                        msg = 'Unexpected artist name format in {}: {!r}'.format(context, artist)
-                        raise WikiEntityParseException(msg) from e
+                        soloist, of_group = artist.split(' of ', 1)
+                        try:
+                            soloist = split_name(soloist)
+                            group = split_name(of_group)
+                            artist_dict = {
+                                'artist': soloist, 'artist_href': find_href(client, anchors, soloist, 'singer'),
+                                'of_group': group, 'group_href': find_href(client, anchors, group, 'group'),
+                            }
+                        except Exception as e1:
+                            msg = 'Unexpected artist name format in {}: {!r}'.format(context, artist)
+                            raise WikiEntityParseException(msg) from e
+                        else:
+                            artists.append(artist_dict)
             else:
                 group_href = find_href(client, anchors, of_group, 'group')
                 for soloist in re.split(' and | & ', soloists):
@@ -266,6 +281,7 @@ class TrackListParser(ListBasedRecursiveDescentParser):
         songs = []
         collabs = []
         title = ''
+        version = None
         inside_quotes = False
         while self.next_tok:
             if self._accept('QUOTE'):
@@ -279,10 +295,12 @@ class TrackListParser(ListBasedRecursiveDescentParser):
                 if inside_quotes:
                     title += self.tok.value
                 elif self.next_tok is None or self._peek('QUOTE'):
-                    songs.append(
-                        {'num': None, 'length': '-1:00', 'name_parts': split_name(title), 'collaborators': collabs}
-                    )
+                    songs.append({
+                        'num': None, 'length': '-1:00', 'name_parts': split_name(title), 'collaborators': collabs,
+                        'version': version
+                    })
                     title = ''
+                    version = None
                     collabs = []
             elif self._accept('ARTIST_DELIM'):
                 if inside_quotes:
@@ -298,7 +316,26 @@ class TrackListParser(ListBasedRecursiveDescentParser):
                     try:
                         soloists, of_group = collab.split(' of ')
                     except Exception as e:
-                        collabs.append({'artist': split_name(collab), 'artist_href': self._link_dict.get(collab)})
+                        err_msg = 'Unexpected content found in collab={!r} from {}'.format(collab, self._context)
+                        try:
+                            collabs.append({'artist': split_name(collab), 'artist_href': self._link_dict.get(collab)})
+                        except ValueError as e1:
+                            try:
+                                parts = ParentheticalParser().parse(collab)
+                            except Exception as e2:
+                                raise WikiEntityParseException(err_msg) from e2
+                            else:
+                                if len(parts) == 2 and any(' ver.' in part.lower() for part in parts):
+                                    if ' ver.' in parts[0].lower():
+                                        v, c = 0, 1
+                                    else:
+                                        v, c = 1, 0
+                                    version = parts[v]
+                                    collabs.append({
+                                        'artist': split_name(parts[c]), 'artist_href': self._link_dict.get(collab)
+                                    })
+                                else:
+                                    raise WikiEntityParseException(err_msg) from e1
                     else:
                         for soloist in re.split(' and | & ', soloists):
                             collabs.append({
@@ -312,7 +349,10 @@ class TrackListParser(ListBasedRecursiveDescentParser):
 
         title = title.strip()
         if title:
-            songs.append({'num': None, 'length': '-1:00', 'name_parts': split_name(title), 'collaborators': collabs})
+            songs.append({
+                'num': None, 'length': '-1:00', 'name_parts': split_name(title), 'collaborators': collabs,
+                'version': version
+            })
         return songs
 
 

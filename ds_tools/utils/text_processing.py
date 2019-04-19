@@ -16,7 +16,7 @@ from unicodedata import normalize, category as unicode_cat
 __all__ = [
     'Token', 'RecursiveDescentParser', 'UnexpectedTokenError', 'strip_punctuation', 'ParentheticalParser', 'DASH_CHARS',
     'QMARKS', 'ALL_WHITESPACE', 'CHARS_BY_CATEGORY', 'ListBasedRecursiveDescentParser', 'ALL_PUNCTUATION',
-    'ALL_SYMBOLS', 'ParentheticalListParser', 'unsurround', 'normalize_roman_numerals', 'common_suffix'
+    'ALL_SYMBOLS', 'ParentheticalListParser', 'unsurround', 'normalize_roman_numerals', 'common_suffix', 'has_unpaired'
 ]
 log = logging.getLogger(__name__)
 
@@ -36,6 +36,19 @@ ALL_PUNCTUATION = ''.join(chain.from_iterable(chars for cat, chars in CHARS_BY_C
 ALL_SYMBOLS = ''.join(chain.from_iterable(chars for cat, chars in CHARS_BY_CATEGORY.items() if cat.startswith('S')))
 PUNC_STRIP_TBL = str.maketrans({c: '' for c in string.punctuation})
 QMARKS = '\"“'
+
+
+def has_unpaired(text, opener='(', closer=')'):
+    opened = 0
+    closed = 0
+    for c in text:
+        if c == opener:
+            opened += 1
+        elif c == closer:
+            closed += 1
+            if closed > opened:
+                return True
+    return opened != closed
 
 
 def common_suffix(strs):
