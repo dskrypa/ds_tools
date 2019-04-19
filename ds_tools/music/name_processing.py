@@ -312,7 +312,7 @@ def split_names(text):
 
 
 @cached(LRUCache(100))
-def split_name(name, unused=False, check_keywords=True, permissive=False, require_preceder=True):
+def split_name(name, unused=False, check_keywords=True, permissive=False, require_preceder=True, allow_cjk_mix=False):
     """
     :param str|tuple name: A song/album/artist title
     :param bool unused: Return a 3-tuple instead of a 2-tuple, with the 3rd element being the content that was discarded
@@ -407,6 +407,8 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
                             else:
                                 eng = parts[0]
                                 cjk = p1_parts[han_idx]
+                    elif allow_cjk_mix and LangCat.contains_any_not(parts[1], LangCat.ENG):
+                        eng, cjk = parts
         elif langs == (LangCat.MIX, LangCat.MIX) and ' X ' in parts[1]:
             if LangCat.categorize(parts[0], True).intersection(LangCat.asian_cats):
                 eng, cjk = '', parts[0]
