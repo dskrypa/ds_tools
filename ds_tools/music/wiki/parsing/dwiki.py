@@ -69,6 +69,7 @@ def parse_ost_page(uri_path, clean_soup, client):
             return track_lists
 
         tracks = []
+        page_eng_cjk_artists = set()
         track_table = info_ul.find_next_sibling('table')
         for tr in track_table.find_all('tr'):
             tds = tr.find_all('td')
@@ -98,9 +99,21 @@ def parse_ost_page(uri_path, clean_soup, client):
                     name_parts.append('Inst.')
 
                 track = parse_track_info(tds[0].text, name_parts, uri_path, include={'from_ost': True})
-                # track['collaborators'] = str2list(tds[2].text.strip())
+
+                artists_text = tds[2].text.strip()
+                if LangCat.contains_any_not(artists_text, LangCat.ENG):
+                    page_eng_cjk_artists.add(artists_text)
+                else:
+                    # Make it easier to match eng+cjk since most pages only include both in the first occurrence
+                    for prev_artist in sorted(page_eng_cjk_artists):
+                        if prev_artist.startswith(artists_text):
+                            remainder = prev_artist[len(artists_text):].strip()
+                            if remainder.startswith('(') and remainder.endswith(')'):
+                                artists_text = prev_artist
+                                break
+
                 track['collaborators'], track['produced_by'] = split_artist_list(
-                    tds[2].text.strip(), context=uri_path, anchors=anchors, client=client
+                    artists_text, context=uri_path, anchors=anchors, client=client
                 )
                 tracks.append(track)
 
