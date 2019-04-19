@@ -72,14 +72,8 @@ NUMS = {
     'first': '1st', 'second': '2nd', 'third': '3rd', 'fourth': '4th', 'fifth': '5th', 'sixth': '6th',
     'seventh': '7th', 'eighth': '8th', 'ninth': '9th', 'tenth': '10th', 'debut': '1st'
 }
+ROMAN_NUMERALS = {'I': 1, 'II': 2, 'III': 3, 'IV': 4, 'V': 5, 'VI': 6, 'VII': 7, 'VIII': 8, 'IX': 9, 'X': 10}
 STRIP_TBL = str.maketrans({c: '' for c in JUNK_CHARS})
-
-"""
-TODO:
-- Search for artist / soloist / soloist of group
-- Search for album / song from artist
-
-"""
 
 
 class WikiEntityMeta(type):
@@ -127,6 +121,9 @@ class WikiEntityMeta(type):
             if not name and not uri_path:
                 raise WikiEntityIdentificationException('A uri_path or name is required')
 
+        all_aliases = tuple(filter(None, aliases)) if aliases and not isinstance(aliases, str) else (name,)
+        # log.debug('name: {!r} all_aliases: {!r}'.format(name, all_aliases))
+
         if not no_fetch:
             if disco_entry:
                 uri_path = uri_path or disco_entry.get('uri_path')
@@ -159,12 +156,17 @@ class WikiEntityMeta(type):
                         return obj
                     for client in (client, KindieWikiClient()):
                         for link_text, link_href in client.search(name)[:3]:    # Check 1st 3 results for non-eng name
-                            entity = cls(link_href, client=client)
-                            if entity.matches(name):
-                                WikiEntityMeta._instances[key] = entity
-                                return entity
+                            try:
+                                entity = cls(link_href, client=client)
+                            except WikiTypeError as e:
+                                log.log(9, 'Search of {} for {} yielded non-match: {}'.format(client.host, name, e))
                             else:
-                                log.log(9, 'Search of {} for {} yielded non-match: {}'.format(client.host, name, entity))
+                                if entity.matches(name):
+                                    WikiEntityMeta._instances[key] = entity
+                                    return entity
+                                else:
+                                    fmt = 'Search of {} for {} yielded non-match: {}'
+                                    log.log(9, fmt.format(client.host, name, entity))
                     else:
                         raise WikiEntityIdentificationException('No matches found for {!r} via search'.format(name))
                 else:
@@ -180,6 +182,26 @@ class WikiEntityMeta(type):
                         raise e
                     except CodeBasedRestException as e:
                         if e.code == 404 and orig_client is None:   # For cases where it's a non-Kpop artist
+                            if any(LangCat.contains_any_not(n, LangCat.ENG) for n in all_aliases):
+                                # log.debug('Attempting search for: {!r}'.format('|'.join(all_aliases)))
+                                key = (uri_path, client, all_aliases)
+                                obj = WikiEntityMeta._get_match(cls, key, client, cls_cat)
+                                if obj is not None:
+                                    return obj
+                                for link_text, link_href in client.search('|'.join(all_aliases))[:3]:
+                                    try:
+                                        entity = cls(link_href, client=client)
+                                    except WikiTypeError as te:
+                                        fmt = 'Search of {} for {} yielded non-match: {}'
+                                        log.log(9, fmt.format(client.host, name, te))
+                                    else:
+                                        if entity.matches(name):
+                                            WikiEntityMeta._instances[key] = entity
+                                            return entity
+                                        else:
+                                            fmt = 'Search of {} for {} yielded non-match: {}'
+                                            log.log(9, fmt.format(client.host, name, entity))
+
                             try:
                                 client = KindieWikiClient()
                                 uri_path = client.normalize_name(name)
@@ -1806,6 +1828,14 @@ class WikiSongCollection(WikiEntity):
                 log.debug(match_fmt.format(self, best_track, name, best_score, best_alias, best_val))
             return (best_track, best_score) if include_score else best_track
         return (None, -1) if include_score else None
+
+    def score_match(self, other, *args, **kwargs):
+        if isinstance(other, str):
+            rom_num = next((rn for rn in ROMAN_NUMERALS if other.endswith(' ' + rn)), None)
+            if rom_num is not None:
+                alt_other = re.sub(r'\s+{}$'.format(rom_num), ' {}'.format(ROMAN_NUMERALS[rom_num]), other)
+                other = (other, alt_other)
+        return super().score_match(other, *args, **kwargs)
 
 
 class WikiAlbum(WikiSongCollection):
