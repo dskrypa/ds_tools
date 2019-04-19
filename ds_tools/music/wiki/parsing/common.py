@@ -517,6 +517,9 @@ def album_num_type(details):
         return num, ' '.join(alb_type_desc[1:] if num else alb_type_desc)
     elif len(details) > 1 and details[0] == 'song' and details[1] == 'by':
         return None, 'single'
+    elif 'extended play' in ' '.join(details) and details.index('extended') == 1:
+        num = NUMS.get(details[0])
+        return num, 'extended play'
     raise ValueError('Unable to determine album type from details: {}'.format(details))
 
 
@@ -572,7 +575,7 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
         version_types = parse_track_info._version_types = (
             'inst', 'acoustic', 'ballad', 'original', 'remix', 'r&b', 'band', 'karaoke', 'special', 'full length',
             'single', 'album', 'radio', 'limited', 'normal', 'english rap', 'rap', 'piano', 'acapella', 'edm', 'stage',
-            'live', 'rock', 'director\'s', 'cd', 'solo', 'classical orchestra', 'orchestra', 'drama'
+            'live', 'rock', 'director\'s', 'cd', 'solo', 'classical orchestra', 'orchestra', 'drama', 'acappella'
         )
         misc_indicators = parse_track_info._misc_indicators = ( # spaces intentional
             'bonus', ' ost', ' mix', 'remix', 'special track', 'prod. by', 'produced by', 'director\'s', ' only',
