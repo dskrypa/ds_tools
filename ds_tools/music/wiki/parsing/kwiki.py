@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from bs4.element import NavigableString, Tag
 
-from ....utils import ParentheticalParser, DASH_CHARS, num_suffix, QMARKS, soupify, unsurround
+from ....utils import ParentheticalParser, DASH_CHARS, num_suffix, QMARKS, soupify, unsurround, normalize_roman_numerals
 from ...name_processing import has_parens, parse_name, split_name, str2list
 from ..utils import synonym_pattern, get_page_category, normalize_href
 from .common import (
@@ -478,36 +478,6 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
                 track['from_ost'] = True
                 songs.append(track)
                 collabs.extend(track.get('collaborators', []))
-
-            # try:
-            #     ost_song_rx = parse_discography_entry._ost_song_rx
-            # except AttributeError:
-            #     ost_song_rx = parse_discography_entry._ost_song_rx = re.compile(
-            #         r'([{}])(.*)\1\s*(?:with|feat\.?|featuring)?\s*(.*)'.format(QMARKS + "'"), re.IGNORECASE
-            #     )
-            # parts = list(map(str.strip, item.split(',')))
-            # for part in parts:
-            #     m = ost_song_rx.match(item)
-            #     if m:
-            #         song_title, _collabs = m.groups()[1:]
-            #         track = {'num': None, 'length': '-1:00', 'name_parts': (song_title,)}
-            #         pat = r'^(?:with|feat\.?|as) | and |,|;|&| feat\.? | featuring | with '
-            #         track_collabs = []
-            #         for collab in str2list(_collabs, pat=pat):
-            #             try:
-            #                 soloist, of_group = collab.split(' of ')
-            #             except Exception as e:
-            #                 track_collabs.append({'artist': split_name(collab), 'artist_href': linkd.get(collab)})
-            #             else:
-            #                 track_collabs.append({
-            #                     'artist': split_name(soloist), 'artist_href': linkd.get(soloist),
-            #                     'of_group': split_name(of_group), 'group_href': linkd.get(of_group),
-            #                 })
-            #         track['collaborators'] = track_collabs
-            #         songs.append(track)
-            #     else:
-            #         fmt = '{}: Unexpected OST discography entry format in {!r}: {!r}'
-            #         raise WikiEntityParseException(fmt.format(artist, item, part))
         else:
             misc_info.append(item)
 
@@ -623,10 +593,11 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
             # May be an album without a link, or a repackage detailed on the same page as the original
 
     info = {
-        'title': title, 'primary_artist': (primary_artist, primary_uri), 'type': album_type, 'base_type': base_type,
-        'year': year, 'collaborators': collabs, 'misc_info': misc_info, 'language': lang, 'uri_path': uri_path,
-        'wiki': wiki, 'is_feature_or_collab': is_feature_or_collab, 'is_ost': is_ost, 'is_repackage': is_repackage,
-        'num': '{}{}'.format(type_idx, num_suffix(type_idx)), 'track_info': track_info or songs
+        'title': normalize_roman_numerals(title), 'primary_artist': (primary_artist, primary_uri), 'type': album_type,
+        'base_type': base_type, 'year': year, 'collaborators': collabs, 'misc_info': misc_info, 'language': lang,
+        'uri_path': uri_path, 'wiki': wiki, 'is_feature_or_collab': is_feature_or_collab, 'is_ost': is_ost,
+        'is_repackage': is_repackage, 'num': '{}{}'.format(type_idx, num_suffix(type_idx)),
+        'track_info': track_info or songs
     }
     return info
 

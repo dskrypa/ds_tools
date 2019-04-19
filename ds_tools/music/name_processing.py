@@ -13,7 +13,7 @@ from fuzzywuzzy import fuzz
 
 from ..caching import cached
 from ..unicode import is_any_cjk, contains_any_cjk, is_hangul, LangCat
-from ..utils import ParentheticalParser, unsurround
+from ..utils import ParentheticalParser, unsurround, normalize_roman_numerals
 
 __all__ = [
     'categorize_langs', 'combine_name_parts', 'eng_cjk_sort', 'fuzz_process', 'has_parens', 'parse_name',
@@ -133,7 +133,7 @@ def parse_name(text):
     first_sentence, period, stripped = stripped.partition('. ')     # Note: space is intentional
     if (' ' not in first_sentence) or (first_sentence.count('"') == 1 and stripped.count('"') % 2 == 1):
         first_sentence += period + stripped.partition('. ')[0].strip()
-    first_sentence = first_sentence.replace('\xa0', ' ')
+    first_sentence = normalize_roman_numerals(first_sentence.replace('\xa0', ' '))
     parser = ParentheticalParser()
     try:
         parts = parser.parse(first_sentence)    # Note: returned strs already stripped of leading/trailing spaces

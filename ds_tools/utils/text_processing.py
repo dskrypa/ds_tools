@@ -10,12 +10,12 @@ import string
 import sys
 from collections import OrderedDict, defaultdict
 from itertools import chain
-from unicodedata import category as unicode_cat
+from unicodedata import normalize, category as unicode_cat
 
 __all__ = [
     'Token', 'RecursiveDescentParser', 'UnexpectedTokenError', 'strip_punctuation', 'ParentheticalParser', 'DASH_CHARS',
     'QMARKS', 'ALL_WHITESPACE', 'CHARS_BY_CATEGORY', 'ListBasedRecursiveDescentParser', 'ALL_PUNCTUATION',
-    'ALL_SYMBOLS', 'ParentheticalListParser', 'unsurround'
+    'ALL_SYMBOLS', 'ParentheticalListParser', 'unsurround', 'normalize_roman_numerals'
 ]
 log = logging.getLogger(__name__)
 
@@ -35,6 +35,17 @@ ALL_PUNCTUATION = ''.join(chain.from_iterable(chars for cat, chars in CHARS_BY_C
 ALL_SYMBOLS = ''.join(chain.from_iterable(chars for cat, chars in CHARS_BY_CATEGORY.items() if cat.startswith('S')))
 PUNC_STRIP_TBL = str.maketrans({c: '' for c in string.punctuation})
 QMARKS = '\"“'
+
+
+def normalize_roman_numerals(text):
+    """
+    Normalizes Roman Numerals of unicode category `Nl <https://www.compart.com/en/unicode/category/Nl>`_ using
+    unicode normalization form NFKC.
+
+    :param str text: A string
+    :return str: The string, with Roman Numerals replaced with easier to use equivalents
+    """
+    return ''.join(normalize('NFKC', c) if 0x2160 <= ord(c) <= 0x217B else c for c in text)
 
 
 def unsurround(a_str, *chars):
