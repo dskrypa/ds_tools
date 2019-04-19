@@ -24,7 +24,8 @@ for logger in logr.values():
 
 AMBIGUOUS_URI_PATH_TEXT = [
     'This article is a disambiguation page', 'Wikipedia does not have an article with this exact name.',
-    'This disambiguation page lists articles associated with'
+    'This disambiguation page lists articles associated with',
+    'The deletion and move log for the page are provided below for reference.'
 ]
 JUNK_CHARS = string.whitespace + string.punctuation
 STRIP_TBL = str.maketrans({c: '' for c in JUNK_CHARS})
@@ -100,35 +101,44 @@ class WikiClient(RestClient):
         try:
             html = self.get_page(name)
         except CodeBasedRestException as e:
-            _log.debug('{}: Error getting page {!r}: {}'.format(self._site, name, e))
+            _log.debug('{}: Error getting page {!r}: code={!r}, {}'.format(self._site, name, e.code, e))
             if e.code == 404:
                 self._bad_name_cache[name] = True
-                aae = AmbiguousEntityException(name, e.resp.text)
-                alt = aae.alternative
-                if alt:
-                    if alt.translate(STRIP_TBL).lower() == _name.translate(STRIP_TBL).lower():
-                        return alt
-                    raise aae from e
-                else:
-                    try:
-                        parts = ParentheticalParser().parse(_name)
-                        name = parts[0]
-                    except Exception as pe:
-                        pass
-                    else:
-                        if name != _name:
-                            _log.debug('{}: Checking {!r} for {!r}'.format(self._site, name, _name))
-                            try:
-                                return self._name_cache['{}: {}'.format(self.host, name)]
-                            except KeyError as ke:
-                                pass
+                aae = AmbiguousEntityException(e.resp.url, e.resp.text)
+                return self.__normalize_ambiguous_name(name, _name, aae, e)
             raise e
         else:
             if any(val in html for val in AMBIGUOUS_URI_PATH_TEXT):
                 _log.debug('{}: Page {!r} exists, but is a disambiguation page'.format(self._site, name))
-                raise AmbiguousEntityException(name, html)
+                aae = AmbiguousEntityException(self.url_for(name), html)
+                return self.__normalize_ambiguous_name(name, _name, aae)
             _log.debug('{}: Page {!r} exists, and appears to be valid'.format(self._site, name))
             return name
+
+    def __normalize_ambiguous_name(self, name, orig_name, ambig_ent_exc, orig_exc=None):
+        _log = logr['normalize']
+        _log.debug('{}: Examining AmbiguousEntityException for {!r}: {}'.format(self._site, name, ambig_ent_exc))
+        alt = ambig_ent_exc.alternative
+        if alt:
+            if alt.translate(STRIP_TBL).lower() == orig_name.translate(STRIP_TBL).lower():
+                return alt
+        else:
+            try:
+                parts = ParentheticalParser().parse(orig_name)
+                name = parts[0]
+            except Exception as pe:
+                pass
+            else:
+                if name != orig_name:
+                    _log.debug('{}: Checking {!r} for {!r}'.format(self._site, name, orig_name))
+                    try:
+                        return self._name_cache['{}: {}'.format(self.host, name)]
+                    except KeyError as ke:
+                        pass
+
+        if orig_exc:
+            raise ambig_ent_exc from orig_exc
+        raise ambig_ent_exc
 
     normalize_artist = normalize_name
 
@@ -204,16 +214,16 @@ class WikipediaClient(WikiClient):
     def get_entity_base(self, uri_path, obj_type=None):
         raw = self.get_page(uri_path)
         if any(val in raw for val in AMBIGUOUS_URI_PATH_TEXT):
-            raise AmbiguousEntityException(uri_path, raw, obj_type)
+            raise AmbiguousEntityException(self.url_for(uri_path), raw, obj_type)
         cat_links = soupify(raw, parse_only=bs4.SoupStrainer('div', id='mw-normal-catlinks'))
         cat_ul = cat_links.find('ul') if cat_links else None
         cats = {li.text.lower() for li in cat_ul.find_all('li')} if cat_ul else set()
         cat = get_page_category(uri_path, cats, no_debug=True)
         if cat is None:
             if re.search(r'For other uses, see.*?\(disambiguation\)', raw, re.IGNORECASE):
-                raise AmbiguousEntityException(uri_path, raw, obj_type)
+                raise AmbiguousEntityException(self.url_for(uri_path), raw, obj_type)
             elif re.search(r'redirects here.\s+For the .*?, see', raw, re.IGNORECASE):
-                raise AmbiguousEntityException(uri_path, raw, obj_type)
+                raise AmbiguousEntityException(self.url_for(uri_path), raw, obj_type)
         return raw, cats
 
     def parse_side_info(self, soup, uri_path):

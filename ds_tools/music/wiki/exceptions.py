@@ -4,7 +4,7 @@
 
 import logging
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 from ...core import cached_property
 from ...utils import soupify
@@ -15,6 +15,9 @@ __all__ = [
     'WikiEntityIdentificationException', 'WikiEntityInitException', 'WikiTypeError'
 ]
 log = logging.getLogger(__name__)
+logr = {'ambig_parsing': logging.getLogger(__name__ + '.ambig_parsing')}
+for logger in logr.values():
+    logger.setLevel(logging.WARNING)
 
 
 class MusicWikiException(MusicException):
@@ -51,8 +54,9 @@ class WikiTypeError(TypeError, MusicWikiException):
 
 
 class AmbiguousEntityException(MusicWikiException):
-    def __init__(self, uri_path, html, obj_type=None):
-        parsed_url = urlparse(uri_path)
+    def __init__(self, url, html, obj_type=None):
+        self.url = url
+        parsed_url = urlparse(url)
         self.site = parsed_url.hostname
         self.uri_path = parsed_url.path
         self.html = html
@@ -71,7 +75,7 @@ class AmbiguousEntityException(MusicWikiException):
             self._alt_texts = [anchor.text.strip()]
         else:
             self._alt_texts.append(anchor.text.strip())
-        return None if '&redlink=1' in href else href
+        return None if '&redlink=1' in href else unquote(href)
 
     @cached_property
     def alternative_texts(self):
@@ -82,14 +86,18 @@ class AmbiguousEntityException(MusicWikiException):
 
     @cached_property
     def alternatives(self):
+        _log = logr['ambig_parsing']
         soup = soupify(self.html)
         try:
             a = soup.find('span', class_='alternative-suggestion').find('a')
         except Exception as e:
-            pass
+            _log.debug('Error finding alt suggestion in {}: {}'.format(self.url, e))
         else:
             if a:
-                return list(filter(None, self._alt_text(a)))
+                _log.debug('Found alt suggestion anchor in {}: {}'.format(self.url, a))
+                return list(filter(None, (self._alt_text(a),)))
+            # else:
+            #     _log.debug('Did not find an alt suggestion anchor in {}'.format(self.url))
 
         disambig_div = soup.find('div', id='disambig')
         if disambig_div:
@@ -99,9 +107,7 @@ class AmbiguousEntityException(MusicWikiException):
         #if re.search(r'For other uses, see.*?\(disambiguation\)', self.html, re.IGNORECASE):
         disambig_a = soup.find('a', class_='mw-disambig')
         if disambig_a:
-            return list(filter(None, self._alt_text(disambig_a)))
-
-        r'redirects here.\s+For the .*?, see'
+            return list(filter(None, (self._alt_text(disambig_a),)))
 
         pats = (r'For other uses, see.*?\(disambiguation\)', r'redirects here.\s+For the .*?, see')
         if not any(re.search(pat, self.html, re.IGNORECASE) for pat in pats):
