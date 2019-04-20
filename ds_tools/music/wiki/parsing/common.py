@@ -6,6 +6,9 @@ import logging
 import re
 from collections import OrderedDict
 
+from cachetools import LRUCache
+
+from ....caching import cached
 from ....core import datetime_with_tz
 from ....http import CodeBasedRestException
 from ....unicode import LangCat
@@ -77,6 +80,7 @@ def _is_invalid_group(text):
     return False
 
 
+@cached(LRUCache(100), exc=True)
 def split_artist_list(artist_list, context=None, anchors=None, client=None):
     """
     feat_indicator ::= feat\.? | featuring | with
@@ -99,6 +103,8 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
         delim_rx = split_artist_list._delim_rx
         group_paren_members_rx = split_artist_list._group_paren_members_rx
         double_of_rx = split_artist_list._double_of_rx
+        space_rx = split_artist_list._space_rx
+        and_rx = split_artist_list._and_rx
     except AttributeError:
         prod_by_rx = split_artist_list._prod_by_rx = re.compile(
             r'^(.*)\s\(Prod(?:\.|uced)? by\s+(.*)\)$', re.IGNORECASE
@@ -110,9 +116,14 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
         double_of_rx = split_artist_list._double_of_rx = re.compile(
             r'^(.*?) of (.*?)\s+\((.*?) of (.*)\)$', re.IGNORECASE
         )
+        space_rx = split_artist_list._space_rx = re.compile(r'\s+')
+        and_rx = split_artist_list._and_rx = re.compile(' and | & ')
 
+    artist_list = space_rx.sub(' ', artist_list)
     artists = []
     producers = []
+    group = None
+    group_href = None
     # log.debug('split_artist_list({!r}, context={}, anchors={}, client={})'.format(artist_list, context, anchors, client))
     # log.debug('split_artist_list({!r}, context={}, client={})'.format(artist_list, context, client))
     m = group_paren_members_rx.match(artist_list)
@@ -128,15 +139,12 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
                 except ValueError:
                     group_name = split_name(group, require_preceder=False)
                 group_href = find_href(client, anchors, group_name, 'group')
-    else:
-        group = None
-        group_href = None
 
-    for i, artist in enumerate(delim_rx.split(artist_list)):
-        m = group_paren_members_rx.match(artist_list)
+    for i, artist in enumerate(filter(None, map(str.strip, delim_rx.split(artist_list)))):
+        m = group_paren_members_rx.match(artist)
         if m:
             # noinspection PyUnresolvedReferences
-            group, artist_list = m.groups()
+            group, artist = m.groups()
             if _is_invalid_group(group):
                 group, group_href = None, None
             else:
@@ -145,6 +153,10 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
                 except ValueError:
                     group_name = split_name(group, require_preceder=False)
                 group_href = find_href(client, anchors, group_name, 'group')
+        elif artist.startswith('f(') and artist.endswith(')') and '+' in artist:
+            group = 'f(x)'
+            group_href = find_href(client, anchors, group, 'group')
+            artist = ' & '.join(artist[2:-1].split('+'))
         elif i:
             group = None
             group_href = None
@@ -158,7 +170,7 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
             try:
                 soloists, of_group = artist.split(' of ')
             except ValueError as e:
-                log.debug('Error splitting {!r} on "of": {}'.format(artist, e))
+                # log.log(9, 'Error splitting {!r} on "of": {}'.format(artist, e))
                 if any(val in artist for val in (' and ', ' & ')):
                     for _artist in re.split(' and | & ', artist):
                         # log.debug('Extending with {!r}'.format(_artist))
@@ -201,7 +213,7 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
                             artist_dict[key] = split_name(val, require_preceder=False)
                     artists.append(artist_dict)
         else:
-            for _artist in re.split(' and | & ', artist):
+            for _artist in and_rx.split(artist):
                 try:
                     name = split_name(_artist)
                 except ValueError:
@@ -254,6 +266,7 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
                     artist_dict['group_href'] = group_href
                 artists.append(artist_dict)
 
+    # log.debug('split_artist_list({!r}, context={}, client={}) => {}'.format(artist_list, context, client, artists))
     return artists, producers
 
 
@@ -269,9 +282,10 @@ class TrackListParser(ListBasedRecursiveDescentParser):
         ('TEXT', '[^{},]+'.format(QMARKS + "'"))
     ])
 
-    def parse(self, text, context=None, link_dict=None):
+    def parse(self, text, context=None, anchors=None, client=None):
         self._context = context
-        self._link_dict = link_dict or {}
+        self._anchors = anchors or tuple()
+        self._client = client
         return super().parse(text)
 
     def tracks(self):
@@ -279,6 +293,7 @@ class TrackListParser(ListBasedRecursiveDescentParser):
         tracks :: = quote text quote {'with' text}*[, tracks]
         """
         songs = []
+        all_collabs = []
         collabs = []
         title = ''
         version = None
@@ -313,35 +328,41 @@ class TrackListParser(ListBasedRecursiveDescentParser):
                     title += self.tok.value
                 else:
                     collab = self.tok.value
-                    try:
-                        soloists, of_group = collab.split(' of ')
-                    except Exception as e:
-                        err_msg = 'Unexpected content found in collab={!r} from {}'.format(collab, self._context)
-                        try:
-                            collabs.append({'artist': split_name(collab), 'artist_href': self._link_dict.get(collab)})
-                        except ValueError as e1:
-                            try:
-                                parts = ParentheticalParser().parse(collab)
-                            except Exception as e2:
-                                raise WikiEntityParseException(err_msg) from e2
-                            else:
-                                if len(parts) == 2 and any(' ver.' in part.lower() for part in parts):
-                                    if ' ver.' in parts[0].lower():
-                                        v, c = 0, 1
-                                    else:
-                                        v, c = 1, 0
-                                    version = parts[v]
-                                    collabs.append({
-                                        'artist': split_name(parts[c]), 'artist_href': self._link_dict.get(collab)
-                                    })
-                                else:
-                                    raise WikiEntityParseException(err_msg) from e1
-                    else:
-                        for soloist in re.split(' and | & ', soloists):
-                            collabs.append({
-                                'artist': split_name(soloist), 'artist_href': self._link_dict.get(soloist),
-                                'of_group': split_name(of_group), 'group_href': self._link_dict.get(of_group),
-                            })
+                    artists, producers = split_artist_list(collab, self._context, self._anchors, self._client)
+                    collabs.extend(artists)
+                    all_collabs.extend(artists)
+                    # try:
+                    #     soloists, of_group = collab.split(' of ')
+                    # except Exception as e:
+                    #     err_msg = 'Unexpected content found in collab={!r} from {}'.format(collab, self._context)
+                    #     for soloist in re.split(' and | & ', collab):
+                    #         try:
+                    #             collabs.append({
+                    #                 'artist': split_name(soloist), 'artist_href': self._link_dict.get(soloist)
+                    #             })
+                    #         except ValueError as e1:
+                    #             try:
+                    #                 parts = ParentheticalParser().parse(soloist)
+                    #             except Exception as e2:
+                    #                 raise WikiEntityParseException(err_msg) from e2
+                    #             else:
+                    #                 if len(parts) == 2 and any(' ver.' in part.lower() for part in parts):
+                    #                     if ' ver.' in parts[0].lower():
+                    #                         v, c = 0, 1
+                    #                     else:
+                    #                         v, c = 1, 0
+                    #                     version = parts[v]
+                    #                     collabs.append({
+                    #                         'artist': split_name(parts[c]), 'artist_href': self._link_dict.get(soloist)
+                    #                     })
+                    #                 else:
+                    #                     raise WikiEntityParseException(err_msg) from e1
+                    # else:
+                    #     for soloist in re.split(' and | & ', soloists):
+                    #         collabs.append({
+                    #             'artist': split_name(soloist), 'artist_href': self._link_dict.get(soloist),
+                    #             'of_group': split_name(of_group), 'group_href': self._link_dict.get(of_group),
+                    #         })
             else:
                 raise UnexpectedTokenError('Unexpected {!r} token {!r} in {!r}'.format(
                     self.next_tok.type, self.next_tok.value, self._full
@@ -353,7 +374,7 @@ class TrackListParser(ListBasedRecursiveDescentParser):
                 'num': None, 'length': '-1:00', 'name_parts': split_name(title), 'collaborators': collabs,
                 'version': version
             })
-        return songs
+        return songs, all_collabs
 
 
 class TrackInfoParser(ListBasedRecursiveDescentParser):
@@ -624,7 +645,8 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
         version_types = parse_track_info._version_types = (
             'inst', 'acoustic', 'ballad', 'original', 'remix', 'r&b', 'band', 'karaoke', 'special', 'full length',
             'single', 'album', 'radio', 'limited', 'normal', 'english rap', 'rap', 'piano', 'acapella', 'edm', 'stage',
-            'live', 'rock', 'director\'s', 'cd', 'solo', 'classical orchestra', 'orchestra', 'drama', 'acappella'
+            'live', 'rock', 'director\'s', 'cd', 'solo', 'classical orchestra', 'orchestra', 'drama', 'acappella',
+            'slow', 'guitar'
         )
         misc_indicators = parse_track_info._misc_indicators = ( # spaces intentional
             'bonus', ' ost', ' mix', 'remix', 'special track', 'prod. by', 'produced by', 'director\'s', ' only',
