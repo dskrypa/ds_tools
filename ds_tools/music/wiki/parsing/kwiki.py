@@ -239,7 +239,7 @@ def parse_album_page(uri_path, clean_soup, side_info, client):
     artists_raw = side_info.get('artist')
     artists = []
     if artists_raw:
-        _anchors = list(clean_soup.find_all('a'))
+        _anchors = tuple(clean_soup.find_all('a'))
         for _raw_artist in artists_raw:
             artists.extend(split_artist_list(_raw_artist, uri_path, _anchors, client=client)[0])
     # else:
@@ -385,7 +385,13 @@ def parse_aside(aside, uri_path):
                 else:
                     value = str2list(val_ele.text)
             elif key == 'birth_name':
-                value = [split_name(s) for s in val_ele.stripped_strings]
+                try:
+                    value = [split_name(s) for s in val_ele.stripped_strings]
+                except ValueError as e:
+                    value = []
+                    for s in val_ele.stripped_strings:
+                        for s_part in s.split(','):
+                            value.append(split_name(s_part))
             else:
                 value = val_ele.text
         parsed[key] = value
@@ -400,24 +406,16 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
         log.warning('Unhandled discography entry format {!r} for {}'.format(ele_text, artist), extra={'red': True})
         return None
 
-    """
-    TODO - handle:
-    Inkigayo Music Crush Part.4 ('First Christmas' with Doyoung) (2016)
-    [Collaboration album/OST] ('[Track name]' with [collaborator]) ([year])
-
-    'The Liar and His Lover OST' ('A Fox' , 'I'm Okay' with Lee Hyun-woo, 'Your Days', 'Shiny Boy', 'Waiting For You', 'The Road to Me') (2017) 
-    [Collaboration album/OST] ('[Track 1]'{ with [collaborator]}, '[Track 2]'{ with [collaborator]}, ...) ([year])
-
-    'Tempted OST Part.2' ('Nonsense') (2018) 
-    [Collaboration album/OST] ('[Track 1]') ([year])
-    """
     # log.debug('Parsed {!r} => {}'.format(ele_text, parsed))
     links = link_tuples(ele.find_all('a'))
     linkd = dict(links)
     try:
         num_type_rx = parse_discography_entry._num_type_rx
+        song_list_rx = parse_discography_entry._song_list_rx
     except AttributeError:
         num_type_rx = parse_discography_entry._num_type_rx = re.compile(r'_\d$')
+        song_list_rx = parse_discography_entry._song_list_rx = re.compile(r'^(["\']).+?\1 with .*$', re.IGNORECASE)
+
     base_type = album_type and (album_type[:-2] if num_type_rx.search(album_type) else album_type).lower() or ''
     is_feature = base_type in ('features', 'collaborations_and_features')
     if is_feature and parsed[0].endswith('-'):
@@ -437,7 +435,7 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
     title = parsed.pop(0)
     if ele_text.startswith('[') and not title.startswith('[') and not any(']' in part for part in parsed):
         title = '[{}]'.format(title)                    # Special case for albums '[+ +]' / '[X X]'
-    elif not is_feature and not ele_text.startswith('"') and len(parsed) == 1 and '"' in ele_text:
+    elif not is_feature and len(parsed) == 1 and ele_text.endswith('"{}"'.format(parsed[0])):
         title = '{} "{}"'.format(title, parsed.pop(0))  # Special case for album name ending in quoted word
     elif 'singles' in base_type:
         try:
@@ -458,6 +456,7 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
             if track_info.get('language'):
                 title += ' ({} ver.)'.format(track_info['language'])
 
+    # log.debug('year={!r}, base_type={!r}, title={!r}, remaining={}'.format(year, base_type, title, parsed))
     collabs, misc_info, songs = [], [], []
     for item in parsed:
         lc_item = item.lower()
@@ -472,12 +471,13 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
                         'artist': split_name(soloist), 'artist_href': linkd.get(soloist),
                         'of_group': split_name(of_group), 'group_href': linkd.get(of_group),
                     })
-        elif base_type == 'osts':
-            ost_tracks = TrackListParser().parse(item, artist, linkd)
-            for track in ost_tracks:
-                track['from_ost'] = True
+        elif base_type == 'osts' or song_list_rx.match(item):
+            _tracks, _collabs = TrackListParser().parse(item, artist.url, tuple(ele.find_all('a')), artist._client)
+            log.log(8, 'Found OST/song disco entry on {}: {} - tracks: {}'.format(artist.url, item, _tracks))
+            collabs.extend(_collabs)
+            for track in _tracks:
+                track['from_ost'] = base_type == 'osts'
                 songs.append(track)
-                collabs.extend(track.get('collaborators', []))
         else:
             misc_info.append(item)
 
@@ -533,8 +533,8 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
     non_artist_links = [lnk for lnk in links if lnk[1] and lnk[1] != primary_uri and lnk[1] not in collab_hrefs]
     if non_artist_links:
         if len(non_artist_links) > 1:
-            fmt = 'Too many non-artist links found: {}\nFrom li: {}\nParsed parts: {}\nbase_type={}'
-            raise WikiEntityParseException(fmt.format(non_artist_links, ele, parsed, base_type))
+            fmt = 'Too many non-artist links found in {}: {}\nFrom li: {}\nParsed parts: {}\nbase_type={}'
+            raise WikiEntityParseException(fmt.format(artist.url, non_artist_links, ele, parsed, base_type))
 
         link_text, link_href = non_artist_links[0]
         if title != link_text and not is_feature_or_collab:
