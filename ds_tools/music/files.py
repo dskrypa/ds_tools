@@ -28,7 +28,10 @@ from ..unicode import contains_hangul, LangCat
 from .exceptions import NoArtistsFoundException, NoAlbumFoundException, NoTrackFoundException, NoMatchFoundException
 from .patches import tag_repr
 from .name_processing import split_names, split_name
-from .wiki import WikiArtist, WikiEntityIdentificationException, KpopWikiClient, WikiSongCollection, find_ost
+from .wiki import (
+    WikiArtist, WikiEntityIdentificationException, KpopWikiClient, WikiSongCollection, find_ost,
+    AmbiguousEntityException
+)
 
 __all__ = [
     'SongFile', 'FakeMusicFile', 'iter_music_files', 'load_tags', 'iter_music_albums',
@@ -936,7 +939,7 @@ class SongFile(ClearableCachedPropertyMixin):
                 artist = WikiArtist(of_group=of_group, aliases=tuple(filter(None, (eng, cjk))))
             except WikiEntityIdentificationException as e:
                 log.error('Error matching artist {} for {}: {}'.format((eng, cjk, of_group), self, e))
-            except CodeBasedRestException as e:
+            except (CodeBasedRestException, AmbiguousEntityException) as e:
                 exc = e
             except AttributeError as e:
                 log.error('Error matching artist {} for {}: {}'.format((eng, cjk, of_group), self, e))
@@ -1014,8 +1017,12 @@ class SongFile(ClearableCachedPropertyMixin):
                 self.wiki_scores['album'] = score
                 if album is None:
                     if not self._in_album_dir:
-                        alb_dir = AlbumDir(self.path.parent)
-                        return alb_dir.wiki_album
+                        try:
+                            alb_dir = AlbumDir(self.path.parent)
+                        except InvalidAlbumDir:
+                            pass
+                        else:
+                            return alb_dir.wiki_album
                     fmt = 'Unable to find album {!r} from {} to match {}'
                     log.debug(fmt.format(self.album_name_cleaned, artist, self), extra={'color': 9})
                 return album
@@ -1060,7 +1067,9 @@ class SongFile(ClearableCachedPropertyMixin):
                         return track
                     else:
                         fmt = 'File {} matched wiki_artist={}, but no album or track match could be found'
-                        raise NoTrackFoundException(fmt.format(self, artist))
+                        log.error(fmt.format(self, artist))
+                        # raise NoTrackFoundException(fmt.format(self, artist))
+                        return None
 
     @cached()
     def wiki_expected_rel_path(self):
