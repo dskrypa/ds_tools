@@ -131,6 +131,38 @@ class AmbiguousEntityException(MusicWikiException):
                     return list(filter(None, anchors))
         return []
 
+    def find_matching_alternative(self, wiki_obj_cls, aliases=None, associated_with=None, reraise=True):
+        fmt = '[reraise={!r}] {} {!r} doesn\'t exist - looking for {} with aliases={!r}, associated_with={!r}; uris: {}'
+        uris = ' | '.join(self.alternatives)
+        log.debug(fmt.format(reraise, self.obj_type, self.url, wiki_obj_cls.__name__, aliases, associated_with, uris))
+        if associated_with and hasattr(wiki_obj_cls, 'find_associated'):    # First since more definitive than aliases
+            for alt in self.alternatives:
+                try:
+                    alt_obj = wiki_obj_cls(alt)
+                except WikiTypeError:
+                    pass
+                else:
+                    try:
+                        score, associated_entity = alt_obj.find_associated(associated_with, 95, True)
+                    except MemberDiscoveryException:
+                        pass
+                    else:
+                        return alt_obj
+        # If no associated act was found, but both were provided, then check aliases too
+        if aliases:
+            for alt in self.alternatives:
+                try:
+                    alt_obj = wiki_obj_cls(alt)
+                except WikiTypeError:
+                    pass
+                else:
+                    if alt_obj.matches(aliases):
+                        return alt_obj
+        # If no match was found, or no identifiers were provided, then re-raise the exception
+        if reraise:
+            raise self
+        return None
+
     def __str__(self):
         alts = self.alternative_texts
         base = '{} {!r} doesn\'t exist'.format(self.obj_type, self.url)
