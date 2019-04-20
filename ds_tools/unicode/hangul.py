@@ -283,11 +283,14 @@ def romanized_permutations(text):
                 vowel = VOWEL_PERMUTATIONS[m]
                 end = END_CONSONANT_PERMUTATIONS[f] if f > 0 else None
 
+                if i == 11:         # ㅇ
+                    if m == 8:      # ㅗ
+                        vowel = tuple(set((vowel, 'oh') if isinstance(vowel, str) else chain(vowel, ('oh',))))
+                    elif m == 13:   # ㅜ
+                        lead = tuple(set((lead, 'w') if isinstance(lead, str) else chain(lead, ('w',))))
+
             if lead == 's' and (vowel in SH_VOWELS or (isinstance(vowel, tuple) and any(v in SH_VOWELS for v in vowel))):
                 lead = ('s', 'sh')
-
-            if lead == '' and vowel == 'o':
-                vowel = ('o', 'oh')
 
             romanized.append(lead)
             romanized.append(vowel)
