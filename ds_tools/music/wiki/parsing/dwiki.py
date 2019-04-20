@@ -77,9 +77,10 @@ def parse_ost_page(uri_path, clean_soup, client):
         tracks = []
         page_eng_cjk_artists = set()
         track_table = info_ul.find_next_sibling('table')
-        for tr in track_table.find_all('tr'):
+        for i, tr in enumerate(track_table.find_all('tr')):
             tds = tr.find_all('td')
             if tds:
+                to_include = {'from_ost': True}
                 name_parts = list(tds[1].stripped_strings)
                 if len(name_parts) == 1 and LangCat.categorize(name_parts[0]) == LangCat.MIX:
                     try:
@@ -109,12 +110,20 @@ def parse_ost_page(uri_path, clean_soup, client):
                             if lc_name.count('(') > 2 and ' ver.)' in lc_name and '(inst.)' in lc_name:
                                 name_parts = name_parts[0]  # Let parse_track_info split the string
                             else:
-                                raise WikiEntityParseException(err_msg) from e
+                                if section.endswith('OST') and i == 1 and lc_name.endswith(' title'):
+                                    base = name_parts[0][:-5].strip()
+                                    if LangCat.categorize(base) in LangCat.asian_cats:
+                                        name_parts = [base]
+                                        to_include['misc'] = ['Title']
+                                    else:
+                                        raise WikiEntityParseException(err_msg) from e
+                                else:
+                                    raise WikiEntityParseException(err_msg) from e
                 elif all(part.lower().endswith('(inst.)') for part in name_parts):
                     name_parts = [part[:-7].strip() for part in name_parts]
                     name_parts.append('Inst.')
 
-                track = parse_track_info(tds[0].text, name_parts, uri_path, include={'from_ost': True})
+                track = parse_track_info(tds[0].text, name_parts, uri_path, include=to_include)
 
                 artists_text = tds[2].text.strip()
                 if LangCat.contains_any_not(artists_text, LangCat.ENG):
