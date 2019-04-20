@@ -189,7 +189,7 @@ def match_wiki(path):
         try:
             rows.append({
                 'File Artist': music_file.tag_artist,
-                'Wiki Artist': music_file.wiki_artist.name if music_file.wiki_artist else "",
+                'Wiki Artist': music_file.wiki_artist.qualname if music_file.wiki_artist else "",
 
                 'File Album': music_file.album_name_cleaned,
                 'Wiki Album': music_file.wiki_album.name if music_file.wiki_album else "",
