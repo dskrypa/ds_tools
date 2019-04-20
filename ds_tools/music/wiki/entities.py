@@ -19,7 +19,7 @@ from ...caching import cached, DictAttrProperty, DictAttrPropertyMixin
 from ...core import cached_property
 from ...http import CodeBasedRestException
 from ...unicode import LangCat, romanized_permutations
-from ...utils import soupify, normalize_roman_numerals
+from ...utils import soupify, normalize_roman_numerals, ParentheticalParser
 from ..name_processing import eng_cjk_sort, fuzz_process, parse_name, revised_weighted_ratio, split_name
 from .exceptions import *
 from .utils import (
@@ -2416,6 +2416,19 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                         other = {other_str.replace(feat, val) for val in romanized_permutations(feat)}
 
                     other.add(other_str)
+            else:
+                lc_other = other.lower()
+                if 'japanese ver.' in lc_other and LangCat.contains_any(other, LangCat.JPN):
+                    try:
+                        parsed = ParentheticalParser().parse(other)
+                    except Exception:
+                        pass
+                    else:
+                        for i, part in enumerate(parsed):
+                            if part.lower().startswith('japanese ver'):
+                                parsed.pop(i)
+                                break
+                        other = [other, ' '.join(parsed)]
         return other
 
     def score_match(self, other, *args, normalize=True, **kwargs):
