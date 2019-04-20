@@ -173,7 +173,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
         if len(artists) == 1:
             return artists.pop()
         elif len(artists) > 1:
-            log.warning('Conflicting wik_artist matches were found for {}: {}'.format(self, ', '.join(map(str, artists))))
+            log.warning('Conflicting wiki_artist matches were found for {}: {}'.format(self, ', '.join(map(str, artists))))
         else:
             # artist_path = self.artist_path
             # if artist_path is not None:
@@ -932,14 +932,26 @@ class SongFile(ClearableCachedPropertyMixin):
         artists = []
         exc = None
         for eng, cjk, of_group in _artists:
-            if self.in_competition_album:
+            if self.in_competition_album or eng and eng.lower() == 'various artists':
                 return WikiArtist(name=eng or cjk, no_fetch=True)
 
+            aliases = [eng, cjk]
+            if eng and cjk and ' ' in eng and ' ' not in cjk:
+                aliases.append(''.join(eng.split()))
+
             try:
-                artist = WikiArtist(of_group=of_group, aliases=tuple(filter(None, (eng, cjk))))
+                artist = WikiArtist(of_group=of_group, aliases=aliases)
             except WikiEntityIdentificationException as e:
                 log.error('Error matching artist {} for {}: {}'.format((eng, cjk, of_group), self, e))
-            except (CodeBasedRestException, AmbiguousEntityException) as e:
+            except AmbiguousEntityException as e:
+                if e.alternatives and not of_group and self._artist_path:
+                    match = e.find_matching_alternative(
+                        WikiArtist, associated_with=self._artist_path.name, reraise=False
+                    )
+                    if match:
+                        return match
+                exc = e
+            except CodeBasedRestException as e:
                 exc = e
             except AttributeError as e:
                 log.error('Error matching artist {} for {}: {}'.format((eng, cjk, of_group), self, e))
@@ -1089,7 +1101,7 @@ class SongFile(ClearableCachedPropertyMixin):
     def _artist_path(self):
         bad = (
             'album', 'single', 'soundtrack', 'collaboration', 'solo', 'christmas', 'download', 'compilation',
-            'unknown_fixme'
+            'unknown_fixme', 'mixtape'
         )
         artist_path = self.path.parents[1]
         lc_name = artist_path.name.lower()
@@ -1100,7 +1112,7 @@ class SongFile(ClearableCachedPropertyMixin):
         lc_name = artist_path.name.lower()
         if not any(i in lc_name for i in bad):
             return artist_path
-        log.error('Unable to determine artist path for {}'.format(self))
+        log.debug('Unable to determine artist path for {}'.format(self))
         return None
 
     @cached_property
