@@ -57,7 +57,7 @@ DISCOGRAPHY_TYPE_MAP = {
     'repackage_albums': 'Album',
     'single_albums': 'Single Album',
     'singles': 'Single',
-    'special_albums': 'Album',
+    'special_albums': 'Special Album',
     'special_singles': 'Single',
     'studio_albums': 'Album'
 }
@@ -2437,6 +2437,20 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                                 parsed.pop(i)
                                 break
                         other = [other, ' '.join(parsed)]
+                else:
+                    orig = other
+                    inst = False
+                    if lc_other.endswith('(inst.)'):
+                        inst = True
+                        other = other[:-7].strip()
+
+                    if not LangCat.contains_any(other, LangCat.ENG) and LangCat.categorize(other) == LangCat.MIX:
+                        try:
+                            parsed = ParentheticalParser().parse(other)
+                        except Exception:
+                            other = orig
+                        else:
+                            other = ['{}{}'.format(p, ' (Inst.)' if inst else '') for p in parsed] + [orig]
         return other
 
     def score_match(self, other, *args, normalize=True, **kwargs):
