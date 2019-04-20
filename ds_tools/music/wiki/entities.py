@@ -390,7 +390,7 @@ class WikiMatchable:
             return False
         return bool(self._fuzzed_aliases.intersection(fuzzed_others))
 
-    def score_match(self, other, process=True, track=None, disk=None, year=None):
+    def score_match(self, other, process=True, track=None, disk=None, year=None, track_count=None):
         """
         Score how closely this WikiEntity's aliases match the given strings.
 
@@ -460,13 +460,21 @@ class WikiMatchable:
                 # log.debug('{!r}=?={!r}: score_mod-=25 (no inst)'.format(self, other_repr))
                 score_mod -= 25
 
-        if year is not None and isinstance(self, WikiSongCollection):
-            try:
-                years_match = str(self.released.year) == str(year)
-            except Exception:
-                pass
-            else:
-                score_mod += 15 if years_match else -15
+        if isinstance(self, WikiSongCollection):
+            if year is not None:
+                try:
+                    years_match = str(self.released.year) == str(year)
+                except Exception:
+                    pass
+                else:
+                    score_mod += 15 if years_match else -15
+            if track_count is not None:
+                try:
+                    track_counts_match = len(self.get_tracks()) == track_count
+                except Exception:
+                    pass
+                else:
+                    score_mod += 20 if track_counts_match else -20
 
         best_score, best_alias, best_val = 0, None, None
         for alias in self._fuzzed_aliases:

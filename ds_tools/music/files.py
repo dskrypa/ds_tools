@@ -107,6 +107,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
         songs = list(_iter_music_files(self.path.as_posix()))
         for song in songs:
             song._in_album_dir = True
+            song._album_dir = self
         return songs
 
     @cached_property
@@ -665,6 +666,7 @@ class SongFile(ClearableCachedPropertyMixin):
     def __init__(self, file_path, *args, **kwargs):
         if not getattr(self, '_SongFile__initialized', False):
             self.wiki_scores = {}
+            self._album_dir = None
             self._in_album_dir = False
             self.__initialized = True
 
@@ -927,6 +929,16 @@ class SongFile(ClearableCachedPropertyMixin):
         return track
 
     @cached_property
+    def album_dir_obj(self):
+        if self._album_dir is not None:
+            return self._album_dir
+        try:
+            return AlbumDir(self.path.parent)
+        except InvalidAlbumDir:
+            pass
+        return None
+
+    @cached_property
     def wiki_artist(self):
         _artists = split_names(self.tag_artist)
         artists = []
@@ -1018,9 +1030,11 @@ class SongFile(ClearableCachedPropertyMixin):
                         log.error('{}: Unable to find match for album name={!r}'.format(self, self.album_name_cleaned))
                         raise e
             else:
+                alb_dir = self.album_dir_obj
+                track_count = len(alb_dir.songs) if alb_dir else None
                 try:
                     album, score = artist.find_song_collection(
-                        self.album_name_cleaned, include_score=True, year=self.year
+                        self.album_name_cleaned, include_score=True, year=self.year, track_count=track_count
                     )
                 except Exception as e:
                     log.error('Error determining album for {} from {}: {}'.format(self, artist, e))
@@ -1029,11 +1043,8 @@ class SongFile(ClearableCachedPropertyMixin):
                 self.wiki_scores['album'] = score
                 if album is None:
                     if not self._in_album_dir:
-                        try:
-                            alb_dir = AlbumDir(self.path.parent)
-                        except InvalidAlbumDir:
-                            pass
-                        else:
+                        alb_dir = self.album_dir_obj
+                        if alb_dir:
                             return alb_dir.wiki_album
                     fmt = 'Unable to find album {!r} from {} to match {}'
                     log.debug(fmt.format(self.album_name_cleaned, artist, self), extra={'color': 9})
