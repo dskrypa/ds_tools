@@ -180,7 +180,10 @@ def parse_name(text):
     found_hangul = False
     stylized = None
     aka = None
-    aka_leads = ('aka', 'a.k.a.', 'also known as', 'or simply', 'an acronym for', 'short for', 'or ', 'better known as')
+    aka_leads = (
+        'aka', 'a.k.a.', 'also known as', 'or simply', 'an acronym for', 'short for', 'or ', 'better known as',
+        'better known simply as'
+    )
     style_leads = ('stylized as', 'sometimes styled as')
     info = []
     details_parts = list(map(str.strip, re.split('[;,]', details)))
@@ -336,7 +339,7 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
     eng, cjk, not_used = None, None, None
     langs = categorize_langs(parts)
     s = 's' if len(parts) > 1 else ''
-    log.log(9, 'ParentheticalParser().parse({!r}) => {} part{}: {} ({})'.format(name, len(parts), s, parts, langs))
+    log.log(4, 'ParentheticalParser().parse({!r}) => {} part{}: {} ({})'.format(name, len(parts), s, parts, langs))
     if len(parts) == 1:
         part = parts[0]
         lang = langs[0]
@@ -352,16 +355,24 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
             raise ValueError('Unable to split {!r} into separate English/CJK strings'.format(name)) from e
     elif len(parts) == 2:
         if LangCat.MIX not in langs and len(set(langs)) == 2:
-            eng, cjk = eng_cjk_sort(parts, langs)           # Name (other lang)
-            if ' / ' in eng:                                # Group / Soloist (soloist other lang)
-                not_used, eng = eng.split(' / ')
-            if ' / ' in cjk:
-                _nu, cjk = cjk.split(' / ')
-                not_used = (not_used, _nu) if not_used else _nu
-            elif not not_used and ' (' in eng and ' (' in cjk:  # Soloist (group) (Soloist (group) {other lang})
-                eng, g_eng = parser.parse(eng)
-                cjk, g_cjk = parser.parse(cjk)
-                not_used = (g_eng, g_cjk)
+            try:
+                eng, cjk = eng_cjk_sort(parts, langs)               # Name (other lang)
+            except ValueError as e:
+                if LangCat.HAN in langs and LangCat.ENG not in langs:
+                    h, o = (0, 1) if langs[0] == LangCat.HAN else (1, 0)
+                    eng = ''
+                    cjk = parts[h]
+                    not_used = parts[o]
+            else:
+                if ' / ' in eng:                                    # Group / Soloist (soloist other lang)
+                    not_used, eng = eng.split(' / ')
+                if ' / ' in cjk:
+                    _nu, cjk = cjk.split(' / ')
+                    not_used = (not_used, _nu) if not_used else _nu
+                elif not not_used and ' (' in eng and ' (' in cjk:  # Soloist (group) (Soloist (group) {other lang})
+                    eng, g_eng = parser.parse(eng)
+                    cjk, g_cjk = parser.parse(cjk)
+                    not_used = (g_eng, g_cjk)
         elif permissive and LangCat.MIX not in langs and len(set(langs)) == 1:
             eng, cjk = eng_cjk_sort(parts[0])               # Soloist (Group) {all same lang}
             not_used = parts[1]
@@ -374,12 +385,19 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
                 not_used = split_name(parts[1])
             except Exception:
                 not_used = parts[1]
-        elif langs == (LangCat.MIX, LangCat.MIX) and all(has_parens(p) for p in parts):
-            eng, cjk = split_name(parts[0])                 # Soloist (other lang) [Group (group other lang)]
-            try:
-                not_used = split_name(parts[1])
-            except Exception:
-                not_used = parts[1]
+        elif langs == (LangCat.MIX, LangCat.MIX):
+            if all(has_parens(p) for p in parts):
+                eng, cjk = split_name(parts[0])                 # Soloist (other lang) [Group (group other lang)]
+                try:
+                    not_used = split_name(parts[1])
+                except Exception:
+                    not_used = parts[1]
+            elif ' X ' in parts[1]:
+                if LangCat.categorize(parts[0], True).intersection(LangCat.asian_cats):
+                    eng, cjk = '', parts[0]
+                else:
+                    eng, cjk = parts[0], ''
+                not_used = parts[1].split(' X ')
         elif langs == (LangCat.ENG, LangCat.MIX):
             if ' / ' in parts[1]:                         # Soloist (Group / soloist other lang)
                 try:
@@ -409,12 +427,6 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
                                 cjk = p1_parts[han_idx]
                     elif allow_cjk_mix and LangCat.contains_any_not(parts[1], LangCat.ENG):
                         eng, cjk = parts
-        elif langs == (LangCat.MIX, LangCat.MIX) and ' X ' in parts[1]:
-            if LangCat.categorize(parts[0], True).intersection(LangCat.asian_cats):
-                eng, cjk = '', parts[0]
-            else:
-                eng, cjk = parts[0], ''
-            not_used = parts[1].split(' X ')
     elif len(parts) == 3:
         if LangCat.MIX not in langs and len(set(langs)) == 2:
             if langs[0] == langs[1] != langs[2]:
@@ -448,7 +460,7 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
                 if keyword:
                     eng = eng[len(keyword):].strip()
             else:
-                log.debug('Shuffling return values due to keywords: {}'.format((eng, cjk, not_used)))
+                log.log(6, 'Shuffling return values due to keywords: {}'.format((eng, cjk, not_used)))
                 if not_used is None:
                     not_used = eng
                 elif isinstance(not_used, str):
