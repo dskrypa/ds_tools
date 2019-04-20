@@ -71,18 +71,21 @@ class AmbiguousEntityException(MusicWikiException):
     def _alt_text(self, anchor):
         href = anchor.get('href') or ''
         href = href[6:] if href.startswith('/wiki/') else href
-        if self._alt_texts is None:
-            self._alt_texts = [anchor.text.strip()]
-        else:
-            self._alt_texts.append(anchor.text.strip())
-        return None if '&redlink=1' in href else unquote(href)
+        if href and '&redlink=1' not in href:
+            # log.debug('Storing anchor text={!r} for href={!r}'.format(anchor.text.strip(), unquote(href)))
+            if self._alt_texts is None:
+                self._alt_texts = [anchor.text.strip()]
+            else:
+                self._alt_texts.append(anchor.text.strip())
+            return unquote(href)
+        return None
 
     @cached_property
     def alternative_texts(self):
         if self._alt_texts is None:
             # noinspection PyStatementEffect
             self.alternatives
-        return []
+        return self._alt_texts or []
 
     @cached_property
     def alternatives(self):
@@ -102,7 +105,9 @@ class AmbiguousEntityException(MusicWikiException):
         disambig_div = soup.find('div', id='disambig')
         if disambig_div:
             anchors = (self._alt_text(a) for li in disambig_div.parent.find('ul') for a in li.find_all('a', limit=1))
-            return list(filter(None, anchors))
+            alts = list(filter(None, anchors))
+            _log.debug('Found div with id=disambig - links: {}'.format(alts))
+            return alts
 
         #if re.search(r'For other uses, see.*?\(disambiguation\)', self.html, re.IGNORECASE):
         disambig_a = soup.find('a', class_='mw-disambig')
@@ -128,7 +133,7 @@ class AmbiguousEntityException(MusicWikiException):
 
     def __str__(self):
         alts = self.alternative_texts
-        base = '{} {!r} doesn\'t exist'.format(self.obj_type, self.uri_path)
+        base = '{} {!r} doesn\'t exist'.format(self.obj_type, self.url)
         if len(alts) == 1:
             return '{} - did you mean {!r}?'.format(base, alts[0])
         elif alts:
