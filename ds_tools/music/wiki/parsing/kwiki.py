@@ -623,7 +623,7 @@ def parse_discography_section(artist, clean_soup):
         if val_type == 'language':  # *almost* always h3, but sometimes type is h3
             val = next(ele.children).get('id')
             val_lc = val.lower()
-            if any(v in val_lc for v in ('album', 'single', 'collaboration', 'feature')):
+            if any(v in val_lc for v in ('album', 'single', 'collaboration', 'feature', 'mixtapes', 'osts')):
                 h_levels[ele.name] = 'type'
                 album_type = val
             else:

@@ -36,7 +36,7 @@ __all__ = [
 ]
 log = logging.getLogger(__name__)
 
-ALBUM_DATED_TYPES = ('Singles', )
+ALBUM_DATED_TYPES = ('Singles', 'Soundtracks', 'Collaborations', 'Extended Plays')
 ALBUM_MULTI_DISK_TYPES = ('Albums', 'Special Albums', 'Japanese Albums', 'Remake Albums', 'Repackage Albums')
 ALBUM_NUMBERED_TYPES = ('Album', 'Mini Album', 'Special Album', 'Single Album', 'Remake Album', 'Repackage Album')
 DISCOGRAPHY_TYPE_MAP = {
@@ -50,6 +50,7 @@ DISCOGRAPHY_TYPE_MAP = {
     'features': 'Collaboration',
     'live_albums': 'Live',
     'mini_albums': 'Mini Album',
+    'mixtapes': 'Mixtape',
     'osts': 'Soundtrack',
     'other_releases': 'Single',
     'promotional_singles': 'Single',
@@ -967,11 +968,12 @@ class WikiArtist(WikiEntity):
                                         found = True
                                         break
                             if not found:
-                                fmt = '{}: Error processing discography entry for {!r} / {!r}: {}'
-                                log.error(fmt.format(self, entry['uri_path'], entry['title'], e), extra={'color': 13})
+                                fmt = '{}: Error processing discography entry in {} for {!r} / {!r}: {}'
+                                msg = fmt.format(self, self.url, entry['uri_path'], entry['title'], e)
+                                log.error(msg, extra={'color': 13})
                     else:
-                        fmt = '{}: Error processing discography entry for {!r} / {!r}: {}'
-                        log.error(fmt.format(self, entry['uri_path'], entry['title'], e), extra={'color': 13})
+                        fmt = '{}: Error processing discography entry in {} for {!r} / {!r}: {}'
+                        log.error(fmt.format(self, self.url, entry['uri_path'], entry['title'], e), extra={'color': 13})
                 except CodeBasedRestException as http_e:
                     if entry['is_ost'] and not isinstance(self._client, DramaWikiClient):
                         ost = find_ost(self, title, entry)
@@ -993,8 +995,9 @@ class WikiArtist(WikiEntity):
                         discography.append(alb)
                         # raise http_e
             except MusicWikiException as e:
-                fmt = '{}: Error processing discography entry for {!r} / {!r}: {}\n{}'
-                log.error(fmt.format(self, entry['uri_path'], entry['title'], e, traceback.format_exc()), extra={'color': 13})
+                fmt = '{}: Error processing discography entry in {} for {!r} / {!r}: {}\n{}'
+                msg = fmt.format(self, self.url, entry['uri_path'], entry['title'], e, traceback.format_exc())
+                log.error(msg, extra={'color': 13})
                 # raise e
 
         if self._singles:

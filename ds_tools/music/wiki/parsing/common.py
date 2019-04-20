@@ -548,12 +548,21 @@ def link_tuples(anchors):
 
 
 def album_num_type(details):
-    alb_broad_type = next((val for val in ('album', 'single') if val in details), None)
+    """
+
+    :param list details: List of words from the first sentence of an intro paragraph that comes after ``is a|the``
+    :return tuple: A 2-tuple of (int(album number), str(album type))
+    """
+    alb_broad_type = next((val for val in ('album', 'single', 'mixtape', 'EP') if val in details), None)
     if alb_broad_type:
         alb_type_desc = details[:details.index(alb_broad_type) + 1]
         if 'full-length' in alb_type_desc:
             alb_type_desc.remove('full-length')
         num = NUMS.get(alb_type_desc[0])
+        if alb_broad_type == 'mixtape':
+            return num, alb_broad_type
+        elif alb_broad_type == 'EP':
+            return num, 'extended play'
         return num, ' '.join(alb_type_desc[1:] if num else alb_type_desc)
     elif len(details) > 1 and details[0] == 'song' and details[1] == 'by':
         return None, 'single'
