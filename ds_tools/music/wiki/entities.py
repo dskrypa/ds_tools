@@ -23,8 +23,7 @@ from ...utils import soupify, normalize_roman_numerals
 from ..name_processing import eng_cjk_sort, fuzz_process, parse_name, revised_weighted_ratio, split_name
 from .exceptions import *
 from .utils import (
-    comparison_type_check, edition_combinations, get_page_category, multi_lang_name, normalize_href, sanitize_path,
-    strify_collabs, synonym_pattern
+    comparison_type_check, edition_combinations, get_page_category, multi_lang_name, sanitize_path, strify_collabs
 )
 from .rest import WikiClient, KindieWikiClient, KpopWikiClient, WikipediaClient, DramaWikiClient
 from .parsing import *
@@ -116,104 +115,91 @@ class WikiEntityMeta(type):
         orig_client = client
         # noinspection PyUnresolvedReferences
         cls_cat = cls._category
-        if not aliases and not isinstance(name, str):
-            aliases, name = name, None
-        if aliases and not name:
-            name = aliases if isinstance(aliases, str) else next(filter(None, aliases), None)
-            if not name and not uri_path:
-                raise WikiEntityIdentificationException('A uri_path or name is required')
-
-        all_aliases = tuple(filter(None, aliases)) if aliases and not isinstance(aliases, str) else (name,)
-        # log.debug('name: {!r} all_aliases: {!r}'.format(name, all_aliases))
+        alias_srcs = (name, aliases, disco_entry.get('title') if disco_entry and not no_fetch else None)
+        _all_aliases = chain.from_iterable((a,) if isinstance(a, str) else a for a in alias_srcs if a)
+        name_aliases = tuple(filter(None, _all_aliases))
+        # log.debug('cls({!r}, name={!r}, aliases={!r}): name_aliases={!r}'.format(uri_path, name, aliases, name_aliases))
+        if not name_aliases and not uri_path:
+            raise WikiEntityIdentificationException('A uri_path or name is required')
 
         if not no_fetch:
             if disco_entry:
                 uri_path = uri_path or disco_entry.get('uri_path')
-                name = name or disco_entry.get('title')
                 disco_site = disco_entry.get('wiki')
                 if disco_site and not client:
                     client = WikiClient.for_site(disco_site)
-            elif name and not uri_path:
+                # elif disco_site and client._site != disco_site:   # Have not seen a need for this yet
+                #     fmt = 'Changing client for uri_path={!r} from {} because it has disco_site={!r} specified'
+                #     log.log(9, fmt.format(uri_path, client, disco_site))
+                #     client = WikiClient.for_site(disco_site)
+            elif name_aliases and not uri_path:
                 client = client or KpopWikiClient()
                 if of_group and not isinstance(of_group, WikiGroup):
                     try:
                         of_group = WikiGroup(aliases=of_group)
                     except WikiTypeError as e:
-                        fmt = 'Error initializing WikiGroup(aliases={!r}) for {}(name={!r}): {}'
-                        log.log(9, fmt.format(of_group, cls.__name__, name, e))
+                        fmt = 'Error initializing WikiGroup(aliases={!r}) for {}(aliases={!r}): {}'
+                        log.log(9, fmt.format(of_group, cls.__name__, name_aliases, e))
                     except Exception as e:
-                        fmt = 'Error initializing WikiGroup(aliases={!r}) for {}(name={!r}): {}'
-                        log.debug(fmt.format(of_group, cls.__name__, name, e))
+                        fmt = 'Error initializing WikiGroup(aliases={!r}) for {}(aliases={!r}): {}'
+                        log.debug(fmt.format(of_group, cls.__name__, name_aliases, e))
 
                 if of_group and isinstance(of_group, WikiGroup):
-                    if aliases:
-                        names = (name, aliases) if isinstance(aliases, str) else tuple(chain((name,), aliases))
-                    else:
-                        names = (name,)
-                    return of_group.find_associated(names)
-                elif isinstance(client, KpopWikiClient) and LangCat.contains_any_not(name, LangCat.ENG):
-                    key = (uri_path, client, name)
-                    obj = WikiEntityMeta._get_match(cls, key, client, cls_cat)
-                    if obj is not None:
-                        return obj
-                    for client in (client, KindieWikiClient()):
-                        for link_text, link_href in client.search(name)[:3]:    # Check 1st 3 results for non-eng name
-                            try:
-                                entity = cls(link_href, client=client)
-                            except WikiTypeError as e:
-                                log.log(9, 'Search of {} for {} yielded non-match: {}'.format(client.host, name, e))
-                            else:
-                                if entity.matches(name):
-                                    WikiEntityMeta._instances[key] = entity
-                                    return entity
-                                else:
-                                    fmt = 'Search of {} for {} yielded non-match: {}'
-                                    log.log(9, fmt.format(client.host, name, entity))
-                    else:
-                        raise WikiEntityIdentificationException('No matches found for {!r} via search'.format(name))
-                else:
-                    try:
-                        # log.debug('{}: Attempting to normalize {!r}'.format(client, name))
-                        uri_path = client.normalize_name(name)
-                    except AmbiguousEntityException as e:
-                        if e.alternatives and aliases:
-                            for alt in e.alternatives:
-                                alt_obj = cls(alt)
-                                if alt_obj.matches(aliases):
-                                    return alt_obj
-                        raise e
-                    except CodeBasedRestException as e:
-                        if e.code == 404 and orig_client is None:   # For cases where it's a non-Kpop artist
-                            if any(LangCat.contains_any_not(n, LangCat.ENG) for n in all_aliases):
-                                # log.debug('Attempting search for: {!r}'.format('|'.join(all_aliases)))
-                                key = (uri_path, client, all_aliases)
-                                obj = WikiEntityMeta._get_match(cls, key, client, cls_cat)
-                                if obj is not None:
-                                    return obj
-                                for link_text, link_href in client.search('|'.join(all_aliases))[:3]:
-                                    try:
-                                        entity = cls(link_href, client=client)
-                                    except WikiTypeError as te:
-                                        fmt = 'Search of {} for {} yielded non-match: {}'
-                                        log.log(9, fmt.format(client.host, name, te))
-                                    else:
-                                        if entity.matches(name):
-                                            WikiEntityMeta._instances[key] = entity
-                                            return entity
-                                        else:
-                                            fmt = 'Search of {} for {} yielded non-match: {}'
-                                            log.log(9, fmt.format(client.host, name, entity))
+                    return of_group.find_associated(name_aliases)
 
-                            try:
-                                client = KindieWikiClient()
-                                uri_path = client.normalize_name(name)
-                            except CodeBasedRestException:
-                                client = WikipediaClient()
-                                uri_path = client.normalize_name(name)
+                key = (uri_path, client, name_aliases)
+                obj = WikiEntityMeta._get_match(cls, key, client, cls_cat)  # Does a type check
+                if obj is not None:
+                    return obj
+                elif all(LangCat.contains_any_not(n, LangCat.ENG) for n in name_aliases):
+                    if orig_client is None or isinstance(client, KpopWikiClient):
+                        clients = (client, KindieWikiClient())
+                    else:
+                        clients = (client,)
+                    return WikiEntityMeta._create_via_search(cls, key, name_aliases, *clients)
+                else:
+                    exc = None
+                    for i, name in enumerate(name_aliases):
+                        try:
+                            # log.debug('{}: Attempting to normalize {!r}'.format(client, name))
+                            uri_path = client.normalize_name(name)
+                        except AmbiguousEntityException as e:
+                            if e.alternatives:
+                                return e.find_matching_alternative(cls, name_aliases, associated_with=of_group)
+                            if len(name_aliases) > 1 and i < len(name_aliases):
+                                return WikiEntityMeta._create_via_search(cls, key, name_aliases, client)
+                        except CodeBasedRestException as e:
+                            if e.code == 404:
+                                if any(LangCat.contains_any_not(n, LangCat.ENG) for n in name_aliases):
+                                    clients = tuple() if orig_client is None else (client,)
+                                    # Only needs to run once - uses all name aliases
+                                    return WikiEntityMeta._create_via_search(cls, key, name_aliases, *clients)
+                                elif orig_client is None:
+                                    try:
+                                        client = KindieWikiClient()
+                                        uri_path = client.normalize_name(name)
+                                    except CodeBasedRestException:
+                                        client = WikipediaClient()
+                                        try:
+                                            uri_path = client.normalize_name(name)
+                                        except CodeBasedRestException:
+                                            fmt = 'Unable to find a page that matches aliases={!r} from any site: {}'
+                                            exc = WikiEntityInitException(fmt.format(name_aliases, e))
+
+                            if not uri_path and not exc:
+                                exc = e
+                        finally:
+                            if uri_path:
+                                break
+
+                    if not uri_path:
+                        if exc:
+                            raise exc
                         else:
-                            raise e
-            elif name and uri_path and uri_path.startswith('//'):   # Alternate subdomain of fandom.com
-                _url = urlparse(uri_path)
+                            raise WikiEntityInitException('Unable to find a uri_path for {!r}'.format(name_aliases))
+
+            if uri_path and uri_path.startswith(('http://', 'https://', '//')):
+                _url = urlparse(uri_path)   # Note: // => alternate subdomain of fandom.com
                 if client:
                     fmt = 'Changing client for uri_path={!r} from {} because it is using a different domain'
                     log.log(9, fmt.format(uri_path, client))
@@ -221,15 +207,6 @@ class WikiEntityMeta(type):
                     client = WikiClient.for_site(_url.hostname)
                 except Exception as e:
                     raise WikiEntityInitException('No client configured for {}'.format(_url.hostname)) from e
-                uri_path = _url.path[6:] if _url.path.startswith('/wiki/') else _url.path
-
-            if uri_path and uri_path.startswith(('http://', 'https://', '//')):
-                _url = urlparse(uri_path)
-                if client:
-                    fmt = 'Changing client for uri_path={!r} from {} because it is using a different domain'
-                    log.log(9, fmt.format(uri_path, client))
-
-                client = WikiClient.for_site(_url.hostname)
                 uri_path = _url.path[6:] if _url.path.startswith('/wiki/') else _url.path
             elif client is None:
                 client = KpopWikiClient()
@@ -239,13 +216,13 @@ class WikiEntityMeta(type):
             # log.debug(fmt.format(cls.__name__, uri_path, client, name))
             obj = cls.__new__(cls, uri_path, client)
             # noinspection PyArgumentList
-            obj.__init__(uri_path, client, name=name, disco_entry=disco_entry, no_fetch=no_fetch, **kwargs)
+            obj.__init__(uri_path, client, name=name_aliases, disco_entry=disco_entry, no_fetch=no_fetch, **kwargs)
             return obj
 
         is_feat_collab = disco_entry and disco_entry.get('base_type') in ('features', 'collaborations', 'singles')
         if uri_path or is_feat_collab:
             uri_path = client.normalize_name(uri_path) if uri_path and ' ' in uri_path else uri_path
-            key = (uri_path, client, name)
+            key = (uri_path, client, name_aliases)
             obj = WikiEntityMeta._get_match(cls, key, client, cls_cat)
             if obj is not None:
                 return obj
@@ -263,29 +240,55 @@ class WikiEntityMeta(type):
         else:
             exp_cls = cls
             raw = None
-            key = (uri_path, client, name)
+            key = (uri_path, client, name_aliases)
 
         if key not in WikiEntityMeta._instances:
             obj = exp_cls.__new__(exp_cls, uri_path, client)
             # noinspection PyArgumentList
-            obj.__init__(uri_path, client, name=name, raw=raw, disco_entry=disco_entry, **kwargs)
+            obj.__init__(uri_path, client, name=name_aliases, raw=raw, disco_entry=disco_entry, **kwargs)
             WikiEntityMeta._instances[key] = obj
+            # log.debug('{}: Storing in instance cache with key={}'.format(obj, key), extra={'color': 14})
         else:
             obj = WikiEntityMeta._instances[key]
+            # log.debug('{}: Found in instance cache with key={}'.format(obj, key), extra={'color': 10})
 
         if of_group:
             if isinstance(obj, WikiSinger):
                 if obj.member_of is None or not obj.member_of.matches(of_group):
-                    fmt = 'Found {} for uri_path={!r}, name={!r}, but they are a member_of={}, not of_group={!r}'
-                    raise WikiEntityIdentificationException(fmt.format(obj, uri_path, name, obj.member_of, of_group))
+                    fmt = 'Found {} for uri_path={!r}, aliases={!r}, but they are a member_of={}, not of_group={!r}'
+                    msg = fmt.format(obj, uri_path, name_aliases, obj.member_of, of_group)
+                    raise WikiEntityIdentificationException(msg)
             elif isinstance(obj, WikiGroup):
                 if obj.subunit_of is None or not obj.subunit_of.matches(of_group):
-                    fmt = 'Found {} for uri_path={!r}, name={!r}, but they are a subunit_of={}, not of_group={!r}'
-                    raise WikiEntityIdentificationException(fmt.format(obj, uri_path, name, obj.subunit_of, of_group))
+                    fmt = 'Found {} for uri_path={!r}, aliases={!r}, but they are a subunit_of={}, not of_group={!r}'
+                    msg = fmt.format(obj, uri_path, name_aliases, obj.subunit_of, of_group)
+                    raise WikiEntityIdentificationException(msg)
             else:
                 raise WikiTypeError('{} is a {}, so cannot be of_group={}'.format(obj, type(obj).__name__, of_group))
 
         return obj
+
+    @staticmethod
+    def _create_via_search(cls, key, name_aliases, *clients):
+        clients = clients or (KpopWikiClient(), KindieWikiClient(), WikipediaClient())
+        dbg_fmt = 'Search of {} for {!r} yielded non-match: {}'
+        # Check 1st 3 results from each site for non-eng name
+        for client in clients:
+            # log.debug('Attempting search of {} for: {!r}'.format(client._site, '|'.join(all_aliases)))
+            for link_text, link_href in client.search('|'.join(name_aliases))[:3]:
+                try:
+                    entity = cls(link_href, client=client)
+                except WikiTypeError as e:
+                    log.log(9, dbg_fmt.format(client.host, name_aliases, e))
+                else:
+                    if entity.matches(name_aliases):
+                        WikiEntityMeta._instances[key] = entity
+                        WikiEntityMeta._instances[(link_href, client, name_aliases)] = entity
+                        return entity
+                    else:
+                        log.log(9, dbg_fmt.format(client.host, name_aliases, entity))
+        else:
+            raise WikiEntityIdentificationException('No matches found for {!r} via search'.format(name_aliases))
 
     @staticmethod
     def _get_match(cls, key, client, cls_cat):
@@ -336,24 +339,18 @@ class WikiMatchable:
         return set(aliases)
 
     def _additional_aliases(self):
-        return None
+        return set()
 
     @cached_property
     def aliases(self):
-        try:
-            del self.__dict__['lc_aliases']
-        except KeyError:
-            pass
-        try:
-            del self.__dict__['_fuzzed_aliases']
-        except KeyError:
-            pass
+        for attr in ('lc_aliases', '_fuzzed_aliases'):
+            try:
+                del self.__dict__[attr]
+            except KeyError:
+                pass
 
         aliases = self._aliases()
-        additional = self._additional_aliases()
-        if additional:
-            # noinspection PyTypeChecker
-            aliases.update(filter(None, additional))
+        aliases.update(self._additional_aliases())
         return aliases
 
     @cached_property
@@ -505,12 +502,27 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
     def __init__(self, uri_path=None, client=None, *, name=None, raw=None, no_fetch=False, **kwargs):
         if uri_path is None and name is None and raw is None:
             raise WikiEntityInitException('Unable to initialize a {} with no identifiers'.format(type(self).__name__))
+        self.__additional_aliases = set()
         self._client = client
         self._uri_path = uri_path
         self._raw = raw if raw is not None else client.get_page(uri_path) if uri_path and not no_fetch else None
         self.english_name = None
         self.cjk_name = None
-        self.name = name or uri_path
+        if not name:
+            self.name = uri_path
+        elif isinstance(name, str):
+            self.name = name
+        else:
+            if len(name) == 2:
+                try:
+                    self.update_name(*eng_cjk_sort(name))
+                except ValueError as e:
+                    self.name = name[0]
+                    self._add_alias(name[1])
+            else:
+                self.name = name[0]
+                self._add_aliases(name[1:])
+
         if isinstance(self._client, DramaWikiClient) and self._raw:
             self._header_title = soupify(self._raw, parse_only=bs4.SoupStrainer('h2', class_='title')).text
         else:
@@ -535,6 +547,23 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
 
     def __hash__(self):
         return hash((self.name, self._raw))
+
+    def _add_alias(self, alias):
+        self.__additional_aliases.add(alias)
+        try:
+            del self.__dict__['aliases']
+        except KeyError:
+            pass
+
+    def _add_aliases(self, aliases):
+        self.__additional_aliases.update(aliases)
+        try:
+            del self.__dict__['aliases']
+        except KeyError:
+            pass
+
+    def _additional_aliases(self):
+        return self.__additional_aliases
 
     @cached_property
     def url(self):
@@ -641,42 +670,12 @@ class WikiDiscography(WikiEntity):
         self.artist = artist
         self._albums, self._singles = parse_discography_page(self._uri_path, self._clean_soup, artist)
 
-    # @cached_property
-    # def features(self):
-    #     singles = []
-    #     for group in self._singles:
-    #         if group['sub_type'] == 'as featured artist':
-    #             for track in group['tracks']:
-    #                 collabs = set(track.get('collaborators', []))
-    #                 collabs.update(l[0] for l in track.get('links', []))
-    #                 if collabs:
-    #                     collabs = [{'artist': eng_cjk_sort(collab)} for collab in collabs]
-    #
-    #                 track['collaborators'] = collabs
-    #                 disco_entry = {'title': track['name_parts'], 'collaborators': collabs}
-    #                 try:
-    #                     single = WikiFeatureOrSingle(
-    #                         None, name=track['name_parts'], no_fetch=True, disco_entry=disco_entry,
-    #                         artist_context=self.artist
-    #                     )
-    #                 except WikiEntityInitException as e:
-    #                     disco_entry['title'] = track['name_parts'][0]
-    #                     single = WikiFeatureOrSingle(
-    #                         None, name=track['name_parts'][0], no_fetch=True, disco_entry=disco_entry,
-    #                         artist_context=self.artist
-    #                     )
-    #
-    #                 single._track_lists = [{'tracks':[track]}]
-    #                 singles.append(single)
-    #     return singles
-
 
 class WikiTVSeries(WikiEntity):
     _category = 'tv_series'
 
     def __init__(self, uri_path=None, client=None, **kwargs):
         super().__init__(uri_path, client, **kwargs)
-
         self.ost_hrefs = []
         if self._side_info:
             self.name = self._side_info['name']
@@ -706,6 +705,15 @@ class WikiTVSeries(WikiEntity):
                     else:
                         log.error(err_msg)
 
+                if self._header_title and LangCat.categorize(self._header_title) == LangCat.ENG:
+                    if self.english_name and self.cjk_name and self.english_name != self._header_title:
+                        permutations = {''.join(p.split()) for p in romanized_permutations(self.cjk_name)}
+                        if ''.join(self.english_name.lower().split()) in permutations:
+                            self._add_alias(self.english_name)
+                            self.english_name = self._header_title
+                    elif self.cjk_name and not self.english_name:
+                        self.english_name = self._header_title
+
                 if self.english_name and self.cjk_name:
                     self.name = multi_lang_name(self.english_name, self.cjk_name)
                 self.aka = self._info.get('also known as', [])
@@ -733,7 +741,6 @@ class WikiArtist(WikiEntity):
 
     def __init__(self, uri_path=None, client=None, *, name=None, strict=True, **kwargs):
         super().__init__(uri_path, client, name=name, **kwargs)
-        self.__additional_aliases = []
         self.english_name, self.cjk_name, self.stylized_name, self.aka = None, None, None, None
         if self._raw and not kwargs.get('no_init'):
             if isinstance(self._client, DramaWikiClient):
@@ -771,18 +778,9 @@ class WikiArtist(WikiEntity):
 
         self._albums, self._singles = None, None
 
-    def _add_alias(self, alias):
-        self.__additional_aliases.append(alias)
-
-    def _add_aliases(self, aliases):
-        self.__additional_aliases.extend(aliases)
-
-    def _additional_aliases(self):
-        return self.__additional_aliases
-
     def __repr__(self):
         try:
-            return '<{}({!r})>'.format(type(self).__name__, self.stylized_name or self.name)
+            return '<{}({!r})>'.format(type(self).__name__, self.stylized_name or self.qualname)
         except AttributeError as e:
             return '<{}({!r})>'.format(type(self).__name__, self._uri_path)
 
@@ -820,8 +818,8 @@ class WikiArtist(WikiEntity):
             pass
         else:
             if candidate._uri_path and candidate._raw:
-                candidate.__additional_aliases.extend(self._aliases())
-                self.__additional_aliases.extend(candidate._aliases())
+                candidate._add_aliases(self.aliases)
+                self._add_aliases(candidate.aliases)
                 if self.english_name and self.cjk_name and (not candidate.english_name or not candidate.cjk_name):
                     candidate.update_name(self.english_name, self.cjk_name)
                 elif candidate.english_name and candidate.cjk_name and (not self.english_name or not self.cjk_name):
@@ -833,8 +831,8 @@ class WikiArtist(WikiEntity):
             candidate = type(self)(uri_path, client=client)
             # log.debug('{}: Validating candidate={}'.format(self, candidate))
             if candidate.matches(self):
-                candidate.__additional_aliases.extend(self._aliases())
-                self.__additional_aliases.extend(candidate._aliases())
+                candidate._add_aliases(self.aliases)
+                self._add_aliases(candidate.aliases)
                 if self.english_name and self.cjk_name and (not candidate.english_name or not candidate.cjk_name):
                     candidate.update_name(self.english_name, self.cjk_name)
                 elif candidate.english_name and candidate.cjk_name and (not self.english_name or not self.cjk_name):
@@ -920,7 +918,7 @@ class WikiArtist(WikiEntity):
         if self._albums:
             return self._albums
 
-        log.debug('{}: No discography content could be found from {}'.format(self, self._client.host))
+        log.debug('{}: No discography content could be found from {}'.format(self, getattr(self._client, 'host', None)))
         return []
 
     @cached_property
@@ -1159,6 +1157,32 @@ class WikiArtist(WikiEntity):
     def _as_collab(self):
         return {'artist': (self.english_name, self.cjk_name), 'artist_href': self._uri_path}
 
+    def find_associated(self, name, min_score=75, include_score=False):
+        match_fmt = '{}: {} matched {} {!r} with score={} because its alias={!r} =~= {!r}'
+        best_score, best_alias, best_val, best_type, best_entity = 0, None, None, None, None
+        etypes = ('member', 'sub_unit', 'associated_act')
+        egroups = (getattr(self, et + 's', None) for et in etypes)
+
+        for etype, egroup in zip(etypes, egroups):
+            if egroup is None:
+                continue
+            # log.debug('Processing {}\'s {}s'.format(self, etype))
+            for entity in egroup:
+                score, alias, val = entity.score_match(name)
+                if score >= 100:
+                    # log.debug(match_fmt.format(self, entity, etype, name, score, alias, val), extra={'color': 100})
+                    return (score, entity) if include_score else entity
+                elif score > best_score:
+                    best_score, best_alias, best_val, best_type, best_entity = score, alias, val, etype, entity
+
+            if best_score > min_score:
+                msg = match_fmt.format(self, best_entity, best_type, name, best_score, best_alias, best_val)
+                log.debug(msg, extra={'color': 100})
+                return (best_score, best_entity) if include_score else best_entity
+
+        fmt = 'Unable to find member/sub-unit/associated act of {} named {!r}'
+        raise MemberDiscoveryException(fmt.format(self, name))
+
 
 class WikiGroup(WikiArtist):
     _category = 'group'
@@ -1217,47 +1241,6 @@ class WikiGroup(WikiArtist):
                 sub_units.append(WikiGroup(href[6:] if href.startswith('/wiki/') else href))
         return sub_units
 
-    def find_associated(self, name, min_score=75):
-        match_fmt = '{}: {} matched {} {!r} with score={} because its alias={!r} =~= {!r}'
-        best_score, best_alias, best_val, best_type, best_entity = 0, None, None, None, None
-        etypes = ('member', 'sub_unit', 'associated_act')
-        egroups = (getattr(self, et + 's') for et in etypes)
-        # egroups = (self.members, self.sub_units, self.associated_acts)
-
-        for etype, egroup in zip(etypes, egroups):
-            # log.debug('Processing {}\'s {}s'.format(self, etype))
-            for entity in egroup:
-                score, alias, val = entity.score_match(name)
-                if score >= 100:
-                    # log.debug(match_fmt.format(self, entity, etype, name, score, alias, val), extra={'color': 100})
-                    return entity
-                elif score > best_score:
-                    best_score, best_alias, best_val, best_type, best_entity = score, alias, val, etype, entity
-
-            if best_score > min_score:
-                msg = match_fmt.format(self, best_entity, best_type, name, best_score, best_alias, best_val)
-                log.debug(msg, extra={'color': 100})
-                return best_entity
-
-        fmt = 'Unable to find member/sub-unit/associated act of {} named {!r}'
-        raise MemberDiscoveryException(fmt.format(self, name))
-
-    def __find_associated(self, name):
-        for member in self.members:
-            try:
-                if member.matches(name):
-                    return member
-            except AttributeError as e:
-                log.error('{}[{}]: Error finding associated entity {!r}: {}'.format(self, self._uri_path, name, e))
-                raise e
-        for sub_unit in self.sub_units:
-            if sub_unit.matches(name):
-                return sub_unit
-        for artist in self.associated_acts:
-            if artist.matches(name):
-                return artist
-        raise MemberDiscoveryException('Unable to find member or sub-unit of {} named {!r}'.format(self, name))
-
 
 class WikiSinger(WikiArtist):
     _category = 'singer'
@@ -1268,7 +1251,6 @@ class WikiSinger(WikiArtist):
     def __init__(self, uri_path=None, client=None, *, _member_of=None, **kwargs):
         super().__init__(uri_path, client, **kwargs)
         self.member_of = _member_of
-
         if self._raw:
             clean_soup = self._clean_soup
             mem_match = self._member_rx.search(clean_soup.text.strip())
@@ -1291,6 +1273,13 @@ class WikiSinger(WikiArtist):
                                     log.debug(fmt.format(self, group_name, a.text, href, e))
                                 else:
                                     break
+            else:
+                for associated in self.associated_acts:
+                    if isinstance(associated, WikiGroup):
+                        for href, member_name in associated._members():
+                            if self._uri_path == href:
+                                self.member_of = associated
+                                break
 
             eng_first, eng_last, cjk_eng_first, cjk_eng_last = None, None, None, None
             birth_names = self._side_info.get('birth_name', [])
@@ -1378,6 +1367,7 @@ class WikiSongCollection(WikiEntity):
         version_title=None, **kwargs
     ):
         super().__init__(uri_path, client, **kwargs)
+        self._track_cache = {}
         self._discography_entry = disco_entry or {}
         self.english_name, self.cjk_name, self.stylized_name, self.aka, self._info = None, None, None, None, None
         self._album_info = album_info or {}
@@ -1628,6 +1618,7 @@ class WikiSongCollection(WikiEntity):
     @cached_property
     def artists(self):
         artists = set()
+        anchors = None
         for artist in self._artists:
             # log.debug('{}: Processing artist: {}'.format(self, artist))
             name = artist['artist']
@@ -1637,6 +1628,30 @@ class WikiSongCollection(WikiEntity):
             href = artist.get('artist_href')
             of_group = artist.get('of_group')
             # group_href = artist.get('group_href')
+
+            no_fetch = False
+            if not href and self._raw:
+                if anchors is None:
+                    anchors = list(self._clean_soup.find_all('a'))
+                # fmt = '{}: Seeing if name={!r} == anchor={!r} => text={!r}, class={!r}, href={!r}'
+                for a in anchors:
+                    _href = a.get('href')
+                    # log.debug(fmt.format(self.url, name[0], a, a.text, a.get('class'), _href))
+                    if a.text == name[0] and 'new' in a.get('class') and _href is None:
+                        no_fetch = True
+                        break
+                    elif _href:
+                        _url = urlparse(_href[6:] if _href.startswith('/wiki/') else _href)
+                        if _url.path == name[0] and '&redlink=1' in _url.query:
+                            no_fetch = True
+                            break
+
+            if no_fetch:
+                fmt = '{}: Skipping page search for artist={!r} of_group={!r} found on {} because it has a red link'
+                log.debug(fmt.format(self, name, of_group, self.url), extra={'color': 94})
+                artists.add(WikiArtist(href, name=name, of_group=of_group, client=self._client, no_fetch=True))
+                continue
+
             try:
                 # log.debug('{}: Looking for artist href={!r} name={!r} of_group={!r}'.format(self, href, name, of_group))
                 artist = WikiArtist(href, name=name, of_group=of_group, client=self._client)
@@ -1700,6 +1715,10 @@ class WikiSongCollection(WikiEntity):
                     fmt = '{}\'s artist={!r} doesn\'t appear to be an artist: {}'
                     log.log(log_lvl, fmt.format(self, name, e), extra={'color': (11, 9)})
                     # raise e
+                artists.add(WikiArtist(href, name=name, no_fetch=True))
+            except Exception as e:
+                fmt = '{}: Unable to find artist href={!r} name={!r} of_group={!r} found on {}: {}'
+                log.error(fmt.format(self, href, name, of_group, self.url, e), extra={'color': 9})
                 artists.add(WikiArtist(href, name=name, no_fetch=True))
             else:
                 # log.debug('{}: artist={} => adding'.format(self, artist))
@@ -1829,8 +1848,9 @@ class WikiSongCollection(WikiEntity):
                 log.log(9, fmt.format(self._client.host, self), extra={'color': 8})
                 return {'tracks': []}
 
-    @cached(True)
+    @cached('_track_cache', exc=True)
     def get_tracks(self, edition_or_part=None, disk=None):
+        # log.debug('{}.get_tracks({!r}, {!r}) called'.format(self, edition_or_part, disk), extra={'color': 76})
         if self._intended is not None and edition_or_part is None and disk is None:
             if len(self._intended) == 3:
                 return [WikiTrack(self._intended[2]._info, self, self._artist_context)]
@@ -1955,7 +1975,6 @@ class WikiSoundtrack(WikiSongCollection):
 
     def __init__(self, uri_path=None, client=None, **kwargs):
         super().__init__(uri_path, client, **kwargs)
-        self.__additional_aliases = []
         if isinstance(self._client, DramaWikiClient):
             if not self._raw:
                 raise WikiEntityInitException('WikiSoundtrack requires a valid uri_path')
@@ -1982,7 +2001,7 @@ class WikiSoundtrack(WikiSongCollection):
             except AttributeError:
                 pass
             else:
-                self.__additional_aliases.extend(('{} OST'.format(a) for a in tv_series.aliases))
+                self._add_aliases(('{} OST'.format(a) for a in tv_series.aliases))
 
         if self._discography_entry:
             m = self._ost_name_rx.match(self._discography_entry.get('title', ''))
@@ -1998,7 +2017,7 @@ class WikiSoundtrack(WikiSongCollection):
                     self.name = multi_lang_name(self.english_name, self.cjk_name)
 
     def _additional_aliases(self):
-        return chain(self.__additional_aliases, [e[0] for e in self.editions_and_disks])
+        return chain(super()._additional_aliases(), [e[0] for e in self.editions_and_disks])
 
     def score_match(self, other, *args, **kwargs):
         if isinstance(other, str):
@@ -2132,7 +2151,7 @@ class WikiSoundtrack(WikiSongCollection):
         track_info = self._discography_entry.get('track_info')
         use_discography_info = self._intended is None and track_info
         if not use_discography_info and self._raw and self._track_lists:
-            log.log(5, 'Skipping WikiSoundtrack _get_tracks() for {}'.format(self.url))
+            log.log(1, 'Skipping WikiSoundtrack _get_tracks({!r}, {!r}) for {}'.format(edition_or_part, disk, self.url))
             return super()._get_tracks(edition_or_part, disk)
 
         if track_info:
@@ -2223,7 +2242,6 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
         if self.from_ost and self._artist_context:
             # log.debug('Comparing collabs={} to aliases={}'.format(self._collaborators, self._artist_context.aliases))
             if not self._from_disco_info:
-                # if not any(lc_alias in self._collaborators for lc_alias in self._artist_context.lc_aliases):
                 if not any(self._artist_context.matches(c['artist']) for c in self._collaborators.values()):
                     fmt = 'WikiTrack {!r} discarding artist context={}; collabs: {}'
                     log.debug(fmt.format(self.name, self._artist_context, self._collaborators), extra={'color': 'cyan'})
@@ -2232,12 +2250,6 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                     for lc_collab, collab in sorted(self._collaborators.items()):
                         if self._artist_context.matches(collab['artist']):
                             self._collaborators.pop(lc_collab)
-
-                    # for lc_alias in self._artist_context.lc_aliases:
-                    #     try:
-                    #         self._collaborators.pop(lc_alias)
-                    #     except KeyError:
-                    #         pass
         else:
             # Clean up the collaborator list for tracks that include the primary artist in the list of collaborators
             # Example case: LOONA pre-debut single albums
@@ -2424,7 +2436,7 @@ def find_ost(artist, title, disco_entry):
         title = m.group(1).strip()
         if title.endswith(' -'):
             title = title[:-1].strip()
-        log.log(9, 'find_ost: normalized {!r} -> {!r}'.format(orig_title, title))
+        log.log(2, 'find_ost: normalized {!r} -> {!r}'.format(orig_title, title))
 
     d_client = DramaWikiClient()
     if artist is not None and not isinstance(artist._client, DramaWikiClient):
@@ -2482,25 +2494,6 @@ def find_ost(artist, title, disco_entry):
                 if alt_uri_path:
                     log.debug('Found alternate uri_path for {!r}: {!r}'.format(title, alt_uri_path))
                     return WikiSongCollection(alt_uri_path, d_client, disco_entry=disco_entry, artist_context=artist)
-
-    # b_client = WikiClient()
-    # if artist is not None and artist._disco_page:
-    #     # log.debug('{}: Processing discography page to find OST tracks...'.format(artist))
-    #     title_rx = synonym_pattern(title)
-    #     for ost_name, tracks in artist._disco_page._soundtracks.items():
-    #         if title_rx.match(ost_name):
-    #             # log.debug('{}: Found discography page match {!r} = {!r}'.format(artist, title, ost_name))
-    #             album_info = {
-    #                 'track_lists': [{'section': None, 'tracks': tracks}], 'num': None, 'type': 'OST',
-    #                 'repackage': False, 'length': None, 'released': None, 'links': []
-    #             }
-    #             _entry = disco_entry.copy()
-    #             _entry['uri_path'] = None
-    #             return WikiSoundtrack(
-    #                 None, b_client, no_type_check=True, disco_entry=_entry, album_info=album_info, artist_context=artist
-    #             )
-            # else:
-            #     log.debug('{}: Found discography page {!r} != {!r}'.format(artist, title, ost_name))
 
     k_client = KpopWikiClient()
     if disco_entry.get('wiki') == k_client._site and disco_entry.get('uri_path'):
