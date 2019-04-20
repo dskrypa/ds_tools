@@ -154,6 +154,8 @@ def parse_ost_page(uri_path, clean_soup, client):
 def parse_drama_wiki_info_list(uri_path, info_ul, client):
     info = {}
     for i, li in enumerate(info_ul.find_all('li')):
+        if li.parent != info_ul:
+            continue
         try:
             key, value = map(str.strip, li.text.strip().split(':', 1))
         except ValueError as e:
@@ -198,6 +200,8 @@ def parse_drama_wiki_info_list(uri_path, info_ul, client):
         elif key in ('original soundtrack', 'original soundtracks'):
             links = dict(link_tuples(li.find_all('a')))
             value = {value: links.get(value)}
+        elif key == 'viewership ratings':
+            continue
 
         info[key] = value
     return info
