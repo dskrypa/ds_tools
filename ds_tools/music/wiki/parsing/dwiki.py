@@ -5,7 +5,8 @@
 import logging
 import re
 
-from ....unicode import LangCat
+from ....unicode import LangCat, romanized_permutations
+from ....utils import common_suffix
 from ...name_processing import eng_cjk_sort, split_name, str2list
 from .exceptions import *
 from .common import *
@@ -58,7 +59,7 @@ def parse_ost_page(uri_path, clean_soup, client):
     if not first_h2:
         raise WikiEntityParseException('Unable to find first OST part section in {}'.format(uri_path))
 
-    anchors = list(clean_soup.find_all('a'))
+    anchors = tuple(clean_soup.find_all('a'))
     track_lists = []
     h2 = first_h2
     while True:
@@ -107,21 +108,23 @@ def parse_ost_page(uri_path, clean_soup, client):
                                 raise WikiEntityParseException(err_msg) from e
                         else:
                             lc_name = name_parts[0].lower()
-                            if lc_name.count('(') > 2 and ' ver.)' in lc_name and '(inst.)' in lc_name:
-                                name_parts = name_parts[0]  # Let parse_track_info split the string
-                            else:
-                                if section.endswith('OST') and i == 1 and lc_name.endswith(' title'):
-                                    base = name_parts[0][:-5].strip()
-                                    if LangCat.categorize(base) in LangCat.asian_cats:
-                                        name_parts = [base]
-                                        to_include['misc'] = ['Title']
-                                    else:
-                                        raise WikiEntityParseException(err_msg) from e
+                            if section.endswith('OST') and i == 1 and lc_name.endswith(' title'):
+                                base = name_parts[0][:-5].strip()
+                                if LangCat.categorize(base) in LangCat.asian_cats:
+                                    name_parts = [base]
+                                    to_include['misc'] = ['Title']
                                 else:
-                                    raise WikiEntityParseException(err_msg) from e
+                                    name_parts = name_parts[0]  # Let parse_track_info split the string
+                            else:
+                                name_parts = name_parts[0]  # Let parse_track_info split the string
                 elif all(part.lower().endswith('(inst.)') for part in name_parts):
                     name_parts = [part[:-7].strip() for part in name_parts]
                     name_parts.append('Inst.')
+                elif len(name_parts) == 2:
+                    common_part_suffix = common_suffix(name_parts)
+                    if common_part_suffix:
+                        unique_parts = [p[:-len(common_part_suffix)].strip() for p in name_parts]
+                        name_parts = '{} ({}) {{}}'.format(*unique_parts).format(common_part_suffix)
 
                 track = parse_track_info(tds[0].text, name_parts, uri_path, include=to_include)
 
@@ -161,10 +164,15 @@ def parse_drama_wiki_info_list(uri_path, info_ul, client):
         if i == 0 and key not in ('title', 'name', 'group name'):
             return None
         elif key in ('title', 'name', 'group name'):
+            parts = list(map(str.strip, value.split('/')))
             try:
-                value = eng_cjk_sort(map(str.strip, value.split('/')), permissive=True)
+                value = eng_cjk_sort(parts, permissive=True)
             except Exception as e:
-                pass
+                langs = [LangCat.categorize(p) for p in parts]
+                if len(parts) == 3 and langs[0] == LangCat.HAN and langs[1] == langs[2] == LangCat.ENG:
+                    permutations = {''.join(p.split()) for p in romanized_permutations(parts[0])}
+                    if all(''.join(p.lower().split()) in permutations for p in parts[1:]):
+                        value = ('', parts[0])
         elif key in ('release date', 'birthdate'):
             if key == 'birthdate':
                 try:
@@ -183,7 +191,7 @@ def parse_drama_wiki_info_list(uri_path, info_ul, client):
         elif key == 'language':
             value = str2list(value)
         elif key == 'artist':
-            anchors = list(li.find_all('a'))
+            anchors = tuple(li.find_all('a'))
             value, info['produced_by'] = split_artist_list(value, context=uri_path, anchors=anchors, client=client)
         elif key == 'also known as':
             value = str2list(value)
