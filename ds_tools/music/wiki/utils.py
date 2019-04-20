@@ -22,7 +22,7 @@ NUMS = {
     'seventh': '7th', 'eighth': '8th', 'ninth': '9th', 'tenth': '10th', 'debut': '1st'
 }
 PAGE_CATEGORIES = OrderedDict([
-    ('album', ('albums', 'discography article stubs')),
+    ('album', ('albums', 'discography article stubs', ' eps')),     # Note: space in ' eps' is intentional
     ('group', ('group', 'group article stubs', 'bands', 'duos')),
     ('singer', ('singer', 'person article stubs', 'actor', 'actress')),
     ('soundtrack', ('osts', 'kost', 'jost', 'cost')),
@@ -35,6 +35,11 @@ PAGE_CATEGORIES = OrderedDict([
     ('play', ('plays',)),
     ('characters', ('fictional characters', 'film characters')),
     ('filmography', ('filmographies',)),
+    ('misc', (
+        'games', 'comics', 'deities', 'television seasons', 'appliances', 'standards', 'military', 'amusement',
+        'episodes', 'hobbies', 'astronauts', 'war', 'economics', 'disasters', 'events', 'bugs', 'modules', 'elves',
+        'dwarves', 'orcs'
+    )),
 ])
 PATH_SANITIZATION_DICT = {c: '' for c in '*;?<>"'}
 PATH_SANITIZATION_DICT.update({'/': '_', ':': '-', '\\': '_', '|': '-'})
