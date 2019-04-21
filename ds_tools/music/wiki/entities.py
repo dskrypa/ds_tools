@@ -2294,11 +2294,9 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                     else:
                         # fmt = 'WikiTrack {!r} discarding album artist from collaborators: artist={!r}; collabs: {}'
                         # log.debug(fmt.format(self.name, artist, self._collaborators), extra={'color': 'cyan'})
-                        for lc_alias in artist.lc_aliases:
-                            try:
-                                self._collaborators.pop(lc_alias)
-                            except KeyError:
-                                pass
+                        for lc_collab, collab in sorted(self._collaborators.items()):
+                            if artist.matches(collab['artist']):
+                                self._collaborators.pop(lc_collab)
 
     @cached_property
     def _repr(self):
