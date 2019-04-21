@@ -665,6 +665,29 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
             log.debug('No sanitization configured for soup objects from {}'.format(type(self._client).__name__))
         return content
 
+    @cached_property
+    def _all_anchors(self):
+        return list(self._clean_soup.find_all('a'))
+
+    def _has_no_valid_links(self, href, text):
+        if not href and self._raw:
+            # fmt = '{}: Seeing if text={!r} == anchor={!r} => a.text={!r}, a.class={!r}, a.href={!r}'
+            for a in self._all_anchors:
+                _href = a.get('href')
+                # log.debug(fmt.format(self.url, text, a, a.text, a.get('class'), _href))
+                if a.text == text:
+                    if _href and '&redlink=1' not in _href:             # a valid link
+                        return False
+                    elif 'new' in a.get('class') and _href is None:     # displayed as a red link in a browser
+                        return True
+                elif _href:
+                    _url = urlparse(_href[6:] if _href.startswith('/wiki/') else _href)
+                    if _url.path == text:
+                        return '&redlink=1' in _url.query
+        elif href and '&redlink=1' in href:
+            return True
+        return False
+
 
 class WikiAgency(WikiEntity):
     _category = 'agency'
@@ -1070,6 +1093,7 @@ class WikiArtist(WikiEntity):
     def associated_acts(self):
         associated = []
         for text, href in self._side_info.get('associated', {}).items():
+            # log.debug('{}: Associated act from {}: a.text={!r}, a.href={!r}'.format(self, self.url, text, href))
             associated.append(WikiArtist(href, name=text, client=self._client))
         return associated
 
@@ -1168,13 +1192,13 @@ class WikiArtist(WikiEntity):
     def find_associated(self, name, min_score=75, include_score=False):
         match_fmt = '{}: {} matched {} {!r} with score={} because its alias={!r} =~= {!r}'
         best_score, best_alias, best_val, best_type, best_entity = 0, None, None, None, None
-        etypes = ('member', 'sub_unit', 'associated_act')
-        egroups = (getattr(self, et + 's', None) for et in etypes)
-
-        for etype, egroup in zip(etypes, egroups):
-            if egroup is None:
+        for etype in ('member', 'sub_unit', 'associated_act'):
+            log.debug('Processing {}\'s {}s'.format(self, etype))
+            try:
+                egroup = getattr(self, etype + 's')
+            except AttributeError as e:
+                log.debug('{}: Error getting attr \'{}s\': {}\n{}'.format(self, etype, e, traceback.format_exc()))
                 continue
-            # log.debug('Processing {}\'s {}s'.format(self, etype))
             for entity in egroup:
                 score, alias, val = entity.score_match(name)
                 if score >= 100:
@@ -1223,7 +1247,15 @@ class WikiGroup(WikiArtist):
         members = []
         for href, member_name in self._members():
             log.debug('{}: Looking up member href={!r} name={!r}'.format(self, href, member_name))
-            if href:
+            if member_name:
+                name = member_name if isinstance(member_name, str) else member_name[0]
+            else:
+                name = None
+            if name and self._has_no_valid_links(href, name):
+                fmt = '{}: Skipping page search for member={!r} found on {} because it has a red link'
+                log.debug(fmt.format(self, member_name, self.url), extra={'color': 94})
+                members.append(WikiSinger(None, name=member_name, no_fetch=True, _member_of=self))
+            elif href:
                 members.append(WikiSinger(href, _member_of=self))
             else:
                 members.append(WikiSinger(None, name=member_name, no_fetch=True, _member_of=self))
@@ -1626,7 +1658,6 @@ class WikiSongCollection(WikiEntity):
     @cached_property
     def artists(self):
         artists = set()
-        anchors = None
         for artist in self._artists:
             # log.debug('{}: Processing artist: {}'.format(self, artist))
             name = artist['artist']
@@ -1636,25 +1667,7 @@ class WikiSongCollection(WikiEntity):
             href = artist.get('artist_href')
             of_group = artist.get('of_group')
             # group_href = artist.get('group_href')
-
-            no_fetch = False
-            if not href and self._raw:
-                if anchors is None:
-                    anchors = list(self._clean_soup.find_all('a'))
-                # fmt = '{}: Seeing if name={!r} == anchor={!r} => text={!r}, class={!r}, href={!r}'
-                for a in anchors:
-                    _href = a.get('href')
-                    # log.debug(fmt.format(self.url, name[0], a, a.text, a.get('class'), _href))
-                    if a.text == name[0] and 'new' in a.get('class') and _href is None:
-                        no_fetch = True
-                        break
-                    elif _href:
-                        _url = urlparse(_href[6:] if _href.startswith('/wiki/') else _href)
-                        if _url.path == name[0] and '&redlink=1' in _url.query:
-                            no_fetch = True
-                            break
-
-            if no_fetch:
+            if self._has_no_valid_links(href, name[0]):
                 fmt = '{}: Skipping page search for artist={!r} of_group={!r} found on {} because it has a red link'
                 log.debug(fmt.format(self, name, of_group, self.url), extra={'color': 94})
                 artists.add(WikiArtist(href, name=name, of_group=of_group, client=self._client, no_fetch=True))

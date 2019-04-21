@@ -666,11 +666,13 @@ def find_group_members(artist, clean_soup):
     :return: Generator that yields 2-tuples of (uri_path, name (None|str|2-tuple of (eng, cjk)))
     """
     try:
-        member_li_rx0 = find_group_members._member_li_rx0
-        member_li_rx1 = find_group_members._member_li_rx1
+        member_li_rx = find_group_members._member_li_rx
     except AttributeError:
-        member_li_rx0 = find_group_members._member_li_rx0 = re.compile(r'^([^(]+)\(([^,;]+)[,;]\s+([^,;]+)\)\s*-.*')
-        member_li_rx1 = find_group_members._member_li_rx1 = re.compile(r'(.*?)\s*-\s*(.*)')
+        member_li_rx = find_group_members._member_li_rx = [
+            re.compile(r'^([^(]+)\(([^,;]+)[,;]\s+([^,;]+)\)\s*-.*'),
+            re.compile(r'(.*?)\s*-\s*(.*)'),
+            re.compile(r'^[^()]+\([^()]+\)$')
+        ]
 
     members_span = clean_soup.find('span', id='Members')
     if members_span:
@@ -683,18 +685,25 @@ def find_group_members(artist, clean_soup):
 
         if members_container.name == 'ul':
             for li in members_container.find_all('li'):
+                li_text = li.text.strip()
                 a = li.find('a')
                 href = normalize_href(a.get('href') if a else None)
                 if href:
                     yield href, None
                 else:
-                    m = member_li_rx0.match(li.text)
+                    m = member_li_rx[0].match(li_text)
                     if m:
                         a, b, cjk = m.groups()
                         yield None, split_name((a if len(a) > len(b) else b, cjk))
                     else:
-                        m = member_li_rx1.match(li.text)
-                        yield None, list(map(str.strip, m.groups()))[0]
+                        m = member_li_rx[1].match(li_text)
+                        if m:
+                            yield None, list(map(str.strip, m.groups()))[0]
+                        elif member_li_rx[2].match(li_text):
+                            yield None, split_name(li_text)
+                        else:
+                            fmt = 'Unexpected member list item format on {}: {!r}'
+                            raise WikiEntityParseException(fmt.format(artist.url, li_text))
         elif members_container.name == 'table':
             for tr in members_container.find_all('tr'):
                 if tr.find('th'):
@@ -718,7 +727,7 @@ def find_group_members(artist, clean_soup):
                     if href:
                         yield href, None
                     else:
-                        m = member_li_rx0.match(li.text)
+                        m = member_li_rx[0].match(li.text)
                         if m:
                             a, b, cjk = m.groups()
                             yield None, split_name((a if len(a) > len(b) else b, cjk))
