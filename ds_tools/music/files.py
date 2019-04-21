@@ -30,7 +30,7 @@ from .patches import tag_repr
 from .name_processing import split_names, split_name
 from .wiki import (
     WikiArtist, WikiEntityIdentificationException, KpopWikiClient, WikiSongCollection, find_ost,
-    AmbiguousEntityException
+    AmbiguousEntityException, WikiGroup, WikiSinger
 )
 
 __all__ = [
@@ -264,11 +264,14 @@ class AlbumDir(ClearableCachedPropertyMixin):
         return None
 
     @cached()
-    def expected_rel_path(self):
+    def expected_rel_path(self, true_soloist=False):
         if self.wiki_album:
-            return self.wiki_album.expected_rel_path()
+            return self.wiki_album.expected_rel_path(true_soloist)
         elif self.wiki_artist:
-            artist_dir = self.wiki_artist.expected_rel_path().name
+            if not true_soloist and isinstance(self.wiki_artist, WikiSinger) and self.wiki_artist.member_of:
+                artist_dir = self.wiki_artist.member_of.expected_rel_path().name
+            else:
+                artist_dir = self.wiki_artist.expected_rel_path().name
             lc_name = self.path.name.lower()
             if any(val in lc_name for val in ('ost', 'soundtrack', 'part', 'episode')):
                 type_dir = 'Soundtracks'
@@ -445,7 +448,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
             log.log(19, 'No changes necessary for {}'.format(self))
         return logged_messages
 
-    def update_song_tags_and_names(self, allow_incomplete, no_qualnames, dry_run):
+    def update_song_tags_and_names(self, allow_incomplete, true_soloist, collab_mode, dry_run):
         logged_messages = 0
         if not self.wiki_artist:
             log.error('Unable to find wiki artist match for {} - skipping tag updates'.format(self), extra={'red': True})
@@ -458,14 +461,9 @@ class AlbumDir(ClearableCachedPropertyMixin):
                 log.error('Unable to find wiki album match for {} - skipping tag updates'.format(self), extra={'red': True})
                 return 1
 
-        updatable = [
-            ('title', 'long_name'), ('artist', 'name' if no_qualnames else 'qualname'),
-            ('album_artist', 'name' if no_qualnames else 'qualname'), ('album', 'name')
-        ]
         upd_prefix = '[DRY RUN] Would update' if dry_run else 'Updating'
         rnm_prefix = '[DRY RUN] Would rename' if dry_run else 'Renaming'
         cwd = Path('.').resolve()
-
         genre = None
         if self.wiki_album and (self.wiki_album.language in ('Korean', 'Japanese', 'Chinese')):
             genre = '{}-pop'.format(self.wiki_album.language[0])
@@ -482,29 +480,45 @@ class AlbumDir(ClearableCachedPropertyMixin):
                 if not allow_incomplete:
                     continue
 
-                file_value = music_file.tag_text('artist')
-                wiki_artist = music_file.wiki_artist
-                if wiki_artist:
-                    wiki_value = wiki_artist.qualname()
-                    if (file_value != wiki_value) and (file_value.count(',') == wiki_value.count(',')):
-                        to_update['artist'] = (file_value, wiki_value)
+                artist = music_file.wiki_artist
+                if music_file.wiki_album:
+                    updatable = ['artist', 'album_artist', 'album']
+                else:
+                    updatable = ['artist']
             else:
-                for field, attr in updatable:
-                    # TODO: If wiki match is eng only, and file title has eng+cjk, take cjk from file
-                    file_value = music_file.tag_text(field, default=None)
-                    if field == 'album_artist':
-                        wiki_field = 'artist'
-                    elif field == 'album':
-                        wiki_field = 'collection'
-                    else:
-                        wiki_field = field
-                    wiki_value = getattr(wiki_song if field == 'title' else getattr(wiki_song, wiki_field), attr)
-                    if file_value != wiki_value:
-                        to_update[field] = (file_value, wiki_value)
+                artist = wiki_song.artist
+                updatable = ['title', 'artist', 'album_artist', 'album']
 
-                file_genre = music_file.tag_text('genre', default=None)
-                if genre and file_genre != genre:
-                    to_update['genre'] = (file_genre, genre)
+            for field in updatable:
+                file_value = music_file.tag_text(field, default=None)
+                if field == 'album_artist':
+                    if not true_soloist and isinstance(artist, WikiSinger) and artist.member_of:
+                        wiki_value = artist.member_of.name
+                    else:
+                        wiki_value = artist.name
+                elif field == 'artist':
+                    artist_name = artist.name if true_soloist else artist.qualname
+                    if collab_mode in ('artist', 'both'):
+                        collabs = [a.qualname if isinstance(a, WikiArtist) else str(a) for a in wiki_song.collaborators]
+                        collabs.insert(0, artist_name)
+                        wiki_value = ', '.join(collabs)
+                    else:
+                        wiki_value = artist_name
+                elif field == 'title':
+                    wiki_value = wiki_song.custom_name(collab_mode in ('title', 'both'))
+                elif field == 'album':
+                    wiki_value = wiki_song.collection.name
+                else:
+                    raise ValueError('Unexpected field: {}'.format(field))
+
+                if file_value != wiki_value:
+                    if not wiki_song and field == 'artist' and (file_value.count(',') != wiki_value.count(',')):
+                        continue
+                    to_update[field] = (file_value, wiki_value)
+
+            file_genre = music_file.tag_text('genre', default=None)
+            if genre and file_genre != genre:
+                to_update['genre'] = (file_genre, genre)
 
             if to_update:
                 logged_messages += 1
@@ -526,7 +540,8 @@ class AlbumDir(ClearableCachedPropertyMixin):
             if wiki_song is None:
                 continue
 
-            expected_filename = wiki_song.expected_filename(music_file.ext)
+            incl_collabs = collab_mode in ('title', 'both')
+            expected_filename = wiki_song.expected_filename(music_file.ext, incl_collabs, incl_collabs)
             current_filename = music_file.path.name
             if (expected_filename != current_filename) and not current_filename.endswith(expected_filename):
                 dest_path = music_file.path.parent.joinpath(expected_filename)

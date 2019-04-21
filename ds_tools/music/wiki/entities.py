@@ -1603,7 +1603,7 @@ class WikiSongCollection(WikiEntity):
         return '{} {}'.format(self.name, extra) if extra else self.name
 
     @cached()
-    def expected_rel_dir(self):
+    def expected_rel_dir(self, as_path=False):
         numbered_type = self.album_type in ALBUM_NUMBERED_TYPES
         if numbered_type or self.album_type in ('Single', ):
             try:
@@ -1618,11 +1618,24 @@ class WikiSongCollection(WikiEntity):
         else:
             title = self.title
 
-        return Path(self.album_type + 's').joinpath(sanitize_path(title)).as_posix()
+        path = Path(self.album_type + 's').joinpath(sanitize_path(title))
+        return path if as_path else path.as_posix()
 
     @cached()
-    def expected_rel_path(self):
-        return self.artist.expected_rel_path().joinpath(self.expected_rel_dir())
+    def expected_rel_path(self, true_soloist=False):
+        rel_to_artist_dir = self.expected_rel_dir(True)
+        if not true_soloist and isinstance(self.artist, WikiSinger) and self.artist.member_of:
+            soloist = self.artist
+            artist_dir = soloist.member_of.expected_rel_path()
+            soloist_name = soloist.english_name or soloist.name
+            if self.album_type == 'Soundrack':
+                d_name = sanitize_path('{} [{}]'.format(rel_to_artist_dir.name, soloist_name))
+                rel_to_artist_dir = rel_to_artist_dir.with_name(d_name)
+            else:
+                rel_to_artist_dir = Path('Solo', soloist_name, rel_to_artist_dir.name)
+        else:
+            artist_dir = self.artist.expected_rel_path()
+        return artist_dir.joinpath(rel_to_artist_dir)
 
     @cached_property
     def _artists(self):
@@ -2313,7 +2326,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
         else:
             name = '{}[??][{!r}]'.format(type(self).__name__, self.name)
         len_str = '[{}]'.format(self.length_str) if self.length_str != '-1:00' else ""
-        return '<{}{}{}>'.format(name, "".join(self._formatted_name_parts), len_str)
+        return '<{}{}{}>'.format(name, "".join(self._formatted_name_parts()), len_str)
 
     @cached_property
     def _collaborators(self):
@@ -2377,8 +2390,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
         comparison_type_check(self, other, WikiTrack, '>')
         return self._cmp_attrs > other._cmp_attrs
 
-    @cached_property
-    def _formatted_name_parts(self):
+    def _formatted_name_parts(self, incl_collabs=True, incl_solo=True):
         self.__process_collabs()
         parts = []
         if self.version:
@@ -2387,11 +2399,11 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
             parts.append('{} ver.'.format(self.language))
         if self.misc:
             parts.extend(self.misc)
-        if self._artist:
+        if incl_solo and self._artist:
             artist_aliases = set(chain.from_iterable(artist.aliases for artist in self.collection.artists))
             if self._artist not in artist_aliases:
                 parts.append('{} solo'.format(self._artist))
-        if self._collaborators:
+        if incl_collabs and self._collaborators:
             collabs = ', '.join(self.collaborators)
             if self.from_compilation or (self.from_ost and self._artist_context is None):
                 parts.insert(0, 'by {}'.format(collabs))
@@ -2399,12 +2411,15 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                 parts.append('Feat. {}'.format(collabs))
         return tuple(map('({})'.format, parts))
 
+    def custom_name(self, *args, **kwargs):
+        return ' '.join(chain((self.name,), self._formatted_name_parts(*args, **kwargs)))
+
     @cached_property
     def long_name(self):
-        return ' '.join(chain((self.name,), self._formatted_name_parts))
+        return ' '.join(chain((self.name,), self._formatted_name_parts()))
 
     def _additional_aliases(self):
-        name_end = ' '.join(self._formatted_name_parts)
+        name_end = ' '.join(self._formatted_name_parts())
         aliases = [self.long_name]
         for val in self.english_name, self.cjk_name:
             if val:
@@ -2416,12 +2431,12 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
         m, s = map(int, self.length_str.split(':'))
         return (s + (m * 60)) if m > -1 else 0
 
-    def expected_filename(self, ext='mp3'):
-        base = sanitize_path('{}.{}'.format(self.long_name, ext))
+    def expected_filename(self, ext='mp3', incl_collabs=True, incl_solo=True):
+        base = sanitize_path('{}.{}'.format(self.custom_name(incl_collabs, incl_solo), ext))
         return '{:02d}. {}'.format(self.num, base) if self.num else base
 
-    def expected_rel_path(self, ext='mp3'):
-        return self.collection.expected_rel_path().joinpath(self.expected_filename(ext))
+    def expected_rel_path(self, ext='mp3', incl_collabs=True, incl_solo=True):
+        return self.collection.expected_rel_path().joinpath(self.expected_filename(ext, incl_collabs, incl_solo))
 
     @classmethod
     def _normalize_for_matching(cls, other):
