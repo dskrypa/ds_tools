@@ -2200,37 +2200,41 @@ class WikiFeatureOrSingle(WikiSongCollection):
 
     def _get_tracks(self, edition_or_part=None, disk=None):
         if self._raw and self._track_lists and not self._album_info.get('fake_track_list'):
-            # log.log(9, '{}: Skipping WikiFeatureOrSingle _get_tracks()'.format(self)
-            log.debug('{}: Skipping WikiFeatureOrSingle _get_tracks()'.format(self))
-            return super()._get_tracks(edition_or_part, disk)
+            _tracks = super()._get_tracks(edition_or_part, disk)['tracks']
+            tracks = self.__update_tracks(_tracks)
+        else:
+            track_info = self._discography_entry.get('track_info')
+            if track_info and not self._raw:
+                log.debug('{}: Using discography track info'.format(self))
+                _tracks = (track_info,) if isinstance(track_info, dict) else track_info
+                tracks = self.__update_tracks(_tracks, True)
+            else:   # self._raw exists, but it had no track list
+                single = None
+                if self._track_lists:
+                    log.debug('{}: Using album page track info'.format(self))
+                    single = self._track_lists[0]['tracks'][0]
+                if not single:
+                    log.debug('{}: Using side bar track info'.format(self))
+                    single = {'name_parts': (self.english_name, self.cjk_name), 'num': 1, 'misc': self._info}
+                single['collaborators'] = [a._as_collab() for a in self.collaborators]
+                tracks = [single]
+        return {'tracks': tracks}
 
-        track_info = self._discography_entry.get('track_info')
-        if track_info and not self._raw:
-            # log.debug('{}: Using discography track info'.format(self))
-            _tracks = (track_info,) if isinstance(track_info, dict) else track_info
-            tracks = []
-            for _track in _tracks:
-                track = _track.copy()
-
-                collabs = track.get('collaborators') or []
-                collabs.extend(self._discography_entry.get('collaborators', []))
-                track['collaborators'] = strify_collabs(collabs)
+    def __update_tracks(self, _tracks, incl_info=False):
+        tracks = []
+        album_collabs = [a._as_collab() for a in self.collaborators]
+        for _track in _tracks:
+            track = _track.copy()
+            collabs = album_collabs.copy()
+            collabs.extend({'artist': name} for name in (track.get('collaborators') or []))
+            track['collaborators'] = collabs
+            if incl_info:
                 misc = track.get('misc') or []
                 if self._info:
                     misc.extend(self._info)
                 track['misc'] = misc
-                tracks.append(track)
-        else:   # self._raw exists, but it had no track list
-            single = None
-            if self._track_lists:
-                # log.debug('{}: Using album page track info'.format(self))
-                single = self._track_lists[0]['tracks'][0]
-            if not single:
-                # log.debug('{}: Using side bar track info'.format(self))
-                single = {'name_parts': (self.english_name, self.cjk_name), 'num': 1, 'misc': self._info}
-            single['collaborators'] = [a._as_collab() for a in self.collaborators]
-            tracks = [single]
-        return {'tracks': tracks}
+            tracks.append(track)
+        return tracks
 
 
 class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
@@ -2254,6 +2258,8 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
         self.collection = collection
         self.english_name, self.cjk_name = self._info['name_parts']
         self.name = multi_lang_name(self.english_name, self.cjk_name)
+        # fmt = 'WikiTrack: artist_context={}, collection={}, name={}, collabs={}'
+        # log.debug(fmt.format(artist_context, collection, self.name, self._info.get('collaborators')))
         self.__processed_collabs = False
 
     def __process_collabs(self):
@@ -2264,8 +2270,8 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
             # log.debug('Comparing collabs={} to aliases={}'.format(self._collaborators, self._artist_context.aliases))
             if not self._from_disco_info:
                 if not any(self._artist_context.matches(c['artist']) for c in self._collaborators.values()):
-                    fmt = 'WikiTrack {!r} discarding artist context={}; collabs: {}'
-                    log.debug(fmt.format(self.name, self._artist_context, self._collaborators), extra={'color': 'cyan'})
+                    # fmt = 'WikiTrack {!r} discarding artist context={}; collabs: {}'
+                    # log.debug(fmt.format(self.name, self._artist_context, self._collaborators), extra={'color': 'cyan'})
                     self._artist_context = None
                 else:
                     for lc_collab, collab in sorted(self._collaborators.items()):
@@ -2276,6 +2282,8 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
             # Example case: LOONA pre-debut single albums
             if self._collaborators:
                 if self._artist and self._artist.lower() in self._collaborators:
+                    # fmt = 'WikiTrack {!r} discarding artist from collaborators: artist={!r}; collabs: {}'
+                    # log.debug(fmt.format(self.name, self._artist, self._collaborators), extra={'color': 'cyan'})
                     self._collaborators.pop(self._artist.lower())
                 elif self.collection:
                     try:
@@ -2284,6 +2292,8 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                         fmt = 'Error processing artist for track {!r} from {}: {}'
                         log.debug(fmt.format(self.name, self.collection, e))
                     else:
+                        # fmt = 'WikiTrack {!r} discarding album artist from collaborators: artist={!r}; collabs: {}'
+                        # log.debug(fmt.format(self.name, artist, self._collaborators), extra={'color': 'cyan'})
                         for lc_alias in artist.lc_aliases:
                             try:
                                 self._collaborators.pop(lc_alias)
