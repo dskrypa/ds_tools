@@ -219,6 +219,14 @@ def parse_album_page(uri_path, clean_soup, side_info, client):
                         break
                 else:
                     raise WikiEntityParseException('Unable to find link to repackaged version of {}'.format(uri_path))
+        elif 'repackage of the album was released' in intro_text:
+            for a in clean_soup.find_all('a'):
+                href = a.get('href')
+                if href and a.text and 'repackage' in a.text:
+                    repkg_title = a.get('title')
+                    album0['repackage_href'] = href[6:]
+                    album0['repackage_title'] = repkg_title
+                    break
 
     links = []
     for ele in clean_soup.children:

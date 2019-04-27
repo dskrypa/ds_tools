@@ -721,8 +721,15 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
 
     try:
         track['name_parts'] = eng_cjk_sort(name_parts[0] if len(name_parts) == 1 else name_parts, tuple(name_langs))
-    except ValueError:
-        track['name_parts'] = tuple(name_parts) if len(name_parts) == 2 else (name_parts[0], '')
+    except ValueError as e:
+        # track['name_parts'] = tuple(name_parts) if len(name_parts) == 2 else (name_parts[0], '')
+        if len(name_parts) == 2 and len(set(name_langs)) == 1:
+            name_parts = combine_name_parts(name_parts)
+        try:
+            track['name_parts'] = split_name(tuple(name_parts), allow_cjk_mix=True)
+        except Exception as e:
+            log.error('Unexpected name_parts={!r} from {}'.format(name_parts, source))
+            raise e
 
     if collabs:
         track['collaborators'] = sorted(collabs)
