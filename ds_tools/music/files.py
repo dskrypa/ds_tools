@@ -824,7 +824,7 @@ class SongFile(ClearableCachedPropertyMixin):
         if m:
             album = album.replace(m.group(1), ' ').strip()
 
-        m = re.match(r'(.*)(\s-\s*EP)$', album, re.IGNORECASE)
+        m = re.match(r'(.*)(\s-\s*(?:EP|Single))$', album, re.IGNORECASE)
         if m:
             album = m.group(1)
 

@@ -354,6 +354,7 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
         except ValueError as e:
             raise ValueError('Unable to split {!r} into separate English/CJK strings'.format(name)) from e
     elif len(parts) == 2:
+        # log.debug('parts={}, langs={}'.format(parts, langs))
         if LangCat.MIX not in langs and len(set(langs)) == 2:
             try:
                 eng, cjk = eng_cjk_sort(parts, langs)               # Name (other lang)
@@ -379,7 +380,7 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
         elif langs[0] == LangCat.MIX and langs[1] != LangCat.MIX and has_parens(parts[0]):
             eng, cjk = split_name(parts[0])                 # Soloist (other lang) (Group single lang)
             not_used = parts[1]
-        elif langs[0] != LangCat.MIX and langs[1] == LangCat.MIX and has_parens(parts[1]):
+        elif langs[0] != LangCat.MIX and langs[1] == LangCat.MIX and has_parens(parts[1]) and not has_parens(parts[0]):
             eng, cjk = eng_cjk_sort(parts[0], langs[0])     # Soloist single lang (Group (group other lang))
             try:
                 not_used = split_name(parts[1])
@@ -408,6 +409,7 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
                     eng = parts[0]
             else:
                 common_part_suffix = common_suffix(parts)
+                # log.debug('Found common part suffix for {}: {!r}'.format(parts, common_part_suffix))
                 if common_part_suffix and LangCat.categorize(parts[1][:-len(common_part_suffix)]) in LangCat.asian_cats:
                     eng, cjk = parts
                 else:

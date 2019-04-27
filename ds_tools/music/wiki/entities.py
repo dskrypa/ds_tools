@@ -485,12 +485,7 @@ class WikiMatchable:
                 else:
                     score_mod += 15 if years_match else -15
             if track_count is not None:
-                try:
-                    track_counts_match = len(self.get_tracks()) == track_count
-                except Exception:
-                    pass
-                else:
-                    score_mod += 20 if track_counts_match else -20
+                score_mod += 20 if track_count in self._part_track_counts else -20
 
         best_score, best_alias, best_val = 0, None, None
         for alias in self._fuzzed_aliases:
@@ -2037,6 +2032,19 @@ class WikiSongCollection(WikiEntity):
     @cached_property
     def parts(self):
         return list(self._parts.values())
+
+    @cached_property
+    def _part_track_counts(self):
+        track_counts = set()
+        for part in self.parts:
+            tracks = part.get_tracks()
+            track_count = len(tracks)
+            track_counts.add(track_count)
+            for track in tracks:
+                if track.misc and any(' only' in m for m in track.misc):
+                    track_count -= 1
+            track_counts.add(track_count)
+        return track_counts
 
     def find_track(self, name, min_score=75, include_score=False, *, edition_or_part=None, disk=None, **kwargs):
         match_fmt = '{}: {} matched {!r} with score={} because its alias={!r} =~= {!r}'
