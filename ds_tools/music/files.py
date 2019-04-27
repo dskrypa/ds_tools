@@ -270,7 +270,17 @@ class AlbumDir(ClearableCachedPropertyMixin):
     def wiki_album_part(self):
         if self.wiki_album:
             track_tuples = [(f.tag_title, f.track_num) for f in self.songs]
-            return self.wiki_album.find_part(track_tuples, disk=self.disk_num)
+            part = self.wiki_album.find_part(track_tuples, disk=self.disk_num)
+            if part:
+                return part
+            try:
+                edition, disk = self.wiki_album._intended[:2]
+            except Exception:
+                pass
+            else:
+                parts = self.wiki_album.parts_for(edition, disk)
+                if len(parts) == 1:
+                    return parts[0]
         return None
 
     @cached_property
@@ -286,7 +296,9 @@ class AlbumDir(ClearableCachedPropertyMixin):
 
     @cached()
     def expected_rel_path(self, true_soloist=False):
-        if self.wiki_album:
+        if self.wiki_album_part:
+            return self.wiki_album_part.expected_rel_path(true_soloist)
+        elif self.wiki_album:
             return self.wiki_album.expected_rel_path(true_soloist)
         elif self.wiki_artist:
             if not true_soloist and isinstance(self.wiki_artist, WikiSinger) and self.wiki_artist.member_of:
@@ -1061,15 +1073,25 @@ class SongFile(ClearableCachedPropertyMixin):
             raise e
         else:
             if album:
-                try:
-                    track, score = album.find_track(name, track=num, include_score=True, disk=self.disk_num)
-                except Exception as e:
-                    log.error('Error determining track for {} from {}: {}'.format(self, album, e))
-                    traceback.print_exc()
-                    raise e
+                if self.disk_num:
+                    disk_nums = (self.disk_num, None) if str(self.disk_num) == '1' else (self.disk_num,)
                 else:
-                    self.wiki_scores['song'] = score
-                    return track
+                    disk_nums = (None,)
+
+                # log.debug('Trying to match {} in {} using disk_nums={}'.format(self, album, disk_nums))
+                for disk_num in disk_nums:  # Some albums don't have a disk number, and it breaks the match
+                    try:
+                        track, score = album.find_track(name, track=num, include_score=True, disk=disk_num)
+                    except Exception as e:
+                        log.error('Error determining track for {} from {}: {}'.format(self, album, e))
+                        traceback.print_exc()
+                        raise e
+                    else:
+                        # log.debug('{} matches {} with score={}'.format(self, track, score))
+                        self.wiki_scores['song'] = score
+                        if track:
+                            return track
+                return None
             else:
                 try:
                     artist = self.wiki_artist
@@ -1318,7 +1340,7 @@ class SongFile(ClearableCachedPropertyMixin):
             elif field == 'title':
                 wiki_value = wiki_song.custom_name(collab_mode in ('title', 'both'))
             elif field == 'album':
-                wiki_value = wiki_song.collection.name
+                wiki_value = wiki_song.collection.title
             else:
                 raise ValueError('Unexpected field: {}'.format(field))
 

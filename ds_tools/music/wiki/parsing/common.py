@@ -240,15 +240,15 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
                         else:
                             if _artist.count('(') == 3 and LangCat.categorize(_artist) == LangCat.MIX:
                                 parts = ParentheticalParser().parse(_artist)
+                                # log.debug('3 parens: {!r} => {}'.format(_artist, parts))
                                 if len(parts) != 4:
                                     raise WikiEntityParseException(err_msg) from e
 
                                 l0, l1, l2, l3 = categorize_langs(parts)
                                 if (l0 == l1 == LangCat.ENG) and (l2 == l3 and l2 in LangCat.asian_cats):
                                     name = (parts[0], parts[2])
-                                    group = parts[1]
-                                    group_name = (parts[1], parts[3])
-                                    group_href = find_href(client, anchors, group_name, 'group')
+                                    group = (parts[1], parts[3])
+                                    group_href = find_href(client, anchors, group, 'group')
                                 else:
                                     raise WikiEntityParseException(err_msg) from e
                             else:

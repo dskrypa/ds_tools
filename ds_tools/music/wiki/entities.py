@@ -1688,7 +1688,7 @@ class WikiSongCollection(WikiEntity):
             soloist = self.artist
             artist_dir = soloist.member_of.expected_rel_path()
             soloist_name = soloist.english_name or soloist.name
-            if self.album_type == 'Soundrack':
+            if self.album_type == 'Soundtrack':
                 d_name = sanitize_path('{} [{}]'.format(rel_to_artist_dir.name, soloist_name))
                 rel_to_artist_dir = rel_to_artist_dir.with_name(d_name)
             else:
@@ -1981,26 +1981,10 @@ class WikiSongCollection(WikiEntity):
                 # noinspection PyTupleAssignmentBalance
                 edition_or_part, disk = self._intended
 
-        if disk is not None:
-            try:
-                disk = int(disk)
-            except Exception:
-                pass
-
-        parts = [
-            part for (part_ed, part_disk, lang), part in self._parts.items()
-            if edition_or_part == part_ed and disk == part_disk
-        ]
+        parts = self.parts_for(edition_or_part, disk)
         if not parts:
-            if edition_or_part is None:
-                if disk is None:
-                    parts = self.parts
-                else:
-                    parts = [p for p in self.parts if p.disk == disk]
-            else:
-                fmt = 'Unable to find part of {} for edition_or_part={!r}, disk={!r}'
-                raise InvalidTrackListException(fmt.format(self, edition_or_part, disk))
-
+            fmt = 'Unable to find part of {} for edition_or_part={!r}, disk={!r}'
+            raise InvalidTrackListException(fmt.format(self, edition_or_part, disk))
         return [t for p in parts for t in p.get_tracks()]
 
     @cached_property
@@ -2012,7 +1996,7 @@ class WikiSongCollection(WikiEntity):
             if section and not isinstance(section, str):
                 section = section[0]
             try:
-                m = bonus_rx.match(section or "")
+                m = bonus_rx.match(section or '')
             except TypeError as e:
                 log.error('{}: Unexpected section value in {}: {}'.format(self, self.url, section))
                 raise e
@@ -2055,9 +2039,10 @@ class WikiSongCollection(WikiEntity):
                 language = track_list.get('language')
                 if section and not isinstance(section, str):
                     section = tuple(filter(None, section))
+                    _section0 = section[0]
                     _section = ' - '.join(section)
                 else:
-                    _section = section
+                    _section0 = _section = section
 
                 try:
                     m = bonus_rx.match(_section or '')
@@ -2073,7 +2058,8 @@ class WikiSongCollection(WikiEntity):
                     except Exception:
                         pass
 
-                parts[(name, disk, language)] = WikiSongCollectionPart(self, name, disk, language, section, track_list)
+                _tracks = self._get_tracks(_section0, disk)
+                parts[(name, disk, language)] = WikiSongCollectionPart(self, name, disk, language, section, _tracks)
 
             if len(self._track_lists) != len(parts):
                 fmt = 'Album part name conflict found for {}: found {} track lists but {} parts'
@@ -2084,6 +2070,34 @@ class WikiSongCollection(WikiEntity):
     @cached_property
     def parts(self):
         return list(self._parts.values())
+
+    def parts_for(self, edition_or_part=None, disk=None):
+        if not self._track_lists:
+            return self.parts
+
+        if disk is None:
+            parts = self.parts
+        else:
+            try:
+                disk = int(disk)
+            except Exception:
+                pass
+            parts = [p for p in self.parts if p.disk == disk]
+
+        if edition_or_part is None:
+            return parts
+
+        lc_ed_or_part = edition_or_part.lower()
+        is_ost_part = lc_ed_or_part.startswith(('part', 'code no'))
+        if is_ost_part:
+            lc_ed_or_part = self._part_rx.sub('part ', lc_ed_or_part)
+
+        filtered = []
+        for part in parts:
+            name = part.edition.lower()
+            if name == lc_ed_or_part or (is_ost_part and lc_ed_or_part in self._part_rx.sub('part ', name)):
+                filtered.append(part)
+        return filtered
 
     @cached_property
     def _part_track_counts(self):
@@ -2158,6 +2172,7 @@ class WikiSongCollection(WikiEntity):
 
 
 class WikiSongCollectionPart:
+    _part_rx = re.compile(r'((?:part|code no)\.?\s*\d+)', re.IGNORECASE)
     passthru_attrs = {
         'released', 'year', 'album_type', 'album_num', 'num_and_type', '_artists', 'artists', 'artist', 'collaborators'
     }
@@ -2212,7 +2227,11 @@ class WikiSongCollectionPart:
             if self.language and self.language.lower() in self.edition.lower():
                 pass
             else:
-                title += ' - {}'.format(self.edition)
+                m = self._part_rx.search(self.edition)
+                if m:
+                    title += ' - {}'.format(m.group(1).strip())
+                else:
+                    title += ' - {}'.format(self.edition)
 
         if self.language:
             title += ' ({} ver.)'.format(self.language)
@@ -2378,6 +2397,9 @@ class WikiSoundtrack(WikiSongCollection):
                     group_eng, group_cjk = _artist['of_group']
                 except KeyError:
                     group_eng, group_cjk = None, None
+                except Exception as e:
+                    log.error('{}: Error processing artist of_group: {}'.format(self, _artist))
+                    raise e
 
                 # log.debug('Processing artist: {}'.format(', '.join('{}={!r}'.format(k, v) for k, v in zip(keys, (eng, cjk, group_eng, group_cjk, artist_href, group_href)))))
                 for key, val in zip(keys, (eng, cjk, group_eng, group_cjk, artist_href, group_href)):
@@ -2451,7 +2473,11 @@ class WikiSoundtrack(WikiSongCollection):
                 else:
                     fmt = 'Error retrieving info for {}\'s artist={!r} of_group={!r}: {}'
                     log.error(fmt.format(self, eng, group_eng, e), extra={'color': 13})
-                artists.add(WikiArtist(name=eng, no_fetch=True))
+                artists.add(WikiArtist(aliases=(eng, cjk), no_fetch=True))
+            except (WikiEntityInitException, WikiEntityIdentificationException) as e:
+                fmt = 'Error retrieving info for {}\'s artist={!r} of_group={!r}: {}'
+                log.debug(fmt.format(self, eng, group_eng, e), extra={'color': 13})
+                artists.add(WikiArtist(aliases=(eng, cjk), no_fetch=True))
             except Exception as e:
                 fmt = 'Unexpected error processing {}\'s artist={!r} of_group={!r}: {}\n{}'
                 log.error(fmt.format(self, eng, group_eng, e, traceback.format_exc()), extra={'color': (11, 9)})
