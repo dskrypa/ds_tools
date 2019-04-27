@@ -63,14 +63,14 @@ class LangCat(Enum):
     def categorize(cls, text, detailed=False):
         if detailed:
             return set(cls.categorize(c) for c in text)
+        elif not text:
+            return cls.NUL
         elif len(text) == 1:
             dec = ord(text)
             for cat, ranges in cls._ranges():
                 if any(a <= dec <= b for a, b in ranges):
                     return cat
             return cls.UNK
-        elif len(text) == 0:
-            return cls.NUL
         else:
             text = _strip_non_word_chars(text)
             if len(text) == 0:

@@ -502,7 +502,7 @@ class WikiMatchable:
                 if score > best_score:
                     best_score, best_alias, best_val = score, alias, val
 
-        if best_alias and len(fuzzed_others) > 1 and LangCat.categorize(best_alias) == LangCat.ENG:
+        if len(fuzzed_others) > 1 and self._non_eng_langs and LangCat.categorize(best_alias) == LangCat.ENG:
             if isinstance(other, WikiMatchable):
                 other_langs = other._non_eng_langs
             else:
