@@ -453,7 +453,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
             log.log(19, 'No changes necessary for {}'.format(self))
         return logged_messages
 
-    def update_song_tags_and_names(self, allow_incomplete, true_soloist, collab_mode, dry_run):
+    def update_song_tags_and_names(self, allow_incomplete, true_soloist, collab_mode, dry_run, dest_root=None):
         logged_messages = 0
         if not self.wiki_artist:
             log.error('Unable to find wiki artist match for {} - skipping tag updates'.format(self), extra={'red': True})
@@ -482,10 +482,16 @@ class AlbumDir(ClearableCachedPropertyMixin):
                 continue
 
             incl_collabs = collab_mode in ('title', 'both')
-            expected_filename = wiki_song.expected_filename(music_file.ext, incl_collabs, incl_collabs)
-            current_filename = music_file.path.name
-            if (expected_filename != current_filename) and not current_filename.endswith(expected_filename):
-                dest_path = music_file.path.parent.joinpath(expected_filename)
+            expected_rel_path = wiki_song.expected_rel_path(
+                music_file.ext, incl_collabs, incl_collabs, true_soloist=true_soloist
+            )
+            if dest_root is None:
+                expected_path = self.artist_path.parent.joinpath(expected_rel_path)
+            else:
+                expected_path = dest_root.joinpath(expected_rel_path)
+            current_path = music_file.path
+            if expected_path != current_path:
+                dest_path = expected_path
                 if dest_path.exists():
                     if not music_file.path.samefile(dest_path):
                         logged_messages += 1

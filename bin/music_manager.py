@@ -483,11 +483,14 @@ def sort_by_wiki(
                 if not dry_run:
                     p.rmdir()
 
+    dest_root = None if source_path == _dest_dir else dest_root
     logged_messages = 0
     for i, album_dir in enumerate(album_dirs):
         if i and logged_messages:
             print()
-        logged_messages = album_dir.update_song_tags_and_names(allow_incomplete, true_soloist, collab_mode, dry_run)
+        logged_messages = album_dir.update_song_tags_and_names(
+            allow_incomplete, true_soloist, collab_mode, dry_run, dest_root
+        )
         if unmatched_cleanup and not album_dir.wiki_album:
             if logged_messages:
                 print()

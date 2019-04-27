@@ -2623,8 +2623,9 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
             num_prefix = '{:02d}. '.format(self.num) if self.num else ''
         return num_prefix + base
 
-    def expected_rel_path(self, ext='mp3', incl_collabs=True, incl_solo=True):
-        return self.collection.expected_rel_path().joinpath(self.expected_filename(ext, incl_collabs, incl_solo))
+    def expected_rel_path(self, ext='mp3', incl_collabs=True, incl_solo=True, **kwargs):
+        album_rel_path = self.collection.expected_rel_path(**kwargs)
+        return album_rel_path.joinpath(self.expected_filename(ext, incl_collabs, incl_solo))
 
     @classmethod
     def _normalize_for_matching(cls, other):
