@@ -454,24 +454,29 @@ class WikiMatchable:
 
         # scorer = fuzz.WRatio if isinstance(self, WikiSongCollection) else fuzz.token_sort_ratio
         scorer = revised_weighted_ratio
-
         score_mod = 0
-        if track is not None and isinstance(self, WikiTrack):
-            score_mod += 15 if str(self.num) == str(track) else -15
-        if disk is not None and isinstance(self, WikiTrack):
-            score_mod += 15 if str(self.disk) == str(disk) else -15
         if isinstance(self, WikiTrack):
-            self_has_inst = 'inst' in self.long_name.lower()
-            if isinstance(other, str):
-                other_has_inst = 'inst' in other.lower()
-            else:
-                other_has_inst = any('inst' in other for other in fuzzed_others)
-            if (self_has_inst and not other_has_inst) or (not self_has_inst and other_has_inst):
-                # other_repr = other if isinstance(other, WikiEntity) else others
-                # log.debug('{!r}=?={!r}: score_mod-=25 (no inst)'.format(self, other_repr))
-                score_mod -= 25
+            if track is not None:
+                score_mod += 15 if str(self.num) == str(track) else -15
+            if disk is not None:
+                score_mod += 15 if str(self.disk) == str(disk) else -15
 
-        if isinstance(self, WikiSongCollection):
+            self_name_lc = self.long_name.lower()
+            self_has = {'inst': 'inst' in self_name_lc, 'version': any(v in self_name_lc for v in ('ver.', 'version'))}
+            if isinstance(other, str):
+                other_lc = other.lower()
+                other_has = {'inst': 'inst' in other_lc, 'version': any(v in other_lc for v in ('ver.', 'version'))}
+            else:
+                other_has = {
+                    'inst': any('inst' in _other for _other in fuzzed_others),
+                    'version': any(v in _other for v in ('ver.', 'version') for _other in fuzzed_others)
+                }
+            for key, self_val in self_has.items():
+                if (self_val and not other_has[key]) or (not self_val and other_has[key]):
+                    # other_repr = other if isinstance(other, WikiEntity) else others
+                    # log.debug('{!r}=?={!r}: score_mod-=25 (no {})'.format(self, other_repr, key))
+                    score_mod -= 25
+        elif isinstance(self, WikiSongCollection):
             if year is not None:
                 try:
                     years_match = str(self.released.year) == str(year)
@@ -2132,7 +2137,9 @@ class WikiSongCollectionPart:
     def expected_rel_path(self, true_soloist=False):
         return self._collection.expected_rel_path(true_soloist, self.title)
 
-    def find_track(self, name, min_score=75, include_score=False, **kwargs):
+    def find_track(self, name, min_score=75, include_score=False, edition_or_part=None, disk=None, **kwargs):
+        if edition_or_part not in (None, self.edition) and disk not in (None, self.disk):
+            return (None, -1) if include_score else None
         return self._collection.find_track(
             name, min_score, include_score, edition_or_part=self.edition, disk=self.disk, **kwargs
         )
