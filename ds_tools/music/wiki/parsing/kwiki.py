@@ -44,7 +44,7 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artist, compilation=Fa
     unexpected_num_fmt = 'Unexpected disk number format for {}: {!r}'
     parser = ParentheticalParser(False)
     track_lists = []
-    section, links, disk = None, [], 1
+    section, language, links, disk = None, None, [], 1
     for ele in h2.next_siblings:
         if isinstance(ele, NavigableString):
             continue
@@ -67,8 +67,10 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artist, compilation=Fa
                 )
                 tracks.append(track)
 
-            track_lists.append({'section': section, 'tracks': tracks, 'links': links, 'disk': disk})
-            section, links = None, []
+            track_lists.append({
+                'section': section, 'tracks': tracks, 'links': links, 'disk': disk, 'language': language
+            })
+            section, language, links = None, None, []
         else:
             for junk in ele.find_all(class_='editsection'):
                 junk.extract()
@@ -80,6 +82,18 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artist, compilation=Fa
                     section = parser.parse(section)
                 except Exception as e:
                     pass
+                else:
+                    for i, sec_part in enumerate(section):
+                        lc_sec_part = sec_part.lower()
+                        if 'ver' in lc_sec_part:
+                            language = next((lng for abrv, lng in LANG_ABBREV_MAP.items() if abrv in lc_sec_part), None)
+                            if language:
+                                section.pop(i)
+                                break
+            else:
+                lc_section = section.lower()
+                if 'ver' in lc_section:
+                    language = next((lng for abrv, lng in LANG_ABBREV_MAP.items() if abrv in lc_section), None)
 
             disk_section = section if not section or isinstance(section, str) else section[0]
             if disk_section and disk_section.lower().startswith(('disk', 'disc', 'cd')):
