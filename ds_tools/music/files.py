@@ -466,88 +466,18 @@ class AlbumDir(ClearableCachedPropertyMixin):
                 log.error('Unable to find wiki album match for {} - skipping tag updates'.format(self), extra={'red': True})
                 return 1
 
-        upd_prefix = '[DRY RUN] Would update' if dry_run else 'Updating'
         rnm_prefix = '[DRY RUN] Would rename' if dry_run else 'Renaming'
         cwd = Path('.').resolve()
-        album_genre = None
+        genre = None
         if self.wiki_album and (self.wiki_album.language in ('Korean', 'Japanese', 'Chinese')):
-            album_genre = '{}-pop'.format(self.wiki_album.language[0])
+            genre = '{}-pop'.format(self.wiki_album.language[0])
 
         dests = {}
         conflicts = {}
         exists = set()
         for music_file in self.songs:
-            to_update = {}
+            logged_messages += music_file.update_tags(allow_incomplete, genre, true_soloist, collab_mode, dry_run)
             wiki_song = music_file.wiki_song
-            if wiki_song is None:
-                logged_messages += 1
-                log.error('Unable to find wiki song match for {}'.format(music_file), extra={'red': True})
-                if not allow_incomplete:
-                    continue
-
-                genre = album_genre
-                artist = music_file.wiki_artist
-                if music_file.wiki_album:
-                    updatable = ['artist', 'album_artist', 'album']
-                else:
-                    updatable = ['artist']
-            else:
-                song_lang = wiki_song.language or wiki_song.collection.language
-                if song_lang and song_lang in ('Korean', 'Japanese', 'Chinese'):
-                    genre = '{}-pop'.format(song_lang[0])
-                else:
-                    genre = album_genre
-                artist = wiki_song.artist
-                updatable = ['title', 'artist', 'album_artist', 'album']
-
-            for field in updatable:
-                file_value = music_file.tag_text(field, default=None)
-                if field == 'album_artist':
-                    if not true_soloist and isinstance(artist, WikiSinger) and artist.member_of:
-                        wiki_value = artist.member_of.name
-                    else:
-                        wiki_value = artist.name
-                elif field == 'artist':
-                    artist_name = artist.name if true_soloist else artist.qualname
-                    if collab_mode in ('artist', 'both'):
-                        collabs = [a.qualname if isinstance(a, WikiArtist) else str(a) for a in wiki_song.collaborators]
-                        collabs.insert(0, artist_name)
-                        wiki_value = ', '.join(collabs)
-                    else:
-                        wiki_value = artist_name
-                elif field == 'title':
-                    wiki_value = wiki_song.custom_name(collab_mode in ('title', 'both'))
-                elif field == 'album':
-                    wiki_value = wiki_song.collection.name
-                else:
-                    raise ValueError('Unexpected field: {}'.format(field))
-
-                if file_value != wiki_value:
-                    if not wiki_song and field == 'artist' and (file_value.count(',') != wiki_value.count(',')):
-                        continue
-                    to_update[field] = (file_value, wiki_value)
-
-            file_genre = music_file.tag_text('genre', default=None)
-            if genre and file_genre != genre:
-                to_update['genre'] = (file_genre, genre)
-
-            if to_update:
-                logged_messages += 1
-                msg = '{} {} to match {} by changing...'.format(upd_prefix, music_file, wiki_song)
-                for tag, (old_val, new_val) in sorted(to_update.items()):
-                    msg += '\n   - {} from {!r} to {!r}'.format(tag, old_val, new_val)
-                log.info(msg)
-                if not dry_run:
-                    try:
-                        for tag, (old_val, new_val) in sorted(to_update.items()):
-                            music_file.set_text_tag(tag, new_val, by_id=False)
-                    except TagException as e:
-                        log.error(e)
-                    else:
-                        music_file.save()
-            else:
-                log.log(19, 'No tag changes necessary for {} == {}'.format(music_file.extended_repr, wiki_song))
-
             if wiki_song is None:
                 continue
 
@@ -1319,6 +1249,82 @@ class SongFile(ClearableCachedPropertyMixin):
     # def acoustid_fingerprint(self):
     #     """Returns the 2-tuple of this file's (duration, fingerprint)"""
     #     return acoustid.fingerprint_file(self.filename)
+
+    def update_tags(self, allow_incomplete, album_genre, true_soloist, collab_mode, dry_run):
+        logged_messages = 0
+        to_update = {}
+        wiki_song = self.wiki_song
+        if wiki_song is None:
+            logged_messages += 1
+            log.error('Unable to find wiki song match for {}'.format(self), extra={'red': True})
+            if not allow_incomplete:
+                return logged_messages
+
+            genre = album_genre
+            artist = self.wiki_artist
+            if self.wiki_album:
+                updatable = ['artist', 'album_artist', 'album']
+            else:
+                updatable = ['artist']
+        else:
+            song_lang = wiki_song.language or wiki_song.collection.language
+            if song_lang and song_lang in ('Korean', 'Japanese', 'Chinese'):
+                genre = '{}-pop'.format(song_lang[0])
+            else:
+                genre = album_genre
+            artist = wiki_song.artist
+            updatable = ['title', 'artist', 'album_artist', 'album']
+
+        for field in updatable:
+            file_value = self.tag_text(field, default=None)
+            if field == 'album_artist':
+                if not true_soloist and isinstance(artist, WikiSinger) and artist.member_of:
+                    wiki_value = artist.member_of.name
+                else:
+                    wiki_value = artist.name
+            elif field == 'artist':
+                artist_name = artist.name if true_soloist else artist.qualname
+                if collab_mode in ('artist', 'both'):
+                    collabs = [a.qualname if isinstance(a, WikiArtist) else str(a) for a in wiki_song.collaborators]
+                    collabs.insert(0, artist_name)
+                    wiki_value = ', '.join(collabs)
+                else:
+                    wiki_value = artist_name
+            elif field == 'title':
+                wiki_value = wiki_song.custom_name(collab_mode in ('title', 'both'))
+            elif field == 'album':
+                wiki_value = wiki_song.collection.name
+            else:
+                raise ValueError('Unexpected field: {}'.format(field))
+
+            if file_value != wiki_value:
+                if not wiki_song and field == 'artist' and (file_value.count(',') != wiki_value.count(',')):
+                    continue
+                to_update[field] = (file_value, wiki_value)
+
+        file_genre = self.tag_text('genre', default=None)
+        if genre and file_genre != genre:
+            to_update['genre'] = (file_genre, genre)
+
+        if to_update:
+            logged_messages += 1
+            upd_prefix = '[DRY RUN] Would update' if dry_run else 'Updating'
+            msg = '{} {} to match {} by changing...'.format(upd_prefix, self, wiki_song)
+            for tag, (old_val, new_val) in sorted(to_update.items()):
+                msg += '\n   - {} from {!r} to {!r}'.format(tag, old_val, new_val)
+            log.info(msg)
+            if not dry_run:
+                try:
+                    for tag, (old_val, new_val) in sorted(to_update.items()):
+                        self.set_text_tag(tag, new_val, by_id=False)
+                except TagException as e:
+                    log.error(e)
+                else:
+                    self.save()
+        else:
+            log.log(19, 'No tag changes necessary for {} == {}'.format(self.extended_repr, wiki_song))
+
+        return logged_messages
 
 
 def load_tags(paths):
