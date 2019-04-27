@@ -179,6 +179,7 @@ def match_wiki(path):
         # SimpleColumn('File Alb Type', formatter=cyan),
         SimpleColumn('Wiki Alb Type', formatter=green),
         SimpleColumn('F.Trck', formatter=cyan), SimpleColumn('W.Trck', formatter=green),
+        SimpleColumn('F.Disk', formatter=cyan), SimpleColumn('W.Disk', formatter=green),
         SimpleColumn('File Title', formatter=cyan), SimpleColumn('Wiki Title', formatter=green),
         SimpleColumn('TScore', formatter=yellow),
         sort_by=('Wiki Artist', 'Wiki Album', 'F.Trck', 'File Artist', 'File Album', 'File Title'),
@@ -190,20 +191,25 @@ def match_wiki(path):
         try:
             rows.append({
                 'File Artist': music_file.tag_artist,
-                'Wiki Artist': music_file.wiki_artist.qualname if music_file.wiki_artist else "",
+                'Wiki Artist': music_file.wiki_artist.qualname if music_file.wiki_artist else '',
 
                 'File Album': music_file.album_name_cleaned,
-                'Wiki Album': music_file.wiki_album.name if music_file.wiki_album else "",
+                'Wiki Album': music_file.wiki_album.name if music_file.wiki_album else '',
                 'File Alb Type': music_file.album_type_dir,
-                'Wiki Alb Type': music_file.wiki_album.album_type if music_file.wiki_album else "",
+                'Wiki Alb Type': music_file.wiki_album.album_type if music_file.wiki_album else '',
                 'AScore': music_file.wiki_scores.get('album', -1),
 
                 'File Title': music_file.tag_title,
-                'Wiki Title': music_file.wiki_song.long_name if music_file.wiki_song else "",
+                'Wiki Title': music_file.wiki_song.long_name if music_file.wiki_song else '',
                 'TScore': music_file.wiki_scores.get('song', -1),
 
-                'F.Trck': str(music_file.tag_text('track', default="")),
-                'W.Trck': str(music_file.wiki_song.num) if music_file.wiki_song else "",
+                # 'F.Trck': str(music_file.tag_text('track', default='')),
+                'F.Trck': str(music_file.track_num),
+                'W.Trck': str(music_file.wiki_song.num) if music_file.wiki_song else '',
+
+                # 'F.Disk': str(music_file.tag_text('disk', default='')),
+                'F.Disk': str(music_file.disk_num),
+                'W.Disk': str(music_file.wiki_song.disk) if music_file.wiki_song else '',
             })
         except Exception as e:
             log.error('Error processing {}: {}'.format(music_file, e))
@@ -231,7 +237,7 @@ def list_dir2artist(path):
                             uprint('"{}": "{}",'.format(_dir, artist))
                             break
             else:
-                uprint('"{}": "{}",'.format(_dir, ""))
+                uprint('"{}": "{}",'.format(_dir, ''))
         else:
             uprint('"{}": "{}",'.format(_dir, disp_name))
 
@@ -271,8 +277,8 @@ def sort_albums(path, dry_run):
     :param str path: Path to the directory to sort
     :param bool dry_run: Print the actions that would be taken instead of taking them
     """
-    prefix, verb = ('[DRY RUN] ', 'Would rename') if dry_run else ("", 'Renaming')
-    punc_strip_tbl = str.maketrans({c: "" for c in string.punctuation})
+    prefix, verb = ('[DRY RUN] ', 'Would rename') if dry_run else ('', 'Renaming')
+    punc_strip_tbl = str.maketrans({c: '' for c in string.punctuation})
 
     for parent_dir, album_dir, music_files in iter_music_albums(path):
         if not album_dir.startswith('['):
@@ -489,7 +495,7 @@ def sort_by_wiki(
 
 
 def _original_sort_by_wiki(source_path, dest_dir, allow_no_dest, dry_run):
-    prefix, verb = ('[DRY RUN] ', 'Would move') if dry_run else ("", 'Moving')
+    prefix, verb = ('[DRY RUN] ', 'Would move') if dry_run else ('', 'Moving')
 
     dests = {}
     unplaced = 0
@@ -544,7 +550,7 @@ def _original_sort_by_wiki(source_path, dest_dir, allow_no_dest, dry_run):
 
 
 def set_tags(paths, tag_ids, value, replace_pats, partial, dry_run):
-    prefix, repl_msg, set_msg = ('[DRY RUN] ', 'Would replace', 'Would set') if dry_run else ("", 'Replacing', 'Setting')
+    prefix, repl_msg, set_msg = ('[DRY RUN] ', 'Would replace', 'Would set') if dry_run else ('', 'Replacing', 'Setting')
     repl_rxs = [re.compile(fnpat2re(pat)[4:-3]) for pat in replace_pats] if replace_pats else []
     if partial and not repl_rxs:
         raise ValueError('When using --partial/-p, --replace/-r must also be specified')
@@ -606,7 +612,7 @@ def set_tags(paths, tag_ids, value, replace_pats, partial, dry_run):
 
 def fix_tags(paths, dry_run):
     # TODO: Convert ` to '
-    prefix, add_msg, rmv_msg = ('[DRY RUN] ', 'Would add', 'remove') if dry_run else ("", 'Adding', 'removing')
+    prefix, add_msg, rmv_msg = ('[DRY RUN] ', 'Would add', 'remove') if dry_run else ('', 'Adding', 'removing')
     upd_msg = 'Would update' if dry_run else 'Updating'
 
     for music_file in iter_music_files(paths):
@@ -679,7 +685,7 @@ def copy_tags(source_paths, dest_paths, tags, dry_run):
     all_tags = 'ALL' in tags
     src_tags = load_tags(source_paths)
 
-    prefix, verb = ('[DRY RUN] ', 'Would update') if dry_run else ("", 'Updating')
+    prefix, verb = ('[DRY RUN] ', 'Would update') if dry_run else ('', 'Updating')
 
     for music_file in iter_music_files(dest_paths):
         path = music_file.filename
@@ -739,7 +745,7 @@ def save_tag_backups(source_paths, backup_path):
 
 
 def remove_tags(paths, tag_ids, dry_run, recommended):
-    prefix, verb = ('[DRY RUN] ', 'Would remove') if dry_run else ("", 'Removing')
+    prefix, verb = ('[DRY RUN] ', 'Would remove') if dry_run else ('', 'Removing')
 
     # tag_ids = sorted({tag_id.upper() for tag_id in tag_ids})
     tag_id_pats = sorted({tag_id for tag_id in tag_ids}) if tag_ids else []
@@ -768,7 +774,7 @@ def remove_tags(paths, tag_ids, dry_run, recommended):
 
         if to_remove:
             if i:
-                log.debug("")
+                log.debug('')
             rm_str = ', '.join(
                 '{}: {}'.format(tag_id, tag_repr(val)) for tag_id, vals in sorted(to_remove.items()) for val in vals
             )

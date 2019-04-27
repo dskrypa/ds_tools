@@ -75,7 +75,7 @@ def _is_invalid_group(text):
     if part_num_rx.match(text):
         return True
     lc_text = text.lower()
-    if lc_text in ('full ost only', ):
+    if lc_text in ('full ost only', 'china'):
         return True
     return False
 
@@ -331,38 +331,6 @@ class TrackListParser(ListBasedRecursiveDescentParser):
                     artists, producers = split_artist_list(collab, self._context, self._anchors, self._client)
                     collabs.extend(artists)
                     all_collabs.extend(artists)
-                    # try:
-                    #     soloists, of_group = collab.split(' of ')
-                    # except Exception as e:
-                    #     err_msg = 'Unexpected content found in collab={!r} from {}'.format(collab, self._context)
-                    #     for soloist in re.split(' and | & ', collab):
-                    #         try:
-                    #             collabs.append({
-                    #                 'artist': split_name(soloist), 'artist_href': self._link_dict.get(soloist)
-                    #             })
-                    #         except ValueError as e1:
-                    #             try:
-                    #                 parts = ParentheticalParser().parse(soloist)
-                    #             except Exception as e2:
-                    #                 raise WikiEntityParseException(err_msg) from e2
-                    #             else:
-                    #                 if len(parts) == 2 and any(' ver.' in part.lower() for part in parts):
-                    #                     if ' ver.' in parts[0].lower():
-                    #                         v, c = 0, 1
-                    #                     else:
-                    #                         v, c = 1, 0
-                    #                     version = parts[v]
-                    #                     collabs.append({
-                    #                         'artist': split_name(parts[c]), 'artist_href': self._link_dict.get(soloist)
-                    #                     })
-                    #                 else:
-                    #                     raise WikiEntityParseException(err_msg) from e1
-                    # else:
-                    #     for soloist in re.split(' and | & ', soloists):
-                    #         collabs.append({
-                    #             'artist': split_name(soloist), 'artist_href': self._link_dict.get(soloist),
-                    #             'of_group': split_name(of_group), 'group_href': self._link_dict.get(of_group),
-                    #         })
             else:
                 raise UnexpectedTokenError('Unexpected {!r} token {!r} in {!r}'.format(
                     self.next_tok.type, self.next_tok.value, self._full

@@ -40,7 +40,7 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artist, compilation=Fa
     if not h2:
         raise WikiEntityParseException('Unable to find track list header for album {}'.format(uri_path))
 
-    disk_rx = re.compile(r'^Dis[ck]\s+(\S+)\s*[{}]?\s*(.*)$'.format(DASH_CHARS + ':'), re.IGNORECASE)
+    disk_rx = re.compile(r'^(?:Dis[ck]|CD)\s*(\S+)\s*[{}]?\s*(.*)$'.format(DASH_CHARS + ':'), re.IGNORECASE)
     unexpected_num_fmt = 'Unexpected disk number format for {}: {!r}'
     parser = ParentheticalParser(False)
     track_lists = []
@@ -62,8 +62,8 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artist, compilation=Fa
                 track_links = link_tuples(li.find_all('a'))
                 all_links = list(set(track_links + intro_links))
                 track = parse_track_info(
-                    i + 1, li.text, uri_path, include={'links': track_links}, links=all_links, compilation=compilation,
-                    artist=artist
+                    i + 1, li.text, uri_path, include={'links': track_links, 'disk': disk}, links=all_links,
+                    compilation=compilation, artist=artist
                 )
                 tracks.append(track)
 
@@ -72,7 +72,7 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artist, compilation=Fa
         else:
             for junk in ele.find_all(class_='editsection'):
                 junk.extract()
-            section = ele.text
+            section = ele.text.strip()
             links = link_tuples(ele.find_all('a'))
             # links = [(a.text, a.get('href')) for a in ele.find_all('a')]
             if has_parens(section):
@@ -82,7 +82,7 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artist, compilation=Fa
                     pass
 
             disk_section = section if not section or isinstance(section, str) else section[0]
-            if disk_section and disk_section.lower().startswith(('disk', 'disc')):
+            if disk_section and disk_section.lower().startswith(('disk', 'disc', 'cd')):
                 m = disk_rx.match(disk_section)
                 if not m:
                     raise WikiEntityParseException(unexpected_num_fmt.format(uri_path, disk_section))

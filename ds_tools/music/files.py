@@ -944,6 +944,18 @@ class SongFile(ClearableCachedPropertyMixin):
         return track
 
     @cached_property
+    def disk_num(self):
+        disk = self.tag_text('disk', default=None)
+        if disk:
+            if '/' in disk:
+                disk = disk.split('/')[0].strip()
+            if ',' in disk:
+                disk = disk.split(',')[0].strip()
+            if disk.startswith('('):
+                disk = disk[1:].strip()
+        return disk
+
+    @cached_property
     def album_dir_obj(self):
         if self._album_dir is not None:
             return self._album_dir
@@ -1079,7 +1091,7 @@ class SongFile(ClearableCachedPropertyMixin):
         else:
             if album:
                 try:
-                    track, score = album.find_track(name, track=num, include_score=True)
+                    track, score = album.find_track(name, track=num, include_score=True, disk=self.disk_num)
                 except Exception as e:
                     log.error('Error determining track for {} from {}: {}'.format(self, album, e))
                     traceback.print_exc()
@@ -1096,7 +1108,7 @@ class SongFile(ClearableCachedPropertyMixin):
                     raise e
                 else:
                     track, score = artist.find_track(
-                        name, self.album_name_cleaned, year=self.year, track=num, include_score=True
+                        name, self.album_name_cleaned, year=self.year, track=num, include_score=True, disk=self.disk_num
                     )
                     if track:
                         self.__dict__['wiki_album'] = track.collection

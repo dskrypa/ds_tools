@@ -7,7 +7,7 @@ import logging
 import re
 import string
 import traceback
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from contextlib import suppress
 from itertools import chain
 from pathlib import Path
@@ -1640,24 +1640,24 @@ class WikiSongCollection(WikiEntity):
 
     @cached_property
     def _artists(self):
+        artists = OrderedDict()
         if self._primary_artist:
-            artists = {tuple(sorted(
+            primary = tuple(sorted(
                 {'artist': eng_cjk_sort(self._primary_artist[0]), 'artist_href': self._primary_artist[1]}.items()
-            ))}
-        else:
-            artists = set()
+            ))
+            artists[primary] = None
 
         d_collabs = self._discography_entry.get('collaborators', [])
         a_artists = self._album_info.get('artists', [])
         for artist in chain(a_artists, d_collabs):
             try:
-                artists.add(tuple(sorted(artist.items())))
+                artists[tuple(sorted(artist.items()))] = None
             except Exception as e:
                 log.error('Error processing artists for {}'.format(self))
                 raise e
 
         artists = [dict(artist) for artist in artists]
-        artist_map = {}
+        artist_map = OrderedDict()
         for artist in artists:
             artist_name = artist['artist']
             if artist_name in artist_map:
@@ -1751,6 +1751,15 @@ class WikiSongCollection(WikiEntity):
                     log.log(log_lvl, fmt.format(self, name, e), extra={'color': (11, 9)})
                     # raise e
                 artists.add(WikiArtist(href, name=name, no_fetch=True))
+            except WikiEntityInitException as e:
+                artist_alias = next((a for a in artists if a.matches(name)), None)
+                if not artist_alias:
+                    fmt = '{}: Unable to find artist href={!r} name={!r} of_group={!r} found on {}: {}'
+                    log.error(fmt.format(self, href, name, of_group, self.url, e), extra={'color': 9})
+                    artists.add(WikiArtist(href, name=name, no_fetch=True))
+                else:
+                    fmt = '{}: Artists contained an alias={!r} for already known artist={}'
+                    log.debug(fmt.format(self, name, artist_alias))
             except Exception as e:
                 fmt = '{}: Unable to find artist href={!r} name={!r} of_group={!r} found on {}: {}'
                 log.error(fmt.format(self, href, name, of_group, self.url, e), extra={'color': 9})
@@ -1805,10 +1814,25 @@ class WikiSongCollection(WikiEntity):
     def _editions_by_disk(self):
         editions_by_disk = defaultdict(list)
         for track_section in self._track_lists:
-            editions_by_disk[track_section.get('disk')].append(track_section)
+            disk = track_section.get('disk')
+            if disk is not None:
+                try:
+                    disk = int(disk)
+                except Exception:
+                    pass
+            editions_by_disk[disk].append(track_section)
         return editions_by_disk
 
+    @cached_property
+    def has_multiple_disks(self):
+        return len(self._editions_by_disk) > 1
+
     def _get_tracks(self, edition_or_part=None, disk=None):
+        if disk is not None:
+            try:
+                disk = int(disk)
+            except Exception:
+                pass
         if self._track_lists:
             # log.debug('{}: Retrieving tracks for edition_or_part={!r}'.format(self, edition_or_part))
             if disk is None and edition_or_part is None or isinstance(edition_or_part, int):
@@ -1823,7 +1847,7 @@ class WikiSongCollection(WikiEntity):
             if not editions and disk is None:
                 editions = self._editions_by_disk[disk]
             if not editions:
-                raise InvalidTrackListException('{} has no disk {}'.format(self, disk))
+                raise InvalidTrackListException('{} has no disk {!r}'.format(self, disk))
             elif edition_or_part is None:
                 return editions[0]
 
@@ -1935,17 +1959,22 @@ class WikiSongCollection(WikiEntity):
             packages.append(tmp)
         return packages
 
-    def find_track(self, name, min_score=75, include_score=False, **kwargs):
+    def find_track(self, name, min_score=75, include_score=False, *, disk=None, **kwargs):
         match_fmt = '{}: {} matched {!r} with score={} because its alias={!r} =~= {!r}'
         best_score, best_alias, best_val, best_track = 0, None, None, None
         normalized = WikiTrack._normalize_for_matching(name)
-        for track in self.get_tracks():
-            score, alias, val = track.score_match(normalized, normalize=False, **kwargs)
-            if score >= 100:
-                # log.debug(match_fmt.format(self, track, name, score, alias, val))
-                return (track, score) if include_score else track
-            elif score > best_score:
-                best_score, best_alias, best_val, best_track = score, alias, val, track
+        try:
+            tracks = self.get_tracks(disk=disk)
+        except InvalidTrackListException:
+            pass
+        else:
+            for track in tracks:
+                score, alias, val = track.score_match(normalized, normalize=False, disk=disk, **kwargs)
+                if score >= 100:
+                    # log.debug(match_fmt.format(self, track, name, score, alias, val))
+                    return (track, score) if include_score else track
+                elif score > best_score:
+                    best_score, best_alias, best_val, best_track = score, alias, val, track
 
         if best_score > min_score:
             if best_score < 95:
@@ -2434,7 +2463,11 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
 
     def expected_filename(self, ext='mp3', incl_collabs=True, incl_solo=True):
         base = sanitize_path('{}.{}'.format(self.custom_name(incl_collabs, incl_solo), ext))
-        return '{:02d}. {}'.format(self.num, base) if self.num else base
+        if self.collection.has_multiple_disks:
+            num_prefix = '{}-{:02d}. '.format(self.disk, self.num) if self.num else ''
+        else:
+            num_prefix = '{:02d}. '.format(self.num) if self.num else ''
+        return num_prefix + base
 
     def expected_rel_path(self, ext='mp3', incl_collabs=True, incl_solo=True):
         return self.collection.expected_rel_path().joinpath(self.expected_filename(ext, incl_collabs, incl_solo))

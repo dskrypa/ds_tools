@@ -24,7 +24,7 @@ NUMS = {
 PAGE_CATEGORIES = OrderedDict([
     ('album', ('albums', 'discography article stubs', ' eps')),     # Note: space in ' eps' is intentional
     ('group', ('group', 'group article stubs', 'bands', 'duos')),
-    ('singer', ('singer', 'person article stubs', 'actor', 'actress')),
+    ('singer', ('singer', 'person article stubs', 'actor', 'actress', 'musician')),
     ('soundtrack', ('osts', 'kost', 'jost', 'cost')),
     ('tv_series', ('television series', 'television drama', 'kdrama', 'competition shows', 'jdrama')),
     ('discography', ('discographies',)),
