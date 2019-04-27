@@ -10,6 +10,9 @@ import string
 import unicodedata
 from enum import Enum
 
+from cachetools import LRUCache
+
+from ..caching import cached
 from ..core import classproperty
 from ..utils import ALL_PUNCTUATION, ALL_SYMBOLS
 from .ranges import *
@@ -56,8 +59,11 @@ class LangCat(Enum):
         yield cls.CYR, CYRILLIC_RANGES
 
     @classmethod
+    @cached(LRUCache(200), exc=True)
     def categorize(cls, text, detailed=False):
-        if len(text) == 1:
+        if detailed:
+            return set(cls.categorize(c) for c in text)
+        elif len(text) == 1:
             dec = ord(text)
             for cat, ranges in cls._ranges():
                 if any(a <= dec <= b for a, b in ranges):
@@ -69,8 +75,6 @@ class LangCat(Enum):
             text = _strip_non_word_chars(text)
             if len(text) == 0:
                 return cls.NUL
-            elif detailed:
-                return set(cls.categorize(c) for c in text)
             else:
                 cat = cls.categorize(text[0])
                 for c in text[1:]:
@@ -108,6 +112,25 @@ class LangCat(Enum):
             if cls.categorize(c) != cat:
                 return True
         return False
+
+    @classmethod
+    def for_name(cls, language):
+        lang = language.lower()
+        if lang in ('english', 'spanish'):
+            return cls.ENG
+        elif lang == 'korean':
+            return cls.HAN
+        elif lang == 'japanese':
+            return cls.JPN
+        elif lang == 'thai':
+            return cls.THAI
+        elif lang in ('chinese', 'mandarin'):
+            return cls.CJK
+        elif lang in ('russian',):
+            return cls.CYR
+        elif lang in ('greek',):
+            return cls.GRK
+        return cls.UNK
 
 
 def _strip_non_word_chars(text):
