@@ -173,16 +173,16 @@ def match_wiki(path):
     yellow = lambda raw, pre: colored(pre, 'yellow')
 
     tbl = Table(
-        SimpleColumn('File Artist', formatter=cyan), SimpleColumn('Wiki Artist', formatter=green),
+        SimpleColumn('F.Artist', formatter=cyan), SimpleColumn('Wiki Artist', formatter=green),
         SimpleColumn('File Album', formatter=cyan), SimpleColumn('Wiki Album', formatter=green),
-        SimpleColumn('AScore', formatter=yellow),
+        SimpleColumn('A.Scr', formatter=yellow),
         # SimpleColumn('File Alb Type', formatter=cyan),
         SimpleColumn('Wiki Alb Type', formatter=green),
-        SimpleColumn('F.Trck', formatter=cyan), SimpleColumn('W.Trck', formatter=green),
-        SimpleColumn('F.Disk', formatter=cyan), SimpleColumn('W.Disk', formatter=green),
+        SimpleColumn('F.Tr', formatter=cyan), SimpleColumn('W.Tr', formatter=green),
+        SimpleColumn('F.Dsk', formatter=cyan), SimpleColumn('W.Dsk', formatter=green),
         SimpleColumn('File Title', formatter=cyan), SimpleColumn('Wiki Title', formatter=green),
-        SimpleColumn('TScore', formatter=yellow),
-        sort_by=('Wiki Artist', 'Wiki Album', 'F.Trck', 'File Artist', 'File Album', 'File Title'),
+        SimpleColumn('T.Scr', formatter=yellow),
+        sort_by=('Wiki Artist', 'Wiki Album', 'F.Tr', 'F.Artist', 'File Album', 'File Title'),
         update_width=True
     )
 
@@ -190,26 +190,26 @@ def match_wiki(path):
     for music_file in iter_music_files(path):
         try:
             rows.append({
-                'File Artist': music_file.tag_artist,
+                'F.Artist': music_file.tag_artist,
                 'Wiki Artist': music_file.wiki_artist.qualname if music_file.wiki_artist else '',
 
                 'File Album': music_file.album_name_cleaned,
                 'Wiki Album': music_file.wiki_album.name if music_file.wiki_album else '',
                 'File Alb Type': music_file.album_type_dir,
                 'Wiki Alb Type': music_file.wiki_album.album_type if music_file.wiki_album else '',
-                'AScore': music_file.wiki_scores.get('album', -1),
+                'A.Scr': music_file.wiki_scores.get('album', -1),
 
                 'File Title': music_file.tag_title,
                 'Wiki Title': music_file.wiki_song.long_name if music_file.wiki_song else '',
-                'TScore': music_file.wiki_scores.get('song', -1),
+                'T.Scr': music_file.wiki_scores.get('song', -1),
 
-                # 'F.Trck': str(music_file.tag_text('track', default='')),
-                'F.Trck': str(music_file.track_num),
-                'W.Trck': str(music_file.wiki_song.num) if music_file.wiki_song else '',
+                # 'F.Tr': str(music_file.tag_text('track', default='')),
+                'F.Tr': str(music_file.track_num),
+                'W.Tr': str(music_file.wiki_song.num) if music_file.wiki_song else '',
 
-                # 'F.Disk': str(music_file.tag_text('disk', default='')),
-                'F.Disk': str(music_file.disk_num),
-                'W.Disk': str(music_file.wiki_song.disk) if music_file.wiki_song else '',
+                # 'F.Dsk': str(music_file.tag_text('disk', default='')),
+                'F.Dsk': str(music_file.disk_num),
+                'W.Dsk': str(music_file.wiki_song.disk) if music_file.wiki_song else '',
             })
         except Exception as e:
             log.error('Error processing {}: {}'.format(music_file, e))
