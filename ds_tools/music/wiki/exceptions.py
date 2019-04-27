@@ -12,7 +12,7 @@ from ..exceptions import MusicException
 
 __all__ = [
     'AmbiguousEntityException', 'InvalidTrackListException', 'MemberDiscoveryException', 'MusicWikiException',
-    'WikiEntityIdentificationException', 'WikiEntityInitException', 'WikiTypeError'
+    'WikiEntityIdentificationException', 'WikiEntityInitException', 'WikiTypeError', 'WikiAlbumPartProcessingError'
 ]
 log = logging.getLogger(__name__)
 logr = {'ambig_parsing': logging.getLogger(__name__ + '.ambig_parsing')}
@@ -172,3 +172,7 @@ class AmbiguousEntityException(MusicWikiException):
             return '{} - did you mean one of these? {}'.format(base, ' | '.join(alts))
         else:
             return '{} and no suggestions could be found.'.format(base)
+
+
+class WikiAlbumPartProcessingError(MusicWikiException):
+    """Exception to be raised when there's a problem with processing parts of a multi-part album"""

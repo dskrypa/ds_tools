@@ -45,7 +45,9 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artist, compilation=Fa
     parser = ParentheticalParser(False)
     track_lists = []
     section, language, links, disk = None, None, [], 1
-    for ele in h2.next_siblings:
+    super_section = None
+    last_section_idx = None
+    for section_idx, ele in enumerate(h2.next_siblings):
         if isinstance(ele, NavigableString):
             continue
 
@@ -68,21 +70,27 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artist, compilation=Fa
                 tracks.append(track)
 
             track_lists.append({
-                'section': section, 'tracks': tracks, 'links': links, 'disk': disk, 'language': language
+                'section': section,
+                'tracks': tracks, 'links': links, 'disk': disk, 'language': language
             })
             section, language, links = None, None, []
         else:
             for junk in ele.find_all(class_='editsection'):
                 junk.extract()
+            if last_section_idx and section_idx - last_section_idx == 2:
+                super_section = [section] if isinstance(section, str) else section
             section = ele.text.strip()
+            last_section_idx = section_idx
+            # log.debug('Found section={} on page={}: {!r}'.format(section_idx, uri_path, section))
             links = link_tuples(ele.find_all('a'))
-            # links = [(a.text, a.get('href')) for a in ele.find_all('a')]
             if has_parens(section):
                 try:
                     section = parser.parse(section)
                 except Exception as e:
                     pass
                 else:
+                    if super_section:
+                        section = super_section + section
                     for i, sec_part in enumerate(section):
                         lc_sec_part = sec_part.lower()
                         if 'ver' in lc_sec_part:
@@ -90,10 +98,22 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artist, compilation=Fa
                             if language:
                                 section.pop(i)
                                 break
+                        else:
+                            language = next((lng for abrv, lng in LANG_ABBREV_MAP.items() if abrv == lc_sec_part), None)
+                            if language:
+                                section.pop(i)
+                                break
             else:
                 lc_section = section.lower()
-                if 'ver' in lc_section:
-                    language = next((lng for abrv, lng in LANG_ABBREV_MAP.items() if abrv in lc_section), None)
+                language = next((lng for abrv, lng in LANG_ABBREV_MAP.items() if abrv in lc_section), None)
+                if super_section:
+                    section = super_section + [section]
+                    if language:
+                        lc_lang = language.lower()
+                        for i, sec_part in enumerate(section):
+                            if lc_lang in sec_part.lower():
+                                section.pop(i)
+                                break
 
             disk_section = section if not section or isinstance(section, str) else section[0]
             if disk_section and disk_section.lower().startswith(('disk', 'disc', 'cd')):

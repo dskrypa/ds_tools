@@ -194,7 +194,7 @@ def match_wiki(path):
                 'Wiki Artist': music_file.wiki_artist.qualname if music_file.wiki_artist else '',
 
                 'File Album': music_file.album_name_cleaned,
-                'Wiki Album': music_file.wiki_album.name if music_file.wiki_album else '',
+                'Wiki Album': music_file.wiki_album.title if music_file.wiki_album else '',
                 'File Alb Type': music_file.album_type_dir,
                 'Wiki Alb Type': music_file.wiki_album.album_type if music_file.wiki_album else '',
                 'A.Scr': music_file.wiki_scores.get('album', -1),
@@ -204,12 +204,16 @@ def match_wiki(path):
                 'T.Scr': music_file.wiki_scores.get('song', -1),
 
                 # 'F.Tr': str(music_file.tag_text('track', default='')),
-                'F.Tr': str(music_file.track_num),
-                'W.Tr': str(music_file.wiki_song.num) if music_file.wiki_song else '',
+                'F.Tr': '{:>2d}'.format(int(music_file.track_num)),
+                'W.Tr': '{:>2d}'.format(int(music_file.wiki_song.num)) if music_file.wiki_song else '',
+                # 'F.Tr': str(music_file.track_num),
+                # 'W.Tr': str(music_file.wiki_song.num) if music_file.wiki_song else '',
 
                 # 'F.Dsk': str(music_file.tag_text('disk', default='')),
-                'F.Dsk': str(music_file.disk_num),
-                'W.Dsk': str(music_file.wiki_song.disk) if music_file.wiki_song else '',
+                'F.Dsk': '{:>2d}'.format(int(music_file.disk_num)),
+                # 'F.Dsk': str(music_file.disk_num),
+                'W.Dsk': '{:>2d}'.format(int(music_file.wiki_song.disk)) if music_file.wiki_song else '',
+                # 'W.Dsk': str(music_file.wiki_song.disk) if music_file.wiki_song else '',
             })
         except Exception as e:
             log.error('Error processing {}: {}'.format(music_file, e))
@@ -424,8 +428,6 @@ def sort_by_wiki(
         if basic_cleanup:
             continue
 
-        # TODO: (if not true_soloist:) Soloists: /Group/AlbType/[Date] Soloist - AlbumTitle/Num. TrackName.ext
-
         rel_path = album_dir.expected_rel_path(true_soloist)
         if rel_path and ('UNKNOWN_FIXME' in rel_path.as_posix()) and not move_unknown:
             log.log(19, 'Skipping {} because a proper location could not be determined'.format(album_dir))
@@ -495,61 +497,6 @@ def sort_by_wiki(
             if logged_messages:
                 print()
             logged_messages = album_dir.cleanup_partial_matches(dry_run)
-
-
-def _original_sort_by_wiki(source_path, dest_dir, allow_no_dest, dry_run):
-    prefix, verb = ('[DRY RUN] ', 'Would move') if dry_run else ('', 'Moving')
-
-    dests = {}
-    unplaced = 0
-    conflicts = {}
-    exists = set()
-    for music_file in iter_music_files(source_path):
-        try:
-            rel_path = music_file.wiki_expected_rel_path()
-        except Exception as e:
-            log.error('Unable to determine destination for {}: {}'.format(music_file, e))
-            raise e
-
-        if rel_path:
-            dest = Path(os.path.join(dest_dir, rel_path)).as_posix()
-            log.log(19, 'Destination for {}: {!r}'.format(music_file, dest))
-            if os.path.exists(dest):
-                if not music_file.path.samefile(dest):
-                    log.warning('File already exists at destination for {}: {!r}'.format(music_file, dest), extra={'color': 'yellow'})
-                    exists.add(dest)
-                else:
-                    log.info('File already has the correct path: {}'.format(music_file))
-                    continue
-
-            if dest in dests:
-                log.warning('Duplicate destination conflict for {}: {!r}'.format(music_file, dest), extra={'color': 'yellow'})
-                conflicts[music_file] = dest
-                conflicts[dests[dest]] = dest
-            else:
-                dests[dest] = music_file
-        else:
-            log.warning('Could not determine placement for {}'.format(music_file), extra={'red': True})
-            unplaced += 1
-
-    if unplaced and not allow_no_dest:
-        raise RuntimeError('Unable to determine placement for {:,d} files - exiting'.format(unplaced))
-
-    if exists:
-        raise RuntimeError('Files already exist in {:,d} destinations - choose another destination directory'.format(len(exists)))
-    elif conflicts:
-        raise RuntimeError('There are {:,d} duplicate destination conflicts - exiting'.format(len(conflicts)))
-
-    for dest, music_file in sorted(dests.items()):
-        src_path = music_file.path
-        dest_path = Path(dest)
-        log.info('{}{} {!r} -> {!r}'.format(prefix, verb, src_path.as_posix(), dest_path.as_posix()))
-        if not dry_run:
-            if not dest_path.parent.exists():
-                os.makedirs(dest_path.parent)
-            if dest_path.exists():
-                raise RuntimeError('Destination for {} already exists: {!r}'.format(music_file, dest_path.as_posix()))
-            src_path.rename(dest_path)
 
 
 def set_tags(paths, tag_ids, value, replace_pats, partial, dry_run):

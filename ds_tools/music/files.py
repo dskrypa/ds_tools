@@ -202,7 +202,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
     @cached_property
     def wiki_album(self):
         try:
-            albums = {f.wiki_album for f in self.songs if f.wiki_album}
+            albums = {f._wiki_album for f in self.songs if f._wiki_album}
         except Exception as e:
             log.error('Error determining wiki_album for one or more songs in {}: {}'.format(self, e))
             return None
@@ -255,6 +255,22 @@ class AlbumDir(ClearableCachedPropertyMixin):
                     return album
 
         log.warning('No wiki_album match was found for {}'.format(self))
+        return None
+
+    @cached_property
+    def disk_num(self):
+        nums = {f.disk_num for f in self.songs}
+        if len(nums) == 1:
+            return nums.pop()
+        else:
+            log.error('Error determining disk number for {}: {}'.format(self, nums))
+            return None
+
+    @cached_property
+    def wiki_album_part(self):
+        if self.wiki_album:
+            track_tuples = [(f.tag_title, f.track_num) for f in self.songs]
+            return self.wiki_album.find_part(track_tuples, disk=self.disk_num)
         return None
 
     @cached_property
@@ -632,8 +648,8 @@ class SongFile(ClearableCachedPropertyMixin):
             self._in_album_dir = False
             self.__initialized = True
 
-    def __getattr__(self, item):
-        return getattr(self._f, item)
+    # def __getattr__(self, item):
+    #     return getattr(self._f, item)
 
     def __getitem__(self, item):
         return self._f[item]
@@ -966,8 +982,11 @@ class SongFile(ClearableCachedPropertyMixin):
 
     @cached_property
     def wiki_album(self):
-        wiki_song = self.wiki_song
-        return wiki_song.collection
+        alb_part = self.album_dir_obj.wiki_album_part
+        if alb_part:
+            return alb_part
+        else:
+            return self._wiki_album
 
     @cached_property
     def _wiki_album(self):
@@ -1035,7 +1054,7 @@ class SongFile(ClearableCachedPropertyMixin):
         name = self.tag_title
         num = self.track_num
         try:
-            album = self._wiki_album
+            album = self.wiki_album
         except Exception as e:
             log.error('Error determining album for {}: {}'.format(self, e))
             traceback.print_exc()
