@@ -35,7 +35,7 @@ __all__ = [
 ]
 log = logging.getLogger(__name__)
 
-ALBUM_DATED_TYPES = ('Singles', 'Soundtracks', 'Collaborations', 'Extended Plays')
+ALBUM_DATED_TYPES = ('Single', 'Soundtrack', 'Collaboration', 'Extended Play')
 ALBUM_MULTI_DISK_TYPES = ('Albums', 'Special Albums', 'Japanese Albums', 'Remake Albums', 'Repackage Albums')
 ALBUM_NUMBERED_TYPES = ('Album', 'Mini Album', 'Special Album', 'Single Album', 'Remake Album', 'Repackage Album')
 DISCOGRAPHY_TYPE_MAP = {
@@ -1605,11 +1605,12 @@ class WikiSongCollection(WikiEntity):
     @cached()
     def expected_rel_dir(self, as_path=False):
         numbered_type = self.album_type in ALBUM_NUMBERED_TYPES
-        if numbered_type or self.album_type in ('Single', ):
+        if numbered_type or self.album_type in ALBUM_DATED_TYPES:
             try:
-                release_date = '[{}] '.format(self._album_info['released'].strftime('%Y.%m.%d'))
+                release_str =self._album_info['released'].strftime('%Y.%m.%d')
             except KeyError:
-                release_date = ''
+                release_str = self._discography_entry.get('year', '')
+            release_date = '[{}] '.format(release_str) if release_str else ''
 
             if numbered_type:
                 title = '{}{} [{}]'.format(release_date, self.title, self.num_and_type)
