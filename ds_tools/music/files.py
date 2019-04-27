@@ -30,7 +30,7 @@ from .patches import tag_repr
 from .name_processing import split_names, split_name
 from .wiki import (
     WikiArtist, WikiEntityIdentificationException, KpopWikiClient, WikiSongCollection, find_ost,
-    AmbiguousEntityException, WikiGroup, WikiSinger
+    AmbiguousEntityException, WikiGroup, WikiSinger, WikiSongCollectionPart
 )
 
 __all__ = [
@@ -210,7 +210,12 @@ class AlbumDir(ClearableCachedPropertyMixin):
         if len(albums) == 1:
             return albums.pop()
         elif len(albums) > 1:
-            log.warning('Conflicting wiki_album matches were found for {}: {}'.format(self, ', '.join(map(str, albums))))
+            if all(isinstance(a, WikiSongCollectionPart) for a in albums):
+                _albums = {p._collection for p in albums}
+                if len(_albums) == 1:
+                    return _albums.pop()
+            fmt = 'Conflicting wiki_album matches were found for {}: {}'
+            log.warning(fmt.format(self, ', '.join(map(str, albums))))
         elif self.wiki_artist and self.tag_release_date:
             for album in self.wiki_artist.discography:
                 if album.released == self.tag_release_date and len(self.songs) == len(album.get_tracks()):
@@ -464,9 +469,9 @@ class AlbumDir(ClearableCachedPropertyMixin):
         upd_prefix = '[DRY RUN] Would update' if dry_run else 'Updating'
         rnm_prefix = '[DRY RUN] Would rename' if dry_run else 'Renaming'
         cwd = Path('.').resolve()
-        genre = None
+        album_genre = None
         if self.wiki_album and (self.wiki_album.language in ('Korean', 'Japanese', 'Chinese')):
-            genre = '{}-pop'.format(self.wiki_album.language[0])
+            album_genre = '{}-pop'.format(self.wiki_album.language[0])
 
         dests = {}
         conflicts = {}
@@ -480,12 +485,18 @@ class AlbumDir(ClearableCachedPropertyMixin):
                 if not allow_incomplete:
                     continue
 
+                genre = album_genre
                 artist = music_file.wiki_artist
                 if music_file.wiki_album:
                     updatable = ['artist', 'album_artist', 'album']
                 else:
                     updatable = ['artist']
             else:
+                song_lang = wiki_song.language or wiki_song.collection.language
+                if song_lang and song_lang in ('Korean', 'Japanese', 'Chinese'):
+                    genre = '{}-pop'.format(song_lang[0])
+                else:
+                    genre = album_genre
                 artist = wiki_song.artist
                 updatable = ['title', 'artist', 'album_artist', 'album']
 
@@ -1019,6 +1030,11 @@ class SongFile(ClearableCachedPropertyMixin):
 
     @cached_property
     def wiki_album(self):
+        wiki_song = self.wiki_song
+        return wiki_song.collection
+
+    @cached_property
+    def _wiki_album(self):
         self.wiki_scores['album'] = -1
         try:
             artist = self.wiki_artist
@@ -1083,7 +1099,7 @@ class SongFile(ClearableCachedPropertyMixin):
         name = self.tag_title
         num = self.track_num
         try:
-            album = self.wiki_album
+            album = self._wiki_album
         except Exception as e:
             log.error('Error determining album for {}: {}'.format(self, e))
             traceback.print_exc()
