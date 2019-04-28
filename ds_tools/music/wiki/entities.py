@@ -235,7 +235,7 @@ class WikiEntityMeta(type):
                 url = client.url_for(uri_path)
                 # Note: client.get_entity_base caches args->return vals
                 raw, cats = client.get_entity_base(uri_path, cls_cat.title() if isinstance(cls_cat, str) else None)
-                category = get_page_category(url, cats)
+                category = get_page_category(url, cats, raw=raw)
 
             # noinspection PyTypeChecker
             WikiEntityMeta._check_type(cls, url, category, cls_cat, raw)
@@ -2893,7 +2893,19 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                 if of_group:
                     artist = '{} [{}]'.format(artist, of_group)
             else:
-                artist = artist.qualname if collab.get('of_group') else artist.name
+                if artist:
+                    artist = artist.qualname if collab.get('of_group') else artist.name
+                else:
+                    artist = collab['artist']
+                    if not isinstance(artist, str):
+                        eng, cjk = artist
+                        if eng and cjk:
+                            artist = '{} ({})'.format(eng, cjk)
+                        else:
+                            artist = eng or cjk
+                    of_group = collab.get('of_group')
+                    if of_group:
+                        artist = '{} [{}]'.format(artist, of_group)
 
             collabs.append(artist)
         return collabs

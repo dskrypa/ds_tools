@@ -6,8 +6,9 @@ import logging
 import re
 from collections import OrderedDict
 from itertools import chain, combinations
+from urllib.parse import urlparse
 
-from ...utils import QMARKS
+from ...utils import QMARKS, soupify
 
 __all__ = [
     'comparison_type_check', 'edition_combinations', 'get_page_category', 'multi_lang_name', 'normalize_href',
@@ -113,7 +114,7 @@ def synonym_pattern(text, synonym_sets=None, chain_sets=True):
     return re.compile(pattern, re.IGNORECASE)
 
 
-def get_page_category(url, cats, no_debug=False):
+def get_page_category(url, cats, no_debug=False, raw=None):
     if url.endswith('_discography'):
         return 'discography'
     elif any(i in cat for i in ('singles', 'songs') for cat in cats):
@@ -122,9 +123,22 @@ def get_page_category(url, cats, no_debug=False):
         else:
             return 'collab/feature/single'
     else:
+        to_return = None
         for category, indicators in PAGE_CATEGORIES.items():
             if any(i in cat for i in indicators for cat in cats):
-                return category
+                to_return = category
+                break
+
+        if to_return == 'soundtrack':
+            uri_path = urlparse(url).path
+            uri_path = uri_path[6:] if uri_path.startswith('/wiki/') else uri_path
+            if uri_path.count('/') > 1 and raw and 'Lyrics' in raw:
+                expected = uri_path.rsplit('/', 1)[0]
+                for a in soupify(raw).find_all('a'):
+                    if a.get('href') == expected:
+                        return 'lyrics'
+        if to_return:
+            return to_return
 
         if '/wiki/Template:' in url:
             return 'template'

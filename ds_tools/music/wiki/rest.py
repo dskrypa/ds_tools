@@ -167,7 +167,7 @@ class WikiClient(RestClient):
         if uri_path.startswith((self.path_prefix, '/' + self.path_prefix)):
             uri_path = uri_path[len(self.path_prefix)+1:]
         raw, cats = self.get_entity_base(uri_path)
-        page_category = get_page_category(uri_path, cats, no_debug=True)
+        page_category = get_page_category(uri_path, cats, no_debug=True, raw=raw)
         return (page_category in categories) if categories is not None else (page_category is not None)
 
 
@@ -225,7 +225,7 @@ class WikipediaClient(WikiClient):
         cat_links = soupify(raw, parse_only=bs4.SoupStrainer('div', id='mw-normal-catlinks'))
         cat_ul = cat_links.find('ul') if cat_links else None
         cats = {li.text.lower() for li in cat_ul.find_all('li')} if cat_ul else set()
-        cat = get_page_category(uri_path, cats, no_debug=True)
+        cat = get_page_category(uri_path, cats, no_debug=True, raw=raw)
         if cat is None:
             if re.search(r'For other uses, see.*?\(disambiguation\)', raw, re.IGNORECASE):
                 raise AmbiguousEntityException(self.url_for(uri_path), raw, obj_type)
