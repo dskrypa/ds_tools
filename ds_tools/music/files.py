@@ -248,20 +248,20 @@ class AlbumDir(ClearableCachedPropertyMixin):
                             album.update_name(None, self.title)
                         return album
 
-        if len(self.songs) == 1 and self.wiki_artist:
-            song_file = next(iter(self.songs))
-            try:
-                wiki_track = song_file.wiki_song
-            except Exception as e:
-                log.error('{}: Error matching track {}: {}'.format(self, song_file, e))
-                traceback.print_exc()
-                raise e
-            else:
-                if wiki_track:
-                    album = song_file.wiki_album
-                    if self.title and LangCat.contains_any_not(self.title, LangCat.ENG) and not album.cjk_name:
-                        album.update_name(None, self.title)
-                    return album
+        # if len(self.songs) == 1 and self.wiki_artist:
+        #     song_file = next(iter(self.songs))
+        #     try:
+        #         wiki_track = song_file.wiki_song
+        #     except Exception as e:
+        #         log.error('{}: Error matching track {}: {}'.format(self, song_file, e))
+        #         traceback.print_exc()
+        #         raise e
+        #     else:
+        #         if wiki_track:
+        #             album = song_file.wiki_album
+        #             if self.title and LangCat.contains_any_not(self.title, LangCat.ENG) and not album.cjk_name:
+        #                 album.update_name(None, self.title)
+        #             return album
 
         log.warning('No wiki_album match was found for {}'.format(self))
         return None
@@ -1097,7 +1097,6 @@ class SongFile(ClearableCachedPropertyMixin):
                         log.error('{}: Unable to find match for album name={!r}'.format(self, self.album_name_cleaned))
                         raise e
             else:
-                raise BaseException('WTF: {}'.format(self))
                 alb_dir = self.album_dir_obj
                 track_count = len(alb_dir.songs) if alb_dir else None
                 try:

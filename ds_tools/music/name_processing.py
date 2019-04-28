@@ -34,6 +34,8 @@ def fuzz_process(text, strip_special=True):
     :param bool strip_special: Strip special characters (defaults to True - set to False to preserve them)
     :return str: The processed string
     """
+    if not text:
+        return text
     try:
         non_letter_non_num_rx = fuzz_process._non_letter_non_num_rx
         ost_rx = fuzz_process._ost_rx

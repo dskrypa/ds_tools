@@ -67,7 +67,8 @@ SINGLE_TYPE_TO_BASE_TYPE = {
     'as lead artist': 'singles',
     'collaborations': 'collaborations',
     'as featured artist': 'features',
-    'other releases': 'singles'
+    'other releases': 'singles',
+    'promotional singles': 'singles'
 }
 JUNK_CHARS = string.whitespace + string.punctuation
 NUM_STRIP_TBL = str.maketrans({c: '' for c in '0123456789'})
@@ -780,7 +781,11 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
             for rm_ele in content.find_all(class_='mw-empty-elt'):
                 rm_ele.extract()
 
-            for clz in ('toc', 'mw-editsection', 'reference', 'hatnote', 'infobox', 'noprint'):
+            bad_classes = (
+                'toc', 'mw-editsection', 'reference', 'hatnote', 'infobox', 'noprint', 'box-Multiple_issues',
+                'box-Unreliable_sources'
+            )
+            for clz in bad_classes:
                 for rm_ele in content.find_all(class_=clz):
                     rm_ele.extract()
 
@@ -935,7 +940,19 @@ class WikiArtist(WikiPersonCollection):
                                 self.english_name = m.group(2).strip()
                                 break
             elif isinstance(self._client, WikipediaClient):
-                self.english_name = self._side_info['name']
+                page_text = self._clean_soup.text
+                if LangCat.categorize(page_text) == LangCat.MIX:
+                    try:
+                        name_parts = parse_name(page_text)
+                    except Exception as e:
+                        fmt = '{} while processing intro for {}: {}'
+                        log.warning(fmt.format(type(e).__name__, self._client.url_for(uri_path), e))
+                        if strict:
+                            raise e
+                    else:
+                        self.english_name, self.cjk_name, self.stylized_name, self.aka, self._info = name_parts
+                else:
+                    self.english_name = self._side_info['name']
             else:
                 try:
                     name_parts = parse_name(self._clean_soup.text)
@@ -991,9 +1008,13 @@ class WikiArtist(WikiPersonCollection):
         if self._client._site == client._site:
             return self
         try:
-            candidate = type(self)(name=self.english_name or self.cjk_name, client=client)
+            candidate = type(self)(aliases=(self.english_name, self.cjk_name), client=client)
         except CodeBasedRestException as e:
             pass
+        except AmbiguousEntityException as e:
+            if e.alternatives:
+                of_group = self.member_of.english_name if hasattr(self, 'member_of') else None
+                return e.find_matching_alternative(type(self), self.aliases, associated_with=of_group, client=client)
         else:
             if candidate._uri_path and candidate._raw:
                 candidate._add_aliases(self.aliases)
@@ -1180,7 +1201,7 @@ class WikiArtist(WikiPersonCollection):
             for group in self._singles:
                 group_type = group['type']
                 group_sub_type = group['sub_type']
-                if group_type in ('other charted songs', ):
+                if any(gtype in ('other charted songs', ) for gtype in (group_type, group_sub_type)):
                     continue
                 elif any('soundtrack' in (group.get(k) or '') for k in ('sub_type', 'type')):
                     soundtracks = defaultdict(list)
@@ -1262,6 +1283,7 @@ class WikiArtist(WikiPersonCollection):
                 return (collection, score) if include_score else collection
             elif score > best_score:
                 best_score, best_alias, best_val, best_coll = score, alias, val, collection
+                log.debug(match_fmt.format(self, best_coll, name, best_score, best_alias, best_val))
 
         if best_score > min_score:
             if best_score < 95:
@@ -1282,6 +1304,18 @@ class WikiArtist(WikiPersonCollection):
             try:
                 alt_artist = self.for_alt_site(site)
             except Exception as e:
+                if any('OST' in alias.upper() for alias in aliases):
+                    ost_name = name if isinstance(name, str) else next(iter(name))
+                    ost = find_ost(self, ost_name, {'title': ost_name})
+                    if ost:
+                        score, alias, val = ost.score_match(name, **kwargs)
+                        if score > best_score:
+                            best_score, best_alias, best_val, best_coll = score, alias, val, ost
+                            log.debug(match_fmt.format(self, best_coll, name, best_score, best_alias, best_val))
+                            if best_score > min_score:
+                                if best_score < 95:
+                                    log.debug(match_fmt.format(self, best_coll, name, best_score, best_alias, best_val))
+                                return (best_coll, best_score) if include_score else best_coll
                 log.debug('{}: Error finding {} version: {}'.format(self, site, e))
             else:
                 return alt_artist.find_song_collection(name, min_score=min_score, include_score=include_score, **kwargs)
@@ -1992,9 +2026,7 @@ class WikiSongCollection(WikiEntity):
 
     @cached_property
     def has_multiple_disks(self):
-        # log.warning('{} has {} disks: {}'.format(self, len(self._editions_by_disk), self._editions_by_disk.keys()))
         return len(set(p.disk for p in self.parts)) > 1
-        # return len(self._editions_by_disk) > 1
 
     def _get_tracks(self, edition_or_part=None, disk=None):
         if disk is not None:
@@ -2531,7 +2563,9 @@ class WikiSoundtrack(WikiSongCollection):
 
         fixed_artists = []
         for a in artists.values():
-            group = None if not any(k in a for k in ('group_eng', 'group_cjk')) else (a['group_eng'], a['group_cjk'])
+            group = None
+            if any(k in a for k in ('group_eng', 'group_cjk')):
+                group = (a.get('group_eng', ''), a.get('group_cjk', ''))
             fixed_artists.append({
                 'artist_href': a.get('artist_href'), 'artist': (a.get('eng', ''), a.get('cjk', '')),
                 'group_href': a.get('group_href'), 'of_group': group
@@ -2997,6 +3031,8 @@ def find_ost(artist, title, disco_entry):
     except AttributeError:
         norm_title_rx = find_ost._norm_title_rx = re.compile(r'^(.*)\s+(?:Part|Code No)\.?\s*\d+$', re.IGNORECASE)
 
+    # log.debug('find_ost({}, {!r}, {})'.format(artist, title, disco_entry), extra={'color': 10})
+
     orig_title = title
     m = norm_title_rx.match(title)
     if m:
@@ -3009,11 +3045,12 @@ def find_ost(artist, title, disco_entry):
     if artist is not None and not isinstance(artist._client, DramaWikiClient):
         try:
             d_artist = artist.for_alt_site(d_client)
-        except (WikiTypeError, WikiEntityInitException):
+        except (WikiTypeError, WikiEntityInitException) as e:
             pass
         except Exception as e:
-            log.debug('Error finding {} version of {}: {}\n{}'.format(d_client._site, artist, e, traceback.format_exc()))
+            log.debug('Error finding {} version of {}: {}\n{}'.format(d_client._site, artist, e, traceback.format_exc()), extra={'color': 14})
         else:
+            # log.debug('Found {} version of artist: {} - {}'.format(d_client, d_artist, d_artist.url), extra={'color': 14})
             ost_match = d_artist.find_song_collection(title)
             if ost_match:
                 log.debug('{}: Found OST fuzzy match {!r}={} via artist'.format(artist, title, ost_match), extra={'color': 10})
