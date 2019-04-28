@@ -10,6 +10,7 @@ from unicodedata import normalize, combining
 
 from cachetools import LRUCache
 from fuzzywuzzy import fuzz
+from fuzzywuzzy.fuzz import _token_sort as fuzz_token_sort_ratio, _token_set as fuzz_token_set_ratio
 
 from ..caching import cached
 from ..unicode import is_any_cjk, contains_any_cjk, is_hangul, LangCat
@@ -77,50 +78,43 @@ def revised_weighted_ratio(p1, p2):
     elif p1 == p2:
         return 100
 
-    try:
-        int_pat = revised_weighted_ratio._int_pat
-    except AttributeError:
-        int_pat = revised_weighted_ratio._int_pat = re.compile(r'(?P<int>\d+)|(?P<other>\D+)')
-
-    # noinspection PyUnresolvedReferences
-    p1_nums = ''.join(m.groups()[0] for m in iter(int_pat.scanner(p1).match, None) if m.groups()[0])
-    # noinspection PyUnresolvedReferences
-    p2_nums = ''.join(m.groups()[0] for m in iter(int_pat.scanner(p2).match, None) if m.groups()[0])
-    num_mod = -30 if p1_nums != p2_nums else 0
-
-    # should we look at partials?
-    try_partial = True
-    unbase_scale = .95
-    partial_scale = .90
-
     base = fuzz.ratio(p1, p2)
-    len_ratio = float(max(len(p1), len(p2))) / min(len(p1), len(p2))
-
+    lens = (len(p1), len(p2))
+    len_ratio = max(lens) / min(lens)
     # if strings are similar length, don't use partials
-    if len_ratio < 1.5:
-        try_partial = False
+    try_partial = len_ratio >= 1.5
 
-    # if one string is much much shorter than the other
-    if len_ratio > 3:
-        partial_scale = .25
-    elif len_ratio > 2:
-        partial_scale = .45
-    elif len_ratio > 1.5:
-        partial_scale = .625
-    elif len_ratio > 1:
-        partial_scale = .75
+    # Defaults:
+    # fuzz_token_sort_ratio(s1, s2, partial=True, force_ascii=True, full_process=True)
+    # fuzz_token_set_ratio(s1, s2, partial=True, force_ascii=True, full_process=True)
 
     if try_partial:
+        # if one string is much much shorter than the other
+        if len_ratio > 3:
+            partial_scale = .25
+        elif len_ratio > 2:
+            partial_scale = .45
+        elif len_ratio > 1.5:
+            partial_scale = .625
+        elif len_ratio > 1:
+            partial_scale = .75
+        else:
+            partial_scale = .90
+
         partial = fuzz.partial_ratio(p1, p2) * partial_scale
-        ptsor = fuzz.partial_token_sort_ratio(p1, p2, full_process=False) * unbase_scale * partial_scale
-        ptser = fuzz.partial_token_set_ratio(p1, p2, full_process=False) * unbase_scale * partial_scale
+        ptsor = fuzz_token_sort_ratio(p1, p2, True, False, False) * .95 * partial_scale
+        # ptsor = fuzz.partial_token_sort_ratio(p1, p2, full_process=False) * .95 * partial_scale
+        ptser = fuzz_token_set_ratio(p1, p2, True, False, False) * .95 * partial_scale
+        # ptser = fuzz.partial_token_set_ratio(p1, p2, full_process=False) * .95 * partial_scale
         # log.debug('{!r}=?={!r}: ratio={}, len_ratio={}, part_ratio={}, tok_sort_ratio={}, tok_set_ratio={}'.format(p1, p2, base, len_ratio, partial, ptsor, ptser))
-        return int(round(max(base, partial, ptsor, ptser))) + num_mod
+        return int(round(max(base, partial, ptsor, ptser)))
     else:
-        tsor = fuzz.token_sort_ratio(p1, p2, full_process=False) * unbase_scale
-        tser = fuzz.token_set_ratio(p1, p2, full_process=False) * unbase_scale
+        tsor = fuzz_token_sort_ratio(p1, p2, False, False, False) * .95
+        # tsor = fuzz.token_sort_ratio(p1, p2, full_process=False) * .95
+        tser = fuzz_token_set_ratio(p1, p2, False, False, False) * .95
+        # tser = fuzz.token_set_ratio(p1, p2, full_process=False) * .95
         # log.debug('{!r}=?={!r}: ratio={}, len_ratio={}, tok_sort_ratio={}, tok_set_ratio={}'.format(p1, p2, base, len_ratio, tsor, tser))
-        return int(round(max(base, tsor, tser))) + num_mod
+        return int(round(max(base, tsor, tser)))
 
 
 def parse_name(text):

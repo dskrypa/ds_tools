@@ -39,7 +39,7 @@ PAGE_CATEGORIES = OrderedDict([
     ('misc', (
         'games', 'comics', 'deities', 'television seasons', 'appliances', 'standards', 'military', 'amusement',
         'episodes', 'hobbies', 'astronauts', 'war', 'economics', 'disasters', 'events', 'bugs', 'modules', 'elves',
-        'dwarves', 'orcs'
+        'dwarves', 'orcs', 'lists'
     )),
 ])
 PATH_SANITIZATION_DICT = {c: '' for c in '*;?<>"'}

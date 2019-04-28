@@ -321,8 +321,39 @@ class WikiEntityMeta(type):
 
 class WikiMatchable:
     _category = None
+    __cache = LRUCache(300)
+    _int_pat = re.compile(r'\d+')
+
+    def __init__(self):
+        self._strip_special = False
+        self._num_cache = {}
+
+    @classmethod
+    def __cached(cls, obj, strip_special=False, track=None):
+        try:
+            return cls.__cache[obj]
+        except (KeyError, TypeError):
+            # log.debug('Cache miss for {!r}'.format(obj), extra={'color': (1, 14)})
+            m = WikiMatchable()
+            m._obj = obj
+            m._strip_special = strip_special
+            m._track = track
+            try:
+                cls.__cache[obj] = m
+            except TypeError:
+                pass
+            return m
+
+    @cached_property
+    def _is_plain_matchable(self):
+        return not isinstance(self, WikiEntity) and hasattr(self, '_obj')
 
     def _aliases(self):
+        if self._is_plain_matchable:
+            # noinspection PyUnresolvedReferences
+            aliases = (self._obj,) if isinstance(self._obj, str) else self._obj
+            return set(aliases)
+
         _aliases = (
             getattr(self, attr, None) for attr in ('english_name', 'cjk_name', 'stylized_name', 'name', '_header_title')
         )
@@ -361,8 +392,15 @@ class WikiMatchable:
 
     @cached_property
     def _fuzzed_aliases(self):
+        if self._is_plain_matchable:
+            # noinspection PyUnresolvedReferences
+            fuzzed, cjk, rom_permutations = self._fuzz_other(self._obj)
+            self.cjk_name = cjk
+            self._rom_permutations = rom_permutations
+            return fuzzed
+
         try:
-            if isinstance(self, WikiSongCollection):
+            if isinstance(self, WikiSongCollection) or self._strip_special:
                 return set(filter(None, (fuzz_process(a, strip_special=False) for a in self.aliases)))
             return set(filter(None, (fuzz_process(a) for a in self.aliases)))
         except Exception as e:
@@ -404,9 +442,7 @@ class WikiMatchable:
         return bool(self._fuzzed_aliases.intersection(fuzzed_others))
 
     def _fuzz_other(self, other, process=True):
-        eng, cjk = None, None
-        if not isinstance(other, (str, WikiEntity)) and len(other) == 1:
-            other = other[0]
+        eng, cjk, permutations = None, None, None
         if isinstance(other, str):
             lang = LangCat.categorize(other)
             if lang == LangCat.MIX:
@@ -424,26 +460,60 @@ class WikiMatchable:
                         others = ['{} ({})'.format(s, extra) for s in others] + others
             elif lang == LangCat.HAN:
                 cjk = other
-                others = romanized_permutations(other)
-                others.insert(0, other)
+                others = (other,)
+                permutations = tuple(filter(None, (fuzz_process(o) for o in romanized_permutations(other) if o)))
             else:
                 if lang in LangCat.asian_cats:
                     cjk = other
                 others = (other,)
         elif isinstance(other, WikiEntity):
-            if self._category != other._category and self._category is not None and other._category is not None:
-                log.warning('Unable to compare {} to {!r}: incompatible categories'.format(self, other))
-                return 0, None, None
             others = other._fuzzed_aliases
             process = False
         else:
             others = other
 
-        if isinstance(self, WikiSongCollection):
+        if isinstance(self, WikiSongCollection) or self._strip_special:
             fuzzed = tuple(filter(None, (fuzz_process(o, strip_special=False) for o in others) if process else others))
         else:
             fuzzed = tuple(filter(None, (fuzz_process(o) for o in others if o) if process else others))
-        return fuzzed, cjk
+        return fuzzed, cjk, permutations
+
+    @cached_property
+    def __has(self):
+        if isinstance(self, WikiTrack):
+            self_name_lc = self.long_name.lower()
+            return {'inst': 'inst' in self_name_lc, 'version': any(v in self_name_lc for v in ('ver.', 'version'))}
+        elif self._is_plain_matchable:
+            # noinspection PyUnresolvedReferences
+            obj = self._obj
+            if isinstance(obj, str):
+                other_lc = obj.lower()
+                return {'inst': 'inst' in other_lc, 'version': any(v in other_lc for v in ('ver.', 'version'))}
+            else:
+                return {
+                    'inst': any('inst' in _other for _other in self._fuzzed_aliases),
+                    'version': any(v in _other for v in ('ver.', 'version') for _other in self._fuzzed_aliases)
+                }
+        return {}
+
+    @cached_property
+    def __track_info(self):
+        info = []
+        # noinspection PyUnresolvedReferences
+        obj = self._obj
+        for _other in (obj,) if isinstance(obj, str) else obj:
+            try:
+                # noinspection PyUnresolvedReferences
+                other_track_info = parse_track_info(self._track, _other, 'matching')
+            except Exception:
+                pass
+            else:
+                info.append(other_track_info)
+        return info
+
+    @cached('_num_cache')
+    def __nums(self, fuzzed_alias):
+        return ''.join(self._int_pat.findall(fuzzed_alias))
 
     @cached(LRUCache(100))
     def score_match(self, other, process=True, track=None, disk=None, year=None, track_count=None, score_mod=0):
@@ -460,9 +530,18 @@ class WikiMatchable:
         :param int score_mod: The initial score modifier (if checks were made prior to calling this method)
         :return tuple: (score, best alias of this WikiEntity, best value from other)
         """
-        fuzzed_others, cjk = self._fuzz_other(other, process)
-        # log.debug('fuzz({!r}) => {!r}'.format(other, fuzzed_others))
-        if not fuzzed_others:
+        if not isinstance(other, (str, WikiEntity)) and len(other) == 1:
+            other = other[0]
+        if isinstance(other, WikiEntity):
+            if self._category != other._category and self._category is not None and other._category is not None:
+                log.warning('Unable to compare {} to {!r}: incompatible categories'.format(self, other))
+                return 0, None, None
+
+        matchable = self.__cached(other, isinstance(self, WikiSongCollection), track)
+        # fuzzed_others, cjk = self._fuzz_other(other, process)
+        # log.debug('fuzz({!r}) => {!r}'.format(other, matchable._fuzzed_aliases))
+        # log.debug('fuzz({!r}) => {}'.format(other, len(matchable._fuzzed_aliases)))
+        if not matchable._fuzzed_aliases:
             log.warning('Unable to compare {} to {!r}: nothing to compare after processing'.format(self, other))
             return 0, None, None
         elif isinstance(self, WikiTrack):
@@ -471,16 +550,8 @@ class WikiMatchable:
             if disk is not None:
                 score_mod += 15 if str(self.disk) == str(disk) else -40
 
-            self_name_lc = self.long_name.lower()
-            self_has = {'inst': 'inst' in self_name_lc, 'version': any(v in self_name_lc for v in ('ver.', 'version'))}
-            if isinstance(other, str):
-                other_lc = other.lower()
-                other_has = {'inst': 'inst' in other_lc, 'version': any(v in other_lc for v in ('ver.', 'version'))}
-            else:
-                other_has = {
-                    'inst': any('inst' in _other for _other in fuzzed_others),
-                    'version': any(v in _other for v in ('ver.', 'version') for _other in fuzzed_others)
-                }
+            self_has = self.__has
+            other_has = matchable.__has
             for key, self_val in self_has.items():
                 if (self_val and not other_has[key]) or (not self_val and other_has[key]):
                     # other_repr = other if isinstance(other, WikiEntity) else others
@@ -491,26 +562,22 @@ class WikiMatchable:
                 self_lang = (self.language or '').lower()
                 self_langs = ('chinese', 'mandarin') if self_lang in ('chinese', 'mandarin') else (self_lang,)
                 scored_lang, scored_ver = False, False
-                for _other in (other,) if isinstance(other, str) else other:
-                    try:
-                        other_track_info = parse_track_info(track, _other, 'matching')
-                    except Exception:
-                        pass
-                    else:
-                        # log.debug('{}: Comparing lang & version to: {!r} => {}'.format(self, other, other_track_info))
-                        if not scored_lang:
-                            other_lang = (other_track_info.get('language') or '').lower()
-                            # log.debug('{}: Comparing to {!r} - lang {!r} =?= {!r}'.format(self, other, self_lang, other_lang))
-                            if self_lang and other_lang:
-                                score_mod += 15 if other_lang in self_langs else -15
-                        if not scored_ver:
-                            other_ver = (other_track_info.get('version') or '').lower()
-                            self_ver = (self.version or '').lower()
-                            # log.debug('{}: Comparing to {!r} - ver {!r} =?= {!r}'.format(self, other, self_ver, other_ver))
-                            if self_ver and other_ver:
-                                score_mod += 15 if other_ver == self_ver else -15
-                        if scored_lang and scored_ver:
-                            break
+
+                for other_track_info in matchable.__track_info:
+                    # log.debug('{}: Comparing lang & version to: {!r} => {}'.format(self, other, other_track_info))
+                    if not scored_lang:
+                        other_lang = (other_track_info.get('language') or '').lower()
+                        # log.debug('{}: Comparing to {!r} - lang {!r} =?= {!r}'.format(self, other, self_lang, other_lang))
+                        if self_lang and other_lang:
+                            score_mod += 15 if other_lang in self_langs else -15
+                    if not scored_ver:
+                        other_ver = (other_track_info.get('version') or '').lower()
+                        self_ver = (self.version or '').lower()
+                        # log.debug('{}: Comparing to {!r} - ver {!r} =?= {!r}'.format(self, other, self_ver, other_ver))
+                        if self_ver and other_ver:
+                            score_mod += 15 if other_ver == self_ver else -15
+                    if scored_lang and scored_ver:
+                        break
         elif isinstance(self, WikiSongCollection):
             if year is not None:
                 try:
@@ -523,12 +590,22 @@ class WikiMatchable:
                 score_mod += 10 if track_count in self._part_track_counts else -20
 
         best_score, best_alias, best_val = 0, None, None
+        has_han_alias = any(LangCat.categorize(alias) == LangCat.HAN for alias in self._fuzzed_aliases)
         for alias in self._fuzzed_aliases:
-            for val in fuzzed_others:
+            alias_nums = self.__nums(alias)
+            other_aliases = matchable._fuzzed_aliases
+            if not has_han_alias and matchable._rom_permutations:
+                if LangCat.categorize(alias) in (LangCat.ENG, LangCat.MIX):
+                    other_aliases = chain(matchable._fuzzed_aliases, matchable._rom_permutations)
+
+            for val in other_aliases:
+                val_nums = matchable.__nums(val)
                 if best_score >= 100:
                     break
 
                 score = revised_weighted_ratio(alias, val)
+                if alias_nums != val_nums:
+                    score -= 30
                 if ('live' in alias and 'live' not in val) or ('live' in val and 'live' not in alias):
                     score -= 25
 
@@ -537,18 +614,15 @@ class WikiMatchable:
                 if score > best_score:
                     best_score, best_alias, best_val = score, alias, val
 
-        if len(fuzzed_others) > 1 and self._non_eng_langs and LangCat.categorize(best_alias) == LangCat.ENG:
-            if isinstance(other, WikiMatchable):
-                other_langs = other._non_eng_langs
-            else:
-                other_langs = {lng for a in fuzzed_others for lng in LangCat.categorize(a, True) if lng != LangCat.ENG}
+        if len(matchable._fuzzed_aliases) > 1 and self._non_eng_langs and LangCat.categorize(best_alias) == LangCat.ENG:
+            other_langs = matchable._non_eng_langs
             score_mod += 15 if self._non_eng_langs.intersection(other_langs) else -50
 
         final_score = best_score + score_mod
-        if final_score >= 100 and cjk and not getattr(self, 'cjk_name', None):
-            log.debug('Updating {!r}.cjk_name => {!r}'.format(self, cjk))
+        if final_score >= 100 and matchable.cjk_name and not getattr(self, 'cjk_name', None):
+            log.debug('Updating {!r}.cjk_name => {!r}'.format(self, matchable.cjk_name))
             try:
-                self.update_name(None, cjk)
+                self.update_name(None, matchable.cjk_name)
             except AttributeError:
                 pass
 
@@ -562,6 +636,7 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
     def __init__(self, uri_path=None, client=None, *, name=None, raw=None, no_fetch=False, **kwargs):
         if uri_path is None and name is None and raw is None:
             raise WikiEntityInitException('Unable to initialize a {} with no identifiers'.format(type(self).__name__))
+        super().__init__()
         self.__additional_aliases = set()
         self._client = client
         self._uri_path = uri_path
@@ -1595,7 +1670,7 @@ class WikiSongCollection(WikiEntity):
             try:
                 # log.debug('{}: {} Trying to access artist...'.format(self, self.url))
                 artist = self.artist
-            except AttributeError:
+            except NoPrimaryArtistError:
                 try:
                     artist = self.artists[0]
                 except IndexError:
@@ -1885,14 +1960,14 @@ class WikiSongCollection(WikiEntity):
                         fmt = '{}: Unable to determine primary artist based on side info - pre-feat matches: {}'
                         log.debug(fmt.format(self, primary))
 
-        raise AttributeError('{} has multiple contributing artists and no artist context'.format(self))
+        raise NoPrimaryArtistError('{} has multiple contributing artists and no artist context'.format(self))
 
     @cached_property
     def collaborators(self):
         artists = self.artists
         try:
             primary = self.artist
-        except AttributeError:
+        except NoPrimaryArtistError:
             primary = None
 
         if len(artists) < 2:
@@ -1917,7 +1992,9 @@ class WikiSongCollection(WikiEntity):
 
     @cached_property
     def has_multiple_disks(self):
-        return len(self._editions_by_disk) > 1
+        # log.warning('{} has {} disks: {}'.format(self, len(self._editions_by_disk), self._editions_by_disk.keys()))
+        return len(set(p.disk for p in self.parts)) > 1
+        # return len(self._editions_by_disk) > 1
 
     def _get_tracks(self, edition_or_part=None, disk=None):
         if disk is not None:
@@ -2155,6 +2232,7 @@ class WikiSongCollection(WikiEntity):
             pass
         else:
             for track in tracks:
+                # log.debug('{}: Comparing {} to normalized={!r}'.format(self, track, normalized))
                 score, alias, val = track.score_match(normalized, normalize=False, disk=disk, **kwargs)
                 if score >= 100:
                     # log.debug(match_fmt.format(self, track, name, score, alias, val))
@@ -2176,10 +2254,15 @@ class WikiSongCollection(WikiEntity):
                 pass
         best_score, best_part = 0, None
         parts = self.parts if disk is None else [p for p in self.parts if p.disk == disk]
+        # log.debug('{} has parts with matching disk: {}'.format(self, parts))
+        # log.debug(' > Comparing parts to tracks: {}'.format(track_tuples))
 
         for part in parts:
+            if len(part.get_tracks()) * 2 < len(track_tuples):
+                continue
             part_scores = []
             for track_name, track_num in track_tuples:
+                # log.debug('Searching part={} for track name={!r} num={}'.format(part, track_name, track_num))
                 track, score = part.find_track(track_name, min_score=min_score, include_score=True, disk=disk, **kwargs)
                 part_scores.append(score)
 
@@ -2211,6 +2294,7 @@ class WikiSongCollectionPart:
     }
 
     def __init__(self, collection, edition, disk, language, section_info, track_list):
+        self._track_cache = {}
         self._collection = collection
         self._section_info = (section_info,) if isinstance(section_info, str) else section_info
         self._track_list = track_list
@@ -2263,6 +2347,8 @@ class WikiSongCollectionPart:
                 m = self._part_rx.search(self.edition)
                 if m:
                     title += ' - {}'.format(m.group(1).strip())
+                elif isinstance(self._collection, WikiSoundtrack) and self.edition in self.name:
+                    pass    # Make no changes - this is the full OST
                 else:
                     title += ' - {}'.format(self.edition)
 
@@ -2273,6 +2359,7 @@ class WikiSongCollectionPart:
     def _get_tracks(self):
         return self._track_list
 
+    @cached('_track_cache', exc=True)
     def get_tracks(self):
         artist_context = self._collection._artist_context
         return [WikiTrack(info, self, artist_context) for info in self._track_list['tracks']]
@@ -2399,6 +2486,10 @@ class WikiSoundtrack(WikiSongCollection):
                     other = (other, title1)
         # log.debug('{}: Comparing to: {}'.format(self, other))
         return super().score_match(other, *args, **kwargs)
+
+    @cached_property
+    def album_type(self):
+        return 'Soundtrack'
 
     @cached_property
     def tv_series(self):
@@ -2577,6 +2668,15 @@ class WikiSoundtrack(WikiSongCollection):
             log.log(9, fmt.format(self._client.host, self), extra={'color': 8})
             return {'tracks': []}
 
+    @cached()
+    def expected_rel_path(self, true_soloist=False, base_title=None):
+        try:
+            artist = self.artist
+        except NoPrimaryArtistError:
+            return Path('Various Artists').joinpath(self.expected_rel_dir(True, base_title))
+        else:
+            return super().expected_rel_path(true_soloist, base_title)
+
 
 class WikiFeatureOrSingle(WikiSongCollection):
     _category = 'collab/feature/single'
@@ -2636,6 +2736,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
     _from_disco_info = DictAttrProperty('_info', 'from_discography_info', default=False)
 
     def __init__(self, info, collection, artist_context):
+        super().__init__()
         self._info = info   # num, length, language, version, name_parts, collaborators, misc, artist
         self._artist_context = artist_context
         self.collection = collection
@@ -2673,7 +2774,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                 elif self.collection:
                     try:
                         artist = self.collection.artist
-                    except AttributeError as e:
+                    except NoPrimaryArtistError as e:
                         log.log(7, 'No single artist found for track={} from {}'.format(self, self.collection))
                     except Exception as e:
                         fmt = 'Error processing artist for track {!r} from {}: {}'
@@ -2720,6 +2821,16 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
         return collabs
 
     @cached_property
+    def artists(self):
+        self.__process_collabs()
+        collabs = []
+        for collab in self._collaborators.values():
+            artist = self.collection._get_artist(collab)
+            if artist is not None:
+                collabs.append(artist)
+        return collabs
+
+    @cached_property
     def collaborators(self):
         self.__process_collabs()
         collabs = []
@@ -2751,7 +2862,12 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
         if self._artist_context:
             return self._artist_context
         else:
-            return self.collection.artist
+            try:
+                return self.collection.artist
+            except NoPrimaryArtistError as e:
+                if self.collection._category == 'soundtrack' and len(self.artists) == 1:
+                    return self.artists[0]
+                raise e
 
     @property
     def _cmp_attrs(self):

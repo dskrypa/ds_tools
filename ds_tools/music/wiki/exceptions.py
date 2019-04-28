@@ -12,7 +12,8 @@ from ..exceptions import MusicException
 
 __all__ = [
     'AmbiguousEntityException', 'InvalidTrackListException', 'MemberDiscoveryException', 'MusicWikiException',
-    'WikiEntityIdentificationException', 'WikiEntityInitException', 'WikiTypeError', 'WikiAlbumPartProcessingError'
+    'WikiEntityIdentificationException', 'WikiEntityInitException', 'WikiTypeError', 'WikiAlbumPartProcessingError',
+    'NoPrimaryArtistError'
 ]
 log = logging.getLogger(__name__)
 logr = {'ambig_parsing': logging.getLogger(__name__ + '.ambig_parsing')}
@@ -176,3 +177,7 @@ class AmbiguousEntityException(MusicWikiException):
 
 class WikiAlbumPartProcessingError(MusicWikiException):
     """Exception to be raised when there's a problem with processing parts of a multi-part album"""
+
+
+class NoPrimaryArtistError(MusicWikiException):
+    """Exception to be raised when retrieving an album's primary artist, but that album has no primary artist"""
