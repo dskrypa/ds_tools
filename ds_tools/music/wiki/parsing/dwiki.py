@@ -175,6 +175,10 @@ def parse_drama_wiki_info_list(uri_path, info_ul, client):
                     permutations = {''.join(p.split()) for p in romanized_permutations(parts[0])}
                     if all(''.join(p.lower().split()) in permutations for p in parts[1:]):
                         value = ('', parts[0])
+                elif len(parts) == 2 and all(lang in LangCat.asian_cats for lang in langs):
+                    value = ('', parts[0])
+                    fmt = 'No english title found for {}; 2 non-eng titles found: {!r} (keeping) / {!r} (discarding)'
+                    log.debug(fmt.format(uri_path, *parts))
         elif key in ('release date', 'birthdate'):
             if key == 'birthdate':
                 try:
