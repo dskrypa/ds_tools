@@ -182,7 +182,7 @@ def parse_name(text):
     aka = None
     aka_leads = (
         'aka', 'a.k.a.', 'also known as', 'or simply', 'an acronym for', 'short for', 'or ', 'better known as',
-        'better known simply as'
+        'better known simply as', 'known pre-debut as', 'previously known by the stage name'
     )
     style_leads = ('stylized as', 'sometimes styled as')
     info = []
@@ -198,8 +198,18 @@ def parse_name(text):
             found_hangul = is_hangul(part)
             cjk = part
         elif ':' in part and not found_hangul:
-            _lang_name, cjk = eng_cjk_sort(tuple(map(str.strip, part.split(':', 1))))
-            found_hangul = is_hangul(cjk)
+            _lang_name, cjk = tuple(map(str.strip, part.split(':', 1)))
+            langs = categorize_langs((_lang_name, cjk))
+            if langs[0] != LangCat.ENG:
+                raise ValueError('Unexpected langs for "lang: value" pair {!r}: {}'.format(part, langs))
+            elif langs[1] == LangCat.MIX:
+                suffix = common_suffix((base, cjk))
+                if not suffix or LangCat.categorize(cjk[:-len(suffix)]) not in LangCat.asian_cats:
+                    fmt = 'Unexpected lang mix for "lang: value" pair {!r} given base={!r}: {}'
+                    raise ValueError(fmt.format(part, base, langs))
+            elif langs[1] not in LangCat.asian_cats:
+                raise ValueError('Unexpected langs for "lang: value" pair {!r}: {}'.format(part, langs))
+            found_hangul = langs[1] == LangCat.HAN
         elif ':' in part and contains_any_cjk(part):
             try:
                 pronounced_rx = parse_name._pronounced_rx
@@ -447,6 +457,25 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
                 keyword = next((val for val in ('from ',) if not_used.startswith(val)), None)
                 if keyword:
                     not_used = not_used[len(keyword):].strip()
+        elif LangCat.MIX not in langs and len(set(langs)) == 3:     # Soloist (other lang 1) (other lang 2)
+            not_used = []
+            for part, lang in zip(map(unsurround, parts), langs):
+                if lang == LangCat.ENG:
+                    eng = part
+                elif lang == LangCat.HAN:
+                    cjk = part
+                else:
+                    not_used.append(part)
+            if not eng:
+                cjk = None
+            elif not cjk:
+                if len(not_used) == 2:
+                    for i, val in enumerate(not_used):
+                        if LangCat.categorize(val) in LangCat.asian_cats:
+                            cjk = not_used.pop(i)
+                            break
+                if not cjk:
+                    eng = None  # Raise exception
 
     if not eng and not cjk:
         # traceback.print_stack()
