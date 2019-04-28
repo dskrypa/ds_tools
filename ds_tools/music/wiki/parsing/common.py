@@ -41,7 +41,7 @@ NUMS = {
 }
 
 
-def find_href(client, anchors, texts, categories):
+def find_href(client, anchors, texts, categories=None):
     if not client or not anchors:
         return None
     elif isinstance(texts, str):

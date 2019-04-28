@@ -151,7 +151,13 @@ class WikiClient(RestClient):
     def get_entity_base(self, uri_path, obj_type=None):
         raise NotImplementedError()
 
-    def is_any_category(self, uri_path, categories):
+    def is_any_category(self, uri_path, categories=None):
+        """
+        :param str uri_path: A uri path relative to this client's root path
+        :param None|container categories: A container holding one more more str categories to match against, or None to
+          return True if the given uri_path's category is not None
+        :return bool: True if the page with the given uri_path is one of the provided categories
+        """
         if 'action=edit&redlink=1' in uri_path:
             return False
         if isinstance(categories, str):
@@ -161,7 +167,8 @@ class WikiClient(RestClient):
         if uri_path.startswith((self.path_prefix, '/' + self.path_prefix)):
             uri_path = uri_path[len(self.path_prefix)+1:]
         raw, cats = self.get_entity_base(uri_path)
-        return get_page_category(uri_path, cats, no_debug=True) in categories
+        page_category = get_page_category(uri_path, cats, no_debug=True)
+        return (page_category in categories) if categories is not None else (page_category is not None)
 
 
 class KpopWikiClient(WikiClient):

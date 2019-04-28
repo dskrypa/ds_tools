@@ -740,6 +740,18 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
             return True
         return False
 
+    def _find_href(self, texts, categories=None):
+        """
+        :param container texts: A container holding one or more strings that should match the text property of an html
+          anchor in this page
+        :param None|container categories: A container holding one more more str categories to match against, or None to
+          match against any non-None page category
+        :return None|str: A url/uri_path from an anchor on this page if a match was found, otherwise None
+        """
+        if self._raw:
+            return find_href(self._client, self._all_anchors, texts, categories)
+        return None
+
 
 class WikiPersonCollection(WikiEntity):
     _category = ('agency', 'competition', 'group', 'singer')
@@ -1350,7 +1362,7 @@ class WikiGroup(WikiArtist):
 class WikiSinger(WikiArtist):
     _category = 'singer'
     _member_rx = re.compile(
-        r'^.* is (?:a|the) (.*?)(?:member|vocalist|rapper|dancer|leader|visual|maknae) of .*?group (.*)\.'
+        r'^.* is (?:a|the) (.*?)(?:member|vocalist|rapper|dancer|leader|visual|maknae) of (.*?group) (.*)\.'
     )
 
     def __init__(self, uri_path=None, client=None, *, _member_of=None, **kwargs):
@@ -1360,22 +1372,22 @@ class WikiSinger(WikiArtist):
             clean_soup = self._clean_soup
             mem_match = self._member_rx.search(clean_soup.text.strip())
             if mem_match:
-                if 'former' not in mem_match.group(1):
-                    group_name = mem_match.group(2)
+                if 'former' not in mem_match.group(1) and 'left the group' not in mem_match.group(2):
+                    group_name = mem_match.group(3)
                     m = re.match(r'^(.*)\.\s+[A-Z]', group_name)
                     if m:
                         group_name = m.group(1)
                     # log.debug('{} appears to be a member of group {!r}; looking for group page...'.format(self, group_name))
                     for i, a in enumerate(clean_soup.find_all('a')):
                         if a.text and a.text in group_name:
-                            href = (a.get('href') or "")[6:]
+                            href = (a.get('href') or '')[6:]
                             # log.debug('{}: May have found group match for {!r} => {!r}, href={!r}'.format(self, group_name, a.text, href))
                             if href and (href != self._uri_path):
                                 try:
                                     self.member_of = WikiGroup(href)
                                 except WikiTypeError as e:
-                                    fmt = '{}: Found possible group match for {!r}=>{!r}, href={!r}, but {}'
-                                    log.debug(fmt.format(self, group_name, a.text, href, e))
+                                    fmt = '{}: Found possible group match for {!r}=>{!r}, href={!r}, but {}; rx={}'
+                                    log.debug(fmt.format(self, group_name, a.text, href, e, mem_match.groups()))
                                 else:
                                     break
             else:
@@ -1751,103 +1763,99 @@ class WikiSongCollection(WikiEntity):
                 artist_map[artist_name] = artist
         return list(artist_map.values())
 
+    def _get_artist(self, artist_dict, artists=None):
+        # log.debug('{}: Processing artist: {}'.format(self, artist))
+        name = artist_dict['artist']
+        if name[0].lower() in ('various artists', 'various'):
+            return None
+
+        href = artist_dict.get('artist_href')
+        of_group = artist_dict.get('of_group')
+        # group_href = artist.get('group_href')
+        if self._has_no_valid_links(href, name[0]):
+            fmt = '{}: Skipping page search for artist={!r} of_group={!r} found on {} because it has a red link'
+            log.debug(fmt.format(self, name, of_group, self.url), extra={'color': 94})
+            return WikiArtist(href, name=name, of_group=of_group, client=self._client, no_fetch=True)
+
+        try:
+            # log.debug('{}: Looking for artist href={!r} name={!r} of_group={!r}'.format(self, href, name, of_group))
+            return WikiArtist(href, name=name, of_group=of_group, client=self._client)
+        except AmbiguousEntityException as e:
+            # log.debug('{}: artist={} => ambiguous'.format(self, artist))
+            if self._artist_context and isinstance(self._artist_context, WikiGroup):
+                for member in self._artist_context.members:
+                    if member._uri_path in e.alternatives:
+                        return member
+
+            fmt = '{}\'s artist={!r} is ambiguous'
+            no_warn = False
+            if e.alternatives:
+                fmt += ' - it could be one of: {}'.format(' | '.join(e.alternatives))
+                if len(e.alternatives) == 1:
+                    alt_href = e.alternatives[0]
+                    try:
+                        alt_entity = WikiEntity(alt_href)
+                    except Exception:
+                        pass
+                    else:
+                        if not isinstance(alt_entity, WikiArtist):
+                            fmt = '{}\'s artist={!r} has no page in {}; the disambiguation alternative was {}'
+                            log.debug(fmt.format(self, name, alt_entity._client.host, alt_entity))
+                            no_warn = True
+
+            if not no_warn:
+                log.log(19, fmt.format(self, name), extra={'color': (11, 9)})
+
+            return WikiArtist(href, name=name, no_fetch=True, client=self._client)
+        except CodeBasedRestException as e:
+            # log.debug('{}: artist={} => {}'.format(self, artist, e))
+            if isinstance(self._client, KpopWikiClient):
+                try:
+                    return WikiArtist(href, name=name, of_group=of_group)
+                except CodeBasedRestException as e2:
+                    fmt = 'Error retrieving info for {}\'s artist={!r} (href={!r}) from multiple clients: {}'
+                    log.debug(fmt.format(self, name, href, e), extra={'color': 13})
+                    return WikiArtist(href, name=name, no_fetch=True)
+            else:
+                msg = 'Error retrieving info for {}\'s artist={!r} (href={!r}): {}'.format(self, name, href, e)
+                if href is None:
+                    log.log(9 if isinstance(self, WikiSoundtrack) else 10, msg)
+                else:
+                    log.error(msg, extra={'color': 13})
+                return WikiArtist(href, name=name, no_fetch=True)
+        except WikiTypeError as e:
+            # log.debug('{}: artist={} => {}'.format(self, artist, e))
+            log_lvl = logging.DEBUG if isinstance(self._client, WikipediaClient) else logging.WARNING
+            if e.category == 'disambiguation':
+                fmt = '{}\'s artist={!r} has an ambiguous href={}'
+                log.log(log_lvl, fmt.format(self, name, e.url), extra={'color': (11, 9)})
+            else:
+                fmt = '{}\'s artist={!r} doesn\'t appear to be an artist: {}'
+                log.log(log_lvl, fmt.format(self, name, e), extra={'color': (11, 9)})
+                # raise e
+            return WikiArtist(href, name=name, no_fetch=True)
+        except WikiEntityInitException as e:
+            artist_alias = next((a for a in artists if a.matches(name)), None) if artists else None
+            if not artist_alias:
+                fmt = '{}: Unable to find artist href={!r} name={!r} of_group={!r} found on {}: {}'
+                log.error(fmt.format(self, href, name, of_group, self._info_src, e), extra={'color': 9})
+                return WikiArtist(href, name=name, no_fetch=True)
+            else:
+                fmt = '{}: Artists contained an alias={!r} for already known artist={}'
+                log.debug(fmt.format(self, name, artist_alias))
+        except Exception as e:
+            fmt = '{}: Unable to find artist href={!r} name={!r} of_group={!r} found on {}: {}'
+            log.error(fmt.format(self, href, name, of_group, self._info_src, e), extra={'color': 9})
+            return WikiArtist(href, name=name, no_fetch=True)
+        return None
+
     @cached_property
     def artists(self):
         artists = set()
-        for artist in self._artists:
-            # log.debug('{}: Processing artist: {}'.format(self, artist))
-            name = artist['artist']
-            if name[0].lower() in ('various artists', 'various'):
-                continue
-
-            href = artist.get('artist_href')
-            of_group = artist.get('of_group')
-            # group_href = artist.get('group_href')
-            if self._has_no_valid_links(href, name[0]):
-                fmt = '{}: Skipping page search for artist={!r} of_group={!r} found on {} because it has a red link'
-                log.debug(fmt.format(self, name, of_group, self.url), extra={'color': 94})
-                artists.add(WikiArtist(href, name=name, of_group=of_group, client=self._client, no_fetch=True))
-                continue
-
-            try:
-                # log.debug('{}: Looking for artist href={!r} name={!r} of_group={!r}'.format(self, href, name, of_group))
-                artist = WikiArtist(href, name=name, of_group=of_group, client=self._client)
-            except AmbiguousEntityException as e:
-                # log.debug('{}: artist={} => ambiguous'.format(self, artist))
-                if self._artist_context and isinstance(self._artist_context, WikiGroup):
-                    found = False
-                    for member in self._artist_context.members:
-                        if member._uri_path in e.alternatives:
-                            artists.add(member)
-                            found = True
-                            break
-                    if found:
-                        continue
-
-                fmt = '{}\'s artist={!r} is ambiguous'
-                no_warn = False
-                if e.alternatives:
-                    fmt += ' - it could be one of: {}'.format(' | '.join(e.alternatives))
-                    if len(e.alternatives) == 1:
-                        alt_href = e.alternatives[0]
-                        try:
-                            alt_entity = WikiEntity(alt_href)
-                        except Exception:
-                            pass
-                        else:
-                            if not isinstance(alt_entity, WikiArtist):
-                                fmt = '{}\'s artist={!r} has no page in {}; the disambiguation alternative was {}'
-                                log.debug(fmt.format(self, name, alt_entity._client.host, alt_entity))
-                                no_warn = True
-
-                if not no_warn:
-                    log.log(19, fmt.format(self, name), extra={'color': (11, 9)})
-
-                artists.add(WikiArtist(href, name=name, no_fetch=True, client=self._client))
-            except CodeBasedRestException as e:
-                # log.debug('{}: artist={} => {}'.format(self, artist, e))
-                if isinstance(self._client, KpopWikiClient):
-                    try:
-                        artist = WikiArtist(href, name=name, of_group=of_group)
-                    except CodeBasedRestException as e2:
-                        fmt = 'Error retrieving info for {}\'s artist={!r} (href={!r}) from multiple clients: {}'
-                        log.debug(fmt.format(self, name, href, e), extra={'color': 13})
-                        artists.add(WikiArtist(href, name=name, no_fetch=True))
-                    else:
-                        artists.add(artist)
-                else:
-                    msg = 'Error retrieving info for {}\'s artist={!r} (href={!r}): {}'.format(self, name, href, e)
-                    if href is None:
-                        log.log(9 if isinstance(self, WikiSoundtrack) else 10, msg)
-                    else:
-                        log.error(msg, extra={'color': 13})
-                    artists.add(WikiArtist(href, name=name, no_fetch=True))
-            except WikiTypeError as e:
-                # log.debug('{}: artist={} => {}'.format(self, artist, e))
-                log_lvl = logging.DEBUG if isinstance(self._client, WikipediaClient) else logging.WARNING
-                if e.category == 'disambiguation':
-                    fmt = '{}\'s artist={!r} has an ambiguous href={}'
-                    log.log(log_lvl, fmt.format(self, name, e.url), extra={'color': (11, 9)})
-                else:
-                    fmt = '{}\'s artist={!r} doesn\'t appear to be an artist: {}'
-                    log.log(log_lvl, fmt.format(self, name, e), extra={'color': (11, 9)})
-                    # raise e
-                artists.add(WikiArtist(href, name=name, no_fetch=True))
-            except WikiEntityInitException as e:
-                artist_alias = next((a for a in artists if a.matches(name)), None)
-                if not artist_alias:
-                    fmt = '{}: Unable to find artist href={!r} name={!r} of_group={!r} found on {}: {}'
-                    log.error(fmt.format(self, href, name, of_group, self._info_src, e), extra={'color': 9})
-                    artists.add(WikiArtist(href, name=name, no_fetch=True))
-                else:
-                    fmt = '{}: Artists contained an alias={!r} for already known artist={}'
-                    log.debug(fmt.format(self, name, artist_alias))
-            except Exception as e:
-                fmt = '{}: Unable to find artist href={!r} name={!r} of_group={!r} found on {}: {}'
-                log.error(fmt.format(self, href, name, of_group, self._info_src, e), extra={'color': 9})
-                artists.add(WikiArtist(href, name=name, no_fetch=True))
-            else:
-                # log.debug('{}: artist={} => adding'.format(self, artist))
+        for _artist in self._artists:
+            artist = self._get_artist(_artist, artists)
+            # log.debug('{}: artist={} => adding'.format(self, artist))
+            if artist is not None:
                 artists.add(artist)
         return sorted(artists)
 
@@ -1859,7 +1867,9 @@ class WikiSongCollection(WikiEntity):
         elif self._artist_context:
             return self._artist_context
 
-        if self._raw:
+        if self._raw and isinstance(self._client, (KpopWikiClient, WikipediaClient)):
+            fmt = '{}: Examining side info for primary artist info from {} via client={}'
+            log.debug(fmt.format(self, self.url, self._client))
             artists_raw = self._side_info.get('artist')
             if artists_raw and len(artists_raw) == 1:
                 lc_artist_raw = artists_raw[0].lower()
@@ -2423,90 +2433,123 @@ class WikiSoundtrack(WikiSongCollection):
                 except Exception as e:
                     log.error('{}: Error processing artist of_group: {}'.format(self, _artist))
                     raise e
-
                 # log.debug('Processing artist: {}'.format(', '.join('{}={!r}'.format(k, v) for k, v in zip(keys, (eng, cjk, group_eng, group_cjk, artist_href, group_href)))))
                 for key, val in zip(keys, (eng, cjk, group_eng, group_cjk, artist_href, group_href)):
                     if val:
                         artists[eng].setdefault(key, val)
-        return list(artists.values())
 
-    @cached_property
-    def artists(self):
-        if not isinstance(self._client, DramaWikiClient):
-            return super().artists
+        fixed_artists = []
+        for a in artists.values():
+            group = None if not any(k in a for k in ('group_eng', 'group_cjk')) else (a['group_eng'], a['group_cjk'])
+            fixed_artists.append({
+                'artist_href': a.get('artist_href'), 'artist': (a.get('eng', ''), a.get('cjk', '')),
+                'group_href': a.get('group_href'), 'of_group': group
+            })
+        return fixed_artists
 
-        artists = set()
-        for _artist in self._artists:
-            eng, cjk = _artist['eng'], _artist.get('cjk')
-            if eng.lower() == 'various artists':
-                continue
+    def _get_artist(self, artist_dict, artists=None):
+        # log.debug('Processing artist: {!r}'.format(artist_dict), extra={'color': (1, 8)})
+        eng, cjk = artist_dict['artist']
+        # eng, cjk = artist_dict['eng'], artist_dict.get('cjk')
+        if eng.lower() == 'various artists':
+            return None
 
-            group_eng = _artist.get('group_eng')
+        parts = (eng, cjk)
+        # group_eng = artist_dict.get('group_eng')
+        try:
+            group_eng, group_cjk = artist_dict.get('of_group')
+        except Exception:
+            group_eng, group_cjk = None, None
+        if not group_eng and eng and cjk and LangCat.categorize(cjk) == LangCat.HAN and not self._find_href(parts):
+            # Don't bother looking up solo artists that have no (valid) links on this page
+            eng_lc_nospace = ''.join(eng.split()).lower()
+            permutations = romanized_permutations(cjk)
+            # log.debug('Comparing {!r} to: {}'.format(eng_lc_nospace, permutations))
+            if any(''.join(p.split()) == eng_lc_nospace for p in permutations):
+                # log.debug('No lookup being done for {!r}'.format(parts))
+                return WikiArtist(aliases=(eng, cjk), no_fetch=True)
+
+        try:
             try:
-                try:
-                    artist = WikiArtist(aliases=(eng, cjk), of_group=group_eng)
-                except WikiTypeError as e:
-                    if group_eng:
-                        artist = WikiArtist(aliases=(eng, cjk))
-                    else:
-                        raise e
-            except AmbiguousEntityException as e:
-                d_artist_href = _artist.get('artist_href')
-                if d_artist_href:
-                    d_artist = WikiArtist(d_artist_href, client=self._client)
-                    if e.alternatives:
-                        alternatives = []
-                        _alts = list(e.alternatives)
-                        for alt_href in e.alternatives:
-                            if 'singer' in alt_href:
-                                _alts.remove(alt_href)
-                                alternatives.append(alt_href)
-                        alternatives.extend(_alts)
-                    else:
-                        alternatives = e.alternatives
+                return WikiArtist(aliases=(eng, cjk), of_group=group_eng)
+            except WikiTypeError as e:
+                if group_eng:
+                    return WikiArtist(aliases=(eng, cjk))
+                else:
+                    raise e
+        except AmbiguousEntityException as e:
+            d_artist_href = artist_dict.get('artist_href')
+            if d_artist_href:
+                d_artist = WikiArtist(d_artist_href, client=self._client)
+                if e.alternatives:
+                    alternatives = []
+                    _alts = list(e.alternatives)
+                    for alt_href in e.alternatives:
+                        if 'singer' in alt_href:
+                            _alts.remove(alt_href)
+                            alternatives.append(alt_href)
+                    alternatives.extend(_alts)
+                else:
+                    alternatives = e.alternatives
 
-                    for i, alt_href in enumerate(alternatives):
-                        if i > 3:
-                            fmt = '{}: Skipping alt href comparison for {} =?= {} because it has too many alternatives'
-                            log.warning(fmt.format(self, d_artist, alt_href))
-                        else:
-                            client = WikiClient.for_site(e.site) if e.site else None
-                            tmp_artist = WikiArtist(alt_href, client=client)
-                            if tmp_artist.matches(d_artist):
-                                log.debug('{}: Matched {} to {}'.format(self, d_artist, tmp_artist))
-                                artists.add(tmp_artist)
-                                break
-                            else:
-                                log.debug('{}: {} != {}'.format(self, d_artist, tmp_artist))
+                for i, alt_href in enumerate(alternatives):
+                    if i > 3:
+                        fmt = '{}: Skipping alt href comparison for {} =?= {} because it has too many alternatives'
+                        log.warning(fmt.format(self, d_artist, alt_href))
                     else:
-                        fmt = '{}\'s artist={!r} is ambiguous'
-                        if e.alternatives:
-                            fmt += ' - it could be one of: {}'.format(' | '.join(e.alternatives))
-                        log.log(19, fmt.format(self, eng, group_eng), extra={'color': (11, 9)})
-                        artists.add(WikiArtist(name=eng, no_fetch=True))
+                        client = WikiClient.for_site(e.site) if e.site else None
+                        tmp_artist = WikiArtist(alt_href, client=client)
+                        if tmp_artist.matches(d_artist):
+                            log.debug('{}: Matched {} to {}'.format(self, d_artist, tmp_artist))
+                            return tmp_artist
+                        else:
+                            log.debug('{}: {} != {}'.format(self, d_artist, tmp_artist))
                 else:
                     fmt = '{}\'s artist={!r} is ambiguous'
                     if e.alternatives:
                         fmt += ' - it could be one of: {}'.format(' | '.join(e.alternatives))
-                    log.warning(fmt.format(self, eng), extra={'color': (11, 9)})
-                    artists.add(WikiArtist(name=eng, no_fetch=True))
-            except CodeBasedRestException as e:
-                if e.code == 404:
-                    log.debug('No page found for {}\'s artist={!r} of_group={!r}'.format(self, eng, group_eng))
-                else:
-                    fmt = 'Error retrieving info for {}\'s artist={!r} of_group={!r}: {}'
-                    log.error(fmt.format(self, eng, group_eng, e), extra={'color': 13})
-                artists.add(WikiArtist(aliases=(eng, cjk), no_fetch=True))
-            except (WikiEntityInitException, WikiEntityIdentificationException) as e:
-                fmt = 'Error retrieving info for {}\'s artist={!r} of_group={!r}: {}'
-                log.debug(fmt.format(self, eng, group_eng, e), extra={'color': 13})
-                artists.add(WikiArtist(aliases=(eng, cjk), no_fetch=True))
-            except Exception as e:
-                fmt = 'Unexpected error processing {}\'s artist={!r} of_group={!r}: {}\n{}'
-                log.error(fmt.format(self, eng, group_eng, e, traceback.format_exc()), extra={'color': (11, 9)})
+                    log.log(19, fmt.format(self, eng, group_eng), extra={'color': (11, 9)})
+                    return WikiArtist(name=eng, no_fetch=True)
             else:
-                artists.add(artist)
-        return sorted(artists)
+                fmt = '{}\'s artist={!r} is ambiguous'
+                if e.alternatives:
+                    fmt += ' - it could be one of: {}'.format(' | '.join(e.alternatives))
+                log.warning(fmt.format(self, eng), extra={'color': (11, 9)})
+                return WikiArtist(name=eng, no_fetch=True)
+        except CodeBasedRestException as e:
+            if e.code == 404:
+                artist_href = artist_dict.get('artist_href')
+                if artist_href:
+                    fmt = 'No page found for {}\'s artist={!r} of_group={!r} via client={}, but a {} link was found'
+                    log.log(6, fmt.format(self, eng, group_eng, KpopWikiClient(), self._client))
+                    try:
+                        return WikiArtist(artist_href, client=self._client, of_group=group_eng)
+                    except Exception as e1:
+                        fmt = '{}: Unexpected error using artist_href={} for {}: {}'
+                        log.error(fmt.format(self, artist_href, parts, e1))
+                else:
+                    log.debug('No page found for {}\'s artist={!r} of_group={!r}'.format(self, eng, group_eng))
+            else:
+                fmt = 'Error retrieving info for {}\'s artist={!r} of_group={!r}: {}'
+                log.error(fmt.format(self, eng, group_eng, e), extra={'color': 13})
+            return WikiArtist(aliases=(eng, cjk), no_fetch=True)
+        except (WikiEntityInitException, WikiEntityIdentificationException) as e:
+            msg = 'Error retrieving info for {}\'s artist={!r} of_group={!r}: {}'.format(self, eng, group_eng, e)
+            artist_href = artist_dict.get('artist_href')
+            if artist_href:
+                log.log(6, msg + ', but a {} link was found'.format(self._client))
+                try:
+                    return WikiArtist(artist_href, client=self._client, of_group=group_eng)
+                except Exception as e1:
+                    fmt = '{}: Unexpected error using artist_href={} for {}: {}'
+                    log.error(fmt.format(self, artist_href, parts, e1))
+            else:
+                log.debug(msg, extra={'color': 13})
+            return WikiArtist(aliases=(eng, cjk), no_fetch=True)
+        except Exception as e:
+            fmt = 'Unexpected error processing {}\'s artist={!r} of_group={!r}: {}\n{}'
+            log.error(fmt.format(self, eng, group_eng, e, traceback.format_exc()), extra={'color': (11, 9)})
+        return None
 
     def _get_tracks(self, edition_or_part=None, disk=None):
         track_info = self._discography_entry.get('track_info')
@@ -2607,6 +2650,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
             return
         self.__processed_collabs = True
         if self.from_ost and self._artist_context:
+            # log.debug('Processing collabs from OST {!r} w/ artist_context={!r}'.format(self.name, self._artist_context), extra={'color': (1, 230)})
             # log.debug('Comparing collabs={} to aliases={}'.format(self._collaborators, self._artist_context.aliases))
             if not self._from_disco_info:
                 if not any(self._artist_context.matches(c['artist']) for c in self._collaborators.values()):
@@ -2621,6 +2665,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
             # Clean up the collaborator list for tracks that include the primary artist in the list of collaborators
             # Example case: LOONA pre-debut single albums
             if self._collaborators:
+                # log.debug('Processing collabs from {!r}: {!r}'.format(self.name, self._collaborators), extra={'color': (1, 230)})
                 if self._artist and self._artist.lower() in self._collaborators:
                     # fmt = 'WikiTrack {!r} discarding artist from collaborators: artist={!r}; collabs: {}'
                     # log.debug(fmt.format(self.name, self._artist, self._collaborators), extra={'color': 'cyan'})
@@ -2628,6 +2673,8 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                 elif self.collection:
                     try:
                         artist = self.collection.artist
+                    except AttributeError as e:
+                        log.log(7, 'No single artist found for track={} from {}'.format(self, self.collection))
                     except Exception as e:
                         fmt = 'Error processing artist for track {!r} from {}: {}'
                         log.debug(fmt.format(self.name, self.collection, e))
@@ -2678,9 +2725,10 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
         collabs = []
         for collab in self._collaborators.values():
             try:
-                artist = WikiArtist(
-                    collab.get('artist_href'), aliases=collab['artist'], of_group=collab.get('of_group')
-                )
+                artist = self.collection._get_artist(collab)
+                # artist = WikiArtist(
+                #     collab.get('artist_href'), aliases=collab['artist'], of_group=collab.get('of_group')
+                # )
             except Exception as e:
                 artist = collab['artist']
                 if not isinstance(artist, str):
