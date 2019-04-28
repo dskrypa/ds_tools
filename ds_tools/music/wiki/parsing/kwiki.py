@@ -117,7 +117,8 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artist, compilation=Fa
                                 break
 
             disk_section = section if not section or isinstance(section, str) else section[0]
-            if disk_section and disk_section.lower().startswith(('disk', 'disc', 'cd')):
+            lc_disk_section = disk_section.lower().strip() if disk_section else ''
+            if disk_section and lc_disk_section.startswith(('disk', 'disc', 'cd')) and lc_disk_section != 'cd':
                 m = disk_rx.match(disk_section)
                 if not m:
                     raise WikiEntityParseException(unexpected_num_fmt.format(uri_path, disk_section))
