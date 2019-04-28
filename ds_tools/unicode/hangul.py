@@ -42,8 +42,8 @@ LEAD_CONSONANT_PERMUTATIONS = [
     ('ch', 'j'), 'jj', 'ch', 'k', 't', 'p', 'h'
 ]
 VOWEL_PERMUTATIONS = [
-    'a', 'ae', 'ya', 'yae', ('eo', 'u'), 'e', ('yeo', 'you'), 'ye', 'o', 'wa', 'wae', 'oe', 'yo', ('u', 'oo'),
-    ('weo', 'wo'), 'we', 'wi', 'yu', 'eu', ('eui', 'ui', 'ee'), 'i'
+    'a', 'ae', 'ya', 'yae', ('eo', 'u'), 'e', ('yeo', 'you', 'yu'), 'ye', ('o', 'oh'), 'wa', 'wae', 'oe', 'yo', ('u', 'oo'),
+    ('weo', 'wo'), 'we', 'wi', ('yu', 'yoo'), 'eu', ('eui', 'ui', 'ee'), 'i'
 ]
 END_CONSONANT_PERMUTATIONS = [
     '', ('k', 'g'), ('kk', 'gg'), ('ks', 'gs'), 'n', 'nj', 'nh', ('d', 't'), 'l', 'rk', 'rm', 'rb', 'rs', 'rt', 'rp',
@@ -63,6 +63,7 @@ REVISED_END_CONSONANTS = [
     'ss', 'ng', 'j', 'ch', 'k', 't', 'p', 'h'
 ]
 ROMANIZED_NAME_SYLLABLES = {'희': ('h', 'ee', ''), '이': ('l', 'ee', ''), '박': ('p', 'a', 'rk')}
+ROMANIZED_MISC_NAMES = {'죠지': 'george', '일레인': 'elaine'}
 SH_VOWELS = {'i', 'yeo', 'ya', 'yo', 'yu'}
 T_STOPS = {'s', 'ss', 'j', 'ch', 'h'}
 
@@ -317,8 +318,10 @@ def romanized_permutations(text):
         combined_1.append(''.join(simple))
 
     # log.debug('{!r} => {}'.format(text, combined_1))
-
-    return list(map(str.strip, combo_options(combined_1)))
+    permutations = list(map(str.strip, combo_options(combined_1)))
+    if text in ROMANIZED_MISC_NAMES:
+        permutations.insert(0, ROMANIZED_MISC_NAMES[text])
+    return permutations
 
 
 def combo_options(list_with_opts, bases=None):
