@@ -178,7 +178,7 @@ def parse_name(text):
     aka = None
     aka_leads = (
         'aka', 'a.k.a.', 'also known as', 'or simply', 'an acronym for', 'short for', 'or ', 'better known as',
-        'better known simply as', 'known pre-debut as', 'previously known by the stage name'
+        'better known simply as', 'known pre-debut as', 'previously known by the stage name', 'also written as'
     )
     style_leads = ('stylized as', 'sometimes styled as')
     info = []
@@ -216,7 +216,11 @@ def parse_name(text):
             if m:
                 info.extend(m.groups())
             else:
-                info.append(part)
+                _lang_name, alt_cjk = tuple(map(str.strip, part.split(':', 1)))
+                if LangCat.categorize(_lang_name) == LangCat.ENG and LangCat.categorize(alt_cjk) in LangCat.asian_cats:
+                    aka = alt_cjk
+                else:
+                    info.append(part)
         elif lc_part.endswith((' ver.', ' ver')):
             info.append(part)
         elif not aka and any(lead for lead in aka_leads if lc_part.startswith(lead)):
