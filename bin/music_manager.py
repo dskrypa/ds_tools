@@ -36,7 +36,7 @@ from ds_tools.core import localize
 from ds_tools.logging import LogManager
 from ds_tools.music import (
     iter_music_files, load_tags, iter_music_albums, iter_categorized_music_files, tag_repr, apply_mutagen_patches,
-    TagException, iter_album_dirs, RM_TAGS_ID3, RM_TAGS_MP4
+    TagException, iter_album_dirs, RM_TAGS_ID3, RM_TAGS_MP4, NoPrimaryArtistError
 )
 from ds_tools.output import colored, uprint, Table, SimpleColumn, TableBar
 from ds_tools.utils import num_suffix
@@ -189,9 +189,15 @@ def match_wiki(path):
     rows = []
     for music_file in iter_music_files(path):
         try:
-            rows.append({
+            row = {}
+            try:
+                row['Wiki Artist'] = music_file.wiki_artist.qualname if music_file.wiki_artist else ''
+            except NoPrimaryArtistError as e:
+                row['Wiki Artist'] = '[no primary artist]'
+
+            row.update({
                 'F.Artist': music_file.tag_artist,
-                'Wiki Artist': music_file.wiki_artist.qualname if music_file.wiki_artist else '',
+                # 'Wiki Artist': music_file.wiki_artist.qualname if music_file.wiki_artist else '',
 
                 'File Album': music_file.album_name_cleaned,
                 'Wiki Album': music_file.wiki_album.title if music_file.wiki_album else '',
@@ -218,6 +224,8 @@ def match_wiki(path):
         except Exception as e:
             log.error('Error processing {}: {}'.format(music_file, e))
             raise e
+        else:
+            rows.append(row)
 
     tbl.print_rows(rows)
 

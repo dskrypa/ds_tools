@@ -30,7 +30,7 @@ from .patches import tag_repr
 from .name_processing import split_names, split_name
 from .wiki import (
     WikiArtist, WikiEntityIdentificationException, KpopWikiClient, WikiSongCollection, find_ost,
-    AmbiguousEntityException, WikiGroup, WikiSinger, WikiSongCollectionPart
+    AmbiguousEntityException, WikiGroup, WikiSinger, WikiSongCollectionPart, NoPrimaryArtistError
 )
 
 __all__ = [
@@ -87,6 +87,9 @@ class AlbumDir(ClearableCachedPropertyMixin):
 
     def __iter__(self):
         yield from self.songs
+
+    def __len__(self):
+        return len(self.songs)
 
     def move(self, dest_path):
         if not isinstance(dest_path, Path):
@@ -164,11 +167,16 @@ class AlbumDir(ClearableCachedPropertyMixin):
         return length
 
     @cached_property
+    def _is_full_ost(self):
+        return all(f._is_full_ost for f in self.songs)
+
+    @cached_property
     def wiki_artist(self):
         try:
             artists = {f.wiki_artist for f in self.songs if f.wiki_artist}
         except Exception as e:
-            log.error('Error determining wiki_artist for one or more songs in {}: {}'.format(self, e))
+            if not self._is_full_ost:
+                log.error('Error determining wiki_artist for one or more songs in {}: {}'.format(self, e))
             return None
 
         if len(artists) == 1:
@@ -208,6 +216,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
             return None
 
         if len(albums) == 1:
+            # log.debug('{}: Found single album match: {}'.format(self, albums))
             return albums.pop()
         elif len(albums) > 1:
             if all(isinstance(a, WikiSongCollectionPart) for a in albums):
@@ -270,9 +279,18 @@ class AlbumDir(ClearableCachedPropertyMixin):
     def wiki_album_part(self):
         if self.wiki_album:
             track_tuples = [(f.tag_title, f.track_num) for f in self.songs]
-            part = self.wiki_album.find_part(track_tuples, disk=self.disk_num)
-            if part:
-                return part
+            if self.disk_num:
+                disk_nums = (self.disk_num, None) if str(self.disk_num) == '1' else (self.disk_num,)
+            else:
+                disk_nums = (None,)
+
+            for disk_num in disk_nums:
+                part = self.wiki_album.find_part(track_tuples, disk=disk_num)
+                if part:
+                    log.debug('{}: Found part: {}'.format(self, part))
+                    return part
+
+            log.debug('{}: Could not find part'.format(self))
             try:
                 edition, disk = self.wiki_album._intended[:2]
             except Exception:
@@ -483,7 +501,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
 
     def update_song_tags_and_names(self, allow_incomplete, true_soloist, collab_mode, dry_run, dest_root=None):
         logged_messages = 0
-        if not self.wiki_artist:
+        if not self.wiki_artist and not self._is_full_ost:
             log.error('Unable to find wiki artist match for {} - skipping tag updates'.format(self), extra={'red': True})
             return 1
         elif not self.wiki_album:
@@ -638,20 +656,26 @@ class AlbumDir(ClearableCachedPropertyMixin):
 
 class SongFile(ClearableCachedPropertyMixin):
     """Adds some properties/methods to mutagen.File types that facilitate other functions"""
+    __instances = {}
+
     def __new__(cls, file_path, *args, **kwargs):
         file_path = Path(file_path).expanduser().as_posix()
-        try:
-            music_file = mutagen.File(file_path, *args, **kwargs)
-        except Exception as e:
-            log.debug('Error loading {}: {}'.format(file_path, e))
-            music_file = None
+        if file_path not in cls.__instances:
+            try:
+                music_file = mutagen.File(file_path, *args, **kwargs)
+            except Exception as e:
+                log.debug('Error loading {}: {}'.format(file_path, e))
+                music_file = None
 
-        if music_file:
-            obj = super().__new__(cls)
-            obj._f = music_file
-            return obj
+            if music_file:
+                obj = super().__new__(cls)
+                obj._f = music_file
+                cls.__instances[file_path] = obj
+                return obj
+            else:
+                return None
         else:
-            return None
+            return cls.__instances[file_path]
 
     def __init__(self, file_path, *args, **kwargs):
         if not getattr(self, '_SongFile__initialized', False):
@@ -704,6 +728,7 @@ class SongFile(ClearableCachedPropertyMixin):
             return self.path.as_posix()
 
     def rename(self, dest_path):
+        old_path = self.path.as_posix()
         if not isinstance(dest_path, Path):
             dest_path = Path(dest_path).expanduser().resolve()
 
@@ -714,8 +739,13 @@ class SongFile(ClearableCachedPropertyMixin):
 
         self.path.rename(dest_path)
         self.clear_cached_properties()
+        new_path = dest_path.as_posix()
         # noinspection PyAttributeOutsideInit
-        self._f = mutagen.File(dest_path.as_posix())
+        self._f = mutagen.File(new_path)
+
+        cls = type(self)
+        del cls.__instances[old_path]
+        cls.__instances[new_path] = self
 
     def save(self):
         self._f.tags.save(self._f.filename)
@@ -941,7 +971,27 @@ class SongFile(ClearableCachedPropertyMixin):
         return None
 
     @cached_property
+    def _is_full_ost(self):
+        album_artist = self.tag_text('album_artist', default='').lower()
+        album_name = self.album_name_cleaned
+        full_ost = album_name.endswith('OST') and 'part' not in album_name.lower()
+        alb_dir = self.album_dir_obj
+        multiple_artists = len({f.tag_artist for f in alb_dir}) > 1
+        return full_ost and album_artist == 'various artists' and multiple_artists and len(alb_dir) > 2
+
+    @cached_property
     def wiki_artist(self):
+        if self._is_full_ost:
+            # log.debug('{}: Setting artist via OST'.format(self))
+            self.__dict__['wiki_artist'] = None
+            # dir_artist = self.album_dir_obj.wiki_artist
+            album = self._wiki_album
+            # if album:
+            #     log.debug('{}: Successfully set album via OST: {}'.format(self, album))
+            song = self.wiki_song
+            # del self.__dict__['wiki_artist']
+            return song.artist
+
         _artists = split_names(self.tag_artist)
         artists = []
         exc = None
@@ -1000,8 +1050,33 @@ class SongFile(ClearableCachedPropertyMixin):
         else:
             return self._wiki_album
 
+    def _find_ost_match(self):
+        alb_name = self.album_name_cleaned
+        log.log(8, '{}: Searching for OST matches...'.format(self))
+        title, part = self.album_name_cleaned_plus_and_part
+        log.log(8, '{}: Trying to match album title={!r}'.format(self, title))
+        try:
+            ost = find_ost(None, title, {'title': alb_name})
+        except CodeBasedRestException as e:
+            ost = None
+        if ost is None:
+            m = re.match(r'^(.*) \(.*\) OST$', title)
+            if m:
+                title = '{} OST'.format(m.group(1).strip())
+                log.debug('{}: Trying again to match album title={!r}'.format(self, title))
+                ost = find_ost(None, title, {'title': '{} {}'.format(title, part) if part else alb_name})
+                if ost:
+                    return ost
+
+                raise NoAlbumFoundException('Unable to find album for {} / {!r}'.format(self, alb_name))
+        else:
+            return ost
+
     @cached_property
     def _wiki_album(self):
+        if self._is_full_ost:
+            return self._find_ost_match()
+
         self.wiki_scores['album'] = -1
         try:
             artist = self.wiki_artist
@@ -1014,25 +1089,7 @@ class SongFile(ClearableCachedPropertyMixin):
                 alb_name = self.album_name_cleaned
                 log.debug('{}: No artist found; attemping lookup by name={!r}'.format(self, alb_name))
                 if 'OST' in alb_name.upper():
-                    log.debug('{}: Searching for OST matches...'.format(self))
-                    title, part = self.album_name_cleaned_plus_and_part
-                    log.debug('{}: Trying to match album title={!r}'.format(self, title))
-                    try:
-                        ost = find_ost(None, title, {'title': alb_name})
-                    except CodeBasedRestException as e:
-                        ost = None
-                    if ost is None:
-                        m = re.match(r'^(.*) \(.*\) OST$', title)
-                        if m:
-                            title = '{} OST'.format(m.group(1).strip())
-                            log.debug('{}: Trying again to match album title={!r}'.format(self, title))
-                            ost = find_ost(None, title, {'title': '{} {}'.format(title, part) if part else alb_name})
-                            if ost:
-                                return ost
-
-                            raise NoAlbumFoundException('Unable to find album for {} / {!r}'.format(self, alb_name))
-                    else:
-                        return ost
+                    return self._find_ost_match()
                 else:
                     try:
                         return WikiSongCollection(name=self.album_name_cleaned)
@@ -1040,6 +1097,7 @@ class SongFile(ClearableCachedPropertyMixin):
                         log.error('{}: Unable to find match for album name={!r}'.format(self, self.album_name_cleaned))
                         raise e
             else:
+                raise BaseException('WTF: {}'.format(self))
                 alb_dir = self.album_dir_obj
                 track_count = len(alb_dir.songs) if alb_dir else None
                 try:
@@ -1308,7 +1366,13 @@ class SongFile(ClearableCachedPropertyMixin):
                 return logged_messages
 
             genre = album_genre
-            artist = self.wiki_artist
+            try:
+                artist = self.wiki_artist
+            except NoPrimaryArtistError as e:
+                if self._is_full_ost:
+                    artist = None
+                else:
+                    raise e
             if self.wiki_album:
                 updatable = ['artist', 'album_artist', 'album']
             else:
@@ -1319,21 +1383,39 @@ class SongFile(ClearableCachedPropertyMixin):
                 genre = '{}-pop'.format(song_lang[0])
             else:
                 genre = album_genre
-            artist = wiki_song.artist
+            try:
+                artist = wiki_song.artist
+            except NoPrimaryArtistError as e:
+                if self._is_full_ost:
+                    artist = None
+                else:
+                    raise e
             updatable = ['title', 'artist', 'album_artist', 'album']
+
+        try:
+            album_artist = self.wiki_album.artist if self.wiki_album else None
+        except NoPrimaryArtistError as e:
+            album_artist = None
 
         for field in updatable:
             file_value = self.tag_text(field, default=None)
             if field == 'album_artist':
-                if not true_soloist and isinstance(artist, WikiSinger) and artist.member_of:
+                if self.wiki_album._category == 'soundtrack' and album_artist is None:
+                    wiki_value = 'Various Artists'
+                elif not true_soloist and isinstance(artist, WikiSinger) and artist.member_of:
                     wiki_value = artist.member_of.name
                 else:
                     wiki_value = artist.name
+
             elif field == 'artist':
-                artist_name = artist.name if true_soloist else artist.qualname
+                if artist:
+                    artist_name = artist.name if true_soloist else artist.qualname
+                else:
+                    artist_name = None
                 if collab_mode in ('artist', 'both'):
                     collabs = [a.qualname if isinstance(a, WikiArtist) else str(a) for a in wiki_song.collaborators]
-                    collabs.insert(0, artist_name)
+                    if artist_name and artist_name not in collabs:
+                        collabs.insert(0, artist_name)
                     wiki_value = ', '.join(collabs)
                 else:
                     wiki_value = artist_name
