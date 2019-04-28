@@ -10,8 +10,9 @@ from urllib.parse import urlparse
 
 from bs4.element import NavigableString, Tag
 
+from ....unicode import LangCat
 from ....utils import ParentheticalParser, DASH_CHARS, num_suffix, QMARKS, soupify, unsurround, normalize_roman_numerals
-from ...name_processing import has_parens, parse_name, split_name, str2list
+from ...name_processing import has_parens, parse_name, split_name, str2list, categorize_langs
 from ..utils import synonym_pattern, get_page_category, normalize_href
 from .common import (
     album_num_type, first_side_info_val, LANG_ABBREV_MAP, link_tuples, NUM2INT, parse_track_info, parse_date,
@@ -713,7 +714,8 @@ def find_group_members(artist, clean_soup):
         member_li_rx = find_group_members._member_li_rx = [
             re.compile(r'^([^(]+)\(([^,;]+)[,;]\s+([^,;]+)\)\s*-.*'),
             re.compile(r'(.*?)\s*-\s*(.*)'),
-            re.compile(r'^[^()]+\([^()]+\)$')
+            re.compile(r'^(.*?)\s*\(([^;]+);\s*(.*)\)$'),
+            re.compile(r'^[^()]+\([^()]+\)$'),
         ]
 
     members_span = clean_soup.find('span', id='Members')
@@ -741,11 +743,21 @@ def find_group_members(artist, clean_soup):
                         m = member_li_rx[1].match(li_text)
                         if m:
                             yield None, list(map(str.strip, m.groups()))[0]
-                        elif member_li_rx[2].match(li_text):
-                            yield None, split_name(li_text)
                         else:
-                            fmt = 'Unexpected member list item format on {}: {!r}'
-                            raise WikiEntityParseException(fmt.format(artist.url, li_text))
+                            m = member_li_rx[2].match(li_text)
+                            if m:
+                                parts = m.groups()
+                                langs = categorize_langs(parts)
+                                if langs[0] == langs[2] == LangCat.ENG and langs[1] in LangCat.asian_cats:
+                                    yield None, (parts[0], parts[1])
+                                else:
+                                    fmt = 'Unexpected member list item format on {}: {!r}'
+                                    raise WikiEntityParseException(fmt.format(artist.url, li_text))
+                            elif member_li_rx[3].match(li_text):
+                                yield None, split_name(li_text)
+                            else:
+                                fmt = 'Unexpected member list item format on {}: {!r}'
+                                raise WikiEntityParseException(fmt.format(artist.url, li_text))
         elif members_container.name == 'table':
             for tr in members_container.find_all('tr'):
                 if tr.find('th'):
