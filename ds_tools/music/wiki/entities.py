@@ -32,7 +32,7 @@ from .parsing import *
 __all__ = [
     'find_ost', 'WikiAgency', 'WikiAlbum', 'WikiArtist', 'WikiDiscography', 'WikiEntity', 'WikiEntityMeta',
     'WikiFeatureOrSingle', 'WikiGroup', 'WikiSinger', 'WikiSongCollection', 'WikiSongCollectionPart', 'WikiSoundtrack',
-    'WikiTrack', 'WikiTVSeries'
+    'WikiTrack', 'WikiTVSeries', 'WikiMatchable', 'WikiPersonCollection', 'WikiCompetition'
 ]
 log = logging.getLogger(__name__)
 
@@ -67,6 +67,7 @@ SINGLE_TYPE_TO_BASE_TYPE = {
     'as lead artist': 'singles',
     'collaborations': 'collaborations',
     'as featured artist': 'features',
+    'other releases': 'singles'
 }
 JUNK_CHARS = string.whitespace + string.punctuation
 NUM_STRIP_TBL = str.maketrans({c: '' for c in '0123456789'})
@@ -80,7 +81,7 @@ STRIP_TBL = str.maketrans({c: '' for c in JUNK_CHARS})
 
 class WikiEntityMeta(type):
     _category_classes = {}
-    _category_bases = {}
+    _category_bases = defaultdict(set)
     _instances = {}
 
     def __init__(cls, name, bases, attr_dict):
@@ -91,7 +92,7 @@ class WikiEntityMeta(type):
                 WikiEntityMeta._category_classes[category] = cls
             else:
                 for cat in category:
-                    WikiEntityMeta._category_bases[cat] = cls
+                    WikiEntityMeta._category_bases[cat].add(cls)
 
         super().__init__(name, bases, attr_dict)
 
@@ -308,10 +309,10 @@ class WikiEntityMeta(type):
             raise AmbiguousEntityException(url, raw)
 
         exp_cls = WikiEntityMeta._category_classes.get(category)
-        exp_base = WikiEntityMeta._category_bases.get(category)
+        exp_bases = WikiEntityMeta._category_bases[category]
         has_unexpected_cls = exp_cls and not issubclass(exp_cls, cls) and cls._category is not None
-        has_unexpected_base = exp_base and not issubclass(cls, exp_base) and cls._category is not None
-        if has_unexpected_cls or has_unexpected_base or (exp_cls is None and exp_base is None):
+        has_unexpected_base = exp_bases and not any(issubclass(cls, b) for b in exp_bases) and cls._category is not None
+        if has_unexpected_cls or has_unexpected_base or (exp_cls is None and not exp_bases):
             article = 'an' if category and category[0] in 'aeiou' else 'a'
             # exp_cls_strs = (getattr(exp_cls, '__name__', None), getattr(exp_base, '__name__', None))
             # log.debug('Specified cls={}, exp_cls={}, exp_base={}'.format(cls.__name__, *exp_cls_strs))
@@ -556,7 +557,6 @@ class WikiMatchable:
 
 class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
     __instances = {}
-    _categories = {}
     _category = None
 
     def __init__(self, uri_path=None, client=None, *, name=None, raw=None, no_fetch=False, **kwargs):
@@ -741,8 +741,16 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
         return False
 
 
-class WikiAgency(WikiEntity):
+class WikiPersonCollection(WikiEntity):
+    _category = ('agency', 'competition', 'group', 'singer')
+
+
+class WikiAgency(WikiPersonCollection):
     _category = 'agency'
+
+
+class WikiCompetition(WikiPersonCollection):
+    _category = 'competition'
 
 
 class WikiDiscography(WikiEntity):
@@ -817,7 +825,7 @@ class WikiTVSeries(WikiEntity):
             self.aka = []
 
 
-class WikiArtist(WikiEntity):
+class WikiArtist(WikiPersonCollection):
     _category = ('group', 'singer')
     _known_artists = set()
     __known_artists_loaded = False
@@ -1107,14 +1115,19 @@ class WikiArtist(WikiEntity):
                     for track in group['tracks']:
                         name = track['name_parts']
 
-                        collabs = set(track.get('collaborators', []))
-                        collabs.update(l[0] for l in track.get('links', []))
-                        collabs = [{'artist': eng_cjk_sort(collab)} for collab in collabs]
+                        collabs = track.get('collaborators', [])
+                        try:
+                            collabs = set(collabs)
+                        except TypeError:                   # dict is not hashable
+                            collab_dicts = list(collabs)
+                        else:
+                            collabs.update(l[0] for l in track.get('links', []))
+                            collab_dicts = [{'artist': eng_cjk_sort(collab)} for collab in collabs]
 
-                        track['collaborators'] = collabs
+                        track['collaborators'] = collab_dicts
                         try:
                             disco_entry = {
-                                'title': name, 'collaborators': collabs,
+                                'title': name, 'collaborators': collab_dicts,
                                 'base_type': SINGLE_TYPE_TO_BASE_TYPE[group_sub_type]
                             }
                         except KeyError as e:
@@ -1146,7 +1159,7 @@ class WikiArtist(WikiEntity):
         associated = []
         for text, href in self._side_info.get('associated', {}).items():
             # log.debug('{}: Associated act from {}: a.text={!r}, a.href={!r}'.format(self, self.url, text, href))
-            associated.append(WikiArtist(href, name=text, client=self._client))
+            associated.append(WikiPersonCollection(href, name=text, client=self._client))
         return associated
 
     def find_song_collection(self, name, min_score=75, include_score=False, **kwargs):
@@ -1386,7 +1399,7 @@ class WikiSinger(WikiArtist):
                 if eng and cjk:
                     cjk_eng_last, cjk_eng_first = eng.split(maxsplit=1)
                     self._add_aliases((eng, cjk))
-                elif eng:
+                elif eng and ' ' in eng:
                     eng_first, eng_last = eng.rsplit(maxsplit=1)
                     self._add_aliases((eng, eng_first))
                     self.__add_aliases(eng_first)
@@ -1605,6 +1618,11 @@ class WikiSongCollection(WikiEntity):
             return ['{} {}'.format(artist.english_name, a) for a in self._aliases()]
 
     @cached_property
+    def _info_src(self):
+        artist = self._artist_context
+        return self.url if self.url else artist.url if artist and artist.url else self._primary_artist
+
+    @cached_property
     def language(self):
         return self._discography_entry.get('language')
 
@@ -1696,6 +1714,11 @@ class WikiSongCollection(WikiEntity):
         else:
             artist_dir = self.artist.expected_rel_path()
         return artist_dir.joinpath(rel_to_artist_dir)
+
+    def _has_no_valid_links(self, href, text):
+        if not self._raw and self._artist_context:  # Created based on discography info
+            return self._artist_context._has_no_valid_links(href, text)
+        return super()._has_no_valid_links(href, text)
 
     @cached_property
     def _artists(self):
@@ -1814,14 +1837,14 @@ class WikiSongCollection(WikiEntity):
                 artist_alias = next((a for a in artists if a.matches(name)), None)
                 if not artist_alias:
                     fmt = '{}: Unable to find artist href={!r} name={!r} of_group={!r} found on {}: {}'
-                    log.error(fmt.format(self, href, name, of_group, self.url, e), extra={'color': 9})
+                    log.error(fmt.format(self, href, name, of_group, self._info_src, e), extra={'color': 9})
                     artists.add(WikiArtist(href, name=name, no_fetch=True))
                 else:
                     fmt = '{}: Artists contained an alias={!r} for already known artist={}'
                     log.debug(fmt.format(self, name, artist_alias))
             except Exception as e:
                 fmt = '{}: Unable to find artist href={!r} name={!r} of_group={!r} found on {}: {}'
-                log.error(fmt.format(self, href, name, of_group, self.url, e), extra={'color': 9})
+                log.error(fmt.format(self, href, name, of_group, self._info_src, e), extra={'color': 9})
                 artists.add(WikiArtist(href, name=name, no_fetch=True))
             else:
                 # log.debug('{}: artist={} => adding'.format(self, artist))
