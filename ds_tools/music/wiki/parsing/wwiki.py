@@ -38,7 +38,7 @@ def parse_discography_page(uri_path, clean_soup, artist):
     for h2 in clean_soup.find_all(top_lvl_h):
         album_type = h2.text.strip().lower()
         sub_type = None
-        if album_type in ('music videos', 'see also'):
+        if album_type in ('music videos', 'see also', 'videography'):
             break
 
         ele = h2.next_sibling
@@ -93,8 +93,9 @@ def parse_discography_page(uri_path, clean_soup, artist):
                 else:                                                                               # It is an album
                     for i, th in enumerate(ele.find_all('th', scope='row')):
                         links = link_tuples(th.find_all('a'))
-                        # links = [(a.text, a.get('href') or '') for a in th.find_all('a')]
                         title = th.text.strip()
+                        fmt = 'Processing type={!r} sub_type={!r} th={!r} on {}'
+                        log.debug(fmt.format(album_type, sub_type, title, uri_path))
                         album = {
                             'title': title, 'links': links, 'type': album_type, 'sub_type': sub_type, 'is_ost': False,
                             'primary_artist': (artist.name, artist._uri_path) if artist else (None, None),
@@ -194,6 +195,7 @@ def parse_wikipedia_album_page(uri_path, clean_soup, side_info):
     album0['title_parts'] = parse_name(intro_match.group(1))  # base, cjk, stylized, aka, info
 
     details_str = intro_match.group(2)
+    details_str = details_str.replace('full length', 'full-length').replace('mini-album', 'mini album')
     details = list(details_str.split())
     album0['repackage'] = False
     try:
