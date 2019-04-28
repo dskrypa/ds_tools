@@ -126,6 +126,9 @@ def get_page_category(url, cats, no_debug=False):
             if any(i in cat for i in indicators for cat in cats):
                 return category
 
+        if '/wiki/Template:' in url:
+            return 'template'
+
         if not no_debug:
             log.debug('Unable to determine category for {}'.format(url))
         return None
