@@ -115,6 +115,19 @@ class AmbiguousEntityException(MusicWikiException):
         if disambig_a:
             return list(filter(None, (self._alt_text(disambig_a),)))
 
+        music_h2_span = soup.find('span', id='Music')
+        if music_h2_span:
+            try:
+                ul = music_h2_span.parent.find_next('ul')
+            except Exception as e:
+                pass
+            else:
+                anchors = (
+                    self._alt_text(a) for li in ul.find_all('li') for a in li.find_all('a', limit=1)
+                    if any(val in li.text.lower() for val in ('korea', 'group', 'artist', 'band'))
+                )
+                return list(filter(None, anchors))
+
         pats = (r'For other uses, see.*?\(disambiguation\)', r'redirects here.\s+For the .*?, see')
         if not any(re.search(pat, self.html, re.IGNORECASE) for pat in pats):
             try:
@@ -132,14 +145,14 @@ class AmbiguousEntityException(MusicWikiException):
                     return list(filter(None, anchors))
         return []
 
-    def find_matching_alternative(self, wiki_obj_cls, aliases=None, associated_with=None, reraise=True):
+    def find_matching_alternative(self, wiki_obj_cls, aliases=None, associated_with=None, reraise=True, client=None):
         fmt = '[reraise={!r}] {} {!r} doesn\'t exist - looking for {} with aliases={!r}, associated_with={!r}; uris: {}'
         uris = ' | '.join(self.alternatives)
         log.debug(fmt.format(reraise, self.obj_type, self.url, wiki_obj_cls.__name__, aliases, associated_with, uris))
         if associated_with and hasattr(wiki_obj_cls, 'find_associated'):    # First since more definitive than aliases
             for alt in self.alternatives:
                 try:
-                    alt_obj = wiki_obj_cls(alt)
+                    alt_obj = wiki_obj_cls(alt, client=client)
                 except WikiTypeError:
                     pass
                 else:
@@ -153,7 +166,7 @@ class AmbiguousEntityException(MusicWikiException):
         if aliases:
             for alt in self.alternatives:
                 try:
-                    alt_obj = wiki_obj_cls(alt)
+                    alt_obj = wiki_obj_cls(alt, client=client)
                 except WikiTypeError:
                     pass
                 else:
