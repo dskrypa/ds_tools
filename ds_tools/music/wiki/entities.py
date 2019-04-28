@@ -2845,8 +2845,15 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
             if collab:
                 # log.debug('WikiTrack[{!r}]: processing collaborator: {}'.format(self.name, collab))
                 if isinstance(collab, dict):
-                    eng, cjk = collab['artist']
-                    name = eng or cjk
+                    try:
+                        eng, cjk = collab['artist']
+                    except ValueError as e:
+                        if isinstance(collab['artist'], str):
+                            name = collab['artist']
+                        else:
+                            raise e
+                    else:
+                        name = eng or cjk
                     collabs[name.lower()] = collab
                 elif isinstance(collab, list):
                     addl_collabs.extend(collab)
@@ -2990,6 +2997,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                         other = {other_str.replace(feat, val) for val in romanized_permutations(feat)}
 
                     other.add(other_str)
+                    other = tuple(sorted(other))
             else:
                 lc_other = other.lower()
                 if 'japanese ver.' in lc_other and LangCat.contains_any(other, LangCat.JPN):
@@ -3002,7 +3010,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                             if part.lower().startswith('japanese ver'):
                                 parsed.pop(i)
                                 break
-                        other = [other, ' '.join(parsed)]
+                        other = (other, ' '.join(parsed))
                 else:
                     orig = other
                     inst = False
@@ -3016,7 +3024,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                         except Exception:
                             other = orig
                         else:
-                            other = ['{}{}'.format(p, ' (Inst.)' if inst else '') for p in parsed] + [orig]
+                            other = tuple(['{}{}'.format(p, ' (Inst.)' if inst else '') for p in parsed] + [orig])
         return other
 
     def score_match(self, other, *args, normalize=True, **kwargs):
