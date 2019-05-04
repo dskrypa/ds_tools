@@ -32,7 +32,7 @@ from .parsing import *
 __all__ = [
     'find_ost', 'WikiAgency', 'WikiAlbum', 'WikiArtist', 'WikiDiscography', 'WikiEntity', 'WikiEntityMeta',
     'WikiFeatureOrSingle', 'WikiGroup', 'WikiSinger', 'WikiSongCollection', 'WikiSongCollectionPart', 'WikiSoundtrack',
-    'WikiTrack', 'WikiTVSeries', 'WikiMatchable', 'WikiPersonCollection', 'WikiCompetition'
+    'WikiTrack', 'WikiTVSeries', 'WikiMatchable', 'WikiPersonCollection', 'WikiCompetitionOrShow'
 ]
 log = logging.getLogger(__name__)
 
@@ -841,8 +841,8 @@ class WikiAgency(WikiPersonCollection):
     _category = 'agency'
 
 
-class WikiCompetition(WikiPersonCollection):
-    _category = 'competition'
+class WikiCompetitionOrShow(WikiPersonCollection):
+    _category = 'competition_or_show'
 
 
 class WikiDiscography(WikiEntity):
@@ -1103,7 +1103,7 @@ class WikiArtist(WikiPersonCollection):
         elif isinstance(self._client, WikipediaClient):   # Pretend to be a WikiDiscography when both are on same page
             try:
                 self._albums, self._singles = parse_discography_page(self._uri_path, self._clean_soup, self)
-            except Exception:
+            except Exception as e:
                 disco_page = self._disco_page
                 if disco_page:
                     self._albums, self._singles = disco_page._albums, disco_page._singles
@@ -1117,7 +1117,11 @@ class WikiArtist(WikiPersonCollection):
         if self._albums:
             return self._albums
 
-        log.debug('{}: No discography content could be found from {}'.format(self, getattr(self._client, 'host', None)))
+        client_host = getattr(self._client, 'host', None)
+        if self._singles:
+            log.debug('{}: Found singles in discography on {}, but no albums'.format(self, client_host))
+        else:
+            log.debug('{}: No discography content could be found from {}'.format(self, client_host))
         return []
 
     @cached_property
@@ -1144,7 +1148,7 @@ class WikiArtist(WikiPersonCollection):
                     cls = WikiSoundtrack
                 elif any(val in base_type for val in ('singles', 'collaborations', 'features')):
                     cls = WikiFeatureOrSingle
-                elif any(val in base_type for val in ('albums', 'eps', 'extended plays')):
+                elif any(val in base_type for val in ('albums', 'eps', 'extended plays', 'single album')):
                     cls = WikiAlbum
                 else:
                     log.debug('{}: Unexpected base_type={!r} for {}'.format(self, base_type, entry), extra={'color': 9})
@@ -1229,8 +1233,11 @@ class WikiArtist(WikiPersonCollection):
                         except TypeError:                   # dict is not hashable
                             collab_dicts = list(collabs)
                         else:
-                            collabs.update(l[0] for l in track.get('links', []))
-                            collab_dicts = [{'artist': eng_cjk_sort(collab)} for collab in collabs]
+                            # collabs.update(l[0] for l in track.get('links', []))
+                            collab_dicts = [
+                                collab if isinstance(collab, dict) else {'artist': eng_cjk_sort(collab)}
+                                for collab in collabs
+                            ]
 
                         track['collaborators'] = collab_dicts
                         try:
@@ -1768,16 +1775,17 @@ class WikiSongCollection(WikiEntity):
                 else:
                     base_type = sub_type.replace(' ', '_')
 
+        if base_type is None:
+            return None
+
+        base_type = base_type.replace(' ', '_')
+        if not base_type.endswith('s'):
+            base_type += 's'
+
         try:
             return DISCOGRAPHY_TYPE_MAP[base_type]
-        except KeyError as e0:
-            if base_type is not None:
-                try:
-                    return DISCOGRAPHY_TYPE_MAP[base_type.replace(' ', '_')]
-                except KeyError as e:
-                    raise MusicWikiException('{}: Unexpected album base_type: {!r}'.format(self, base_type)) from e
-            else:
-                return None
+        except KeyError as e:
+            raise MusicWikiException('{}: Unexpected album base_type: {!r}'.format(self, base_type)) from e
 
     @cached_property
     def album_num(self):
@@ -1856,7 +1864,8 @@ class WikiSongCollection(WikiEntity):
             try:
                 artists[tuple(sorted(artist.items()))] = None
             except Exception as e:
-                log.error('Error processing artists for {}'.format(self))
+                fmt = '{}: Error processing artist={!r} from a_artists={!r} d_collabs={!r}'
+                log.error(fmt.format(self, artist, a_artists, d_collabs))
                 raise e
 
         artists = [dict(artist) for artist in artists]
@@ -1899,11 +1908,15 @@ class WikiSongCollection(WikiEntity):
             fmt = '{}\'s artist={!r} is ambiguous'
             no_warn = False
             if e.alternatives:
+                try:
+                    return e.find_matching_alternative(WikiArtist, name, of_group, False, self._client)
+                except AmbiguousEntityException:
+                    pass
+
                 fmt += ' - it could be one of: {}'.format(' | '.join(e.alternatives))
                 if len(e.alternatives) == 1:
-                    alt_href = e.alternatives[0]
                     try:
-                        alt_entity = WikiEntity(alt_href)
+                        alt_entity = WikiEntity(e.alternatives[0])
                     except Exception:
                         pass
                     else:
@@ -1922,11 +1935,11 @@ class WikiSongCollection(WikiEntity):
                 try:
                     return WikiArtist(href, name=name, of_group=of_group)
                 except CodeBasedRestException as e2:
-                    fmt = 'Error retrieving info for {}\'s artist={!r} (href={!r}) from multiple clients: {}'
-                    log.debug(fmt.format(self, name, href, e), extra={'color': 13})
+                    fmt = 'Error retrieving info for {}\'s artist={!r} from multiple clients: {}'
+                    log.debug(fmt.format(self, artist_dict, e), extra={'color': 13})
                     return WikiArtist(href, name=name, no_fetch=True)
             else:
-                msg = 'Error retrieving info for {}\'s artist={!r} (href={!r}): {}'.format(self, name, href, e)
+                msg = 'Error retrieving info for {}\'s artist={!r}: {}'.format(self, artist_dict, e)
                 if href is None:
                     log.log(9 if isinstance(self, WikiSoundtrack) else 10, msg)
                 else:
@@ -2236,7 +2249,7 @@ class WikiSongCollection(WikiEntity):
 
         filtered = []
         for part in parts:
-            name = part.edition.lower()
+            name = part.edition.lower() if part.edition else part.edition
             if name == lc_ed_or_part or (is_ost_part and lc_ed_or_part in self._part_rx.sub('part ', name)):
                 filtered.append(part)
         return filtered
@@ -2655,11 +2668,11 @@ class WikiSoundtrack(WikiSongCollection):
                 else:
                     log.debug('No page found for {}\'s artist={!r} of_group={!r}'.format(self, eng, group_eng))
             else:
-                fmt = 'Error retrieving info for {}\'s artist={!r} of_group={!r}: {}'
-                log.error(fmt.format(self, eng, group_eng, e), extra={'color': 13})
+                fmt = 'Error retrieving info for {}\'s artist={}: {}'
+                log.error(fmt.format(self, artist_dict, e), extra={'color': 13})
             return WikiArtist(aliases=(eng, cjk), no_fetch=True)
         except (WikiEntityInitException, WikiEntityIdentificationException) as e:
-            msg = 'Error retrieving info for {}\'s artist={!r} of_group={!r}: {}'.format(self, eng, group_eng, e)
+            msg = 'Error retrieving info for {}\'s artist={}: {}'.format(self, artist_dict, e)
             artist_href = artist_dict.get('artist_href')
             if artist_href:
                 log.log(6, msg + ', but a {} link was found'.format(self._client))

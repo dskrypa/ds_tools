@@ -25,10 +25,10 @@ NUMS = {
 PAGE_CATEGORIES = OrderedDict([
     ('album', ('albums', 'discography article stubs', ' eps')),     # Note: space in ' eps' is intentional
     ('group', ('group', 'group article stubs', 'bands', 'duos')),
-    ('singer', ('singer', 'person article stubs', 'actor', 'actress', 'musician')),
+    ('singer', ('singer', 'person article stubs', 'actor', 'actress', 'musician', 'rapper')),
     ('soundtrack', ('osts', 'kost', 'jost', 'cost')),
-    ('competition', ('competition',)),
-    ('tv_series', ('television series', 'television drama', 'kdrama', 'competition shows', 'jdrama')),
+    ('competition_or_show', ('competition', 'variety show')),
+    ('tv_series', ('television series', 'drama', 'competition shows')),
     ('discography', ('discographies',)),
     ('disambiguation', ('disambiguation', 'ambiguous')),
     ('agency', ('agencies',)),
@@ -40,7 +40,8 @@ PAGE_CATEGORIES = OrderedDict([
     ('misc', (
         'games', 'comics', 'deities', 'television seasons', 'appliances', 'standards', 'military', 'amusement',
         'episodes', 'hobbies', 'astronauts', 'war', 'economics', 'disasters', 'events', 'bugs', 'modules', 'elves',
-        'dwarves', 'orcs', 'lists'
+        'dwarves', 'orcs', 'lists', 'twost', 'food', 'alcohol', 'pubs', 'geography', 'towns', 'cities', 'countries',
+        'counties', 'landmark', 'lake', 'ocean', 'forest', 'roads'
     )),
 ])
 PATH_SANITIZATION_DICT = {c: '' for c in '*;?<>"'}
