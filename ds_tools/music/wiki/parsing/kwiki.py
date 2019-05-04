@@ -24,7 +24,7 @@ __all__ = ['find_group_members', 'parse_album_page', 'parse_album_tracks', 'pars
 log = logging.getLogger(__name__)
 
 
-def parse_album_tracks(uri_path, clean_soup, intro_links, artist, compilation=False):
+def parse_album_tracks(uri_path, clean_soup, intro_links, artists, compilation=False, client=None):
     """
     Parse the Track List section of a Kpop Wiki album/single page.
 
@@ -63,10 +63,10 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artist, compilation=Fa
             tracks = []
             for i, li in enumerate(ele.find_all('li')):
                 track_links = link_tuples(li.find_all('a'))
-                all_links = list(set(track_links + intro_links))
+                all_links = tuple(set(list(track_links) + intro_links))
                 track = parse_track_info(
                     i + 1, li.text, uri_path, include={'links': track_links, 'disk': disk}, links=all_links,
-                    compilation=compilation, artist=artist
+                    compilation=compilation, artist=artists, client=client
                 )
                 tracks.append(track)
 
@@ -293,7 +293,9 @@ def parse_album_page(uri_path, clean_soup, side_info, client):
         album['artists'] = artists
 
     try:
-        track_lists = parse_album_tracks(uri_path, clean_soup, links, artists, 'compilation' in album0['type'].lower())
+        track_lists = parse_album_tracks(
+            uri_path, clean_soup, links, artists, 'compilation' in album0['type'].lower(), client=client
+        )
     except NoTrackListException as e:
         if not album1 and 'single' in album0['type'].lower():
             eng, cjk = album0['title_parts'][:2]
@@ -304,7 +306,7 @@ def parse_album_page(uri_path, clean_soup, side_info, client):
             album0['tracks'] = {
                 'section': None, 'tracks': [
                     # {'name_parts': (eng, cjk), 'num': 1, 'length': album0['length'] or '-1:00', 'misc': title_info},
-                    parse_track_info(1, _name, uri_path, album0['length'] or '-1:00')
+                    parse_track_info(1, _name, uri_path, album0['length'] or '-1:00', client=client)
                 ]
             }
             album0['fake_track_list'] = True
@@ -483,7 +485,7 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
         title = '{} "{}"'.format(title, parsed.pop(0))  # Special case for album name ending in quoted word
     elif 'singles' in base_type:
         try:
-            track_info = parse_track_info(1, title, ele)
+            track_info = parse_track_info(1, title, ele, client=artist._client, links=links)
         except TrackInfoParseException as e:
             if ':' in title and all(val.isdigit() for val in title.split(':')):
                 track_info = {'num': 1, 'length': '-1:00', 'name_parts': (title,)}
@@ -517,7 +519,8 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
                     })
         elif base_type == 'osts' or song_list_rx.match(item):
             _tracks, _collabs = TrackListParser().parse(item, artist.url, tuple(ele.find_all('a')), artist._client)
-            log.log(8, 'Found OST/song disco entry on {}: {} - tracks: {}'.format(artist.url, item, _tracks))
+            fmt = 'Found OST/song disco entry on {}: {} - tracks: {}, collabs: {}'
+            log.log(8, fmt.format(artist.url, item, _tracks, _collabs))
             collabs.extend(_collabs)
             for track in _tracks:
                 track['from_ost'] = base_type == 'osts'

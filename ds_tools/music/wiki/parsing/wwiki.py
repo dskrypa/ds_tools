@@ -38,7 +38,7 @@ def parse_discography_page(uri_path, clean_soup, artist):
     for h2 in clean_soup.find_all(top_lvl_h):
         album_type = h2.text.strip().lower()
         sub_type = None
-        if album_type in ('music videos', 'see also', 'videography'):
+        if album_type in ('music videos', 'see also', 'videography', 'guest appearances'):
             break
 
         ele = h2.next_sibling
@@ -50,7 +50,7 @@ def parse_discography_page(uri_path, clean_soup, artist):
                 sub_type = ele.text.strip().lower()
             elif ele.name == 'table':
                 columns = [th.text.strip() for th in ele.find('tr').find_all('th')]
-                if columns[-1] in ('Album', 'Drama'):                                               # It is a single
+                if columns[-1] in ('Album', 'Drama'):                                               # Singles
                     tracks = []
                     expanded = expanded_wiki_table(ele)
                     # log.debug('Expanded table: {}'.format(expanded))
@@ -83,14 +83,14 @@ def parse_discography_page(uri_path, clean_soup, artist):
                             lines = list(split_name(line, allow_cjk_mix=True)) + lines
 
                         track = parse_track_info(
-                            1, lines, uri_path, links=links,
+                            1, lines, uri_path, links=links, client=artist._client,
                             include={'links': links, 'album': album_title, 'year': int(year_ele.text.strip())}
                         )
-                        # fmt = 'Single info from {} - {} - type={!r} sub_type={!r} album={!r} lines={!r}\n==> track={}'
-                        # log.debug(fmt.format(artist, uri_path, album_type, sub_type, album_title, lines, track))
+                        fmt = 'Single info from {} - {} - type={!r} sub_type={!r} album={!r} lines={!r}\n==> track={}'
+                        log.debug(fmt.format(artist, uri_path, album_type, sub_type, album_title, lines, track))
                         tracks.append(track)
                     singles.append({'type': album_type, 'sub_type': sub_type, 'tracks': tracks})
-                else:                                                                               # It is an album
+                elif any(val in columns for val in ('Details', 'Album details')):                   # Albums
                     for i, th in enumerate(ele.find_all('th', scope='row')):
                         links = link_tuples(th.find_all('a'))
                         title = th.text.strip()
@@ -183,7 +183,7 @@ def expanded_wiki_table(table_ele):
     return rows
 
 
-def parse_wikipedia_album_page(uri_path, clean_soup, side_info):
+def parse_wikipedia_album_page(uri_path, clean_soup, side_info, client):
     unexpected_num_fmt = 'Unexpected disk number format for {}: {!r}'
     bad_intro_fmt = 'Unexpected album intro sentence format in {}: {!r}'
     album0 = {}
@@ -255,7 +255,7 @@ def parse_wikipedia_album_page(uri_path, clean_soup, side_info):
         for tr in track_tbl.find_all('tr'):
             tds = tr.find_all('td')
             if len(tds) >= 3:
-                tracks.append(parse_track_info(tds[0].text, tds[1].text, uri_path, tds[-1].text.strip()))
+                tracks.append(parse_track_info(tds[0].text, tds[1].text, uri_path, tds[-1].text.strip(), client=client))
 
         album['track_lists'].append({'section': section, 'tracks': tracks, 'disk': disk})
 

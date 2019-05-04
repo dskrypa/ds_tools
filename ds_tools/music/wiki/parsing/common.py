@@ -48,8 +48,13 @@ def find_href(client, anchors, texts, categories=None):
         texts = (texts,)
     lc_texts = tuple(filter(None, (t.strip().lower() for t in texts)))
     for a in anchors:
-        if a.text and a.text.strip().lower() in lc_texts:
+        if isinstance(a, tuple):
+            a_text, href = a
+        else:
+            a_text = a.text
             href = a.get('href') or ''
+
+        if a_text and a_text.strip().lower() in lc_texts:
             href = href[6:] if href.startswith('/wiki/') else href
             if href and 'redlink=1' not in href:
                 if href.startswith(('http', '//')):
@@ -117,7 +122,7 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
             r'^(.*?) of (.*?)\s+\((.*?) of (.*)\)$', re.IGNORECASE
         )
         space_rx = split_artist_list._space_rx = re.compile(r'\s+')
-        and_rx = split_artist_list._and_rx = re.compile(' and | & ')
+        and_rx = split_artist_list._and_rx = re.compile('(?:^|\s)(?:and|&)\s')
 
     artist_list = space_rx.sub(' ', artist_list)
     artists = []
@@ -174,7 +179,7 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
                 if any(val in artist for val in (' and ', ' & ')):
                     for _artist in re.split(' and | & ', artist):
                         # log.debug('Extending with {!r}'.format(_artist))
-                        artists.extend(split_artist_list(_artist, context, anchors, client))
+                        artists.extend(split_artist_list(_artist, context, anchors, client)[0])
                 else:
                     m = double_of_rx.match(artist)
                     if m:
@@ -213,7 +218,30 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
                             artist_dict[key] = split_name(val, require_preceder=False)
                     artists.append(artist_dict)
         else:
+            # log.debug('Processing: artist={!r} (did not contain " of ")'.format(artist))
             for _artist in and_rx.split(artist):
+                _artist = _artist.strip()
+                if not _artist:
+                    continue
+
+                if not group and '\'s ' in _artist:
+                    of_group, _artist = map(str.strip, _artist.split('\'s ', 1))
+                    # log.debug('Processing: _artist={!r} group={!r} from {!r}'.format(_artist, of_group, artist))
+                    try:
+                        soloist = split_name(_artist)
+                        group = split_name(of_group)
+                        artist_dict = {
+                            'artist': soloist, 'artist_href': find_href(client, anchors, soloist, 'singer'),
+                            'of_group': group, 'group_href': find_href(client, anchors, group, 'group'),
+                        }
+                    except Exception as e:
+                        msg = 'Unexpected artist name format in {}: {!r}'.format(context, artist)
+                        raise WikiEntityParseException(msg) from e
+                    else:
+                        artists.append(artist_dict)
+                        continue
+
+                # log.debug('Processing: _artist={!r} from artist={!r}'.format(_artist, artist))
                 try:
                     name = split_name(_artist)
                 except ValueError:
@@ -273,6 +301,7 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
 class TrackListParser(ListBasedRecursiveDescentParser):
     _entry_point = 'tracks'
     _strip = True
+    _version_rx = re.compile(r'^[\[(](.*? ver\.?)[\])]\s*(.*)$')
     _quote_reqs = ('WS', 'ARTIST_DELIM', 'COMMA')
     TOKENS = OrderedDict([
         ('QUOTE', '[{}]'.format(QMARKS + "'")),
@@ -328,6 +357,9 @@ class TrackListParser(ListBasedRecursiveDescentParser):
                     title += self.tok.value
                 else:
                     collab = self.tok.value
+                    m = self._version_rx.match(collab)
+                    if m:
+                        version, collab = map(str.strip, m.groups())
                     artists, producers = split_artist_list(collab, self._context, self._anchors, self._client)
                     collabs.extend(artists)
                     all_collabs.extend(artists)
@@ -533,7 +565,7 @@ def first_side_info_val(side_info, key):
 def link_tuples(anchors):
     tuple_gen = ((a.text, a.get('href') or '') for a in anchors)
     tuple_gen = ((text, href) for text, href in tuple_gen if '&redlink=1' not in href)
-    return [(text, href[6:] if href.startswith('/wiki/') else href) for text, href in tuple_gen if href]
+    return tuple((text, href[6:] if href.startswith('/wiki/') else href) for text, href in tuple_gen if href)
 
 
 def album_num_type(details):
@@ -553,7 +585,7 @@ def album_num_type(details):
         elif alb_broad_type == 'EP':
             return num, 'extended play'
         return num, ' '.join(alb_type_desc[1:] if num else alb_type_desc)
-    elif len(details) > 1 and details[0] == 'song' and details[1] == 'by':
+    elif len(details) > 1 and details[0] == 'song' and details[1] in ('recorded', 'by'):
         return None, 'single'
     elif 'extended play' in ' '.join(details) and details.index('extended') == 1:
         num = NUMS.get(details[0])
@@ -561,17 +593,22 @@ def album_num_type(details):
     raise ValueError('Unable to determine album type from details: {}'.format(details))
 
 
-def parse_track_info(idx, text, source, length=None, *, include=None, links=None, compilation=False, artist=None):
+def parse_track_info(
+    idx, text, context, length=None, *, include=None, links=None, compilation=False, artist=None, client=None
+):
     """
     Split and categorize the given text to identify track metadata such as length, collaborators, and english/cjk name
     parts.
 
     :param int|str idx: Track number / index in list (1-based)
     :param str|container text: The text to be parsed, or already parsed/split text
-    :param str source: uri_path or other identifier for the source of the text being parsed (to add context to errors)
+    :param str context: uri_path or other identifier for the source of the text being parsed (to add context to errors)
     :param str|None length: Length of the track, if known (MM:SS format)
     :param dict|None include: Additional fields to be included in the returned track dict
-    :param list|None links: List of tuples of (text, href) that were in the html for the given text
+    :param list|tuple|None links: List of tuples of (text, href) that were in the html for the given text
+    :param bool compilation:
+    :param dict|list|None artist: Used to check if a version value matches the artist's name
+    :param client: WikiClient to use for link checks
     :return dict: The parsed track information
     """
     if isinstance(idx, str):
@@ -582,7 +619,7 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
             idx = int(idx)
         except ValueError as e:
             fmt = 'Error parsing track number {!r} for {!r} from {}: {}'
-            raise TrackInfoParseException(fmt.format(idx, text, source, e)) from e
+            raise TrackInfoParseException(fmt.format(idx, text, context, e)) from e
 
     track = {'num': idx, 'length': '-1:00'}
     if include:
@@ -590,9 +627,9 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
     if isinstance(text, str):
         text = unsurround(text.strip(), *(c*2 for c in QMARKS))
         try:
-            parsed, time_part = TrackInfoParser().parse(text, source)
+            parsed, time_part = TrackInfoParser().parse(text, context)
         except Exception as e:
-            raise TrackInfoParseException('Error parsing track from {}: {!r}'.format(source, text)) from e
+            raise TrackInfoParseException('Error parsing track from {}: {!r}'.format(context, text)) from e
     else:
         parsed = text
         time_part = None
@@ -603,7 +640,7 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
     if time_part:
         if length:
             fmt = 'Length={!r} was provided for track {}/{!r} from {}, but it was also parsed to be {!r}'
-            raise TrackInfoParseException(fmt.format(length, idx, text, source, time_part))
+            raise TrackInfoParseException(fmt.format(length, idx, text, context, time_part))
         track['length'] = time_part
 
     try:
@@ -624,7 +661,8 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
     name_parts, name_langs, collabs, misc, unknown = [], [], [], [], []
     link_texts = set(link[0] for link in links) if links else None
     if compilation:
-        collabs.extend(str2list(parsed.pop(-1), pat='(?: and |,|;|&| feat\.? | featuring | with )'))
+        collabs.extend(split_artist_list(parsed.pop(-1), context, links, client)[0])
+        # collabs.extend(str2list(parsed.pop(-1), pat='(?: and |,|;|&| feat\.? | featuring | with )'))
         track['compilation'] = True
 
     for n, part in enumerate(parsed):
@@ -641,11 +679,13 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
         duet_etc = next((val for val in (' duet', ' trio') if val in lc_part), None)
         if feat:
             collab_part = part[len(feat):].strip() if lc_part.startswith(feat) else part
-            collabs.extend(str2list(collab_part, pat='(?: and |,|;|&| feat\.? | featuring | with )'))
+            collabs.extend(split_artist_list(collab_part, context, links, client)[0])
+            # collabs.extend(str2list(collab_part, pat='(?: and |,|;|&| feat\.? | featuring | with )'))
             # collabs.extend(str2list(part[len(feat):].strip()))
         elif duet_etc:
             collab_part = part[:-len(duet_etc)].strip()
-            collabs.extend(str2list(collab_part, pat='(?: and |,|;|&| feat\.? | featuring | with )'))
+            collabs.extend(split_artist_list(collab_part, context, links, client)[0])
+            # collabs.extend(str2list(collab_part, pat='(?: and |,|;|&| feat\.? | featuring | with )'))
         elif lc_part.endswith(' solo'):
             track['artist'] = part[:-5].strip()
         elif lc_part.endswith((' ver.', ' ver', ' version', ' edition', ' ed.')):
@@ -654,7 +694,9 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
                 if track.get('version'):
                     if track['version'].lower() == value.lower():
                         continue
-                    log.warning('Multiple version entries found for {!r} from {!r}'.format(text, source), extra={'color': 14})
+                    elif not track['version'].lower().startswith('inst'):
+                        fmt = 'Multiple version entries found for {!r} from {!r}'
+                        log.warning(fmt.format(text, context), extra={'color': 14})
                     misc.append('{} ver.'.format(value) if 'ver' in lc_part and 'ver' not in value else part)
                 else:
                     track['version'] = value
@@ -663,10 +705,26 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
                     track['language'] = LANG_ABBREV_MAP[value.lower()]
                 except KeyError:
                     lc_val = value.lower()
-                    is_artist_version = artist and isinstance(artist, dict) and next(iter(artist)).lower() in lc_val
-                    if not (is_artist_version or (lc_val == str(source).lower())):
+                    is_artist_version = False
+                    if artist and isinstance(artist, (list, dict)):
+                        if isinstance(artist, list) and isinstance(artist[0], dict):
+                            _artists = artist
+                        elif isinstance(artist, dict):
+                            _artists = [artist]
+                        else:
+                            _artists = []
+
+                        for _artist in _artists:
+                            a_name = _artist.get('artist', '')
+                            if isinstance(a_name, str):
+                                a_name = (a_name,)
+                            if any(a_name_part.lower() in lc_val for a_name_part in a_name):
+                                is_artist_version = True
+                                break
+
+                    if not (is_artist_version or (lc_val == str(context).lower())):
                         dbg_fmt = 'Found unexpected version text in {!r} - {!r}: {!r}'
-                        log.debug(dbg_fmt.format(source, text, value), extra={'color': 100})
+                        log.debug(dbg_fmt.format(context, text, value), extra={'color': 100})
 
                     if track.get('version'):
                         old_ver = track['version']
@@ -676,46 +734,49 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
                         new_ver = '{} ver.'.format(value) if 'ver' in lc_part and 'ver' not in value else part
                         if len(set(categorize_langs((old_ver, new_ver)))) == 1:
                             warn_fmt = 'Multiple version entries found for {!r} from {!r}'
-                            log.warning(warn_fmt.format(text, source), extra={'color': 14})
+                            log.warning(warn_fmt.format(text, context), extra={'color': 14})
 
                         misc.append(new_ver)
                     else:
                         track['version'] = value
         elif lc_part.startswith(('inst', 'acoustic')):
             if track.get('version'):
-                lc_version = track['version'].lower()
-                if any(val in lc_version for val in ('inst', 'acoustic')):
-                    log.warning('Multiple version entries found for {!r} from {!r}'.format(text, source), extra={'color': 14})
-                misc.append('{} ver.'.format(track['version']) if 'ver' not in track['version'].lower() else part)
+                _ver = track['version']
+                lc_version = _ver.lower()
+                if not any(val in lc_version for val in ('inst', 'acoustic')):
+                    fmt = 'Multiple version entries found for {!r} from {!r} (had: {!r}, found: {!r})'
+                    log.warning(fmt.format(text, context, _ver, part), extra={'color': 14})
+                misc.append('{} ver.'.format(_ver) if 'ver' not in lc_version else _ver)
             track['version'] = part
         elif any(val in lc_part for val in misc_indicators) or all(val in lc_part for val in (' by ', ' of ')):
             misc.append(part)
         elif links and any(link_text in part for link_text in link_texts):
             split_part = str2list(part, pat='(?: and |,|;|&| feat\.? | featuring | with )')
             if any(sp in link_texts for sp in split_part):
-                collabs.extend(split_part)                  # assume links are to artists
+                collabs.extend(split_artist_list(split_part, context, links, client)[0])
+                # collabs.extend(split_part)                  # assume links are to artists
             elif len(set(name_langs)) < 2:
                 # log.debug('{!r}: Adding to name parts: {!r}'.format(text, part))
                 name_parts.append(part)
                 name_langs.append(LangCat.categorize(part))
             else:
-                log.debug('Assuming {!r} from {!r} > {!r} is misc [no link matches]'.format(part, source, text), extra={'color': 70})
+                log.debug('Assuming {!r} from {!r} > {!r} is misc [no link matches]'.format(part, context, text), extra={'color': 70})
                 misc.append(part)
         else:
             if len(set(name_langs)) < 2:
                 # log.debug('{!r}: Adding to name parts: {!r}'.format(text, part))
                 if '; lit. ' in part:
                     part = part.partition('; lit. ')[0]
-                    log.log(9, 'Discarding literal translation from {}: {!r}'.format(source, part))
+                    log.log(9, 'Discarding literal translation from {}: {!r}'.format(context, part))
 
                 name_parts.append(part)
                 name_langs.append(LangCat.categorize(part))
             else:
-                log.debug('Assuming {!r} from {!r} > {!r} is misc'.format(part, source, text), extra={'color': 70})
+                log.debug('Assuming {!r} from {!r} > {!r} is misc'.format(part, context, text), extra={'color': 70})
                 misc.append(part)
 
     if len(name_parts) > 2:
-        log.log(9, 'High name part count in {} [{!r} =>]: {}'.format(source, text, name_parts))
+        log.log(9, 'High name part count in {} [{!r} =>]: {}'.format(context, text, name_parts))
         while len(name_parts) > 2:
             name_parts = combine_name_parts(name_parts)
 
@@ -728,11 +789,11 @@ def parse_track_info(idx, text, source, length=None, *, include=None, links=None
         try:
             track['name_parts'] = split_name(tuple(name_parts), allow_cjk_mix=True)
         except Exception as e:
-            log.error('Unexpected name_parts={!r} from {}'.format(name_parts, source))
+            log.error('Unexpected name_parts={!r} from {}'.format(name_parts, context))
             raise e
 
     if collabs:
-        track['collaborators'] = sorted(collabs)
+        track['collaborators'] = collabs
     if misc:
         track['misc'] = misc
     if unknown:

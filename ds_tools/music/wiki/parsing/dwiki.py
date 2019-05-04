@@ -126,7 +126,7 @@ def parse_ost_page(uri_path, clean_soup, client):
                         unique_parts = [p[:-len(common_part_suffix)].strip() for p in name_parts]
                         name_parts = '{} ({}) {{}}'.format(*unique_parts).format(common_part_suffix)
 
-                track = parse_track_info(tds[0].text, name_parts, uri_path, include=to_include)
+                track = parse_track_info(tds[0].text, name_parts, uri_path, include=to_include, client=client)
 
                 artists_text = tds[2].text.strip()
                 if LangCat.contains_any_not(artists_text, LangCat.ENG):

@@ -4,7 +4,7 @@
 
 __all__ = [
     'MusicException', 'NoAlbumFoundException', 'NoArtistsFoundException', 'TrackDiscoveryException',
-    'NoMatchFoundException', 'NoTrackFoundException'
+    'NoMatchFoundException', 'NoTrackFoundException', 'NameFormatError'
 ]
 
 
@@ -30,3 +30,7 @@ class NoAlbumFoundException(NoMatchFoundException):
 
 class NoTrackFoundException(NoMatchFoundException):
     """Exception to be raised when a track cannot be matched to a track in a wiki"""
+
+
+class NameFormatError(MusicException, ValueError):
+    """Exception to be raised when a name is encountered that doesn't match any expected format"""
