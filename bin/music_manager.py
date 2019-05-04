@@ -222,8 +222,7 @@ def match_wiki(path):
                 # 'W.Dsk': str(music_file.wiki_song.disk) if music_file.wiki_song else '',
             })
         except Exception as e:
-            log.error('Error processing {}: {}'.format(music_file, e))
-            raise e
+            log.error('Error processing {}: {}'.format(music_file, e), extra={'color': (15, 9)})
         else:
             rows.append(row)
 

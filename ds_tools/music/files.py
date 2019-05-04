@@ -992,7 +992,12 @@ class SongFile(ClearableCachedPropertyMixin):
             # del self.__dict__['wiki_artist']
             return song.artist
 
-        _artists = split_names(self.tag_artist)
+        try:
+            _artists = split_names(self.tag_artist)
+        except Exception as e:
+            log.error('{}: Error splitting names from artist={!r}'.format(self, self.tag_artist))
+            raise e
+
         artists = []
         exc = None
         for eng, cjk, of_group in _artists:
