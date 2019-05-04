@@ -55,7 +55,7 @@ class WikiClient(RestClient):
 
     def __init__(self, host=None, prefix='wiki', proto='https', **kwargs):
         if not getattr(self, '_WikiClient__initialized', False):
-            super().__init__(host or self._site, rate_limit=1, prefix=prefix, proto=proto, log_params=True, **kwargs)
+            super().__init__(host or self._site, rate_limit=0.5, prefix=prefix, proto=proto, log_params=True, **kwargs)
             self._resp_cache = DBCache('responses', cache_subdir='kpop_wiki')
             self._name_cache = DBCache('names', cache_subdir='kpop_wiki')
             self._bad_name_cache = DBCache('invalid_names', cache_subdir='kpop_wiki')
@@ -237,7 +237,7 @@ class WikipediaClient(WikiClient):
         return parse_infobox(soup, uri_path, self)
 
     def parse_album_page(self, uri_path, clean_soup, side_info):
-        return parse_wikipedia_album_page(uri_path, clean_soup, side_info)
+        return parse_wikipedia_album_page(uri_path, clean_soup, side_info, self)
 
     def search(self, query):
         params = {'search': query, 'title': 'Special:Search', 'fulltext': 'Search'}
