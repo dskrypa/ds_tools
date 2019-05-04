@@ -220,6 +220,8 @@ class WikiEntityMeta(type):
             obj = cls.__new__(cls, uri_path, client)
             # noinspection PyArgumentList
             obj.__init__(uri_path, client, name=name_aliases, disco_entry=disco_entry, no_fetch=no_fetch, **kwargs)
+            # noinspection PyUnresolvedReferences
+            obj._post_init()
             return obj
 
         is_feat_collab = disco_entry and disco_entry.get('base_type') in ('features', 'collaborations', 'singles')
@@ -250,6 +252,8 @@ class WikiEntityMeta(type):
             # noinspection PyArgumentList
             obj.__init__(uri_path, client, name=name_aliases, raw=raw, disco_entry=disco_entry, **kwargs)
             WikiEntityMeta._instances[key] = obj
+            # noinspection PyUnresolvedReferences
+            obj._post_init()
             # log.debug('{}: Storing in instance cache with key={}'.format(obj, key), extra={'color': 14})
         else:
             obj = WikiEntityMeta._instances[key]
@@ -258,11 +262,15 @@ class WikiEntityMeta(type):
         if of_group:
             if isinstance(obj, WikiSinger):
                 if obj.member_of is None or not obj.member_of.matches(of_group):
+                    if obj.find_associated(of_group):
+                        return obj
                     fmt = 'Found {} for uri_path={!r}, aliases={!r}, but they are a member_of={}, not of_group={!r}'
                     msg = fmt.format(obj, uri_path, name_aliases, obj.member_of, of_group)
                     raise WikiEntityIdentificationException(msg)
             elif isinstance(obj, WikiGroup):
                 if obj.subunit_of is None or not obj.subunit_of.matches(of_group):
+                    if obj.find_associated(of_group):
+                        return obj
                     fmt = 'Found {} for uri_path={!r}, aliases={!r}, but they are a subunit_of={}, not of_group={!r}'
                     msg = fmt.format(obj, uri_path, name_aliases, obj.subunit_of, of_group)
                     raise WikiEntityIdentificationException(msg)
@@ -663,6 +671,9 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
             self._header_title = soupify(self._raw, parse_only=bs4.SoupStrainer('h2', class_='title')).text
         else:
             self._header_title = None
+
+    def _post_init(self):
+        return
 
     def update_name(self, eng_name, cjk_name):
         self.english_name = normalize_roman_numerals(eng_name) if eng_name else self.english_name
@@ -1272,7 +1283,10 @@ class WikiArtist(WikiPersonCollection):
     @cached_property
     def associated_acts(self):
         associated = []
-        for text, href in self._side_info.get('associated', {}).items():
+        _associated = self._side_info.get('associated', {})
+        if not _associated:
+            _associated = self._side_info.get('associated acts', {})
+        for text, href in _associated.items():
             # log.debug('{}: Associated act from {}: a.text={!r}, a.href={!r}'.format(self, self.url, text, href))
             associated.append(WikiPersonCollection(href, name=text, client=self._client))
         return associated
@@ -1386,11 +1400,11 @@ class WikiArtist(WikiPersonCollection):
         match_fmt = '{}: {} matched {} {!r} with score={} because its alias={!r} =~= {!r}'
         best_score, best_alias, best_val, best_type, best_entity = 0, None, None, None, None
         for etype in ('member', 'sub_unit', 'associated_act'):
-            log.debug('Processing {}\'s {}s'.format(self, etype))
+            # log.debug('Processing {}\'s {}s'.format(self, etype))
             try:
                 egroup = getattr(self, etype + 's')
             except AttributeError as e:
-                log.debug('{}: Error getting attr \'{}s\': {}\n{}'.format(self, etype, e, traceback.format_exc()))
+                # log.debug('{}: Error getting attr \'{}s\': {}\n{}'.format(self, etype, e, traceback.format_exc()))
                 continue
             for entity in egroup:
                 score, alias, val = entity.score_match(name)
@@ -1484,6 +1498,7 @@ class WikiSinger(WikiArtist):
     def __init__(self, uri_path=None, client=None, *, _member_of=None, **kwargs):
         super().__init__(uri_path, client, **kwargs)
         self.member_of = _member_of
+        self.__check_associated = False
         if self._raw:
             clean_soup = self._clean_soup
             mem_match = self._member_rx.search(clean_soup.text.strip())
@@ -1500,27 +1515,38 @@ class WikiSinger(WikiArtist):
                             # log.debug('{}: May have found group match for {!r} => {!r}, href={!r}'.format(self, group_name, a.text, href))
                             if href and (href != self._uri_path):
                                 try:
-                                    self.member_of = WikiGroup(href)
+                                    self.member_of = WikiGroup(href, self._client)
                                 except WikiTypeError as e:
                                     fmt = '{}: Found possible group match for {!r}=>{!r}, href={!r}, but {}; rx={}'
                                     log.debug(fmt.format(self, group_name, a.text, href, e, mem_match.groups()))
                                 else:
                                     break
             else:
-                for associated in self.associated_acts:
-                    if isinstance(associated, WikiGroup):
-                        for href, member_name in associated._members():
-                            if self._uri_path == href:
-                                self.member_of = associated
-                                break
+                self.__check_associated = True
 
             eng_first, eng_last, cjk_eng_first, cjk_eng_last = None, None, None, None
-            birth_names = self._side_info.get('birth_name', [])
-            if not birth_names:
-                birth_names = [(self._side_info.get('birth name'), self._side_info.get('native name'))]
-                if not self.cjk_name:
-                    if birth_names[0][1] and LangCat.categorize(birth_names[0][1]) in LangCat.asian_cats:
-                        self.cjk_name = birth_names[0][1]
+            birth_names = []
+            _birth_name = self._side_info.get('birth_name', [])
+            if _birth_name:
+                if isinstance(_birth_name, str):
+                    try:
+                        birth_names.append(split_name(_birth_name))
+                    except ValueError as e:
+                        log.error('{}: Error splitting birth_name: {!r}'.format(self, _birth_name))
+                        raise e
+                else:
+                    if isinstance(_birth_name[0], str):
+                        birth_names.append(_birth_name)
+                    else:
+                        birth_names.extend(_birth_name)
+
+            birth_names.append((self._side_info.get('birth name'), self._side_info.get('native name')))
+            # log.info('birth_names: {}'.format(birth_names))
+            if birth_names and not self.cjk_name:
+                for _name in chain.from_iterable(birth_names):
+                    # log.info('Examining birth name={!r}'.format(_name))
+                    if _name and LangCat.categorize(_name) in LangCat.asian_cats:
+                        self.cjk_name = _name
                         self.name = multi_lang_name(self.english_name, self.cjk_name)
 
             for eng, cjk in birth_names:
@@ -1544,6 +1570,15 @@ class WikiSinger(WikiArtist):
 
             if self.english_name:
                 self.__add_aliases(self.english_name)
+
+    def _post_init(self):
+        if self.__check_associated:
+            for associated in self.associated_acts:
+                if isinstance(associated, WikiGroup):
+                    for href, member_name in associated._members():
+                        if self._uri_path == href:
+                            self.member_of = associated
+                            break
 
     def __add_aliases(self, name):
         for c in ' -':
@@ -2250,7 +2285,7 @@ class WikiSongCollection(WikiEntity):
         filtered = []
         for part in parts:
             name = part.edition.lower() if part.edition else part.edition
-            if name == lc_ed_or_part or (is_ost_part and lc_ed_or_part in self._part_rx.sub('part ', name)):
+            if name == lc_ed_or_part or (name and is_ost_part and lc_ed_or_part in self._part_rx.sub('part ', name)):
                 filtered.append(part)
         return filtered
 

@@ -197,6 +197,7 @@ def parse_name(text):
         lc_part = part.lower()
         if next_is_aka:
             if ':' in part:
+                # log.debug('Processing aka section with colon: {!r}'.format(part))
                 try:
                     aka_eng, aka_cjk = split_name(part)
                 except ValueError:
@@ -204,7 +205,9 @@ def parse_name(text):
                 else:
                     aka = '{} ({})'.format(aka_eng, aka_cjk)    # if 'eng (lang: value)', split_name removes lang name
             else:
+                # log.debug('Processing aka section: {!r}'.format(part))
                 aka = part
+            next_is_aka = False
         elif any(lead for lead in style_leads if lc_part.startswith(lead)):
             style_lead = next((lead for lead in style_leads if lc_part.startswith(lead)), None)
             stylized = part[len(style_lead):].strip()
@@ -220,6 +223,13 @@ def parse_name(text):
             elif langs[1] == LangCat.MIX:
                 suffix = common_suffix((base, alt_lang_val))
                 if not suffix or LangCat.categorize(alt_lang_val[:-len(suffix)]) not in LangCat.asian_cats:
+                    if 'pronounced' in alt_lang_val:
+                        _split = tuple(map(str.strip, alt_lang_val.partition('pronounced')))
+                        part_0_lang = LangCat.categorize(_split[0])
+                        if part_0_lang in LangCat.asian_cats:
+                            cjk = _split[0]
+                            found_hangul = part_0_lang == LangCat.HAN
+                            continue
                     err_msg = 'Unexpected lang mix={} for \'lang: value\' part={!r} given base'.format(langs, part)
                     raise NameFormatError(err_msg + _parse_dbg(base, cjk, stylized, aka, info, details_parts))
             elif found_hangul and _lang_name.upper() == 'RR' and langs[1] == LangCat.ENG:
@@ -276,13 +286,13 @@ def parse_name(text):
             else:
                 found_hangul = LangCat.HAN in LangCat.categorize(part, True)
                 cjk = part
-        elif part.startswith(('pronounced',)):
+        elif part.startswith(('pronounced', 'shortened from')):
             pass
-        elif lc_part.startswith('is a ') and ((base and cjk) or not details_parts):
+        elif lc_part.startswith(('is a ', 'acronym for')) and ((base and cjk) or not details_parts):
             break
         elif found_hangul and lc_part.startswith('rr:'):
             pass
-        elif lc_part == 'lit':  # Literal translation of name
+        elif lc_part == 'lit' or lc_part.startswith('lit. '):   # Literal translation of name
             pass
         else:
             _details_parts = list(map(str.strip, re.split('[;,]', details)))
@@ -290,6 +300,12 @@ def parse_name(text):
                 pass    # (cjk; pronunciation of cjk)
             elif lc_part.startswith('born ') and details_parts and details_parts[0][:4].isdigit():
                 details_parts.pop(0)
+            elif lc_part.startswith('/') and lc_part.endswith('/'):     # IPA pronunciation
+                pass
+            elif base and cjk:
+                err_msg = 'Ignoring unexpected part={!r} and returning parsed name early'.format(part)
+                log.debug(err_msg + _parse_dbg(base, cjk, stylized, aka, info, details_parts))
+                break
             else:
                 err_msg = 'Unexpected part={!r}'.format(part)
                 raise NameFormatError(err_msg + _parse_dbg(base, cjk, stylized, aka, info, details_parts))

@@ -27,7 +27,7 @@ PAGE_CATEGORIES = OrderedDict([
     ('group', ('group', 'group article stubs', 'bands', 'duos')),
     ('singer', ('singer', 'person article stubs', 'actor', 'actress', 'musician', 'rapper')),
     ('soundtrack', ('osts', 'kost', 'jost', 'cost')),
-    ('competition_or_show', ('competition', 'variety show')),
+    ('competition_or_show', ('competition', 'variety show', 'variety television')),
     ('tv_series', ('television series', 'drama', 'competition shows')),
     ('discography', ('discographies',)),
     ('disambiguation', ('disambiguation', 'ambiguous')),

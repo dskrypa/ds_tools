@@ -282,9 +282,11 @@ def parse_infobox(infobox, uri_path, client):
             continue    # Image
 
         th = tr.find('th')
-        if not th or (th.get('colspan') and i != 2):
+        if not th and tr.find('td') and 'musical career' in tr.find('td').text.lower():
+            continue
+        elif not th or (th.get('colspan') and i != 2):
             break
-        key = th.text.strip().lower()
+        key = th.text.strip().lower().replace('\xa0', ' ')
         if i == 2:
             if key != 'background information':
                 try:
@@ -353,7 +355,7 @@ def parse_infobox(infobox, uri_path, client):
 
             # log.info('Parsed "born" section: {}'.format(parsed), extra={'color': 123})
             continue
-        elif key in ('agency', 'associated', 'composer', 'current', 'label', 'writer'):
+        elif key in ('agency', 'associated', 'composer', 'current', 'label', 'writer', 'associated acts'):
             anchors = list(val_ele.find_all('a'))
             if anchors:
                 value = dict(link_tuples(anchors))

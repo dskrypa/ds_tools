@@ -1110,7 +1110,7 @@ class SongFile(ClearableCachedPropertyMixin):
                     )
                 except Exception as e:
                     log.error('Error determining album for {} from {}: {}'.format(self, artist, e))
-                    traceback.print_exc()
+                    # traceback.print_exc()
                     raise e
                 self.wiki_scores['album'] = score
                 if album is None:
