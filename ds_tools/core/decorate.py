@@ -11,7 +11,10 @@ from threading import Lock
 
 from .itertools import partitioned
 
-__all__ = ['cached_property', 'classproperty', 'partitioned_exec', 'rate_limited', 'timed', 'trace_entry']
+__all__ = [
+    'cached_property', 'cached_property_or_err', 'classproperty', 'partitioned_exec', 'rate_limited', 'timed',
+    'trace_entry'
+]
 log = logging.getLogger(__name__)
 
 
@@ -30,6 +33,30 @@ class cached_property:
             return self
         value = obj.__dict__[self.func.__name__] = self.func(obj)
         return value
+
+
+class cached_property_or_err:
+    def __init__(self, func):
+        self.__doc__ = func.__doc__
+        self.func = func
+        self.had_err = None
+        self.result = None
+
+    def __get__(self, obj, cls):
+        if obj is None:
+            return self
+        elif self.had_err is None:
+            try:
+                self.result = self.func(obj)
+            except Exception as e:
+                self.result = e
+                self.had_err = True
+            else:
+                self.had_err = False
+
+        if self.had_err:
+            raise self.result
+        return self.result
 
 
 class cached_classproperty:
