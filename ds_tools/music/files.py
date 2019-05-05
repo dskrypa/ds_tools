@@ -22,7 +22,7 @@ from mutagen.id3 import ID3, TDRC, POPM
 from mutagen.mp4 import MP4Tags
 
 from ..caching import ClearableCachedPropertyMixin, cached
-from ..core import cached_property, format_duration, datetime_with_tz
+from ..core import cached_property, format_duration, datetime_with_tz, cached_property_or_err
 from ..http import CodeBasedRestException
 from ..unicode import contains_hangul, LangCat
 from .exceptions import NoArtistsFoundException, NoAlbumFoundException, NoTrackFoundException, NoMatchFoundException
@@ -68,6 +68,23 @@ class _NotSet:
 
 
 class AlbumDir(ClearableCachedPropertyMixin):
+    __instances = {}
+
+    def __new__(cls, path):
+        if not isinstance(path, Path):
+            path = Path(path).expanduser().resolve()
+
+        str_path = path.as_posix()
+        if str_path not in cls.__instances:
+            if any(p.is_dir() for p in path.iterdir()):
+                raise InvalidAlbumDir('Invalid album dir - contains directories: {}'.format(path.as_posix()))
+
+            obj = super().__new__(cls)
+            cls.__instances[str_path] = obj
+            return obj
+        else:
+            return cls.__instances[str_path]
+
     def __init__(self, path):
         """
         :param str|Path path: The path to a directory that contains one album's music files
