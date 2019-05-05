@@ -1545,6 +1545,9 @@ class WikiGroup(WikiArtist):
                         self.subunit_of = WikiGroup(href)
                         break
 
+    def __contains__(self, item):
+        return item in self.members
+
     def _members(self):
         if not self._raw:
             return
@@ -1985,7 +1988,12 @@ class WikiSongCollection(WikiEntity):
                 d_name = sanitize_path('{} [{}]'.format(rel_to_artist_dir.name, soloist_name))
                 rel_to_artist_dir = rel_to_artist_dir.with_name(d_name)
             else:
-                rel_to_artist_dir = Path('Solo', soloist_name, rel_to_artist_dir.name)
+                group = soloist.member_of
+                group_members_present = [a for a in self.artists if a in group]
+                if len(group_members_present) > 1 and len(group_members_present) != len(self.artists):
+                    rel_to_artist_dir = Path('Collaborations', rel_to_artist_dir.name)
+                else:
+                    rel_to_artist_dir = Path('Solo', sanitize_path(soloist_name), rel_to_artist_dir.name)
         else:
             artist_dir = self.artist.expected_rel_path()
         return artist_dir.joinpath(rel_to_artist_dir)
