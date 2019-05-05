@@ -123,7 +123,7 @@ class WikiEntityMeta(type):
         name_aliases = tuple(filter(None, _all_aliases))
         # log.debug('cls({!r}, name={!r}, aliases={!r}): name_aliases={!r}'.format(uri_path, name, aliases, name_aliases))
         if not name_aliases and not uri_path:
-            raise WikiEntityIdentificationException('A uri_path or name is required')
+            raise WikiEntityIdentificationException('A uri_path or name/aliases is required')
 
         if not no_fetch:
             if disco_entry:
@@ -187,7 +187,7 @@ class WikiEntityMeta(type):
                                             uri_path = client.normalize_name(name)
                                         except CodeBasedRestException:
                                             fmt = 'Unable to find a page that matches aliases={!r} from any site: {}'
-                                            exc = WikiEntityInitException(fmt.format(name_aliases, e))
+                                            exc = NoUrlFoundException(fmt.format(name_aliases, e))
 
                             if not uri_path and not exc:
                                 exc = e
@@ -199,7 +199,7 @@ class WikiEntityMeta(type):
                         if exc:
                             raise exc
                         else:
-                            raise WikiEntityInitException('Unable to find a uri_path for {!r}'.format(name_aliases))
+                            raise NoUrlFoundException('Unable to find a uri_path for {!r}'.format(name_aliases))
 
             if uri_path and uri_path.startswith(('http://', 'https://', '//')):
                 _url = urlparse(uri_path)   # Note: // => alternate subdomain of fandom.com
@@ -209,7 +209,7 @@ class WikiEntityMeta(type):
                 try:
                     client = WikiClient.for_site(_url.hostname)
                 except Exception as e:
-                    raise WikiEntityInitException('No client configured for {}'.format(_url.hostname)) from e
+                    raise InvalidWikiClientException('No client configured for {}'.format(_url.hostname)) from e
                 uri_path = _url.path[6:] if _url.path.startswith('/wiki/') else _url.path
             elif client is None:
                 client = KpopWikiClient()
@@ -963,7 +963,7 @@ class WikiArtist(WikiPersonCollection):
                     else:
                         self.english_name, self.cjk_name, self.stylized_name, self.aka, self._info = name_parts
                 else:
-                    self.english_name = self._side_info['name']
+                    self.english_name = self._side_info.get('name')
             else:
                 try:
                     name_parts = parse_name(self._clean_soup.text)
@@ -1884,6 +1884,11 @@ class WikiSongCollection(WikiEntity):
             return self._artist_context._has_no_valid_links(href, text)
         return super()._has_no_valid_links(href, text)
 
+    def _find_href(self, texts, categories=None):
+        if not self._raw and self._artist_context:  # Created based on discography info
+            return self._artist_context._find_href(texts, categories)
+        return super()._find_href(texts, categories)
+
     @cached_property
     def _artists(self):
         artists = OrderedDict()
@@ -1968,7 +1973,7 @@ class WikiSongCollection(WikiEntity):
             # log.debug('{}: artist={} => {}'.format(self, artist, e))
             if isinstance(self._client, KpopWikiClient):
                 try:
-                    return WikiArtist(href, name=name, of_group=of_group)
+                    return WikiArtist(name=name, of_group=of_group)
                 except CodeBasedRestException as e2:
                     fmt = 'Error retrieving info for {}\'s artist={!r} from multiple clients: {}'
                     log.debug(fmt.format(self, artist_dict, e), extra={'color': 13})
@@ -1992,17 +1997,19 @@ class WikiSongCollection(WikiEntity):
                 # raise e
             return WikiArtist(href, name=name, no_fetch=True)
         except WikiEntityInitException as e:
+            #logging.DEBUG if not href and not self._find_href(name) else logging.ERROR
             artist_alias = next((a for a in artists if a.matches(name)), None) if artists else None
             if not artist_alias:
-                fmt = '{}: Unable to find artist href={!r} name={!r} of_group={!r} found on {}: {}'
-                log.error(fmt.format(self, href, name, of_group, self._info_src, e), extra={'color': 9})
+                msg = '{}: Unable to find artist={} found on {}: {}'.format(self, artist_dict, self._info_src, e)
+                log.log(logging.DEBUG if isinstance(e, NoUrlFoundException) else logging.ERROR, msg, extra={'color': 9})
                 return WikiArtist(href, name=name, no_fetch=True)
             else:
                 fmt = '{}: Artists contained an alias={!r} for already known artist={}'
                 log.debug(fmt.format(self, name, artist_alias))
         except Exception as e:
-            fmt = '{}: Unable to find artist href={!r} name={!r} of_group={!r} found on {}: {}'
-            log.error(fmt.format(self, href, name, of_group, self._info_src, e), extra={'color': 9})
+            msg = '{}: {} finding artist={} from {}: {}'.format(self, type(e).__name__, artist_dict, self._info_src, e)
+            log.error(msg, extra={'color': 9})
+            log.log(19, traceback.format_exc())
             return WikiArtist(href, name=name, no_fetch=True)
         return None
 
@@ -2621,33 +2628,33 @@ class WikiSoundtrack(WikiSongCollection):
         return fixed_artists
 
     def _get_artist(self, artist_dict, artists=None):
+        if not isinstance(self._client, DramaWikiClient):
+            return super()._get_artist(artist_dict, artists)
         # log.debug('Processing artist: {!r}'.format(artist_dict), extra={'color': (1, 8)})
         eng, cjk = artist_dict['artist']
-        # eng, cjk = artist_dict['eng'], artist_dict.get('cjk')
         if eng.lower() == 'various artists':
             return None
 
-        parts = (eng, cjk)
-        # group_eng = artist_dict.get('group_eng')
+        aliases = (eng, cjk)
         try:
             group_eng, group_cjk = artist_dict.get('of_group')
         except Exception:
             group_eng, group_cjk = None, None
-        if not group_eng and eng and cjk and LangCat.categorize(cjk) == LangCat.HAN and not self._find_href(parts):
+        if not group_eng and eng and cjk and LangCat.categorize(cjk) == LangCat.HAN and not self._find_href(aliases):
             # Don't bother looking up solo artists that have no (valid) links on this page
             eng_lc_nospace = ''.join(eng.split()).lower()
             permutations = romanized_permutations(cjk)
             # log.debug('Comparing {!r} to: {}'.format(eng_lc_nospace, permutations))
             if any(''.join(p.split()) == eng_lc_nospace for p in permutations):
                 # log.debug('No lookup being done for {!r}'.format(parts))
-                return WikiArtist(aliases=(eng, cjk), no_fetch=True)
+                return WikiArtist(aliases=aliases, no_fetch=True)
 
         try:
             try:
-                return WikiArtist(aliases=(eng, cjk), of_group=group_eng)
+                return WikiArtist(aliases=aliases, of_group=group_eng)
             except WikiTypeError as e:
                 if group_eng:
-                    return WikiArtist(aliases=(eng, cjk))
+                    return WikiArtist(aliases=aliases)
                 else:
                     raise e
         except AmbiguousEntityException as e:
@@ -2693,19 +2700,19 @@ class WikiSoundtrack(WikiSongCollection):
             if e.code == 404:
                 artist_href = artist_dict.get('artist_href')
                 if artist_href:
-                    fmt = 'No page found for {}\'s artist={!r} of_group={!r} via client={}, but a {} link was found'
-                    log.log(6, fmt.format(self, eng, group_eng, KpopWikiClient(), self._client))
+                    fmt = 'No page found for {}\'s artist={!r} via client={}, but a {} link was found'
+                    log.log(6, fmt.format(self, artist_dict, KpopWikiClient(), self._client))
                     try:
                         return WikiArtist(artist_href, client=self._client, of_group=group_eng)
                     except Exception as e1:
-                        fmt = '{}: Unexpected error using artist_href={} for {}: {}'
-                        log.error(fmt.format(self, artist_href, parts, e1))
+                        fmt = '{}: Unexpected {} using artist_href={} for {} found on {}: {}'
+                        log.error(fmt.format(self, type(e1).__name__, artist_href, artist_dict, self._info_src, e1))
                 else:
-                    log.debug('No page found for {}\'s artist={!r} of_group={!r}'.format(self, eng, group_eng))
+                    log.debug('No page found for {}\'s artist={!r}'.format(self, artist_dict))
             else:
                 fmt = 'Error retrieving info for {}\'s artist={}: {}'
                 log.error(fmt.format(self, artist_dict, e), extra={'color': 13})
-            return WikiArtist(aliases=(eng, cjk), no_fetch=True)
+            return WikiArtist(aliases=aliases, no_fetch=True)
         except (WikiEntityInitException, WikiEntityIdentificationException) as e:
             msg = 'Error retrieving info for {}\'s artist={}: {}'.format(self, artist_dict, e)
             artist_href = artist_dict.get('artist_href')
@@ -2714,14 +2721,14 @@ class WikiSoundtrack(WikiSongCollection):
                 try:
                     return WikiArtist(artist_href, client=self._client, of_group=group_eng)
                 except Exception as e1:
-                    fmt = '{}: Unexpected error using artist_href={} for {}: {}'
-                    log.error(fmt.format(self, artist_href, parts, e1))
+                    fmt = '{}: Unexpected {} using artist_href={} for {} found on {}: {}'
+                    log.error(fmt.format(self, type(e1).__name__, artist_href, artist_dict, self._info_src, e1))
             else:
                 log.debug(msg, extra={'color': 13})
-            return WikiArtist(aliases=(eng, cjk), no_fetch=True)
+            return WikiArtist(aliases=aliases, no_fetch=True)
         except Exception as e:
-            fmt = 'Unexpected error processing {}\'s artist={!r} of_group={!r}: {}\n{}'
-            log.error(fmt.format(self, eng, group_eng, e, traceback.format_exc()), extra={'color': (11, 9)})
+            fmt = 'Unexpected error processing {}\'s artist={!r}: {}\n{}'
+            log.error(fmt.format(self, artist_dict, e, traceback.format_exc()), extra={'color': (11, 9)})
         return None
 
     def _get_tracks(self, edition_or_part=None, disk=None):

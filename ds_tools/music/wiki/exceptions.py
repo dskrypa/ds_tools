@@ -13,7 +13,7 @@ from ..exceptions import MusicException
 __all__ = [
     'AmbiguousEntityException', 'InvalidTrackListException', 'MemberDiscoveryException', 'MusicWikiException',
     'WikiEntityIdentificationException', 'WikiEntityInitException', 'WikiTypeError', 'WikiAlbumPartProcessingError',
-    'NoPrimaryArtistError'
+    'NoPrimaryArtistError', 'NoUrlFoundException', 'InvalidWikiClientException'
 ]
 log = logging.getLogger(__name__)
 logr = {'ambig_parsing': logging.getLogger(__name__ + '.ambig_parsing')}
@@ -27,6 +27,14 @@ class MusicWikiException(MusicException):
 
 class WikiEntityInitException(MusicWikiException):
     """Exception to be raised when unable to initialize a WikiEntity"""
+
+
+class InvalidWikiClientException(WikiEntityInitException):
+    """Exception to be raised when an invalid Wiki client host is provided"""
+
+
+class NoUrlFoundException(WikiEntityInitException):
+    """Exception to be raised when no URL can be found when trying to initialize a WikiEntity"""
 
 
 class WikiEntityIdentificationException(WikiEntityInitException):

@@ -159,8 +159,12 @@ def parse_drama_wiki_info_list(uri_path, info_ul, client):
         try:
             key, value = map(str.strip, li.text.strip().split(':', 1))
         except ValueError as e:
-            fmt = 'Error splitting key:value pair {!r} from {}: {}'
-            raise WikiEntityParseException(fmt.format(li.text.strip(), uri_path, e)) from e
+            stripped_strings = tuple(li.stripped_strings)
+            if len(stripped_strings) == 2:
+                key, value = stripped_strings
+            else:
+                fmt = 'Error splitting key:value pair {!r} from {}: {}'
+                raise WikiEntityParseException(fmt.format(li.text.strip(), uri_path, e)) from e
 
         key = key.lower()
         if i == 0 and key not in ('title', 'name', 'group name'):
