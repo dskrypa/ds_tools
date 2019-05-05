@@ -22,22 +22,20 @@ from mutagen.id3 import ID3, TDRC, POPM
 from mutagen.mp4 import MP4Tags
 
 from ..caching import ClearableCachedPropertyMixin, cached
-from ..core import cached_property, format_duration, datetime_with_tz, cached_property_or_err
+from ..core import cached_property, format_duration, datetime_with_tz
 from ..http import CodeBasedRestException
 from ..unicode import contains_hangul, LangCat
-from .exceptions import NoArtistsFoundException, NoAlbumFoundException, NoTrackFoundException, NoMatchFoundException
+from .exceptions import *
 from .patches import tag_repr
 from .name_processing import split_names, split_name
 from .wiki import (
     WikiArtist, WikiEntityIdentificationException, KpopWikiClient, WikiSongCollection, find_ost,
-    AmbiguousEntityException, WikiGroup, WikiSinger, WikiSongCollectionPart, NoPrimaryArtistError
+    AmbiguousEntityException, WikiSinger, WikiSongCollectionPart, NoPrimaryArtistError
 )
 
 __all__ = [
-    'SongFile', 'FakeMusicFile', 'iter_music_files', 'load_tags', 'iter_music_albums',
-    'iter_categorized_music_files', 'TagException',  'TagAccessException', 'UnsupportedTagForFileType',
-    'InvalidTagName', 'TagValueException', 'TagNotFound', 'WikiMatchException', 'AlbumDir', 'iter_album_dirs',
-    'RM_TAGS_MP4', 'RM_TAGS_ID3'
+    'SongFile', 'FakeMusicFile', 'iter_music_files', 'load_tags', 'iter_music_albums', 'iter_categorized_music_files',
+    'AlbumDir', 'iter_album_dirs', 'RM_TAGS_MP4', 'RM_TAGS_ID3'
 ]
 log = logging.getLogger(__name__)
 
@@ -671,7 +669,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
             log.debug('None of the songs in {} had any tags that needed to be removed'.format(self))
 
 
-class SongFile(ClearableCachedPropertyMixin):
+class BaseSongFile(ClearableCachedPropertyMixin):
     """Adds some properties/methods to mutagen.File types that facilitate other functions"""
     __instances = {}
 
@@ -718,17 +716,6 @@ class SongFile(ClearableCachedPropertyMixin):
     def filename(self):
         return self._f.filename
 
-    @classmethod
-    def for_plex_track(cls, track, root=None):
-        if root is None:
-            root_path_file = Path('~/.plex/server_path_root.txt').expanduser().resolve()
-            if root_path_file.exists():
-                root = root_path_file.open('r').read().strip()
-            if not root:
-                raise ValueError('A server root path must be provided or be in {}'.format(root_path_file.as_posix()))
-
-        return cls(Path(root).joinpath(track.media[0].parts[0].file).resolve())
-
     @cached_property
     def extended_repr(self):
         try:
@@ -736,13 +723,6 @@ class SongFile(ClearableCachedPropertyMixin):
         except Exception as e:
             info = ''
         return '<{}({!r}){}>'.format(type(self).__name__, self.rel_path, info)
-
-    @property
-    def rel_path(self):
-        try:
-            return self.path.relative_to(Path('.').resolve()).as_posix()
-        except Exception as e:
-            return self.path.as_posix()
 
     def rename(self, dest_path):
         old_path = self.path.as_posix()
@@ -770,6 +750,271 @@ class SongFile(ClearableCachedPropertyMixin):
     @cached_property
     def path(self):
         return Path(self._f.filename).resolve()
+
+    @property
+    def rel_path(self):
+        try:
+            return self.path.relative_to(Path('.').resolve()).as_posix()
+        except Exception as e:
+            return self.path.as_posix()
+
+    def basename(self, no_ext=False, trim_prefix=False):
+        basename = self.path.stem if no_ext else self.path.name
+        if trim_prefix:
+            m = re.match(r'\d+\.?\s*(.*)', basename)
+            if m:
+                basename = m.group(1)
+        return basename
+
+    @cached_property
+    def ext(self):
+        if isinstance(self._f.tags, MP4Tags):
+            return self.path.suffix[1:]
+        elif isinstance(self._f.tags, ID3):
+            return 'mp3'
+        return None
+
+    @cached_property
+    def album_dir_obj(self):
+        if self._album_dir is not None:
+            return self._album_dir
+        try:
+            return AlbumDir(self.path.parent)
+        except InvalidAlbumDir:
+            pass
+        return None
+
+    @cached_property
+    def tag_artist(self):
+        return self.tag_text('artist')
+
+    @cached_property
+    def tag_title(self):
+        return self.tag_text('title')
+
+    @cached_property
+    def album_name_cleaned(self):
+        album = self.tag_text('album')
+        m = re.match('(.*)\s*\[.*Album\]', album)
+        if m:
+            album = m.group(1).strip()
+
+        m = re.match('^(.*?)-?\s*(?:the)?\s*[0-9](?:st|nd|rd|th)\s+\S*\s*album\s*(?:repackage)?\s*(.*)$', album, re.I)
+        if m:
+            album = ' '.join(map(str.strip, m.groups())).strip()
+
+        m = re.search(r'((?:^|\s+)\d+\s*집(?:$|\s+))', album)  # {num}집 == nth album
+        if m:
+            album = album.replace(m.group(1), ' ').strip()
+
+        m = re.match(r'(.*)(\s-\s*(?:EP|Single))$', album, re.IGNORECASE)
+        if m:
+            album = m.group(1)
+
+        return album.replace(' : ', ': ')
+
+    @cached_property
+    def album_name_cleaned_plus_and_part(self):
+        title = self.album_name_cleaned
+        part = None
+        if 'OST' in title.upper():
+            m = re.match(r'^(.*)\s+((?:Part|Code No)\.?\s*\d+)$', title, re.IGNORECASE)
+            if m:
+                title = m.group(1).strip()
+                part = m.group(2).strip()
+
+            if title.endswith(' -'):
+                title = title[:-1].strip()
+        return title, part
+
+    def set_title(self, title):
+        self.set_text_tag('title', title, by_id=False)
+
+    @property
+    def length(self):
+        """
+        :return float: The length of this song in seconds
+        """
+        return self._f.info.length
+
+    @cached_property
+    def length_str(self):
+        """
+        :return str: The length of this song in the format (HH:M)M:SS
+        """
+        length = format_duration(int(self._f.info.length))  # Most other programs seem to floor the seconds
+        if length.startswith('00:'):
+            length = length[3:]
+        if length.startswith('0'):
+            length = length[1:]
+        return length
+
+    @cached_property
+    def _tag_type(self):
+        if isinstance(self._f.tags, MP4Tags):
+            return 'mp4'
+        elif isinstance(self._f.tags, ID3):
+            return 'mp3'
+        return None
+
+    def set_text_tag(self, tag, value, by_id=False):
+        tag_id = tag if by_id else self.tag_name_to_id(tag)
+        if isinstance(self._f.tags, MP4Tags):
+            self._f.tags[tag_id] = value
+        elif self.ext == 'mp3':
+            try:
+                tag_cls = getattr(mutagen.id3._frames, tag_id.upper())
+            except AttributeError as e:
+                raise ValueError('Invalid tag for {}: {} (no frame class found for it)'.format(self, tag)) from e
+            else:
+                self._f.tags[tag_id] = tag_cls(text=value)
+        else:
+            raise TypeError('Unable to set {!r} for {} because its extension is {!r}'.format(tag, self, self.ext))
+
+    def tag_name_to_id(self, tag_name):
+        """
+        :param str tag_name: The file type-agnostic name of a tag, e.g., 'title' or 'date'
+        :return str: The tag ID appropriate for this file based on whether it is an MP3 or MP4
+        """
+        try:
+            type2id = TYPED_TAG_MAP[tag_name]
+        except KeyError as e:
+            raise InvalidTagName(tag_name, self) from e
+        try:
+            return type2id[self._tag_type]
+        except KeyError as e:
+            raise UnsupportedTagForFileType(tag_name, self) from e
+
+    def tags_for_id(self, tag_id):
+        """
+        :param str tag_id: A tag ID
+        :return list: All tags from this file with the given ID
+        """
+        if self.ext == 'mp3':
+            return self._f.tags.getall(tag_id.upper())         # all MP3 tags are uppercase; some MP4 tags are mixed case
+        return self._f.tags.get(tag_id, [])                    # MP4Tags doesn't have getall() and always returns a list
+
+    def tags_named(self, tag_name):
+        """
+        :param str tag_name: A tag name; see :meth:`.tag_name_to_id` for mapping of names to IDs
+        :return list: All tags from this file with the given name
+        """
+        return self.tags_for_id(self.tag_name_to_id(tag_name))
+
+    def get_tag(self, tag, by_id=False):
+        """
+        :param str tag: The name of the tag to retrieve, or the tag ID if by_id is set to True
+        :param bool by_id: The provided value was a tag ID rather than a tag name
+        :return: The tag object if there was a single instance of the tag with the given name/ID
+        :raises: :class:`TagValueException` if multiple tags were found with the given name/ID
+        :raises: :class:`TagNotFound` if no tags were found with the given name/ID
+        """
+        tags = self.tags_for_id(tag) if by_id else self.tags_named(tag)
+        if len(tags) > 1:
+            fmt = 'Multiple {!r} tags found for {}: {}'
+            raise TagValueException(fmt.format(tag, self, ', '.join(map(repr, tags))))
+        elif not tags:
+            raise TagNotFound('No {!r} tags were found for {}'.format(tag, self))
+        return tags[0]
+
+    def tag_text(self, tag, strip=True, by_id=False, default=_NotSet):
+        """
+        :param str tag: The name of the tag to retrieve, or the tag ID if by_id is set to True
+        :param bool strip: Strip leading/trailing spaces from the value before returning it
+        :param bool by_id: The provided value was a tag ID rather than a tag name
+        :param None|Str default: Default value to return when a TagValueException would otherwise be raised
+        :return str: The text content of the tag with the given name if there was a single value
+        :raises: :class:`TagValueException` if multiple values existed for the given tag
+        """
+        try:
+            _tag = self.get_tag(tag, by_id)
+        except TagNotFound as e:
+            if default is not _NotSet:
+                return default
+            raise e
+        vals = getattr(_tag, 'text', _tag)
+        if not isinstance(vals, list):
+            vals = [vals]
+        vals = list(map(str, vals))
+        if len(vals) > 1:
+            msg = 'Multiple {!r} values found for {}: {}'.format(tag, self, ', '.join(map(repr, vals)))
+            if default is not _NotSet:
+                log.warning(msg)
+                return default
+            raise TagValueException(msg)
+        elif not vals:
+            if default is not _NotSet:
+                return default
+            raise TagValueException('No {!r} tag values were found for {}'.format(tag, self))
+        return vals[0].strip() if strip else vals[0]
+
+    def all_tag_text(self, tag_name, suppress_exc=True):
+        try:
+            for tag in self.tags_named(tag_name):
+                yield from tag
+        except KeyError as e:
+            if suppress_exc:
+                log.debug('{} has no {} tags - {}'.format(self, tag_name, e))
+            else:
+                raise e
+
+    def tagless_sha256sum(self):
+        with self.path.open('rb') as f:
+            tmp = BytesIO(f.read())
+
+        try:
+            mutagen.File(tmp).tags.delete(tmp)
+        except AttributeError as e:
+            log.error('Error determining tagless sha256sum for {}: {}'.format(self._f.filename, e))
+            return self._f.filename
+
+        tmp.seek(0)
+        return sha256(tmp.read()).hexdigest()
+
+    def sha256sum(self):
+        with self.path.open('rb') as f:
+            return sha256(f.read()).hexdigest()
+
+    # @cached_property
+    # def acoustid_fingerprint(self):
+    #     """Returns the 2-tuple of this file's (duration, fingerprint)"""
+    #     return acoustid.fingerprint_file(self.filename)
+
+    @cached_property
+    def date(self):
+        date_str = self.tag_text('date')
+        return datetime_with_tz(date_str, '%Y%m%d')
+
+    @cached_property
+    def year(self):
+        try:
+            return self.date.year
+        except Exception:
+            return None
+
+    @cached_property
+    def track_num(self):
+        track = self.tag_text('track', default=None)
+        if track:
+            if '/' in track:
+                track = track.split('/')[0].strip()
+            if ',' in track:
+                track = track.split(',')[0].strip()
+            if track.startswith('('):
+                track = track[1:].strip()
+        return track
+
+    @cached_property
+    def disk_num(self):
+        disk = self.tag_text('disk', default=None)
+        if disk:
+            if '/' in disk:
+                disk = disk.split('/')[0].strip()
+            if ',' in disk:
+                disk = disk.split(',')[0].strip()
+            if disk.startswith('('):
+                disk = disk[1:].strip()
+        return disk
 
     @property
     def rating(self):
@@ -853,71 +1098,18 @@ class SongFile(ClearableCachedPropertyMixin):
         else:
             self.rating = RATING_RANGES[int(value) - 1][2]
 
-    @property
-    def length(self):
-        """
-        :return float: The length of this song in seconds
-        """
-        return self._f.info.length
 
-    @cached_property
-    def length_str(self):
-        """
-        :return str: The length of this song in the format (HH:M)M:SS
-        """
-        length = format_duration(int(self._f.info.length))  # Most other programs seem to floor the seconds
-        if length.startswith('00:'):
-            length = length[3:]
-        if length.startswith('0'):
-            length = length[1:]
-        return length
+class SongFile(BaseSongFile):
+    @classmethod
+    def for_plex_track(cls, track, root=None):
+        if root is None:
+            root_path_file = Path('~/.plex/server_path_root.txt').expanduser().resolve()
+            if root_path_file.exists():
+                root = root_path_file.open('r').read().strip()
+            if not root:
+                raise ValueError('A server root path must be provided or be in {}'.format(root_path_file.as_posix()))
 
-    @cached_property
-    def date(self):
-        date_str = self.tag_text('date')
-        return datetime_with_tz(date_str, '%Y%m%d')
-
-    @cached_property
-    def year(self):
-        try:
-            return self.date.year
-        except Exception:
-            return None
-
-    @cached_property
-    def album_name_cleaned(self):
-        album = self.tag_text('album')
-        m = re.match('(.*)\s*\[.*Album\]', album)
-        if m:
-            album = m.group(1).strip()
-
-        m = re.match('^(.*?)-?\s*(?:the)?\s*[0-9](?:st|nd|rd|th)\s+\S*\s*album\s*(?:repackage)?\s*(.*)$', album, re.I)
-        if m:
-            album = ' '.join(map(str.strip, m.groups())).strip()
-
-        m = re.search(r'((?:^|\s+)\d+\s*집(?:$|\s+))', album)   # {num}집 == nth album
-        if m:
-            album = album.replace(m.group(1), ' ').strip()
-
-        m = re.match(r'(.*)(\s-\s*(?:EP|Single))$', album, re.IGNORECASE)
-        if m:
-            album = m.group(1)
-
-        return album.replace(' : ', ': ')
-
-    @cached_property
-    def album_name_cleaned_plus_and_part(self):
-        title = self.album_name_cleaned
-        part = None
-        if 'OST' in title.upper():
-            m = re.match(r'^(.*)\s+((?:Part|Code No)\.?\s*\d+)$', title, re.IGNORECASE)
-            if m:
-                title = m.group(1).strip()
-                part = m.group(2).strip()
-
-            if title.endswith(' -'):
-                title = title[:-1].strip()
-        return title, part
+        return cls(Path(root).joinpath(track.media[0].parts[0].file).resolve())
 
     @cached_property
     def album_from_dir(self):
@@ -931,17 +1123,6 @@ class SongFile(ClearableCachedPropertyMixin):
         return album
 
     @cached_property
-    def tag_title(self):
-        return self.tag_text('title')
-
-    def set_title(self, title):
-        self.set_text_tag('title', title, by_id=False)
-
-    @cached_property
-    def tag_artist(self):
-        return self.tag_text('artist')
-
-    @cached_property
     def in_competition_album(self):
         try:
             album_artist = self.tag_text('album_artist')
@@ -952,40 +1133,6 @@ class SongFile(ClearableCachedPropertyMixin):
                 if album_artist.split()[-1].isdigit():
                     return True
         return False
-
-    @cached_property
-    def track_num(self):
-        track = self.tag_text('track', default=None)
-        if track:
-            if '/' in track:
-                track = track.split('/')[0].strip()
-            if ',' in track:
-                track = track.split(',')[0].strip()
-            if track.startswith('('):
-                track = track[1:].strip()
-        return track
-
-    @cached_property
-    def disk_num(self):
-        disk = self.tag_text('disk', default=None)
-        if disk:
-            if '/' in disk:
-                disk = disk.split('/')[0].strip()
-            if ',' in disk:
-                disk = disk.split(',')[0].strip()
-            if disk.startswith('('):
-                disk = disk[1:].strip()
-        return disk
-
-    @cached_property
-    def album_dir_obj(self):
-        if self._album_dir is not None:
-            return self._album_dir
-        try:
-            return AlbumDir(self.path.parent)
-        except InvalidAlbumDir:
-            pass
-        return None
 
     @cached_property
     def _is_full_ost(self):
@@ -1229,153 +1376,6 @@ class SongFile(ClearableCachedPropertyMixin):
     def album_type_dir(self):
         return self.path.parents[1].name
 
-    @cached_property
-    def ext(self):
-        if isinstance(self._f.tags, MP4Tags):
-            return self.path.suffix[1:]
-        elif isinstance(self._f.tags, ID3):
-            return 'mp3'
-        return None
-
-    @cached_property
-    def _tag_type(self):
-        if isinstance(self._f.tags, MP4Tags):
-            return 'mp4'
-        elif isinstance(self._f.tags, ID3):
-            return 'mp3'
-        return None
-
-    def basename(self, no_ext=False, trim_prefix=False):
-        basename = self.path.stem if no_ext else self.path.name
-        if trim_prefix:
-            m = re.match(r'\d+\.?\s*(.*)', basename)
-            if m:
-                basename = m.group(1)
-        return basename
-
-    def set_text_tag(self, tag, value, by_id=False):
-        tag_id = tag if by_id else self.tag_name_to_id(tag)
-        if isinstance(self._f.tags, MP4Tags):
-            self._f.tags[tag_id] = value
-        elif self.ext == 'mp3':
-            try:
-                tag_cls = getattr(mutagen.id3._frames, tag_id.upper())
-            except AttributeError as e:
-                raise ValueError('Invalid tag for {}: {} (no frame class found for it)'.format(self, tag)) from e
-            else:
-                self._f.tags[tag_id] = tag_cls(text=value)
-        else:
-            raise TypeError('Unable to set {!r} for {} because its extension is {!r}'.format(tag, self, self.ext))
-
-    def tag_name_to_id(self, tag_name):
-        """
-        :param str tag_name: The file type-agnostic name of a tag, e.g., 'title' or 'date'
-        :return str: The tag ID appropriate for this file based on whether it is an MP3 or MP4
-        """
-        try:
-            type2id = TYPED_TAG_MAP[tag_name]
-        except KeyError as e:
-            raise InvalidTagName(tag_name, self) from e
-        try:
-            return type2id[self._tag_type]
-        except KeyError as e:
-            raise UnsupportedTagForFileType(tag_name, self) from e
-
-    def tags_for_id(self, tag_id):
-        """
-        :param str tag_id: A tag ID
-        :return list: All tags from this file with the given ID
-        """
-        if self.ext == 'mp3':
-            return self._f.tags.getall(tag_id.upper())         # all MP3 tags are uppercase; some MP4 tags are mixed case
-        return self._f.tags.get(tag_id, [])                    # MP4Tags doesn't have getall() and always returns a list
-
-    def tags_named(self, tag_name):
-        """
-        :param str tag_name: A tag name; see :meth:`.tag_name_to_id` for mapping of names to IDs
-        :return list: All tags from this file with the given name
-        """
-        return self.tags_for_id(self.tag_name_to_id(tag_name))
-
-    def get_tag(self, tag, by_id=False):
-        """
-        :param str tag: The name of the tag to retrieve, or the tag ID if by_id is set to True
-        :param bool by_id: The provided value was a tag ID rather than a tag name
-        :return: The tag object if there was a single instance of the tag with the given name/ID
-        :raises: :class:`TagValueException` if multiple tags were found with the given name/ID
-        :raises: :class:`TagNotFound` if no tags were found with the given name/ID
-        """
-        tags = self.tags_for_id(tag) if by_id else self.tags_named(tag)
-        if len(tags) > 1:
-            fmt = 'Multiple {!r} tags found for {}: {}'
-            raise TagValueException(fmt.format(tag, self, ', '.join(map(repr, tags))))
-        elif not tags:
-            raise TagNotFound('No {!r} tags were found for {}'.format(tag, self))
-        return tags[0]
-
-    def tag_text(self, tag, strip=True, by_id=False, default=_NotSet):
-        """
-        :param str tag: The name of the tag to retrieve, or the tag ID if by_id is set to True
-        :param bool strip: Strip leading/trailing spaces from the value before returning it
-        :param bool by_id: The provided value was a tag ID rather than a tag name
-        :param None|Str default: Default value to return when a TagValueException would otherwise be raised
-        :return str: The text content of the tag with the given name if there was a single value
-        :raises: :class:`TagValueException` if multiple values existed for the given tag
-        """
-        try:
-            _tag = self.get_tag(tag, by_id)
-        except TagNotFound as e:
-            if default is not _NotSet:
-                return default
-            raise e
-        vals = getattr(_tag, 'text', _tag)
-        if not isinstance(vals, list):
-            vals = [vals]
-        vals = list(map(str, vals))
-        if len(vals) > 1:
-            msg = 'Multiple {!r} values found for {}: {}'.format(tag, self, ', '.join(map(repr, vals)))
-            if default is not _NotSet:
-                log.warning(msg)
-                return default
-            raise TagValueException(msg)
-        elif not vals:
-            if default is not _NotSet:
-                return default
-            raise TagValueException('No {!r} tag values were found for {}'.format(tag, self))
-        return vals[0].strip() if strip else vals[0]
-
-    def all_tag_text(self, tag_name, suppress_exc=True):
-        try:
-            for tag in self.tags_named(tag_name):
-                yield from tag
-        except KeyError as e:
-            if suppress_exc:
-                log.debug('{} has no {} tags - {}'.format(self, tag_name, e))
-            else:
-                raise e
-
-    def tagless_sha256sum(self):
-        with self.path.open('rb') as f:
-            tmp = BytesIO(f.read())
-
-        try:
-            mutagen.File(tmp).tags.delete(tmp)
-        except AttributeError as e:
-            log.error('Error determining tagless sha256sum for {}: {}'.format(self._f.filename, e))
-            return self._f.filename
-
-        tmp.seek(0)
-        return sha256(tmp.read()).hexdigest()
-
-    def sha256sum(self):
-        with self.path.open('rb') as f:
-            return sha256(f.read()).hexdigest()
-
-    # @cached_property
-    # def acoustid_fingerprint(self):
-    #     """Returns the 2-tuple of this file's (duration, fingerprint)"""
-    #     return acoustid.fingerprint_file(self.filename)
-
     def update_tags(self, allow_incomplete, album_genre, true_soloist, collab_mode, dry_run):
         logged_messages = 0
         to_update = {}
@@ -1560,46 +1560,6 @@ def _load_tags(tag_info, file_path):
 #         #     logging.warning('Found multiple recordings in best result with score {}: {}'.format(best['score'], ', '.join(best_ids)))
 #         #
 #         # return self.get_track(best_ids[0])
-
-
-class TagException(Exception):
-    """Generic exception related to problems with tags"""
-
-
-class TagNotFound(TagException):
-    """Exception to be raised when a given tag cannot be found"""
-
-
-class TagAccessException(TagException):
-    """Exception to be raised when unable to access a given tag"""
-    def __init__(self, tag, file_obj):
-        self.tag = tag
-        self.obj = file_obj
-
-
-class UnsupportedTagForFileType(TagAccessException):
-    """Exception to be raised when attempting to access a tag on an unsupported file type"""
-    def __repr__(self):
-        fmt = 'Accessing/modifying {!r} tags is not supported on {} because it is a {!r} file'
-        return fmt.format(self.tag, self.obj, self.obj.ext)
-
-
-class InvalidTagName(TagAccessException):
-    """Exception to be raised when attempting to retrieve the value for a tag that does not exist"""
-    def __repr__(self):
-        return 'Invalid tag name {!r} for file {}'.format(self.tag, self.obj)
-
-
-class TagValueException(TagException):
-    """Exception to be raised when a tag with an unexpected value is encountered"""
-
-
-class WikiMatchException(Exception):
-    """Exception to be raised when unable to find a match for a given field in the wiki"""
-
-
-class InvalidAlbumDir(Exception):
-    """Exception to be raised when an AlbumDir is initialized with an invalid directory"""
 
 
 def iter_categorized_music_files(paths):
