@@ -86,16 +86,16 @@ def parse_discography_page(uri_path, clean_soup, artist):
                             1, lines, uri_path, links=links, client=artist._client,
                             include={'links': links, 'album': album_title, 'year': int(year_ele.text.strip())}
                         )
-                        fmt = 'Single info from {} - {} - type={!r} sub_type={!r} album={!r} lines={!r}\n==> track={}'
-                        log.debug(fmt.format(artist, uri_path, album_type, sub_type, album_title, lines, track))
+                        # fmt = 'Single info from {} - {} - type={!r} sub_type={!r} album={!r} lines={!r}\n==> track={}'
+                        # log.debug(fmt.format(artist, uri_path, album_type, sub_type, album_title, lines, track))
                         tracks.append(track)
                     singles.append({'type': album_type, 'sub_type': sub_type, 'tracks': tracks})
                 elif any(val in columns for val in ('Details', 'Album details')):                   # Albums
                     for i, th in enumerate(ele.find_all('th', scope='row')):
                         links = link_tuples(th.find_all('a'))
                         title = th.text.strip()
-                        fmt = 'Processing type={!r} sub_type={!r} th={!r} on {}'
-                        log.debug(fmt.format(album_type, sub_type, title, uri_path))
+                        # fmt = 'Processing type={!r} sub_type={!r} th={!r} on {}'
+                        # log.debug(fmt.format(album_type, sub_type, title, uri_path))
                         album = {
                             'title': title, 'links': links, 'type': album_type, 'sub_type': sub_type, 'is_ost': False,
                             'primary_artist': (artist.name, artist._uri_path) if artist else (None, None),

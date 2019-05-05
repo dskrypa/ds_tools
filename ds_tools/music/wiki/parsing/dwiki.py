@@ -8,11 +8,26 @@ import re
 from ....unicode import LangCat, romanized_permutations
 from ....utils import common_suffix
 from ...name_processing import eng_cjk_sort, split_name, str2list
+from ..utils import multi_lang_name
 from .exceptions import *
 from .common import *
 
-__all__ = ['parse_artist_osts', 'parse_drama_wiki_info_list', 'parse_ost_page']
+__all__ = ['parse_artist_osts', 'parse_drama_wiki_info_list', 'parse_ost_page', 'parse_tv_appearances']
 log = logging.getLogger(__name__)
+
+
+def parse_tv_appearances(uri_path, clean_soup, artist):
+    try:
+        show_ul = clean_soup.find('span', id='TV_Shows').parent.find_next('ul')
+    except Exception as e:
+        raise WikiEntityParseException('Unable to find TV_Shows section in {}'.format(uri_path)) from e
+
+    shows = []
+    for li in show_ul.find_all('li'):
+        a = li.find('a')
+        if a:
+            shows.append({'name': a.text, 'href': a.get('href')})
+    return shows
 
 
 def parse_artist_osts(uri_path, clean_soup, artist):
@@ -183,6 +198,27 @@ def parse_drama_wiki_info_list(uri_path, info_ul, client):
                     value = ('', parts[0])
                     fmt = 'No english title found for {}; 2 non-eng titles found: {!r} (keeping) / {!r} (discarding)'
                     log.debug(fmt.format(uri_path, *parts))
+        elif key in ('also known as', 'formerly known as'):
+            parts = list(map(str.strip, value.split('/')))
+            langs = tuple(LangCat.categorize(p) for p in parts)
+            if len(parts) == 2 and LangCat.MIX not in langs and len(set(langs)) == 2:
+                aka_eng, aka_cjk = eng_cjk_sort(parts, langs)
+                if aka_eng and aka_cjk:
+                    value = [multi_lang_name(aka_eng, aka_cjk), aka_eng, aka_cjk]
+                else:
+                    value = [aka_eng or aka_cjk]
+            else:
+                value = []
+                for part in parts:
+                    try:
+                        aka_eng, aka_cjk = split_name(part)
+                    except Exception as e:
+                        value.append(part)
+                    else:
+                        if aka_eng and aka_cjk:
+                            value.extend([multi_lang_name(aka_eng, aka_cjk), aka_eng, aka_cjk])
+                        else:
+                            value.append(aka_eng or aka_cjk)
         elif key in ('release date', 'birthdate'):
             if key == 'birthdate':
                 try:
@@ -203,8 +239,8 @@ def parse_drama_wiki_info_list(uri_path, info_ul, client):
         elif key == 'artist':
             anchors = tuple(li.find_all('a'))
             value, info['produced_by'] = split_artist_list(value, context=uri_path, anchors=anchors, client=client)
-        elif key == 'also known as':
-            value = str2list(value)
+        # elif key in ('also known as', 'formerly known as'):
+        #     value = str2list(value)
         elif key in ('original soundtrack', 'original soundtracks'):
             links = dict(link_tuples(li.find_all('a')))
             value = {value: links.get(value)}

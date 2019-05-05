@@ -148,25 +148,25 @@ def parse_name(text):
         base = base[:base.index(' is a ')].strip()
         # log.warning('Used \'is\' split for {!r}=>{!r}==>>{!r}'.format(text[:250], parts[0], base), extra={'color': (9, 11)})
         eng, cjk = eng_cjk_sort(base)
-        return eng, cjk, None, None, None
+        return eng, cjk, None, [], None
     elif is_any_cjk(details):
-        return base, details, None, None, None
+        return base, details, None, [], None
     elif base in ('+ +', 'X X'):                            # Special case for particular albums
         return '[{}]'.format(base), '', None, details, None
     elif len(parts) == 2 and first_sentence.endswith('"'):  # Special case for album name ending in quoted word
-        return '{} "{}"'.format(base, details), '', None, None, None
+        return '{} "{}"'.format(base, details), '', None, [], None
     elif not contains_any_cjk(details):
         eng, cjk = eng_cjk_sort(base)
-        return eng, cjk, None, None, None
+        return eng, cjk, None, [], None
     elif lc_details.endswith('ost') and base.lower().endswith('ost') and contains_any_cjk(details):
         eng, cjk = eng_cjk_sort((base, details), permissive=True)
-        return eng, cjk, None, None, None
+        return eng, cjk, None, [], None
     elif base.endswith(')') and details.endswith(')'):
         base_parts = parser.parse(base)
         details_parts = parser.parse(details)
         if len(base_parts) == len(details_parts) == 2 and base_parts[1] == details_parts[1]:
             eng, cjk = eng_cjk_sort((base_parts[0], details_parts[0]), permissive=True)
-            return eng, cjk, None, None, [base_parts[1]]
+            return eng, cjk, None, [], [base_parts[1]]
     # elif lc_details.startswith('hangul'):
     #     details = details[6:]
     #     if details.startswith(':'):
@@ -186,7 +186,7 @@ def parse_name(text):
     cjk = ''
     found_hangul = False
     stylized = None
-    aka = None
+    aka = []
     next_is_aka = False
     style_leads = ('stylized as', 'sometimes styled as')
     info = []
@@ -199,14 +199,14 @@ def parse_name(text):
             if ':' in part:
                 # log.debug('Processing aka section with colon: {!r}'.format(part))
                 try:
-                    aka_eng, aka_cjk = split_name(part)
+                    aka_eng, aka_cjk = split_name(part)         # if 'eng (lang: value)', split_name removes lang name
                 except ValueError:
-                    aka = part
+                    aka.append(part)
                 else:
-                    aka = '{} ({})'.format(aka_eng, aka_cjk)    # if 'eng (lang: value)', split_name removes lang name
+                    aka.append('{} ({})'.format(aka_eng, aka_cjk))
             else:
                 # log.debug('Processing aka section: {!r}'.format(part))
-                aka = part
+                aka.append(part)
             next_is_aka = False
         elif any(lead for lead in style_leads if lc_part.startswith(lead)):
             style_lead = next((lead for lead in style_leads if lc_part.startswith(lead)), None)
@@ -252,23 +252,24 @@ def parse_name(text):
             else:
                 _lang_name, alt_cjk = tuple(map(str.strip, part.split(':', 1)))
                 if LangCat.categorize(_lang_name) == LangCat.ENG and LangCat.categorize(alt_cjk) in LangCat.asian_cats:
-                    aka = alt_cjk
+                    aka.append(alt_cjk)
                 else:
                     info.append(part)
         elif lc_part.endswith((' ver.', ' ver')):
             info.append(part)
-        elif not aka and aka_rx.match(part):
+        elif aka_rx.match(part):
             _orig = part
             m = aka_rx.match(part)
             # log.debug('AKA match: {!r} => {}'.format(_orig, m.groups()))
             part = m.group(2).strip()
             if not found_hangul and not cjk and contains_any_cjk(part) and has_parens(part):
-                aka, part = map(str.strip, part.split())
+                _aka, part = map(str.strip, part.split())
                 details_parts.insert(0, unsurround(part))
             else:
-                aka = part
+                _aka = part
 
-            next_is_aka = not aka
+            aka.append(_aka)
+            next_is_aka = not _aka
             if next_is_aka:
                 log.log(9, 'Next part is AKA value because part={!r} has no aka value'.format(_orig))
         elif not found_hangul and not cjk and contains_any_cjk(part):
@@ -292,8 +293,14 @@ def parse_name(text):
             break
         elif found_hangul and lc_part.startswith('rr:'):
             pass
-        elif lc_part == 'lit' or lc_part.startswith('lit. '):   # Literal translation of name
+        elif lc_part == 'lit':  # Literal translation of name
             pass
+        elif lc_part.startswith('lit. '):
+            lit_translation = part[4:].strip()
+            if ')' in lit_translation and '(' not in lit_translation:
+                lit_translation, remainder = map(str.strip, lit_translation.split(')', 1))
+                details_parts.append(remainder)
+            aka.append(lit_translation)
         else:
             _details_parts = list(map(str.strip, re.split('[;,]', details)))
             _pat = r'{}\s*[;,]\s*{}'.format(regexcape(cjk), regexcape(part))

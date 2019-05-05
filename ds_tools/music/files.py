@@ -811,6 +811,10 @@ class BaseSongFile(ClearableCachedPropertyMixin):
         if m:
             album = m.group(1)
 
+        m = re.match(r'^(.*)\sO\.S\.T\.?(\s.*|$)', album, re.IGNORECASE)
+        if m:
+            album = '{} OST{}'.format(*m.groups())
+
         return album.replace(' : ', ': ')
 
     @cached_property
