@@ -14,7 +14,7 @@ from fuzzywuzzy.fuzz import _token_sort as fuzz_token_sort_ratio, _token_set as 
 
 from ..caching import cached
 from ..unicode import is_any_cjk, contains_any_cjk, is_hangul, LangCat
-from ..utils import ParentheticalParser, unsurround, normalize_roman_numerals, common_suffix
+from ..utils import ParentheticalParser, unsurround, normalize_roman_numerals, common_suffix, regexcape
 from .exceptions import NameFormatError
 
 __all__ = [
@@ -296,7 +296,8 @@ def parse_name(text):
             pass
         else:
             _details_parts = list(map(str.strip, re.split('[;,]', details)))
-            if len(_details_parts) == 2 and cjk and re.match(r'{}\s*[;,]\s*{}'.format(cjk, part), details):
+            _pat = r'{}\s*[;,]\s*{}'.format(regexcape(cjk), regexcape(part))
+            if len(_details_parts) == 2 and cjk and re.match(_pat, details):
                 pass    # (cjk; pronunciation of cjk)
             elif lc_part.startswith('born ') and details_parts and details_parts[0][:4].isdigit():
                 details_parts.pop(0)
@@ -304,7 +305,7 @@ def parse_name(text):
                 pass
             elif base and cjk:
                 err_msg = 'Ignoring unexpected part={!r} and returning parsed name early'.format(part)
-                log.debug(err_msg + _parse_dbg(base, cjk, stylized, aka, info, details_parts))
+                log.log(9, err_msg + _parse_dbg(base, cjk, stylized, aka, info, details_parts))
                 break
             else:
                 err_msg = 'Unexpected part={!r}'.format(part)

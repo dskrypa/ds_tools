@@ -16,7 +16,8 @@ from unicodedata import normalize, category as unicode_cat
 __all__ = [
     'Token', 'RecursiveDescentParser', 'UnexpectedTokenError', 'strip_punctuation', 'ParentheticalParser', 'DASH_CHARS',
     'QMARKS', 'ALL_WHITESPACE', 'CHARS_BY_CATEGORY', 'ListBasedRecursiveDescentParser', 'ALL_PUNCTUATION',
-    'ALL_SYMBOLS', 'ParentheticalListParser', 'unsurround', 'normalize_roman_numerals', 'common_suffix', 'has_unpaired'
+    'ALL_SYMBOLS', 'ParentheticalListParser', 'unsurround', 'normalize_roman_numerals', 'common_suffix', 'has_unpaired',
+    'regexcape'
 ]
 log = logging.getLogger(__name__)
 
@@ -36,6 +37,11 @@ ALL_PUNCTUATION = ''.join(chain.from_iterable(chars for cat, chars in CHARS_BY_C
 ALL_SYMBOLS = ''.join(chain.from_iterable(chars for cat, chars in CHARS_BY_CATEGORY.items() if cat.startswith('S')))
 PUNC_STRIP_TBL = str.maketrans({c: '' for c in string.punctuation})
 QMARKS = '\"“'
+REGEX_ESCAPE_TABLE = str.maketrans({c: '\\' + c for c in '()[]{}^$+*.?|\\'})
+
+
+def regexcape(text):
+    return text.translate(REGEX_ESCAPE_TABLE)
 
 
 def has_unpaired(text, opener='(', closer=')'):

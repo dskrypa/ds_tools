@@ -794,7 +794,7 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
 
             bad_classes = (
                 'toc', 'mw-editsection', 'reference', 'hatnote', 'infobox', 'noprint', 'box-Multiple_issues',
-                'box-Unreliable_sources'
+                'box-Unreliable_sources', 'box-BLP_sources'
             )
             for clz in bad_classes:
                 for rm_ele in content.find_all(class_=clz):

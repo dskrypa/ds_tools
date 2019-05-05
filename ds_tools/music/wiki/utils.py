@@ -8,7 +8,7 @@ from collections import OrderedDict
 from itertools import chain, combinations
 from urllib.parse import urlparse
 
-from ...utils import QMARKS, soupify
+from ...utils import QMARKS, soupify, regexcape
 
 __all__ = [
     'comparison_type_check', 'edition_combinations', 'get_page_category', 'multi_lang_name', 'normalize_href',
@@ -48,7 +48,6 @@ PATH_SANITIZATION_DICT = {c: '' for c in '*;?<>"'}
 PATH_SANITIZATION_DICT.update({'/': '_', ':': '-', '\\': '_', '|': '-'})
 PATH_SANITIZATION_TABLE = str.maketrans(PATH_SANITIZATION_DICT)
 QMARK_STRIP_TBL = str.maketrans({c: '' for c in QMARKS})
-REGEX_ESCAPE_TABLE = str.maketrans({c: '\\' + c for c in '()[]{}^$+*.?|\\'})
 SYNONYM_SETS = [{'and', '&', '+'}, {'version', 'ver.'}]
 
 
@@ -102,13 +101,13 @@ def synonym_pattern(text, synonym_sets=None, chain_sets=True):
       synonym_sets)
     :return: Compiled regex pattern for the given text that will match the provided synonyms
     """
-    parts = [part.translate(REGEX_ESCAPE_TABLE) for part in re.split('(\W)', re.sub('\s+', ' ', text.lower())) if part]
+    parts = [regexcape(part) for part in re.split('(\W)', re.sub('\s+', ' ', text.lower())) if part]
     synonym_sets = chain(SYNONYM_SETS, synonym_sets) if chain_sets and synonym_sets else synonym_sets or SYNONYM_SETS
 
     for synonym_set in synonym_sets:
         for i, part in enumerate(list(parts)):
             if part in synonym_set:
-                parts[i] = '(?:{})'.format('|'.join(s.translate(REGEX_ESCAPE_TABLE) for s in sorted(synonym_set)))
+                parts[i] = '(?:{})'.format('|'.join(regexcape(s) for s in sorted(synonym_set)))
 
     pattern = ''.join('\s+' if part == ' ' else part for part in parts)
     # log.debug('Synonym pattern: {!r} => {!r}'.format(text, pattern))
