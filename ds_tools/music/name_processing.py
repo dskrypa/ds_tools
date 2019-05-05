@@ -42,7 +42,7 @@ def fuzz_process(text, strip_special=True):
         ost_rx = fuzz_process._ost_rx
     except AttributeError:
         non_letter_non_num_rx = fuzz_process._non_letter_non_num_rx = re.compile(r'\W')
-        ost_rx = fuzz_process._ost_rx = re.compile(r'\sOST(?:$|\s)', re.IGNORECASE)
+        ost_rx = fuzz_process._ost_rx = re.compile(r'\sOST(?:$|\s|\)|\])', re.IGNORECASE)
 
     original = text
     if strip_special:                               # Some titles are only differentiable by special characters

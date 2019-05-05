@@ -70,6 +70,8 @@ def comparison_type_check(obj, other, req_type, op):
 
 def multi_lang_name(eng_name, cjk_name):
     if eng_name and cjk_name:
+        if cjk_name.startswith('(') and cjk_name.endswith(')'):
+            return '{} {}'.format(eng_name, cjk_name)
         return '{} ({})'.format(eng_name, cjk_name)
     else:
         return eng_name or cjk_name

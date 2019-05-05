@@ -7,3 +7,4 @@ Package containing utilities for parsing Wiki pages into artist/album/song/etc e
 from .exceptions import *
 from .rest import *
 from .entities import *
+from .parsing import split_artist_list

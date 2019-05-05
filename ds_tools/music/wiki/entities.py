@@ -332,6 +332,7 @@ class WikiMatchable:
     _category = None
     __cache = LRUCache(300)
     _int_pat = re.compile(r'\d+')
+    __part_pat = re.compile(r'^(.*)part \d+$', re.IGNORECASE)
 
     def __init__(self):
         self._strip_special = False
@@ -352,6 +353,11 @@ class WikiMatchable:
             except TypeError:
                 pass
             return m
+
+    def __repr__(self):
+        if hasattr(self, '_obj'):
+            return repr(self._obj)
+        return super().__repr__()
 
     @cached_property
     def _is_plain_matchable(self):
@@ -481,7 +487,8 @@ class WikiMatchable:
         else:
             others = other
 
-        if isinstance(self, WikiSongCollection) or self._strip_special:
+        # log.debug('_fuzz_other({!r}) pre-fuzz others={!r}'.format(other, others))
+        if isinstance(self, WikiSongCollection) or not self._strip_special:
             fuzzed = tuple(filter(None, (fuzz_process(o, strip_special=False) for o in others) if process else others))
         else:
             fuzzed = tuple(filter(None, (fuzz_process(o) for o in others if o) if process else others))
@@ -547,7 +554,6 @@ class WikiMatchable:
                 return 0, None, None
 
         matchable = self.__cached(other, isinstance(self, WikiSongCollection), track)
-        # fuzzed_others, cjk = self._fuzz_other(other, process)
         # log.debug('fuzz({!r}) => {!r}'.format(other, matchable._fuzzed_aliases))
         # log.debug('fuzz({!r}) => {}'.format(other, len(matchable._fuzzed_aliases)))
         if not matchable._fuzzed_aliases:
@@ -595,8 +601,16 @@ class WikiMatchable:
                     pass
                 else:
                     score_mod += 15 if years_match else -25
+                    # if years_match:
+                    #     log.debug('score_mod += 15: self.released.year=year={}'.format(year))
+                    # else:
+                    #     log.debug('score_mod -= 25: self.released.year={} != year={}'.format(self.released.year, year))
             if track_count is not None:
                 score_mod += 10 if track_count in self._part_track_counts else -20
+                # if track_count in self._part_track_counts:
+                #     log.debug('score_mod += 10: track_count={} matches {}'.format(track_count, self._part_track_counts))
+                # else:
+                #     log.debug('score_mod -= 20: track_count={} not in {}'.format(track_count, self._part_track_counts))
 
         best_score, best_alias, best_val = 0, None, None
         has_han_alias = any(LangCat.categorize(alias) == LangCat.HAN for alias in self._fuzzed_aliases)
@@ -623,9 +637,29 @@ class WikiMatchable:
                 if score > best_score:
                     best_score, best_alias, best_val = score, alias, val
 
-        if len(matchable._fuzzed_aliases) > 1 and self._non_eng_langs and LangCat.categorize(best_alias) == LangCat.ENG:
+        best_is_eng = LangCat.categorize(best_alias) == LangCat.ENG
+        val_is_eng = LangCat.categorize(best_val) == LangCat.ENG
+        if best_is_eng and not val_is_eng:
+            score_mod -= 50
+            # log.debug('score_mod -= 50: val_is_eng={}, best_is_eng={}'.format(val_is_eng, best_is_eng))
+
+        if len(matchable._fuzzed_aliases) > 1 and self._non_eng_langs and best_is_eng:
             other_langs = matchable._non_eng_langs
-            score_mod += 15 if self._non_eng_langs.intersection(other_langs) else -50
+            common_non_eng = self._non_eng_langs.intersection(other_langs)
+            score_mod += 5 if common_non_eng else -15
+            # if common_non_eng:
+            #     log.debug('score_mod += 15: common non-eng langs: {}'.format(common_non_eng))
+            # else:
+            #     log.debug('score_mod -= 50: non-eng self:{} other:{}'.format(self._non_eng_langs, other_langs))
+
+        if isinstance(self, WikiSongCollection) and best_alias and best_val:
+            # noinspection PyUnresolvedReferences
+            m_self = self.__part_pat.match(best_alias)
+            # noinspection PyUnresolvedReferences
+            m_other = self.__part_pat.match(best_val)
+            if m_self and m_other:
+                score = revised_weighted_ratio(m_self.group(1), m_other.group(1))
+                best_score = int(best_score * score / 100)
 
         final_score = best_score + score_mod
         if final_score >= 100 and matchable.cjk_name and not getattr(self, 'cjk_name', None):
@@ -635,6 +669,8 @@ class WikiMatchable:
             except AttributeError:
                 pass
 
+        # fmt = '{!r}=?={!r}: final_score={} (={} + {}), alias={!r}, val={!r}'
+        # log.debug(fmt.format(self, other, final_score, best_score, score_mod, best_alias, best_val))
         return final_score, best_alias, best_val
 
 
@@ -685,7 +721,7 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
             pass
 
     def __repr__(self):
-        return '<{}({!r})>'.format(type(self).__name__, self.name)
+        return '<{}({!r}) @ {}>'.format(type(self).__name__, self.name, self._client._site)
 
     def __eq__(self, other):
         if not isinstance(other, WikiEntity):
@@ -1370,10 +1406,25 @@ class WikiArtist(WikiPersonCollection):
         except Exception as e:
             if any('OST' in alias.upper() for alias in aliases):
                 ost_name = name if isinstance(name, str) else next(iter(name))
+                match_aliases = [name] if isinstance(name, str) else list(name)
+                # try:
+                #     no_part_name = WikiSoundtrack._ost_name_rx.match(ost_name).group(1).strip()
+                # except Exception:
+                #     pass
+                # else:
+                #     log.info('no_part_name({!r}) = {!r}'.format(name, no_part_name))
+                #     match_aliases.insert(0, no_part_name)
+
                 log.debug('{}: Using find_ost({!r})'.format(self, ost_name))
+
                 ost = find_ost(self, ost_name, {'title': ost_name})
                 if ost:
-                    score, alias, val = ost.score_match(name, **kwargs)
+                    log.debug('{}: Found OST via find_ost: {} @ {}'.format(self, ost, ost.url))
+
+                    score, alias, val = ost.score_match(tuple(match_aliases), **kwargs)
+
+                    log.debug(match_fmt.format(self, ost, name, score, alias, val))
+
                     if score > best_score:
                         best_score, best_alias, best_val, best_coll = score, alias, val, ost
                         log.debug(match_fmt.format(self, best_coll, name, best_score, best_alias, best_val))
@@ -1381,6 +1432,7 @@ class WikiArtist(WikiPersonCollection):
                             if best_score < 95:
                                 log.debug(match_fmt.format(self, best_coll, name, best_score, best_alias, best_val))
                             return best_coll, best_score
+
             log.debug('{}: Error finding {} version: {}'.format(self, site, e))
             return None, -1
         else:
@@ -1833,7 +1885,7 @@ class WikiSongCollection(WikiEntity):
         try:
             artist = self._artist_context or self.artist
         except Exception:
-            pass
+            return []
         else:
             return ['{} {}'.format(artist.english_name, a) for a in self._aliases()]
 
@@ -1896,7 +1948,7 @@ class WikiSongCollection(WikiEntity):
         return '{} {}'.format(self.name, extra) if extra else self.name
 
     @cached()
-    def expected_rel_dir(self, as_path=False, base_title=None):
+    def expected_rel_dir(self, as_path=False, base_title=None, released=None, year=None):
         """
         :param bool as_path: Return a Path object instead of a string
         :param str base_title: Base title to use for editions/parts
@@ -1905,9 +1957,11 @@ class WikiSongCollection(WikiEntity):
         numbered_type = self.album_type in ALBUM_NUMBERED_TYPES
         if numbered_type or self.album_type in ALBUM_DATED_TYPES:
             try:
-                release_str = self.released.strftime('%Y.%m.%d')
+                released = released or self.released
+                release_str = released.strftime('%Y.%m.%d')
             except Exception:
-                release_str = self.year or ''
+                year = year or self.year
+                release_str = year or ''
             release_date = '[{}] '.format(release_str) if release_str else ''
 
             if numbered_type:
@@ -1921,8 +1975,8 @@ class WikiSongCollection(WikiEntity):
         return path if as_path else path.as_posix()
 
     @cached()
-    def expected_rel_path(self, true_soloist=False, base_title=None):
-        rel_to_artist_dir = self.expected_rel_dir(True, base_title)
+    def expected_rel_path(self, true_soloist=False, base_title=None, released=None, year=None):
+        rel_to_artist_dir = self.expected_rel_dir(True, base_title, released, year)
         if not true_soloist and isinstance(self.artist, WikiSinger) and self.artist.member_of:
             soloist = self.artist
             artist_dir = soloist.member_of.expected_rel_path()
@@ -2500,6 +2554,18 @@ class WikiSongCollectionPart:
             title += ' ({} ver.)'.format(self.language)
         return title
 
+    @cached_property
+    def released(self):
+        if not isinstance(self._collection._client, DramaWikiClient):
+            return self._collection.released
+        return self._track_list['info']['release date']
+
+    @cached_property
+    def year(self):
+        if not isinstance(self._collection._client, DramaWikiClient):
+            return self._collection.year
+        return self.released.year
+
     def _get_tracks(self):
         return self._track_list
 
@@ -2509,10 +2575,10 @@ class WikiSongCollectionPart:
         return [WikiTrack(info, self, artist_context) for info in self._track_list['tracks']]
 
     def expected_rel_dir(self, as_path=False):
-        return self._collection.expected_rel_dir(as_path, self.title)
+        return self._collection.expected_rel_dir(as_path, self.title, self.released, self.year)
 
     def expected_rel_path(self, true_soloist=False):
-        return self._collection.expected_rel_path(true_soloist, self.title)
+        return self._collection.expected_rel_path(true_soloist, self.title, self.released, self.year)
 
     def find_track(self, name, min_score=75, include_score=False, edition_or_part=None, disk=None, **kwargs):
         if edition_or_part not in (None, self.edition) and disk not in (None, self.disk):
@@ -2567,6 +2633,7 @@ class WikiSoundtrack(WikiSongCollection):
     _ost_name_rx = re.compile(r'^(.* OST)\s*-?\s*((?:part|code no)\.?\s*\d+)$', re.IGNORECASE)
     _ost_name_paren_rx = re.compile(r'^(.*) \(.*\) OST$', re.IGNORECASE)
     _ost_simple_rx = re.compile(r'^(.* OST)', re.IGNORECASE)
+    _mix_part_rx = re.compile(r'(.*OST)\s*\((.*OST)\) - (.*)', re.IGNORECASE)
 
     def __init__(self, uri_path=None, client=None, **kwargs):
         super().__init__(uri_path, client, **kwargs)
@@ -2613,6 +2680,7 @@ class WikiSoundtrack(WikiSongCollection):
 
     def _additional_aliases(self):
         addl_aliases = set(super()._additional_aliases())
+        addl_aliases.update(p.title for p in self.parts)
         try:
             addl_aliases.update(e[0] for e in self.editions_and_disks)
         except InvalidTrackListException:   # Happens when this obj was constructed from dico info
@@ -2632,18 +2700,27 @@ class WikiSoundtrack(WikiSongCollection):
 
     def score_match(self, other, *args, **kwargs):
         if isinstance(other, str):
-            m1 = self._ost_name_rx.match(other)
-            if m1:
-                title1 = m1.group(1)
-                if title1.endswith(' -'):
-                    title1 = title1[:-1].strip()
+            m0 = self._mix_part_rx.match(other)
+            if m0:
+                lang_a, lang_b, part = m0.groups()
+                other = (
+                    other, lang_a, lang_b, '{} {}'.format(lang_a, part), '{} {}'.format(lang_b, part),
+                    '{} ({})'.format(lang_a, lang_b)
+                )
+                # log.debug('other: {}'.format(other))
+            else:
+                m1 = self._ost_name_rx.match(other)
+                if m1:
+                    title1 = m1.group(1)
+                    if title1.endswith(' -'):
+                        title1 = title1[:-1].strip()
 
-                m2 = self._ost_name_paren_rx.match(title1)
-                if m2:
-                    title2 = '{} OST'.format(m2.group(1).strip())
-                    other = (other, title1, title2)
-                else:
-                    other = (other, title1)
+                    m2 = self._ost_name_paren_rx.match(title1)
+                    if m2:
+                        title2 = '{} OST'.format(m2.group(1).strip())
+                        other = (other, title1, title2)
+                    else:
+                        other = (other, title1)
         # log.debug('{}: Comparing to: {}'.format(self, other))
         return super().score_match(other, *args, **kwargs)
 
@@ -2831,13 +2908,13 @@ class WikiSoundtrack(WikiSongCollection):
             return {'tracks': []}
 
     @cached()
-    def expected_rel_path(self, true_soloist=False, base_title=None):
+    def expected_rel_path(self, true_soloist=False, base_title=None, released=None, year=None):
         try:
             artist = self.artist
         except NoPrimaryArtistError:
             return Path('Various Artists').joinpath(self.expected_rel_dir(True, base_title))
         else:
-            return super().expected_rel_path(true_soloist, base_title)
+            return super().expected_rel_path(true_soloist, base_title, released, year)
 
 
 class WikiFeatureOrSingle(WikiSongCollection):
@@ -3204,7 +3281,14 @@ def find_ost(artist, title, disco_entry):
                 log.debug('{}: Found OST fuzzy match {!r}={} via artist'.format(artist, title, ost_match), extra={'color': 10})
                 return ost_match
 
-    show_title = ' '.join(title.split()[:-1]) if title.endswith(' OST') else title      # Search without 'OST' suffix
+    if title.endswith(' OST'):
+        show_title = ' '.join(title.split()[:-1])
+    elif LangCat.categorize(title) == LangCat.MIX and 'OST' in title.upper():
+        show_title = re.sub(r'\sOST(?!$|[!a-zA-Z])', ' ', title, flags=re.IGNORECASE)
+        show_title = ' '.join(show_title.split())
+    else:
+        show_title = title
+
     # log.debug('{}: Searching for show {!r} for OST {!r}'.format(artist, show_title, title))
     search_title = show_title
     if 'love' in show_title.lower():
@@ -3237,7 +3321,10 @@ def find_ost(artist, title, disco_entry):
                 else:
                     continue
 
+            log.debug('Found search result for {!r}: {} @ {}'.format(search_title, series, series.url))
+
             if not series.matches(show_title):
+                log.debug('{} does not match {!r}'.format(series, show_title))
                 continue
             elif series.ost_hrefs:
                 for ost_href in series.ost_hrefs:

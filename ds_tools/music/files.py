@@ -30,7 +30,7 @@ from .patches import tag_repr
 from .name_processing import split_names, split_name
 from .wiki import (
     WikiArtist, WikiEntityIdentificationException, KpopWikiClient, WikiSongCollection, find_ost,
-    AmbiguousEntityException, WikiSinger, WikiSongCollectionPart, NoPrimaryArtistError
+    AmbiguousEntityException, WikiSinger, WikiSongCollectionPart, NoPrimaryArtistError, split_artist_list
 )
 
 __all__ = [
@@ -1161,10 +1161,16 @@ class SongFile(BaseSongFile):
             return song.artist
 
         try:
-            _artists = split_names(self.tag_artist)
+            artist_dicts = split_artist_list(self.tag_artist, self)[0]
+            # _artists = split_names(self.tag_artist)
         except Exception as e:
             log.error('{}: Error splitting names from artist={!r}'.format(self, self.tag_artist))
             raise e
+        else:
+            _artists = []
+            for artist_dict in artist_dicts:
+                eng, cjk = artist_dict['artist']
+                _artists.append((eng, cjk, artist_dict.get('of_group')))
 
         artists = []
         exc = None
@@ -1272,6 +1278,7 @@ class SongFile(BaseSongFile):
             else:
                 alb_dir = self.album_dir_obj
                 track_count = len(alb_dir.songs) if alb_dir else None
+
                 try:
                     album, score = artist.find_song_collection(
                         self.album_name_cleaned, include_score=True, year=self.year, track_count=track_count
