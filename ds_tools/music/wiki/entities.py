@@ -721,7 +721,7 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
             pass
 
     def __repr__(self):
-        return '<{}({!r}) @ {}>'.format(type(self).__name__, self.name, self._client._site)
+        return '<{}({!r}) @ {}>'.format(type(self).__name__, self.name, self._client._site if self._client else None)
 
     def __eq__(self, other):
         if not isinstance(other, WikiEntity):
@@ -1059,7 +1059,7 @@ class WikiArtist(WikiPersonCollection):
             name = self.stylized_name or self.qualname
         except AttributeError:
             name = self._uri_path
-        return '<{}({!r})@{}>'.format(type(self).__name__, name, self._client._site)
+        return '<{}({!r})@{}>'.format(type(self).__name__, name, self._client._site if self._client else None)
 
     def __lt__(self, other):
         comparison_type_check(self, other, (WikiArtist, str), '<')
