@@ -56,6 +56,7 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artists, compilation=F
         if ele_name == 'h2':
             break
         elif ele_name in ('ol', 'ul'):
+            # log.debug('Processing section={!r} on {}'.format(section, uri_path))
             if section and (section if isinstance(section, str) else section[0]).lower().startswith('dvd'):
                 section, links = None, []
                 continue
@@ -80,6 +81,7 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artists, compilation=F
                 junk.extract()
             if last_section_idx and section_idx - last_section_idx == 2:
                 super_section = [section] if isinstance(section, str) else section
+                # log.debug('Updated super_section={!r}'.format(super_section))
             section = ele.text.strip()
             last_section_idx = section_idx
             # log.debug('Found section={} on page={}: {!r}'.format(section_idx, uri_path, section))
@@ -132,10 +134,16 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artists, compilation=F
                     except (TypeError, ValueError) as e1:
                         raise WikiEntityParseException(unexpected_num_fmt.format(uri_path, m.group(1))) from e1
                 disk_section = m.group(2).strip() or None
+                # log.debug('Adding disk_section={!r} to section={!r}'.format(disk_section, section))
                 if isinstance(section, str):
                     section = disk_section
                 else:
-                    section[0] = disk_section
+                    if not disk_section:
+                        section.pop(0)
+                        if not section:
+                            section = None
+                    else:
+                        section[0] = disk_section
             else:
                 disk = 1
 
@@ -458,9 +466,11 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
     try:
         num_type_rx = parse_discography_entry._num_type_rx
         song_list_rx = parse_discography_entry._song_list_rx
+        year_rx = parse_discography_entry._year_rx
     except AttributeError:
         num_type_rx = parse_discography_entry._num_type_rx = re.compile(r'_\d$')
         song_list_rx = parse_discography_entry._song_list_rx = re.compile(r'^(["\']).+?\1 with .*$', re.IGNORECASE)
+        year_rx = parse_discography_entry._year_rx = re.compile(r'((?:19|20)\d{2})')
 
     base_type = album_type and (album_type[:-2] if num_type_rx.search(album_type) else album_type).lower() or ''
     is_feature = base_type in ('features', 'collaborations_and_features')
@@ -474,8 +484,15 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
 
     year = int(parsed.pop()) if len(parsed[-1]) == 4 and parsed[-1].isdigit() else None
     year_was_last = year is not None
-    if year is None and len(parsed[-2]) == 4 and parsed[-2].isdigit():
-        year = int(parsed.pop(-2))
+    try:
+        if year is None and len(parsed[-2]) == 4 and parsed[-2].isdigit():
+            year = int(parsed.pop(-2))
+    except IndexError as e:
+        years = year_rx.findall(ele_text)   # Live album with year in title may not have a separate (year)
+        if len(years) == 1:
+            year = int(years[0])
+        else:
+            log.debug('No year could be determined for {!r} from artist={}'.format(ele_text, artist))
 
     track_info = None
     title = parsed.pop(0)
