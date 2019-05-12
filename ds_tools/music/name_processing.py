@@ -142,6 +142,8 @@ def parse_name(text):
         base, details = parts[0], ''
     else:
         base, details = parts[:2]
+        if 'professionally known as' in details and len(parts) > 2 and parts[2].startswith('('):
+            details = ' '.join(parts[1:3])
 
     lc_details = details.lower()
     if ' is a ' in base:
@@ -173,12 +175,18 @@ def parse_name(text):
     #         details = details[1:].strip()
 
     try:
+        dob_rx = parse_name._dob_rx
+        year_rx = parse_name._year_rx
         aka_rx = parse_name._aka_rx
     except AttributeError:
+        year_rx = parse_name._year_rx = re.compile(r'\d{4}\)?')
+        dob_rx = parse_name._dob_rx = re.compile(
+            r'born (?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\S* \d+', re.IGNORECASE
+        )
         aka_pat_parts = [
-            r'(?:also|better|previously|formerly) (?:known|written) \S*\s*as',
-            r'(?:also|better|previously|formerly) known by (?:the|her|his) \S*\s*name',
-            r'a\.?k\.?a\.?', r'or simply', r'an acronym for', r'short for', r'or ',
+            r'(?:also|better|previously|formerly|professionally) (?:known|written) \S*\s*as',
+            r'(?:also|better|previously|formerly|professionally) known by (?:the|her|his) \S*\s*name',
+            r'a\.?k\.?a\.?', r'or simply', r'an acronym for', r'short for', r'(?:or|born) ',
         ]
         aka_rx = parse_name._aka_rx = re.compile(r'^({})(.*)$'.format('|'.join(aka_pat_parts)), re.IGNORECASE)
 
@@ -188,7 +196,7 @@ def parse_name(text):
     stylized = None
     aka = []
     next_is_aka = False
-    style_leads = ('stylized as', 'sometimes styled as')
+    style_leads = ('stylized as', 'sometimes styled as', 'sometimes stylized as')
     info = []
     details_parts = list(map(str.strip, re.split('[;,]', details)))
     while details_parts:
@@ -214,32 +222,41 @@ def parse_name(text):
         elif is_any_cjk(part) and not found_hangul:
             found_hangul = is_hangul(part)
             cjk = part
-        elif ':' in part and not found_hangul:
-            _lang_name, alt_lang_val = tuple(map(str.strip, part.split(':', 1)))
-            langs = categorize_langs((_lang_name, alt_lang_val))
-            if langs[0] != LangCat.ENG:
-                err_msg = 'Unexpected langs={} for \'lang: value\' part={!r}'.format(langs, part)
-                raise NameFormatError(err_msg + _parse_dbg(base, cjk, stylized, aka, info, details_parts))
-            elif langs[1] == LangCat.MIX:
-                suffix = common_suffix((base, alt_lang_val))
-                if not suffix or LangCat.categorize(alt_lang_val[:-len(suffix)]) not in LangCat.asian_cats:
-                    if 'pronounced' in alt_lang_val:
-                        _split = tuple(map(str.strip, alt_lang_val.partition('pronounced')))
-                        part_0_lang = LangCat.categorize(_split[0])
-                        if part_0_lang in LangCat.asian_cats:
-                            cjk = _split[0]
-                            found_hangul = part_0_lang == LangCat.HAN
-                            continue
-                    err_msg = 'Unexpected lang mix={} for \'lang: value\' part={!r} given base'.format(langs, part)
+        elif lc_part.endswith((' ver.', ' ver')):
+            info.append(part)
+        elif dob_rx.match(part):
+            pass
+        elif aka_rx.match(part):
+            _orig = part
+            m = aka_rx.match(part)
+            # log.debug('AKA match: {!r} => {} [remaining: {}]'.format(_orig, m.groups(), details_parts))
+            part = m.group(2).strip()
+            reset_cjk = False
+            if not found_hangul and not cjk and contains_any_cjk(part) and has_parens(part):
+                _aka, part = map(str.strip, part.split())
+                details_parts.insert(0, unsurround(part))
+            elif has_parens(part):
+                _parts = ParentheticalParser().parse(part)
+                if len(_parts) == 2:
+                    _aka = _parts[0]
+                    details_parts.insert(0, _parts[1])
+                else:
+                    err_msg = 'Unexpected AKA format for part={!r}'.format(_orig)
                     raise NameFormatError(err_msg + _parse_dbg(base, cjk, stylized, aka, info, details_parts))
-            elif found_hangul and _lang_name.upper() == 'RR' and langs[1] == LangCat.ENG:
-                continue
-            elif langs[1] not in LangCat.asian_cats:
-                err_msg = 'Unexpected langs={} for \'lang: value\' part={!r}'.format(langs, part)
-                raise NameFormatError(err_msg + _parse_dbg(base, cjk, stylized, aka, info, details_parts))
+            else:
+                _aka = part
 
-            cjk = alt_lang_val
-            found_hangul = langs[1] == LangCat.HAN
+            if 'professionally' in _orig and details_parts and LangCat.contains_any(details_parts[0], LangCat.asian):
+                _aka, base = base, _aka     # Ex: IU @ wikipedia
+                reset_cjk = bool(cjk)
+
+            aka.append(_aka)
+            if reset_cjk:
+                aka.append(cjk)
+                cjk = None
+            next_is_aka = not _aka
+            if next_is_aka:
+                log.log(9, 'Next part is AKA value because part={!r} has no aka value'.format(_orig))
         elif ':' in part and contains_any_cjk(part):
             try:
                 pronounced_rx = parse_name._pronounced_rx
@@ -250,28 +267,44 @@ def parse_name(text):
             if m:
                 info.extend(m.groups())
             else:
-                _lang_name, alt_cjk = tuple(map(str.strip, part.split(':', 1)))
-                if LangCat.categorize(_lang_name) == LangCat.ENG and LangCat.categorize(alt_cjk) in LangCat.asian_cats:
-                    aka.append(alt_cjk)
-                else:
-                    info.append(part)
-        elif lc_part.endswith((' ver.', ' ver')):
-            info.append(part)
-        elif aka_rx.match(part):
-            _orig = part
-            m = aka_rx.match(part)
-            # log.debug('AKA match: {!r} => {}'.format(_orig, m.groups()))
-            part = m.group(2).strip()
-            if not found_hangul and not cjk and contains_any_cjk(part) and has_parens(part):
-                _aka, part = map(str.strip, part.split())
-                details_parts.insert(0, unsurround(part))
-            else:
-                _aka = part
+                _lang_name, alt_lang_val = tuple(map(str.strip, part.split(':', 1)))
+                langs = categorize_langs((_lang_name, alt_lang_val))
+                if langs[1] == LangCat.MIX and ' on ' in alt_lang_val:
+                    alt_lang_val, _dob = map(str.strip, alt_lang_val.split(' on ', 1))
+                    langs = (langs[0], LangCat.categorize(alt_lang_val))
 
-            aka.append(_aka)
-            next_is_aka = not _aka
-            if next_is_aka:
-                log.log(9, 'Next part is AKA value because part={!r} has no aka value'.format(_orig))
+                if langs[0] != LangCat.ENG:
+                    err_msg = 'Unexpected langs={} for \'lang: value\' part={!r}'.format(langs, part)
+                    raise NameFormatError(err_msg + _parse_dbg(base, cjk, stylized, aka, info, details_parts))
+                elif langs[1] == LangCat.MIX:
+                    suffix = common_suffix((base, alt_lang_val))
+                    if not suffix or LangCat.categorize(alt_lang_val[:-len(suffix)]) not in LangCat.asian_cats:
+                        if 'pronounced' in alt_lang_val:
+                            _split = tuple(map(str.strip, alt_lang_val.partition('pronounced')))
+                            part_0_lang = LangCat.categorize(_split[0])
+                            if part_0_lang in LangCat.asian_cats:
+                                cjk = _split[0]
+                                found_hangul = part_0_lang == LangCat.HAN
+                                continue
+                        err_msg = 'Unexpected lang mix={} for \'lang: value\' part={!r} given base'.format(langs, part)
+                        raise NameFormatError(err_msg + _parse_dbg(base, cjk, stylized, aka, info, details_parts))
+                elif found_hangul and _lang_name.upper() == 'RR' and langs[1] == LangCat.ENG:
+                    continue
+                elif langs[1] not in LangCat.asian_cats:
+                    err_msg = 'Unexpected langs={} for \'lang: value\' part={!r}'.format(langs, part)
+                    raise NameFormatError(err_msg + _parse_dbg(base, cjk, stylized, aka, info, details_parts))
+
+                _is_hangul = langs[1] == LangCat.HAN
+                if cjk:
+                    if _is_hangul and not found_hangul:
+                        aka.append(cjk)
+                        cjk = alt_lang_val
+                        found_hangul = True
+                    else:
+                        aka.append(alt_lang_val)
+                else:
+                    cjk = alt_lang_val
+                    found_hangul = _is_hangul
         elif not found_hangul and not cjk and contains_any_cjk(part):
             part_parts = part.split()
             if is_hangul(part_parts[0]) and LangCat.categorize(part_parts[1]) == LangCat.ENG:
@@ -301,6 +334,8 @@ def parse_name(text):
                 lit_translation, remainder = map(str.strip, lit_translation.split(')', 1))
                 details_parts.append(remainder)
             aka.append(lit_translation)
+        elif year_rx.match(part):
+            pass
         else:
             _details_parts = list(map(str.strip, re.split('[;,]', details)))
             _pat = r'{}\s*[;,]\s*{}'.format(regexcape(cjk), regexcape(part))
