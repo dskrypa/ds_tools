@@ -23,6 +23,7 @@ __all__ = [
 ]
 log = logging.getLogger(__name__)
 
+ALL_PUNC_SYMBOLS_WS = ALL_PUNCTUATION + ALL_SYMBOLS + string.whitespace
 NUM_STRIP_TBL = str.maketrans({c: '' for c in '0123456789'})
 PUNC_STRIP_TBL = str.maketrans({c: '' for c in string.punctuation})
 PUNC_SYMBOL_STRIP_TBL = str.maketrans({c: '' for c in ALL_PUNCTUATION + ALL_SYMBOLS})
@@ -135,6 +136,48 @@ class LangCat(Enum):
         elif lang in ('greek',):
             return cls.GRK
         return cls.UNK
+
+    @classmethod
+    def split(cls, text, strip=True):
+        if strip:
+            text = text.strip()
+        if not text:
+            return []
+
+        indexes = []
+        last = None
+        i = 0
+        for c in text:
+            if c in ALL_PUNC_SYMBOLS_WS:
+                pass
+            elif last is None:
+                last = cls.categorize(c)
+            else:
+                current = cls.categorize(c)
+                if current != last:
+                    last = current
+                    indexes.append(i)
+                    i = 0
+            i += 1
+
+        # log.debug('indexes: {}'.format(indexes))
+        parts = []
+        for idx in indexes:
+            part, rem = text[:idx], text[idx:]
+            # log.debug('idx={}, part={!r}, rem={!r}'.format(idx, part, rem))
+            parts.append(part)
+            text = rem
+
+        if text:
+            parts.append(text)
+
+        if strip:
+            parts = list(map(str.strip, parts))
+            for i, part in enumerate(parts):
+                if part.endswith(';'):
+                    parts[i] = part[:-1].strip()
+
+        return parts
 
 
 def _strip_non_word_chars(text):
