@@ -54,7 +54,7 @@ def parse_artist_osts(uri_path, clean_soup, artist):
                 album = {
                     'title': text, 'type': 'OST', 'is_ost': True, 'uri_path': href, 'base_type': 'osts',
                     'wiki': 'wiki.d-addicts.com', 'collaborators': {}, 'misc_info': [], 'language': None,
-                    'primary_artist': (artist.name, artist._uri_path) if artist else (None, None),
+                    'primary_artist': (artist.name_tuple, artist._uri_path) if artist else (None, None),
                     'is_feature_or_collab': None, 'year': year
                 }
                 albums.append(album)
