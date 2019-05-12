@@ -35,13 +35,13 @@ def parse_discography_page(uri_path, clean_soup, artist):
     else:
         top_lvl_h, sub_h = 'h2', 'h3'
 
-    for h2 in clean_soup.find_all(top_lvl_h):
-        album_type = h2.text.strip().lower()
+    for top_hx in clean_soup.find_all(top_lvl_h):
+        album_type = top_hx.text.strip().lower()
         sub_type = None
-        if album_type in ('music videos', 'see also', 'videography', 'guest appearances'):
+        if album_type in ('music videos', 'see also', 'videography', 'guest appearances') or 'awards' in album_type:
             break
 
-        ele = h2.next_sibling
+        ele = top_hx.next_sibling
         while hasattr(ele, 'name') and ele.name != top_lvl_h:
             if isinstance(ele, NavigableString):
                 ele = ele.next_sibling
@@ -50,7 +50,8 @@ def parse_discography_page(uri_path, clean_soup, artist):
                 sub_type = ele.text.strip().lower()
             elif ele.name == 'table':
                 columns = [th.text.strip() for th in ele.find('tr').find_all('th')]
-                if columns[-1] in ('Album', 'Drama'):                                               # Singles
+                lc_columns = list(map(str.lower, columns))
+                if lc_columns[-1] in ('album', 'drama'):                                               # Singles
                     tracks = []
                     expanded = expanded_wiki_table(ele)
                     # log.debug('Expanded table: {}'.format(expanded))
@@ -90,21 +91,30 @@ def parse_discography_page(uri_path, clean_soup, artist):
                         # log.debug(fmt.format(artist, uri_path, album_type, sub_type, album_title, lines, track))
                         tracks.append(track)
                     singles.append({'type': album_type, 'sub_type': sub_type, 'tracks': tracks})
-                elif any(val in columns for val in ('Details', 'Album details')):                   # Albums
+                elif any(val in lc_columns for val in ('details', 'album details')):                   # Albums
                     for i, th in enumerate(ele.find_all('th', scope='row')):
                         links = link_tuples(th.find_all('a'))
-                        title = th.text.strip()
+
+                        title_parts = list(th.stripped_strings)
+                        title = title_parts.pop(0)
+                        if title_parts:
+                            misc_info = title_parts     # Ex: HookGA<br/>as High4:20
+                        else:
+                            misc_info = []
+
                         # fmt = 'Processing type={!r} sub_type={!r} th={!r} on {}'
                         # log.debug(fmt.format(album_type, sub_type, title, uri_path))
                         album = {
                             'title': title, 'links': links, 'type': album_type, 'sub_type': sub_type, 'is_ost': False,
-                            'primary_artist': (artist.name, artist._uri_path) if artist else (None, None),
+                            'primary_artist': (artist.name_tuple, artist._uri_path) if artist else (None, None),
                             'uri_path': dict(links).get(title), 'base_type': album_type, 'wiki': 'en.wikipedia.org',
-                            'num': '{}{}'.format(i, num_suffix(i)), 'collaborators': {}, 'misc_info': [],
+                            'num': '{}{}'.format(i, num_suffix(i)), 'collaborators': {}, 'misc_info': misc_info,
                             'language': None, 'is_feature_or_collab': None, 'title_parts': parse_name(title)
                         }
 
-                        for li in th.parent.find('td').find('ul').find_all('li'):
+                        details_td = th.parent.find('td')
+                        meta_ul = details_td.find('ul')
+                        for li in meta_ul.find_all('li'):
                             key, value = map(str.strip, li.text.split(':', 1))
                             key = key.lower()
                             if key == 'released':
@@ -134,7 +144,23 @@ def parse_discography_page(uri_path, clean_soup, artist):
                             album['year'] = album['released'].year
                         except Exception as e:
                             pass
+
+                        tracks_ol = details_td.find('ol')
+                        if 'track listing' in details_td.text.lower() and tracks_ol:
+                            track_list_links = link_tuples(tracks_ol.find_all('a'))
+                            tracks = [
+                                parse_track_info(
+                                    track_num + 1, ' '.join(li.stripped_strings), uri_path, links=track_list_links,
+                                    client=artist._client, include={'album': title, 'year': album.get('year')}
+                                )
+                                for track_num, li in enumerate(tracks_ol.find_all('li'))
+                            ]
+                            album['tracks'] = {'section': None, 'tracks': tracks}
+
                         albums.append(album)
+                else:
+                    fmt = 'Skipping type={!r} sub_type={!r} on {} with columns: {}'
+                    log.debug(fmt.format(album_type, sub_type, uri_path, columns))
             ele = ele.next_sibling
     return albums, singles
 
