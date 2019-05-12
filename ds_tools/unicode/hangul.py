@@ -269,7 +269,7 @@ def romanize_plus(text, name=False, space=False):
     return ''.join(romanized).strip()
 
 
-def romanized_permutations(text):
+def romanized_permutations(text, include_space=True):
     romanized = []
     last_char = None
     for char in text:
@@ -321,6 +321,9 @@ def romanized_permutations(text):
     permutations = list(map(str.strip, combo_options(combined_1)))
     if text in ROMANIZED_MISC_NAMES:
         permutations.insert(0, ROMANIZED_MISC_NAMES[text])
+
+    if not include_space:
+        permutations = [''.join(p.split()) for p in permutations]
     return permutations
 
 
