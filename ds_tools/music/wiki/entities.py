@@ -1196,7 +1196,7 @@ class WikiArtist(WikiPersonCollection):
                 self._albums, self._singles = parse_discography_page(self._uri_path, self._clean_soup, self)
             except Exception as e:
                 log.debug('{}: Error parsing discography info from {}: {}'.format(self, self.url, e))
-                traceback.print_exc()
+                # traceback.print_exc()
                 disco_page = self._disco_page
                 if disco_page:
                     self._albums, self._singles = disco_page._albums, disco_page._singles
@@ -3067,7 +3067,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                     except Exception as e:
                         fmt = 'Error processing artist for track {!r} from {}: {}'
                         log.debug(fmt.format(self.name, self.collection, e))
-                        traceback.print_exc()
+                        # traceback.print_exc()
                     else:
                         # fmt = 'WikiTrack {!r} discarding album artist from collaborators: artist={!r}; collabs: {}'
                         # log.debug(fmt.format(self.name, artist, self._collaborators), extra={'color': 'cyan'})
