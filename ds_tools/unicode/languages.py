@@ -48,6 +48,8 @@ class LangCat(Enum):
     def asian_cats(self):
         return LangCat.HAN, LangCat.JPN, LangCat.CJK, LangCat.THAI
 
+    asian = asian_cats
+
     @classmethod
     def _ranges(cls):
         yield cls.ENG, LATIN_RANGES
@@ -86,17 +88,19 @@ class LangCat(Enum):
     def contains_any(cls, text, cat):
         """
         :param str text: Text to examine
-        :param LangCat cat: A :class:`LangCat` language category
+        :param LangCat|list|tuple|set cat: One or more :class:`LangCat` language categories
         :return bool: True if the given text contains a character with the given language category, False otherwise
         """
-        if cat == cls.MIX:
+        cats = [cat] if isinstance(cat, cls) else cat
+        if cls.MIX in cats:
             return cls.categorize(text) == cls.MIX
         elif len(text) > 1:
             text = _strip_non_word_chars(text)
+
         if len(text) == 0:
-            return cat == cls.NUL
+            return cls.NUL in cats
         for c in text:
-            if cls.categorize(c) == cat:
+            if cls.categorize(c) in cats:
                 return True
         return False
 
