@@ -21,6 +21,7 @@ import pickle
 import re
 import string
 import sys
+import traceback
 from collections import Counter, defaultdict
 from fnmatch import fnmatch, translate as fnpat2re
 from pathlib import Path
@@ -210,19 +211,20 @@ def match_wiki(path):
                 'T.Scr': music_file.wiki_scores.get('song', -1),
 
                 # 'F.Tr': str(music_file.tag_text('track', default='')),
-                'F.Tr': '{:>2d}'.format(int(music_file.track_num)),
+                'F.Tr': '{:>2d}'.format(int(music_file.track_num)) if music_file.track_num else '',
                 'W.Tr': '{:>2d}'.format(int(music_file.wiki_song.num)) if music_file.wiki_song else '',
                 # 'F.Tr': str(music_file.track_num),
                 # 'W.Tr': str(music_file.wiki_song.num) if music_file.wiki_song else '',
 
                 # 'F.Dsk': str(music_file.tag_text('disk', default='')),
-                'F.Dsk': '{:>2d}'.format(int(music_file.disk_num)),
+                'F.Dsk': '{:>2d}'.format(int(music_file.disk_num)) if music_file.disk_num else '',
                 # 'F.Dsk': str(music_file.disk_num),
                 'W.Dsk': '{:>2d}'.format(int(music_file.wiki_song.disk)) if music_file.wiki_song else '',
                 # 'W.Dsk': str(music_file.wiki_song.disk) if music_file.wiki_song else '',
             })
         except Exception as e:
             log.error('Error processing {}: {}'.format(music_file, e), extra={'color': (15, 9)})
+            # traceback.print_exc()
         else:
             rows.append(row)
 
