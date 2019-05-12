@@ -38,7 +38,9 @@ def parse_discography_page(uri_path, clean_soup, artist):
     for top_hx in clean_soup.find_all(top_lvl_h):
         album_type = top_hx.text.strip().lower()
         sub_type = None
-        if album_type in ('music videos', 'see also', 'videography', 'guest appearances') or 'awards' in album_type:
+        if album_type in ('music videos', 'see also', 'videography', 'guest appearances'):
+            break
+        elif any(val in album_type for val in ('awards', 'concerts')):
             break
 
         ele = top_hx.next_sibling
@@ -51,7 +53,7 @@ def parse_discography_page(uri_path, clean_soup, artist):
             elif ele.name == 'table':
                 columns = [th.text.strip() for th in ele.find('tr').find_all('th')]
                 lc_columns = list(map(str.lower, columns))
-                if lc_columns[-1] in ('album', 'drama'):                                               # Singles
+                if lc_columns and lc_columns[-1] in ('album', 'drama'):                                     # Singles
                     tracks = []
                     expanded = expanded_wiki_table(ele)
                     # log.debug('Expanded table: {}'.format(expanded))

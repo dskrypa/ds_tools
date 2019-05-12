@@ -1210,7 +1210,7 @@ class WikiArtist(WikiPersonCollection):
                 self._albums, self._singles = parse_discography_page(self._uri_path, self._clean_soup, self)
             except Exception as e:
                 log.debug('{}: Error parsing discography info from {}: {}'.format(self, self.url, e))
-                # traceback.print_exc()
+                log.log(19, traceback.format_exc())
                 disco_page = self._disco_page
                 if disco_page:
                     self._albums, self._singles = disco_page._albums, disco_page._singles
