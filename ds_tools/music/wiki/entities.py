@@ -1936,7 +1936,22 @@ class WikiSongCollection(WikiEntity):
         return self._discography_entry.get('year')
 
     @cached_property
-    def album_type(self):
+    def _alt_version(self):
+        try:
+            artist = self.artist
+        except NoPrimaryArtistError:
+            pass
+        else:
+            try:
+                alt_artist = artist.for_alt_site(KpopWikiClient._site)
+            except Exception as e:
+                pass
+            else:
+                return alt_artist.find_song_collection(self, allow_alt=False)
+        return None
+
+    @cached_property
+    def _base_type(self):
         base_type = self._discography_entry.get('base_type')
         if isinstance(self._client, WikipediaClient):
             sub_type = self._discography_entry.get('sub_type')
@@ -1955,28 +1970,27 @@ class WikiSongCollection(WikiEntity):
         if not base_type.endswith('s'):
             base_type += 's'
 
-        if base_type == 'extended_plays' and not isinstance(self._client, KpopWikiClient):
-            try:                                        # This is for when the full track list is available elsewhere
-                artist = self.artist
-            except NoPrimaryArtistError:
-                pass
-            else:
-                try:
-                    alt_artist = artist.for_alt_site(KpopWikiClient._site)
-                except Exception as e:
-                    pass
-                else:
-                    alt_alb = alt_artist.find_song_collection(self, allow_alt=False)
-                    if alt_alb:
-                        return alt_alb.album_type
+        return base_type
+
+    @cached_property
+    def album_type(self):
+        if self._base_type == 'extended_plays' and not isinstance(self._client, KpopWikiClient):
+            alt_alb = self._alt_version     # This is for when the full track list is available elsewhere
+            if alt_alb:
+                return alt_alb.album_type
 
         try:
-            return DISCOGRAPHY_TYPE_MAP[base_type]
+            return DISCOGRAPHY_TYPE_MAP[self._base_type]
         except KeyError as e:
-            raise MusicWikiException('{}: Unexpected album base_type: {!r}'.format(self, base_type)) from e
+            raise MusicWikiException('{}: Unexpected album base_type: {!r}'.format(self, self._base_type)) from e
 
     @cached_property
     def album_num(self):
+        if self._base_type == 'extended_plays' and not isinstance(self._client, KpopWikiClient):
+            alt_alb = self._alt_version     # This is for when the full track list is available elsewhere
+            if alt_alb:
+                return alt_alb.album_num
+
         return self._discography_entry.get('num')
 
     @cached_property
