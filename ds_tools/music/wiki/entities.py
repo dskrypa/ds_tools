@@ -1687,7 +1687,7 @@ class WikiSinger(WikiArtist):
 
             birth_names.append((self._side_info.get('birth name'), self._side_info.get('native name')))
             # log.info('birth_names: {}'.format(birth_names))
-            if birth_names and not self.cjk_name:
+            if birth_names and not self.cjk_name and 'stage name' not in self._clean_soup.text:
                 for _name in chain.from_iterable(birth_names):
                     # log.info('Examining birth name={!r}'.format(_name))
                     if _name and LangCat.categorize(_name) in LangCat.asian_cats:
