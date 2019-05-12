@@ -142,8 +142,11 @@ def parse_name(text):
         base, details = parts[0], ''
     else:
         base, details = parts[:2]
-        if 'professionally known as' in details and len(parts) > 2 and parts[2].startswith('('):
-            details = ' '.join(parts[1:3])
+        if any(val in details for val in ('professionally known as', 'better known by')) and len(parts) > 2:
+            if parts[2].startswith('('):
+                details = ' '.join(parts[1:3])
+            elif parts[2].startswith('Hangul'):
+                details = '{} ({})'.format(details, parts[2])
 
     lc_details = details.lower()
     if ' is a ' in base:
@@ -185,7 +188,7 @@ def parse_name(text):
         )
         aka_pat_parts = [
             r'(?:also|better|previously|formerly|professionally) (?:known|written) \S*\s*as',
-            r'(?:also|better|previously|formerly|professionally) known by (?:the|her|his) \S*\s*name',
+            r'(?:also|better|previously|formerly|professionally) known by (?:the|her|his) \S*\s*names?',
             r'a\.?k\.?a\.?', r'or simply', r'an acronym for', r'short for', r'(?:or|born) ',
         ]
         aka_rx = parse_name._aka_rx = re.compile(r'^({})(.*)$'.format('|'.join(aka_pat_parts)), re.IGNORECASE)
@@ -246,9 +249,10 @@ def parse_name(text):
             else:
                 _aka = part
 
-            if 'professionally' in _orig and details_parts and LangCat.contains_any(details_parts[0], LangCat.asian):
-                _aka, base = base, _aka     # Ex: IU @ wikipedia
-                reset_cjk = bool(cjk)
+            if details_parts and any(val in m.group(1) for val in ('better', 'professionally')):    # Ex: IU @ wikipedia
+                if LangCat.contains_any(details_parts[0], LangCat.asian):
+                    _aka, base = base, _aka
+                    reset_cjk = bool(cjk)
 
             aka.append(_aka)
             if reset_cjk:
