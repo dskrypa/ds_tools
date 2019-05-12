@@ -6,6 +6,8 @@ import logging
 import re
 from urllib.parse import urlparse, unquote
 
+import bs4
+
 from ...core import cached_property
 from ...utils import soupify
 from ..exceptions import MusicException
@@ -96,10 +98,39 @@ class AmbiguousEntityException(MusicWikiException):
             self.alternatives
         return self._alt_texts or []
 
+    @property
+    def _soup(self):
+        # soupify every time so that elements may be modified/removed without affecting other functions
+        return soupify(self.html, parse_only=bs4.SoupStrainer('div', id='mw-content-text')) if self.html else None
+
+    @cached_property
+    def _clean_soup(self):
+        """The soupified page content, with the undesirable parts at the beginning removed"""
+        try:
+            content = self._soup.find('div', id='mw-content-text')
+        except AttributeError as e:
+            if self._soup is not None:
+                log.warning(e)
+            return None
+
+        for rm_ele in content.select('[style~="display:none"]'):
+            rm_ele.extract()
+
+        bad_classes = (
+            'tocright', 'mw-editsection', 'reference', 'hatnote', 'infobox', 'noprint', 'dablink', 'mw-empty-elt',
+            'shortdescription', 'box-Multiple_issues', 'box-Unreliable_sources', 'box-BLP_sources',
+            'box-More_citations_needed'
+        )
+        for clz in bad_classes:
+            for rm_ele in content.find_all(class_=clz):
+                rm_ele.extract()
+
+        return content
+
     @cached_property
     def alternatives(self):
         _log = logr['ambig_parsing']
-        soup = soupify(self.html)
+        soup = self._clean_soup
         try:
             a = soup.find('span', class_='alternative-suggestion').find('a')
         except Exception as e:
@@ -121,6 +152,7 @@ class AmbiguousEntityException(MusicWikiException):
         #if re.search(r'For other uses, see.*?\(disambiguation\)', self.html, re.IGNORECASE):
         disambig_a = soup.find('a', class_='mw-disambig')
         if disambig_a:
+            _log.debug('Found anchor with class=mw-disambig - links: {}'.format(disambig_a))
             return list(filter(None, (self._alt_text(disambig_a),)))
 
         music_h2_span = soup.find('span', id='Music')
@@ -132,24 +164,34 @@ class AmbiguousEntityException(MusicWikiException):
             else:
                 anchors = (
                     self._alt_text(a) for li in ul.find_all('li') for a in li.find_all('a', limit=1)
-                    if any(val in li.text.lower() for val in ('korea', 'group', 'artist', 'band'))
+                    if any(val in li.text.lower() for val in ('korea', 'group', 'artist', 'band', 'singer'))
                 )
+                _log.debug('Found span with id=Music - links: {}'.format(anchors))
                 return list(filter(None, anchors))
 
         pats = (r'For other uses, see.*?\(disambiguation\)', r'redirects here.\s+For the .*?, see')
         if not any(re.search(pat, self.html, re.IGNORECASE) for pat in pats):
             try:
-                ul = soup.find('div', class_='mw-parser-output').find('ul')
+                body = soup.find('div', class_='mw-parser-output')
             except Exception:
                 pass
             else:
-                anchors = (self._alt_text(a) for li in ul.find_all('li') for a in li.find_all('a', limit=1))
-                return list(filter(None, anchors))
+                if body:
+                    anchors = (
+                        self._alt_text(a)
+                        for ul in body.find_all('ul')
+                        for li in ul.find_all('li')
+                        for a in li.find_all('a', limit=1)
+                        if any(val in li.text.lower() for val in ('korea', 'group', 'artist', 'band', 'singer'))
+                    )
+                    _log.debug('Found ul in div with class=mw-parser-output - links: {}'.format(anchors))
+                    return list(filter(None, anchors))
 
         if re.search(r'redirects here.\s+For the pop music group, see', self.html, re.IGNORECASE):
             for div in soup.find_all('div', class_='hatnote'):
                 if 'For the pop music group' in div.text:
                     anchors = (self._alt_text(a) for a in div.find_all('a', limit=1))
+                    _log.debug('Found class=hatnote with text="For the pop music group" - links: {}'.format(anchors))
                     return list(filter(None, anchors))
         return []
 
@@ -184,6 +226,9 @@ class AmbiguousEntityException(MusicWikiException):
         if reraise:
             raise self
         return None
+
+    def __repr__(self):
+        return '<{}({!r})>: {}'.format(type(self).__name__, self.url, self)
 
     def __str__(self):
         alts = self.alternative_texts
