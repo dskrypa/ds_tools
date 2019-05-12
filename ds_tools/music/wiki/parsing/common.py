@@ -753,7 +753,7 @@ def parse_track_info(
         elif links and any(link_text in part for link_text in link_texts):
             split_part = str2list(part, pat='(?: and |,|;|&| feat\.? | featuring | with )')
             if any(sp in link_texts for sp in split_part):
-                collabs.extend(split_artist_list(split_part, context, links, client)[0])
+                collabs.extend(split_artist_list(part, context, links, client)[0])
                 # collabs.extend(split_part)                  # assume links are to artists
             elif len(set(name_langs)) < 2:
                 # log.debug('{!r}: Adding to name parts: {!r}'.format(text, part))
