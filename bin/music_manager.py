@@ -224,7 +224,7 @@ def match_wiki(path):
             })
         except Exception as e:
             log.error('Error processing {}: {}'.format(music_file, e), extra={'color': (15, 9)})
-            # traceback.print_exc()
+            log.log(19, traceback.format_exc())
         else:
             rows.append(row)
 
