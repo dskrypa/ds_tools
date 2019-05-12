@@ -27,14 +27,18 @@ def to_str(data):
     return data
 
 
-def readable_bytes(file_size):
-    units = dict(zip(['B ', 'KB', 'MB', 'GB', 'TB', 'PB'], [0, 2, 2, 2, 2, 2]))
+def readable_bytes(file_size, dec_places=None, dec_by_unit=None):
+    units = list(zip(['B ', 'KB', 'MB', 'GB', 'TB', 'PB'], [0, 2, 2, 2, 2, 2]))
     try:
         exp = min(int(math.log(file_size, 1024)), len(units) - 1) if file_size > 0 else 0
     except TypeError as e:
         print('Invalid file size: {!r}'.format(file_size))
         raise e
     unit, dec = units[exp]
+    if dec_places is not None:
+        dec = dec_places
+    if isinstance(dec_by_unit, dict):
+        dec = dec_by_unit.get(unit, 2)
     return '{{:,.{}f}} {}'.format(dec, unit).format(file_size / 1024 ** exp)
 
 
