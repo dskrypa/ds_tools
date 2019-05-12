@@ -675,7 +675,7 @@ class WikiMatchable:
                 pass
 
         fmt = '{!r}=?={!r}: final_score={} (={} + {}), alias={!r}, val={!r}'
-        log.debug(fmt.format(self, other, final_score, best_score, score_mod, best_alias, best_val))
+        _log.debug(fmt.format(self, other, final_score, best_score, score_mod, best_alias, best_val))
         return final_score, best_alias, best_val
 
 
