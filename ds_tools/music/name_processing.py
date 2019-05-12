@@ -249,15 +249,16 @@ def parse_name(text):
             else:
                 _aka = part
 
-            if details_parts and any(val in m.group(1) for val in ('better', 'professionally')):    # Ex: IU @ wikipedia
-                if LangCat.contains_any(details_parts[0], LangCat.asian):
+            aka_intro = m.group(1)
+            if details_parts and any(val in aka_intro for val in ('better', 'professionally', 'stage')):
+                if LangCat.contains_any(details_parts[0], LangCat.asian) or 'stage' in aka_intro:
                     _aka, base = base, _aka
                     reset_cjk = bool(cjk)
 
             aka.append(_aka)
             if reset_cjk:
                 aka.append(cjk)
-                cjk = None
+                cjk = '' if 'stage' in aka_intro else None
             next_is_aka = not _aka
             if next_is_aka:
                 log.log(9, 'Next part is AKA value because part={!r} has no aka value'.format(_orig))
@@ -342,14 +343,14 @@ def parse_name(text):
             pass
         else:
             _details_parts = list(map(str.strip, re.split('[;,]', details)))
-            _pat = r'{}\s*[;,]\s*{}'.format(regexcape(cjk), regexcape(part))
+            _pat = r'{}\s*[;,]\s*{}'.format(regexcape(cjk), regexcape(part)) if cjk else None
             if len(_details_parts) == 2 and cjk and re.match(_pat, details):
                 pass    # (cjk; pronunciation of cjk)
             elif lc_part.startswith('born ') and details_parts and details_parts[0][:4].isdigit():
                 details_parts.pop(0)
             elif lc_part.startswith('/') and lc_part.endswith('/'):     # IPA pronunciation
                 pass
-            elif base and cjk:
+            elif (base and cjk) or base and aka and part.startswith('is a'):
                 err_msg = 'Ignoring unexpected part={!r} and returning parsed name early'.format(part)
                 log.log(9, err_msg + _parse_dbg(base, cjk, stylized, aka, info, details_parts))
                 break
