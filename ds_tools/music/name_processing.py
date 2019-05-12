@@ -470,6 +470,9 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
         except ValueError as e:
             raise ValueError('Unable to split {!r} into separate English/CJK strings'.format(name)) from e
     elif len(parts) == 2:
+        if langs == (LangCat.MIX, LangCat.ENG):
+            parts = parts[::-1]
+            langs = (LangCat.ENG, LangCat.MIX)
         # log.debug('parts={}, langs={}'.format(parts, langs))
         if LangCat.MIX not in langs and len(set(langs)) == 2:
             try:
