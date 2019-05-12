@@ -68,6 +68,7 @@ DISCOGRAPHY_TYPE_MAP = {
 SINGLE_TYPE_TO_BASE_TYPE = {
     None: 'singles',
     'as lead artist': 'singles',
+    'as a lead artist': 'singles',
     'collaborations': 'collaborations',
     'as featured artist': 'features',
     'other releases': 'singles',
@@ -336,6 +337,7 @@ class WikiMatchable:
     __cache = LRUCache(300)
     _int_pat = re.compile(r'\d+')
     __part_pat = re.compile(r'^(.*)part \d+$', re.IGNORECASE)
+    __abbrev_pat = re.compile(r'\.(?!\s)')
 
     def __init__(self):
         self._strip_special = False
@@ -388,6 +390,8 @@ class WikiMatchable:
                     aliases.append(aka)
                 else:
                     aliases.extend(aka)
+
+        aliases.extend([self.__abbrev_pat.sub('', alias) for alias in aliases])  # Remove periods from abbreviations
         return set(aliases)
 
     def _additional_aliases(self):
@@ -610,7 +614,7 @@ class WikiMatchable:
                         _log.debug('score_mod += 15: self.released.year=year={}'.format(year))
                     else:
                         _log.debug('score_mod -= 25: self.released.year={} != year={}'.format(self.released.year, year))
-            if track_count is not None:
+            if track_count is not None and self._part_track_counts:
                 score_mod += 10 if track_count in self._part_track_counts else -20
                 if track_count in self._part_track_counts:
                     _log.debug('score_mod += 10: track_count={} matches {}'.format(track_count, self._part_track_counts))
@@ -1159,7 +1163,7 @@ class WikiArtist(WikiPersonCollection):
             else:
                 return alt_artist._disco_page
         elif isinstance(self._client, WikipediaClient):
-            disco_links = set()
+            disco_links = {}
             for a in self._soup.find_all('a'):
                 a_text = a.text.lower() if a.text else ''
                 if 'discography' in a_text:
@@ -1167,10 +1171,22 @@ class WikiArtist(WikiPersonCollection):
                     href = href[6:] if href.startswith('/wiki/') else href
                     remaining = ''.join(a_text.partition('discography')[::2]).strip()
                     if href and '#' not in href and (not remaining or self.matches(remaining)):
-                        disco_links.add(href)
+                        disco_links[a] = href
             if disco_links:
+                uri_path = None
                 if len(disco_links) == 1:
-                    uri_path = disco_links.pop()
+                    a, uri_path = disco_links.popitem()
+                else:
+                    for a, _uri_path in disco_links.items():
+                        log.debug('Examining a={}, parent: {!r}'.format(a, a.parent))
+                        if 'main article' in a.parent.text.lower():
+                            uri_path = _uri_path
+                            break
+                    else:
+                        fmt = '{}: Too many different discography links found: {}'
+                        log.error(fmt.format(self, ', '.join(sorted(disco_links))), extra={'color': 'yellow'})
+
+                if uri_path:
                     client = WikipediaClient()
                     try:
                         try:
@@ -1180,9 +1196,7 @@ class WikiArtist(WikiPersonCollection):
                     except Exception as e:
                         fmt = '{}: Error retrieving discography page {}: {}'
                         log.error(fmt.format(self, client.url_for(uri_path), e))
-                else:
-                    fmt = '{}: Too many different discography links found: {}'
-                    log.error(fmt.format(self, ', '.join(sorted(disco_links))), extra={'color': 'yellow'})
+
         return None
 
     @property
@@ -1381,12 +1395,11 @@ class WikiArtist(WikiPersonCollection):
         best_score, best_alias, best_val, best_coll = 0, None, None, None
         for collection in self.discography:
             score, alias, val = collection.score_match(name, **kwargs)
-            if score >= 100:
-                # log.debug(match_fmt.format(self, collection, name, score, alias, val))
-                return (collection, score) if include_score else collection
-            elif score > best_score:
+            if score > best_score:
                 best_score, best_alias, best_val, best_coll = score, alias, val, collection
                 log.log(3, match_fmt.format(self, best_coll, name, best_score, best_alias, best_val))
+                if score >= 100:
+                    break
 
         if best_score > min_score:
             if allow_alt and isinstance(self._client, KpopWikiClient) and not best_coll.get_tracks():
@@ -2481,6 +2494,9 @@ class WikiSongCollection(WikiEntity):
                 if track.misc and any(' only' in m for m in track.misc):
                     track_count -= 1
             track_counts.add(track_count)
+
+        if len(track_counts) == 1 and 0 in track_counts:
+            return None
         return track_counts
 
     def find_track(self, name, min_score=75, include_score=False, *, edition_or_part=None, disk=None, **kwargs):
