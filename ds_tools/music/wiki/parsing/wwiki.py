@@ -8,9 +8,9 @@ from itertools import chain
 
 from bs4.element import NavigableString
 
-from ....unicode import LangCat
-from ....utils import DASH_CHARS, num_suffix, soupify, unsurround
-from ...name_processing import parse_name, str2list, split_name
+from ....unicode import LangCat, romanized_permutations
+from ....utils import DASH_CHARS, num_suffix, soupify, unsurround, ParentheticalParser
+from ...name_processing import parse_name, str2list, split_name, has_parens
 from .exceptions import *
 from .common import *
 
@@ -277,11 +277,40 @@ def parse_wikipedia_album_page(uri_path, clean_soup, side_info, client):
         else:
             disk = 1
 
+        split_cats = (LangCat.HAN, LangCat.MIX)
         tracks = []
         for tr in track_tbl.find_all('tr'):
             tds = tr.find_all('td')
             if len(tds) >= 3:
-                tracks.append(parse_track_info(tds[0].text, tds[1].text, uri_path, tds[-1].text.strip(), client=client))
+                name_info = tds[1].text
+                if has_parens(name_info) and LangCat.contains_any(name_info, LangCat.HAN):
+                    name_info_parts = ParentheticalParser().parse(name_info)
+                    last_part = name_info_parts[-1]
+                    if len(name_info_parts) > 1 and all(LangCat.contains_any(last_part, cat) for cat in split_cats):
+                        orig = name_info_parts.copy()
+                        eng_name = name_info_parts.pop(0)
+                        extras = LangCat.split(name_info_parts.pop(-1))
+                        rom = ''.join(extras.pop(-1).lower().replace('-', '').split())
+                        try:
+                            han = extras.pop(-1)
+                        except IndexError as e:
+                            fmt = 'Error on han: eng={!r} rom={!r} extras={} other={} page={}'
+                            log.error(fmt.format(eng_name, rom, extras, name_info_parts, uri_path))
+                            raise e
+
+                        # fmt = 'eng={!r} han={!r} rom={!r} extras={}, other={}'
+                        # log.debug(fmt.format(eng_name, han, rom, extras, name_info_parts))
+                        if LangCat.categorize(han) == LangCat.HAN and rom in romanized_permutations(han, False):
+                            name_parts = ['"{} ({})"'.format(eng_name, han)]
+                            if extras:
+                                name_info_parts.append('; '.join(extras))
+                            if name_info_parts:
+                                name_parts.extend('({})'.format(part) for part in name_info_parts)
+                            name_info = ' '.join(name_parts)
+                        else:
+                            raise WikiEntityParseException('Unexpected name_info_parts={} in {}'.format(orig, uri_path))
+
+                tracks.append(parse_track_info(tds[0].text, name_info, uri_path, tds[-1].text.strip(), client=client))
 
         album['track_lists'].append({'section': section, 'tracks': tracks, 'disk': disk})
 
