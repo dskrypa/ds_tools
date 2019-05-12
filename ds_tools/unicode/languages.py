@@ -41,6 +41,9 @@ class LangCat(Enum):
     GRK = 7
     CYR = 8
 
+    def __lt__(self, other):
+        return self.value < other.value
+
     @classproperty
     def non_eng_cats(self):
         return LangCat.UNK, LangCat.HAN, LangCat.JPN, LangCat.CJK, LangCat.THAI, LangCat.GRK, LangCat.CYR
@@ -177,7 +180,16 @@ class LangCat(Enum):
                 if part.endswith(';'):
                     parts[i] = part[:-1].strip()
 
+        for i, part in enumerate(parts):
+            if i and part.endswith(')') and not part.startswith('(') and parts[i-1].endswith('('):
+                parts[i-1] = parts[i-1][:-1]
+                parts[i] = '(' + part
+
         return parts
+
+    @classmethod
+    def sort(cls, texts):
+        return [text for cat, text in sorted((cls.categorize(text), text) for text in texts)]
 
 
 def _strip_non_word_chars(text):

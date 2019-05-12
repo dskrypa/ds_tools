@@ -17,7 +17,7 @@ __all__ = [
     'Token', 'RecursiveDescentParser', 'UnexpectedTokenError', 'strip_punctuation', 'ParentheticalParser', 'DASH_CHARS',
     'QMARKS', 'ALL_WHITESPACE', 'CHARS_BY_CATEGORY', 'ListBasedRecursiveDescentParser', 'ALL_PUNCTUATION',
     'ALL_SYMBOLS', 'ParentheticalListParser', 'unsurround', 'normalize_roman_numerals', 'common_suffix', 'has_unpaired',
-    'regexcape'
+    'regexcape', 'has_nested'
 ]
 log = logging.getLogger(__name__)
 
@@ -55,6 +55,19 @@ def has_unpaired(text, opener='(', closer=')'):
             if closed > opened:
                 return True
     return opened != closed
+
+
+def has_nested(text, opener='(', closer=')'):
+    opened = 0
+    closed = 0
+    for c in text:
+        if c == opener:
+            opened += 1
+            if opened - closed > 1:
+                return True
+        elif c == closer:
+            closed += 1
+    return False
 
 
 def common_suffix(strs):

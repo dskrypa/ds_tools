@@ -11,7 +11,9 @@ from urllib.parse import urlparse
 from bs4.element import NavigableString, Tag
 
 from ....unicode import LangCat
-from ....utils import ParentheticalParser, DASH_CHARS, num_suffix, QMARKS, soupify, unsurround, normalize_roman_numerals
+from ....utils import (
+    ParentheticalParser, DASH_CHARS, num_suffix, QMARKS, soupify, unsurround, normalize_roman_numerals, has_nested
+)
 from ...name_processing import has_parens, parse_name, split_name, str2list, categorize_langs
 from ..utils import synonym_pattern, get_page_category, normalize_href
 from .common import (
@@ -65,10 +67,50 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artists, compilation=F
             for i, li in enumerate(ele.find_all('li')):
                 track_links = link_tuples(li.find_all('a'))
                 all_links = tuple(set(list(track_links) + intro_links))
-                track = parse_track_info(
-                    i + 1, li.text, uri_path, include={'links': track_links, 'disk': disk}, links=all_links,
-                    compilation=compilation, artist=artists, client=client
-                )
+                try:
+                    track = parse_track_info(
+                        i + 1, li.text, uri_path, include={'links': track_links, 'disk': disk}, links=all_links,
+                        compilation=compilation, artist=artists, client=client
+                    )
+                except ValueError as e:
+                    if LangCat.categorize(li.text) == LangCat.MIX and not has_nested(li.text):
+                        track_name, track_time = map(str.strip, li.text.rsplit('-', 1))
+                        if track_name.startswith('"') and track_name.endswith('"'):
+                            track_name = unsurround(track_name)
+                            name_parts = LangCat.sort(LangCat.split(track_name))
+                            eng_parts, cjk_parts = [], []
+                            while name_parts:
+                                part = name_parts.pop(0)
+                                if LangCat.categorize(part) == LangCat.ENG:
+                                    eng_parts.append(part)
+                                else:
+                                    cjk_parts.append(part)
+                                    cjk_parts.extend(name_parts)
+                                    break
+
+                            eng_name = ' '.join(eng_parts)
+                            if len(cjk_parts) > 1:
+                                cjk_name = '({})'.format(' '.join(cjk_parts))
+                            else:
+                                cjk_name = ' '.join(cjk_parts)
+
+                            if cjk_name:
+                                track_name = '{} {}'.format(eng_name, cjk_name)
+                            else:
+                                track_name = eng_name
+
+                            if track_time:
+                                track_name = '{} - {}'.format(track_name, track_time)
+
+                            track = parse_track_info(
+                                i + 1, track_name, uri_path, include={'links': track_links, 'disk': disk},
+                                links=all_links, compilation=compilation, artist=artists, client=client
+                            )
+                        else:
+                            raise WikiEntityParseException('Error parsing track={!r} on {}'.format(li.text, uri_path))
+                    else:
+                        raise WikiEntityParseException('Error parsing track={!r} on {}'.format(li.text, uri_path))
+
                 tracks.append(track)
 
             track_lists.append({
@@ -125,25 +167,31 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artists, compilation=F
                 if not m:
                     raise WikiEntityParseException(unexpected_num_fmt.format(uri_path, disk_section))
 
+                update_section = True
                 disk_raw = m.group(1).strip().lower()
                 try:
                     disk = NUM2INT[disk_raw]
                 except KeyError as e:
-                    try:
-                        disk = int(disk_raw)
-                    except (TypeError, ValueError) as e1:
-                        raise WikiEntityParseException(unexpected_num_fmt.format(uri_path, m.group(1))) from e1
-                disk_section = m.group(2).strip() or None
-                # log.debug('Adding disk_section={!r} to section={!r}'.format(disk_section, section))
-                if isinstance(section, str):
-                    section = disk_section
-                else:
-                    if not disk_section:
-                        section.pop(0)
-                        if not section:
-                            section = None
+                    if lc_disk_section == 'cd only':
+                        update_section = False
                     else:
-                        section[0] = disk_section
+                        try:
+                            disk = int(disk_raw)
+                        except (TypeError, ValueError) as e1:
+                            raise WikiEntityParseException(unexpected_num_fmt.format(uri_path, m.group(1))) from e1
+
+                if update_section:
+                    disk_section = m.group(2).strip() or None
+                    # log.debug('Adding disk_section={!r} to section={!r}'.format(disk_section, section))
+                    if isinstance(section, str):
+                        section = disk_section
+                    else:
+                        if not disk_section:
+                            section.pop(0)
+                            if not section:
+                                section = None
+                        else:
+                            section[0] = disk_section
             else:
                 disk = 1
 
