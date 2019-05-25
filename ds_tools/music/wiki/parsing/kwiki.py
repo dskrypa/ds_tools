@@ -74,7 +74,11 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artists, compilation=F
                     )
                 except ValueError as e:
                     if LangCat.categorize(li.text) == LangCat.MIX and not has_nested(li.text):
-                        track_name, track_time = map(str.strip, li.text.rsplit('-', 1))
+                        try:
+                            track_name, track_time = map(str.strip, li.text.rsplit('-', 1))
+                        except ValueError as e1:
+                            raise WikiEntityParseException('Error splitting {!r} from {}'.format(li.text, uri_path)) from e1
+
                         if track_name.startswith('"') and track_name.endswith('"'):
                             track_name = unsurround(track_name)
                             name_parts = LangCat.sort(LangCat.split(track_name))

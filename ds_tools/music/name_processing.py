@@ -465,6 +465,8 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
             elif ' / ' in part:
                 parts = tuple(map(str.strip, part.split(' / ', 1)))
                 return split_name(parts, unused, check_keywords, permissive, require_preceder)
+            elif len(LangCat.categorize(part, True).intersection((LangCat.JPN, LangCat.CJK))) == 2:
+                lang = LangCat.JPN
         try:
             eng, cjk = eng_cjk_sort(part, lang)
         except ValueError as e:
