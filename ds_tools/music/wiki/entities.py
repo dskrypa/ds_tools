@@ -423,9 +423,10 @@ class WikiMatchable:
             return fuzzed
 
         try:
-            if isinstance(self, WikiSongCollection) or self._strip_special:
-                return set(filter(None, (fuzz_process(a, strip_special=False) for a in self.aliases)))
-            return set(filter(None, (fuzz_process(a) for a in self.aliases)))
+            return set(filter(None, (fuzz_process(a, b) for a in self.aliases for b in (True, False))))
+            # if isinstance(self, WikiSongCollection) or self._strip_special:
+            #     return set(filter(None, (fuzz_process(a, strip_special=False) for a in self.aliases)))
+            # return set(filter(None, (fuzz_process(a) for a in self.aliases)))
         except Exception as e:
             log.error('{}: Error fuzzing aliases: {}'.format(self, self.aliases))
             raise e
@@ -1865,6 +1866,9 @@ class WikiSongCollection(WikiEntity):
             msg = 'A valid uri_path / discography entry are required to initialize a {}'.format(type(self).__name__)
             raise WikiEntityInitException(msg)
 
+        if self.english_name and ' : ' in self.english_name:
+            self.english_name = self.english_name.replace(' : ', ': ')
+
         self._track_lists = self._album_info.get('track_lists')
         if self._track_lists is None:
             album_tracks = self._album_info.get('tracks')
@@ -3252,7 +3256,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
         aliases = [self.long_name]
         for val in self.english_name, self.cjk_name:
             if val:
-                aliases.append('{} {}'.format(val, name_end))
+                aliases.append('{} {}'.format(val, name_end).strip())
         return aliases
 
     @property
