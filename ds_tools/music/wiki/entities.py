@@ -360,6 +360,15 @@ class WikiMatchable:
                 pass
             return m
 
+    def update_name(self, eng_name, cjk_name):
+        self.english_name = normalize_roman_numerals(eng_name) if eng_name else self.english_name
+        self.cjk_name = normalize_roman_numerals(cjk_name) if cjk_name else self.cjk_name
+        self.name = multi_lang_name(self.english_name, self.cjk_name)
+        try:
+            del self.__dict__['aliases']
+        except KeyError:
+            pass
+
     def __repr__(self):
         if hasattr(self, '_obj'):
             return repr(self._obj)
@@ -559,7 +568,7 @@ class WikiMatchable:
             other = other[0]
         if isinstance(other, WikiEntity):
             if self._category != other._category and self._category is not None and other._category is not None:
-                log.warning('Unable to compare {} to {!r}: incompatible categories'.format(self, other))
+                log.debug('Unable to compare {} to {!r}: incompatible categories'.format(self, other))
                 return 0, None, None
 
         _log = logr['scoring']
@@ -678,6 +687,10 @@ class WikiMatchable:
                 self.update_name(None, matchable.cjk_name)
             except AttributeError:
                 pass
+            # else:
+            #     if isinstance(self, WikiTrack) and isinstance(self.collection, WikiFeatureOrSingle):
+            #         if self.collection.english_name == self.english_name and not self.collection.cjk_name:
+            #             self.collection.update_name(None, matchable.cjk_name)
 
         fmt = '{!r}=?={!r}: final_score={} (={} + {}), alias={!r}, val={!r}'
         _log.debug(fmt.format(self, other, final_score, best_score, score_mod, best_alias, best_val))
@@ -720,15 +733,6 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
 
     def _post_init(self):
         return
-
-    def update_name(self, eng_name, cjk_name):
-        self.english_name = normalize_roman_numerals(eng_name) if eng_name else self.english_name
-        self.cjk_name = normalize_roman_numerals(cjk_name) if cjk_name else self.cjk_name
-        self.name = multi_lang_name(self.english_name, self.cjk_name)
-        try:
-            del self.__dict__['aliases']
-        except KeyError:
-            pass
 
     def __repr__(self):
         return '<{}({!r}) @ {}>'.format(type(self).__name__, self.name, self._client._site if self._client else None)
@@ -2667,6 +2671,7 @@ class WikiSongCollectionPart:
     _part_rx = re.compile(r'((?:part|code no)\.?\s*\d+)', re.IGNORECASE)
     passthru_attrs = {
         'released', 'year', 'album_type', 'album_num', 'num_and_type', '_artists', 'artists', 'artist', 'collaborators'
+        'english_name', 'cjk_name'
     }
 
     def __init__(self, collection, edition, disk, language, section_info, track_list):
@@ -2678,8 +2683,8 @@ class WikiSongCollectionPart:
         self.disk = disk
         self.language = language
 
-        self.english_name = collection.english_name
-        self.cjk_name = collection.cjk_name
+        # self.english_name = collection.english_name
+        # self.cjk_name = collection.cjk_name
         self._info = collection._info
 
         if self.cjk_name and self.language and LangCat.categorize(self.cjk_name) != LangCat.for_name(self.language):
@@ -2694,9 +2699,12 @@ class WikiSongCollectionPart:
                         self.cjk_name = cjk
                         break
 
-        self.name = multi_lang_name(self.english_name, self.cjk_name)
+    @property
+    def name(self):
+        name = multi_lang_name(self.english_name, self.cjk_name)
         if self._info:
-            self.name = ' '.join(chain((self.name,), map('({})'.format, self._info)))
+            return ' '.join(chain((name,), map('({})'.format, self._info)))
+        return name
 
     def __repr__(self):
         return '<{}({!r})>'.format(type(self).__name__, self.title())

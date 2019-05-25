@@ -1123,6 +1123,10 @@ class SongFile(BaseSongFile):
     @cached_property
     def album_from_dir(self):
         album = self.path.parent.name
+        if album.lower().startswith(self.tag_artist.lower()):
+            album = album[len(self.tag_artist):].strip()
+        if album.startswith('- '):
+            album = album[1:].strip()
         m = re.match(r'^\[\d{4}[0-9.]*\] (.*)$', album)     # Begins with date
         if m:
             album = m.group(1).strip()
@@ -1290,6 +1294,14 @@ class SongFile(BaseSongFile):
                     )
                 except Exception as e:
                     log.error('Error determining album for {} from {}: {}'.format(self, artist, e))
+                    if not LangCat.contains_any(self.album_name_cleaned.replace(' OST', ''), LangCat.ENG):
+                        try:
+                            album, score = artist.find_song_collection(
+                                self.album_from_dir, include_score=True, year=self.year, track_count=track_count
+                            )
+                        except Exception as e1:
+                            log.error('Error determining album for {} from {}: {}'.format(self, artist, e1))
+                            raise e1
                     # traceback.print_exc()
                     raise e
                 self.wiki_scores['album'] = score

@@ -222,6 +222,8 @@ def parse_name(text):
         elif any(lead for lead in style_leads if lc_part.startswith(lead)):
             style_lead = next((lead for lead in style_leads if lc_part.startswith(lead)), None)
             stylized = part[len(style_lead):].strip()
+            if 'and also abbreviated' in stylized:
+                stylized = stylized.partition('and also abbreviated')[0].strip()
         elif is_any_cjk(part) and not found_hangul:
             found_hangul = is_hangul(part)
             cjk = part
