@@ -139,6 +139,9 @@ def get_page_category(url, cats, no_debug=False, raw=None):
                 for a in soupify(raw).find_all('a'):
                     if a.get('href') == expected:
                         return 'lyrics'
+        elif to_return == 'tv_series' and any(val in cats for val in ('banjun drama', 'lists')):
+            return 'misc'
+
         if to_return:
             return to_return
 

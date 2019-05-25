@@ -4,10 +4,11 @@
 
 import logging
 import re
+from collections import OrderedDict
 
 from ....unicode import LangCat, romanized_permutations
 from ....utils import common_suffix
-from ...name_processing import eng_cjk_sort, split_name, str2list
+from ...name_processing import eng_cjk_sort, split_name, str2list, has_parens
 from ..utils import multi_lang_name
 from .exceptions import *
 from .common import *
@@ -167,7 +168,7 @@ def parse_ost_page(uri_path, clean_soup, client):
 
 
 def parse_drama_wiki_info_list(uri_path, info_ul, client):
-    info = {}
+    info = OrderedDict()
     for i, li in enumerate(info_ul.find_all('li')):
         if li.parent != info_ul:
             continue
@@ -178,26 +179,41 @@ def parse_drama_wiki_info_list(uri_path, info_ul, client):
             if len(stripped_strings) == 2:
                 key, value = stripped_strings
             else:
-                fmt = 'Error splitting key:value pair {!r} from {}: {}'
-                raise WikiEntityParseException(fmt.format(li.text.strip(), uri_path, e)) from e
+                if i < 1:
+                    fmt = 'Error splitting key:value pair {!r} from {}: {}'
+                    raise WikiEntityParseException(fmt.format(li.text.strip(), uri_path, e)) from e
+                break
 
         key = key.lower()
-        if i == 0 and key not in ('title', 'name', 'group name'):
+        if i == 0 and key not in ('title', 'name', 'group name') and 'title' not in key:
+            log.debug('parse_drama_wiki_info_list({!r},...) returning None because 1st key={!r}'.format(uri_path, key))
             return None
-        elif key in ('title', 'name', 'group name'):
+        elif key in ('title', 'name', 'group name') or 'title' in key:
             parts = list(map(str.strip, value.split('/')))
             try:
                 value = eng_cjk_sort(parts, permissive=True)
             except Exception as e:
+                # log.debug('Exception while processing parts={!r}: {}'.format(parts, e))
                 langs = [LangCat.categorize(p) for p in parts]
                 if len(parts) == 3 and langs[0] == LangCat.HAN and langs[1] == langs[2] == LangCat.ENG:
                     permutations = {''.join(p.split()) for p in romanized_permutations(parts[0])}
-                    if all(''.join(p.lower().split()) in permutations for p in parts[1:]):
+                    # log.debug('Comparing {!r} => {!r} to {!r}'.format(parts[0], permutations, parts[1]))
+                    lc_parts = [''.join(p.lower().split()) for p in parts[1:]]
+                    if all(p in permutations for p in lc_parts):
                         value = ('', parts[0])
+                    elif lc_parts[0] in permutations:
+                        value = (parts[2], parts[0])
                 elif len(parts) == 2 and all(lang in LangCat.asian_cats for lang in langs):
                     value = ('', parts[0])
                     fmt = 'No english title found for {}; 2 non-eng titles found: {!r} (keeping) / {!r} (discarding)'
                     log.debug(fmt.format(uri_path, *parts))
+                elif len(parts) == 1:
+                    try:
+                        value = split_name(parts[0])
+                    except ValueError as e1:
+                        log.debug('Error splitting {}={!r} on {}: {}'.format(key, parts, uri_path, e1))
+                else:
+                    log.debug('Error sorting {}={!r} on {}'.format(key, parts, uri_path))
         elif key in ('also known as', 'formerly known as'):
             parts = list(map(str.strip, value.split('/')))
             langs = tuple(LangCat.categorize(p) for p in parts)

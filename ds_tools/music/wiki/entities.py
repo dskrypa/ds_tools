@@ -19,7 +19,7 @@ from cachetools import LRUCache
 from ...caching import cached, DictAttrProperty, DictAttrPropertyMixin
 from ...core import cached_property
 from ...http import CodeBasedRestException
-from ...unicode import LangCat, romanized_permutations
+from ...unicode import LangCat, romanized_permutations, matches_permutation
 from ...utils import soupify, normalize_roman_numerals, ParentheticalParser
 from ..name_processing import eng_cjk_sort, fuzz_process, parse_name, revised_weighted_ratio, split_name
 from .exceptions import *
@@ -824,7 +824,7 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
                 first_ele.extract()
         elif isinstance(self._client, DramaWikiClient):
             self.__side_info = None
-            for clz in ('toc',):
+            for clz in ('toc', 'thumbinner'):
                 rm_ele = content.find(class_=clz)
                 if rm_ele:
                     rm_ele.extract()
@@ -943,33 +943,89 @@ class WikiTVSeries(WikiEntity):
             self.aka = self._side_info.get('also known as', [])
         elif isinstance(self._client, DramaWikiClient):
             self.name = self._header_title
-            if self._raw:
-                info_header = self._clean_soup.find(id='Details') or self._clean_soup.find(id='Season_1')
-                try:
-                    ul = info_header.parent.find_next('ul')
-                except Exception as e:
-                    raise WikiEntityParseException('Unable to find info for {} from {}'.format(self, self.url)) from e
+            if self._raw and not kwargs.get('no_init'):
+                for section in ('Details', 'Detail', 'Season_1'):
+                    info_header = self._clean_soup.find(id=section)
+                    try:
+                        ul = info_header.parent.find_next('ul')
+                    except Exception as e:
+                        if section == 'Season_1':
+                            headlines = self._clean_soup.find_all(class_='mw-headline')
+                            raise_error = True
+                            if not any(span.get('id') in ('Details', 'Season_1') for span in headlines):
+                                ul = self._clean_soup.find('ul')
+                                try:
+                                    raise_error = 'title' not in ul.find('li').text.lower()
+                                except Exception:
+                                    pass
+                            if raise_error:
+                                raise WikiEntityParseException('Unable to find info for {} from {}'.format(self, self.url)) from e
+                        else:
+                            continue
 
-                self._info = parse_drama_wiki_info_list(self._uri_path, ul, client)
+                    # noinspection PyUnboundLocalVariable
+                    self._info = parse_drama_wiki_info_list(self._uri_path, ul, client)
+                    if self._info is not None:
+                        break
+                    elif section == 'Season_1':
+                        raise WikiEntityParseException('Info list could not be parsed for {} from {}'.format(self, self.url))
+
+                title_parts = OrderedDict(
+                    (k, v) for k, v in self._info.items() if any(ti in k for ti in ('title', 'name'))
+                )
+                first_title_key, first_title_part = next(iter(title_parts.items()))
+                if 'chinese' in first_title_key:
+                    han_parts = [
+                        (k, v) for k, v in title_parts.items() if any(hi in k for hi in ('hangul', 'korean'))
+                    ]
+                    if len(han_parts) == 1:
+                        first_title_key, first_title_part = han_parts[0]
                 try:
-                    self.english_name, self.cjk_name = self._info['title']
+                    self.english_name, self.cjk_name = first_title_part
                 except ValueError as e:
-                    err_msg = 'Unexpected show title for {}: {!r}'.format(self.url, self._info['title'])
-                    title = self._info['title']
-                    if isinstance(title, str) and LangCat.contains_any_not(title, LangCat.ENG):
-                        romaji = self._info.get('title (romaji)')
-                        if romaji and LangCat.categorize(romaji) == LangCat.ENG:
-                            self.english_name = romaji
-                            self.cjk_name = title
+                    err_msg = 'Unexpected show title for {}: {!r}'.format(self.url, first_title_part)
+                    if isinstance(first_title_part, str) and LangCat.contains_any_not(first_title_part, LangCat.ENG):
+                        eng_parts = [v for k, v in title_parts.items() if 'english' in k]
+                        if not eng_parts:
+                            eng_parts = [v for k, v in title_parts.items() if 'romaji' in k]
+                        if len(eng_parts) == 1:
+                            eng_part = eng_parts[0] if isinstance(eng_parts[0], str) else eng_parts[0][0]
+                            if LangCat.categorize(eng_part) == LangCat.ENG:
+                                self.english_name = eng_part
+                                self.cjk_name = first_title_part
+                            else:
+                                log.error(err_msg)
+                        elif len(eng_parts) > 1:
+                            log.error('Found multiple eng title parts for {}: {}'.format(self.url, eng_parts))
                         else:
                             log.error(err_msg)
                     else:
                         log.error(err_msg)
+                else:
+                    eng, cjk = self.english_name, self.cjk_name
+                    if not eng or (LangCat.matches(cjk, LangCat.HAN) and matches_permutation(eng, cjk)):
+                        eng_parts = [v for k, v in title_parts.items() if 'english' in k]
+                        if not eng_parts:
+                            eng_parts = [v for k, v in title_parts.items() if 'romaji' in k]
+
+                        if len(eng_parts) == 1:
+                            eng_part = eng_parts[0] if isinstance(eng_parts[0], str) else eng_parts[0][0]
+                            if LangCat.categorize(eng_part) == LangCat.ENG:
+                                if self.english_name:
+                                    self._add_alias(self.english_name)
+                                self.english_name = eng_part
+                            else:
+                                log.debug('Unexpected eng title lang for {}: {!r}'.format(self.url, eng_part))
+                        elif len(eng_parts) > 1:
+                            log.debug('Found multiple eng title parts for {}: {}'.format(self.url, eng_parts))
+
+                # if not self.english_name and not self.cjk_name:
+                #     raise WikiEntityParseException('Title was not found for {} from {}'.format(self, self.url))
 
                 if self._header_title and LangCat.categorize(self._header_title) == LangCat.ENG:
                     if self.english_name and self.cjk_name and self.english_name != self._header_title:
-                        permutations = {''.join(p.split()) for p in romanized_permutations(self.cjk_name)}
-                        if ''.join(self.english_name.lower().split()) in permutations:
+                        eng, cjk = self.english_name, self.cjk_name
+                        if LangCat.matches(cjk, LangCat.HAN) and matches_permutation(eng, cjk):
                             self._add_alias(self.english_name)
                             self.english_name = self._header_title
                     elif self.cjk_name and not self.english_name:
@@ -1020,11 +1076,41 @@ class WikiArtist(WikiPersonCollection):
             if isinstance(self._client, DramaWikiClient):
                 ul = self._clean_soup.find(id='Profile').parent.find_next('ul')
                 self._profile = parse_drama_wiki_info_list(self._uri_path, ul, client)
+                if self._profile is None:
+                    raise WikiEntityParseException('Error parsing profile for {} from {}'.format(self, self.url))
                 try:
                     self._tv_appearances = parse_tv_appearances(self._uri_path, self._clean_soup, self)
                 except WikiEntityParseException as e:
                     log.log(7, 'No TV shows section found for {}: {}'.format(self, e))
-                self.english_name, self.cjk_name = self._profile.get('name', self._profile.get('group name'))
+
+                name_parts = OrderedDict((k, v) for k, v in self._profile.items() if 'name' in k)
+                first_name_key, first_name_part = next(iter(name_parts.items()))
+                try:
+                    self.english_name, self.cjk_name = first_name_part
+                except ValueError as e:
+                    err_msg = 'Unexpected name for {}: {!r}'.format(self.url, first_name_part)
+                    if isinstance(first_name_part, str) and LangCat.contains_any_not(first_name_part, LangCat.ENG):
+                        eng_parts = [v for k, v in name_parts.items() if 'english' in k]
+                        if not eng_parts:
+                            eng_parts = [v for k, v in name_parts.items() if 'romaji' in k]
+                        if len(eng_parts) == 1:
+                            eng_part = eng_parts[0] if isinstance(eng_parts[0], str) else eng_parts[0][0]
+                            if LangCat.categorize(eng_part) == LangCat.ENG:
+                                self.english_name = eng_part
+                                self.cjk_name = first_name_part
+                            else:
+                                raise WikiEntityInitException(err_msg)
+                        else:
+                            raise WikiEntityInitException(err_msg)
+                    else:
+                        raise WikiEntityInitException(err_msg)
+
+                # try:
+                #     self.english_name, self.cjk_name = self._profile.get('name', self._profile.get('group name'))
+                # except ValueError as e:
+                #     _name = self._profile.get('name', self._profile.get('group name'))
+                #     raise WikiEntityInitException('Error splitting tuple for name={!r} for {} from {}'.format(_name, self, self.url))
+
                 # If eng name has proper eng name + romanized hangul name, remove the romanized part
                 if self.english_name and self.cjk_name and '(' in self.english_name and self.english_name.endswith(')'):
                     m = re.match(r'^(.*)\((.*)\)$', self.english_name)
@@ -1034,6 +1120,8 @@ class WikiArtist(WikiPersonCollection):
                             if ''.join(permutation.split()) == lc_nospace_rom:
                                 self.english_name = m.group(2).strip()
                                 break
+                elif self.cjk_name and not self.english_name and 'name (romaji)' in self._profile:
+                    self.english_name = self._profile['name (romaji)']
             elif isinstance(self._client, WikipediaClient):
                 page_text = self._clean_soup.text
                 if LangCat.categorize(page_text) == LangCat.MIX:
@@ -1558,12 +1646,14 @@ class WikiArtist(WikiPersonCollection):
     def tv_shows(self):
         if self._tv_appearances is None:
             return []
-        return [WikiTVSeries(show['href'], self._client) for show in self._tv_appearances if show['href']]
-        # for show in self._tv_appearances:
-        #     href = show['href']
-        #     if href:
-        #         shows.append(WikiTVSeries(href, self._client))
-        # return shows
+        shows = []
+        for show in self._tv_appearances:
+            if show['href'] and '&redlink=1' not in show['href']:
+                try:
+                    shows.append(WikiTVSeries(show['href'], self._client))
+                except WikiTypeError as e:
+                    log.debug('{}\'s show {} is not a TV Series: {}'.format(self, show, e))
+        return shows
 
 
 class WikiGroup(WikiArtist):
@@ -2457,7 +2547,12 @@ class WikiSongCollection(WikiEntity):
 
     @cached_property
     def parts(self):
-        return list(self._parts.values())
+        try:
+            return list(self._parts.values())
+        except WikiAlbumPartProcessingError as e:
+            log.error(str(e))
+            log.log(19, traceback.format_exc())
+            return []
 
     def parts_for(self, edition_or_part=None, disk=None):
         if not self._track_lists:

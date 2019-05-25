@@ -89,6 +89,17 @@ class LangCat(Enum):
                 return cat
 
     @classmethod
+    @cached(LRUCache(200), exc=True)
+    def matches(cls, text, *cats, detailed=False):
+        if detailed:
+            text_cats = cls.categorize(text, True)
+            return len(text_cats.intersection(cats)) == len(text_cats) == len(cats)
+        elif len(cats) > 1:
+            return False
+        else:
+            return cls.categorize(text) == cats[0]
+
+    @classmethod
     def contains_any(cls, text, cat):
         """
         :param str text: Text to examine

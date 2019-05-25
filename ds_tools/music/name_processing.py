@@ -465,7 +465,7 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
             elif ' / ' in part:
                 parts = tuple(map(str.strip, part.split(' / ', 1)))
                 return split_name(parts, unused, check_keywords, permissive, require_preceder)
-            elif len(LangCat.categorize(part, True).intersection((LangCat.JPN, LangCat.CJK))) == 2:
+            elif not has_parens(part) and LangCat.matches(part, LangCat.JPN, LangCat.CJK, detailed=True):
                 lang = LangCat.JPN
         try:
             eng, cjk = eng_cjk_sort(part, lang)
@@ -480,11 +480,8 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
             try:
                 eng, cjk = eng_cjk_sort(parts, langs)               # Name (other lang)
             except ValueError as e:
-                if LangCat.HAN in langs and LangCat.ENG not in langs:
-                    h, o = (0, 1) if langs[0] == LangCat.HAN else (1, 0)
-                    eng = ''
-                    cjk = parts[h]
-                    not_used = parts[o]
+                cjk, not_used = LangCat.sort(parts)
+                eng = ''
             else:
                 if ' / ' in eng:                                    # Group / Soloist (soloist other lang)
                     not_used, eng = eng.split(' / ')
