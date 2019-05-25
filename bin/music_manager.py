@@ -89,6 +89,7 @@ def parser():
     wiki_sort_parser.add_argument('--unmatched_cleanup', '-C', action='store_true', help='Run cleanup tasks for unmatched files (commonly OSTs/collaborations)')
     wiki_sort_parser.add_argument('--true_soloist', '-S', action='store_true', help='For solo artists, use only their name instead of including their group and do not sort them with their group')
     wiki_sort_parser.add_argument('--collab_mode', '-c', choices=('title', 'artist', 'both'), default='artist', help='List collaborators in the artist tag, the title tag, or both (default: %(default)s)')
+    wiki_sort_parser.add_argument('--hide_edition', '-E', action='store_true', help='Exclude the edition from the album title, if present (default: include it)')
 
     p2t_parser = parser.add_subparser('action', 'path2tag', help='Update tags based on the path to each file')
     p2t_parser.add_argument('path', help='A directory that contains directories that contain music files')
@@ -152,7 +153,8 @@ def main():
     elif args.action == 'wiki_sort':
         sort_by_wiki(
             args.source, args.destination or args.source, args.allow_no_dest, args.basic_cleanup, args.move_unknown,
-            args.allow_incomplete, args.unmatched_cleanup, args.true_soloist, args.collab_mode, args.dry_run
+            args.allow_incomplete, args.unmatched_cleanup, args.true_soloist, args.collab_mode, args.hide_edition,
+            args.dry_run
         )
     elif args.action == 'path2tag':
         path2tag(args.path, args.dry_run, args.title)
@@ -201,7 +203,7 @@ def match_wiki(path):
                 # 'Wiki Artist': music_file.wiki_artist.qualname if music_file.wiki_artist else '',
 
                 'File Album': music_file.album_name_cleaned,
-                'Wiki Album': music_file.wiki_album.title if music_file.wiki_album else '',
+                'Wiki Album': music_file.wiki_album.title() if music_file.wiki_album else '',
                 'File Alb Type': music_file.album_type_dir,
                 'Wiki Alb Type': music_file.wiki_album.album_type if music_file.wiki_album else '',
                 'A.Scr': music_file.wiki_scores.get('album', -1),
@@ -399,7 +401,7 @@ def wiki_list(path):
 
 def sort_by_wiki(
     source_path, dest_dir, allow_no_dest, basic_cleanup, move_unknown, allow_incomplete, unmatched_cleanup,
-    true_soloist, collab_mode, dry_run
+    true_soloist, collab_mode, hide_edition, dry_run
 ):
     """
     Cleanup & sort files based on the information found when matching them to artists / albums / songs in various wikis
@@ -417,6 +419,7 @@ def sort_by_wiki(
     :param bool true_soloist: For solo artists, use only their name instead of including their group, and do not sort
       them with their group
     :param str collab_mode: List collaborators in the artist tag, the title tag, or both
+    :param bool hide_edition: Exclude the edition from the album title, if present (default: include it)
     :param bool dry_run: Print the actions that would be taken instead of taking them
     """
     _dest_dir = dest_dir
@@ -437,7 +440,7 @@ def sort_by_wiki(
         if basic_cleanup:
             continue
 
-        rel_path = album_dir.expected_rel_path(true_soloist)
+        rel_path = album_dir.expected_rel_path(true_soloist, hide_edition)
         if rel_path and ('UNKNOWN_FIXME' in rel_path.as_posix()) and not move_unknown:
             log.log(19, 'Skipping {} because a proper location could not be determined'.format(album_dir))
             continue
@@ -500,7 +503,7 @@ def sort_by_wiki(
         if i and logged_messages:
             print()
         logged_messages = album_dir.update_song_tags_and_names(
-            allow_incomplete, true_soloist, collab_mode, dry_run, dest_root
+            allow_incomplete, true_soloist, collab_mode, dry_run, dest_root, hide_edition
         )
         if unmatched_cleanup and not album_dir.wiki_album:
             if logged_messages:

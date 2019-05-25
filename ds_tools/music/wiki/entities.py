@@ -2017,18 +2017,18 @@ class WikiSongCollection(WikiEntity):
             return '{} {} {}'.format(self.album_num, lang.title(), self.album_type)
         return '{} {}'.format(self.album_num, self.album_type)
 
-    @cached_property
-    def title(self):
+    @cached()
+    def title(self, hide_edition=False):
         extra = ' '.join(map('({})'.format, self._info)) if self._info else ''
         return '{} {}'.format(self.name, extra) if extra else self.name
 
     @cached()
-    def expected_rel_dir(self, as_path=False, base_title=None, released=None, year=None):
+    def expected_rel_dir(self, as_path=False, base_title=None, released=None, year=None, hide_edition=False):
         """
         :param bool as_path: Return a Path object instead of a string
         :param str base_title: Base title to use for editions/parts
         """
-        base_title = base_title or self.title
+        base_title = base_title or self.title(hide_edition)
         numbered_type = self.album_type in ALBUM_NUMBERED_TYPES
         if numbered_type or self.album_type in ALBUM_DATED_TYPES:
             try:
@@ -2050,7 +2050,7 @@ class WikiSongCollection(WikiEntity):
         return path if as_path else path.as_posix()
 
     @cached()
-    def expected_rel_path(self, true_soloist=False, base_title=None, released=None, year=None):
+    def expected_rel_path(self, true_soloist=False, base_title=None, released=None, year=None, hide_edition=False):
         rel_to_artist_dir = self.expected_rel_dir(True, base_title, released, year)
         if not true_soloist and isinstance(self.artist, WikiSinger) and self.artist.member_of:
             soloist = self.artist
@@ -2604,7 +2604,7 @@ class WikiSongCollectionPart:
             self.name = ' '.join(chain((self.name,), map('({})'.format, self._info)))
 
     def __repr__(self):
-        return '<{}({!r})>'.format(type(self).__name__, self.title)
+        return '<{}({!r})>'.format(type(self).__name__, self.title())
 
     def __getattr__(self, item):
         # if item in self.passthru_attrs:
@@ -2617,8 +2617,8 @@ class WikiSongCollectionPart:
     def __len__(self):
         return len(self._track_list['tracks'])
 
-    @cached_property
-    def title(self):
+    @cached()
+    def title(self, hide_edition=False):
         extra = ' '.join(map('({})'.format, self._info)) if self._info else ''
         title = '{} {}'.format(self.name, extra) if extra else self.name
         if self.edition:
@@ -2630,7 +2630,7 @@ class WikiSongCollectionPart:
                     title += ' - {}'.format(m.group(1).strip())
                 elif isinstance(self._collection, WikiSoundtrack) and self.edition in self.name:
                     pass    # Make no changes - this is the full OST
-                else:
+                elif not hide_edition:
                     title += ' - {}'.format(self.edition)
 
         if self.language:
@@ -2657,11 +2657,11 @@ class WikiSongCollectionPart:
         artist_context = self._collection._artist_context
         return [WikiTrack(info, self, artist_context) for info in self._track_list['tracks']]
 
-    def expected_rel_dir(self, as_path=False):
-        return self._collection.expected_rel_dir(as_path, self.title, self.released, self.year)
+    def expected_rel_dir(self, as_path=False, hide_edition=False):
+        return self._collection.expected_rel_dir(as_path, self.title(hide_edition), self.released, self.year)
 
-    def expected_rel_path(self, true_soloist=False):
-        return self._collection.expected_rel_path(true_soloist, self.title, self.released, self.year)
+    def expected_rel_path(self, true_soloist=False, hide_edition=False):
+        return self._collection.expected_rel_path(true_soloist, self.title(hide_edition), self.released, self.year)
 
     def find_track(self, name, min_score=75, include_score=False, edition_or_part=None, disk=None, **kwargs):
         if edition_or_part not in (None, self.edition) and disk not in (None, self.disk):
@@ -2763,7 +2763,7 @@ class WikiSoundtrack(WikiSongCollection):
 
     def _additional_aliases(self):
         addl_aliases = set(super()._additional_aliases())
-        addl_aliases.update(p.title for p in self.parts)
+        addl_aliases.update(p.title() for p in self.parts)
         try:
             addl_aliases.update(e[0] for e in self.editions_and_disks)
         except InvalidTrackListException:   # Happens when this obj was constructed from dico info
@@ -2991,7 +2991,7 @@ class WikiSoundtrack(WikiSongCollection):
             return {'tracks': []}
 
     @cached()
-    def expected_rel_path(self, true_soloist=False, base_title=None, released=None, year=None):
+    def expected_rel_path(self, true_soloist=False, base_title=None, released=None, year=None, hide_edition=False):
         try:
             artist = self.artist
         except NoPrimaryArtistError:

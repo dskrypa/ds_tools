@@ -328,9 +328,9 @@ class AlbumDir(ClearableCachedPropertyMixin):
         return None
 
     @cached()
-    def expected_rel_path(self, true_soloist=False):
+    def expected_rel_path(self, true_soloist=False, hide_edition=False):
         if self.wiki_album_part:
-            return self.wiki_album_part.expected_rel_path(true_soloist)
+            return self.wiki_album_part.expected_rel_path(true_soloist, hide_edition)
         elif self.wiki_album:
             return self.wiki_album.expected_rel_path(true_soloist)
         elif self.wiki_artist:
@@ -514,7 +514,9 @@ class AlbumDir(ClearableCachedPropertyMixin):
             log.log(19, 'No changes necessary for {}'.format(self))
         return logged_messages
 
-    def update_song_tags_and_names(self, allow_incomplete, true_soloist, collab_mode, dry_run, dest_root=None):
+    def update_song_tags_and_names(
+        self, allow_incomplete, true_soloist, collab_mode, dry_run, dest_root=None, hide_edition=False
+    ):
         logged_messages = 0
         if not self.wiki_artist and not self._is_full_ost:
             log.error('Unable to find wiki artist match for {} - skipping tag updates'.format(self), extra={'red': True})
@@ -537,14 +539,16 @@ class AlbumDir(ClearableCachedPropertyMixin):
         conflicts = {}
         exists = set()
         for music_file in self.songs:
-            logged_messages += music_file.update_tags(allow_incomplete, genre, true_soloist, collab_mode, dry_run)
+            logged_messages += music_file.update_tags(
+                allow_incomplete, genre, true_soloist, collab_mode, dry_run, hide_edition
+            )
             wiki_song = music_file.wiki_song
             if wiki_song is None:
                 continue
 
             incl_collabs = collab_mode in ('title', 'both')
             expected_rel_path = wiki_song.expected_rel_path(
-                music_file.ext, incl_collabs, incl_collabs, true_soloist=true_soloist
+                music_file.ext, incl_collabs, incl_collabs, true_soloist=true_soloist, hide_edition=hide_edition
             )
             if dest_root is None:
                 expected_path = self.artist_path.parent.joinpath(expected_rel_path)
@@ -1387,7 +1391,7 @@ class SongFile(BaseSongFile):
     def album_type_dir(self):
         return self.path.parents[1].name
 
-    def update_tags(self, allow_incomplete, album_genre, true_soloist, collab_mode, dry_run):
+    def update_tags(self, allow_incomplete, album_genre, true_soloist, collab_mode, dry_run, hide_edition=False):
         logged_messages = 0
         to_update = {}
         wiki_song = self.wiki_song
@@ -1454,7 +1458,7 @@ class SongFile(BaseSongFile):
             elif field == 'title':
                 wiki_value = wiki_song.custom_name(collab_mode in ('title', 'both'))
             elif field == 'album':
-                wiki_value = wiki_song.collection.title
+                wiki_value = wiki_song.collection.title(hide_edition)
             else:
                 raise ValueError('Unexpected field: {}'.format(field))
 
