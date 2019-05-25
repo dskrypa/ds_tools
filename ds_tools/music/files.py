@@ -24,6 +24,7 @@ from mutagen.mp4 import MP4Tags
 from ..caching import ClearableCachedPropertyMixin, cached
 from ..core import cached_property, format_duration, datetime_with_tz
 from ..http import CodeBasedRestException
+from ..output import colored
 from ..unicode import contains_hangul, LangCat
 from .exceptions import *
 from .patches import tag_repr
@@ -1476,7 +1477,11 @@ class SongFile(BaseSongFile):
             upd_prefix = '[DRY RUN] Would update' if dry_run else 'Updating'
             msg = '{} {} to match {} by changing...'.format(upd_prefix, self, wiki_song)
             for tag, (old_val, new_val) in sorted(to_update.items()):
-                msg += '\n   - {} from {!r} to {!r}'.format(tag, old_val, new_val)
+                line = '\n   - {} from {!r} to {!r}'.format(tag, old_val, new_val)
+                if tag == 'title':
+                    line = colored(line, 14)
+                msg += line
+
             log.info(msg)
             if not dry_run:
                 try:
