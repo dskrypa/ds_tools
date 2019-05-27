@@ -93,6 +93,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
         if any(p.is_dir() for p in path.iterdir()):
             raise InvalidAlbumDir('Invalid album dir - contains directories: {}'.format(path.as_posix()))
         self.path = path
+        self._album_score = -1
 
     def __repr__(self):
         try:
@@ -233,6 +234,7 @@ class AlbumDir(ClearableCachedPropertyMixin):
 
         if len(albums) == 1:
             # log.debug('{}: Found single album match: {}'.format(self, albums))
+            self._album_score = self.songs[0].wiki_scores['album']
             return albums.pop()
         elif len(albums) > 1:
             if all(isinstance(a, WikiSongCollectionPart) for a in albums):
@@ -1234,6 +1236,7 @@ class SongFile(BaseSongFile):
     def wiki_album(self):
         alb_part = self.album_dir_obj.wiki_album_part
         if alb_part:
+            self.wiki_scores['album'] = self.album_dir_obj._album_score
             return alb_part
         else:
             return self._wiki_album
