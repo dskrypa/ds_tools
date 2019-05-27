@@ -508,7 +508,9 @@ class TrackInfoParser(ListBasedRecursiveDescentParser):
             elif self._accept_any(self._content_tokens):
                 text += self.tok.value
             elif self._accept('TIME'):
-                if self.prev_tok.type == 'DASH' or not self.next_tok:
+                if self.prev_tok is None:
+                    text += self.tok.value
+                elif self.prev_tok.type == 'DASH' or not self.next_tok:
                     if time_part:
                         fmt = 'Unexpected {!r} token {!r} in {!r} (time {!r} was already found)'
                         raise UnexpectedTokenError(fmt.format(
