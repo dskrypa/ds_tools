@@ -63,7 +63,8 @@ def parse_artist_osts(uri_path, clean_soup, artist):
         else:
             li_text = li.text
             if not any(a['title'] in li_text for a in albums):  # They don't repeat links for the same target
-                log.warning('No OST found in li on {}: {}'.format(uri_path, li))
+                log.debug('No OST found in li on {}: {}'.format(uri_path, li))
+                # A link to the show page may exist, but there may not be a proper OST for this show
     return albums
 
 
