@@ -1261,6 +1261,14 @@ class SongFile(BaseSongFile):
             return ost
 
     @cached_property
+    def album_name_cleaner(self):
+        album = self.album_name_cleaned
+        m = re.match(r'(.*)(\((?:vol.?|volume) (?:\d+|[ivx]+)\))$', album, re.IGNORECASE)
+        if m:
+            album = m.group(1)
+        return album
+
+    @cached_property
     def _wiki_album(self):
         if self._is_full_ost:
             return self._find_ost_match()
@@ -1304,6 +1312,12 @@ class SongFile(BaseSongFile):
                             raise e1
                     # traceback.print_exc()
                     raise e
+                else:
+                    if album is None and self.album_name_cleaned != self.album_name_cleaner:
+                        album, score = artist.find_song_collection(
+                            self.album_name_cleaner, include_score=True, year=self.year, track_count=track_count
+                        )
+
                 self.wiki_scores['album'] = score
                 if album is None:
                     if not self._in_album_dir:
