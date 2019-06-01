@@ -1,15 +1,45 @@
 """
 Module for syncing Plex ratings with ratings stored in ID3 tags
 
+Note on fetchItems:
+The kwargs to fetchItem/fetchItems use __ to access nested attributes, but the only nested attributes available are
+those that are returned in the items in ``plex._session.query(plex._ekey(search_type))``, not the higher level objects.
+Example available attributes::\n
+    >>> data = plex._session.query(plex._ekey('album'))
+    >>> data[0]
+    <Element 'Directory' at 0x000001DF71118EF8>
+    >>> data[0].attrib.keys()
+    dict_keys(['ratingKey', 'key', 'parentRatingKey', 'type', 'title', 'parentKey', 'parentTitle', 'summary', 'index', 'year', 'thumb', 'parentThumb', 'originallyAvailableAt', 'addedAt', 'updatedAt', 'deepAnalysisVersion'])
+    >>> [c for c in data[0]]
+    [<Element 'Genre' at 0x000001DF711182C8>]
+    >>> {c.tag: c.attrib.keys() for c in data[0]}
+    {'Genre': dict_keys(['tag'])}
+
+Example playlist syncs::\n
+    >>> plex.sync_playlist('K-Pop 3+ Stars', userRating__gte=6, genre__like='[kj]-?pop')
+    2019-06-01 08:53:39 EDT INFO __main__ 178 Creating playlist K-Pop 3+ Stars with 485 tracks
+    >>> plex.sync_playlist('K-Pop 4+ Stars', userRating__gte=8, genre__like='[kj]-?pop')
+    2019-06-01 08:54:13 EDT INFO __main__ 178 Creating playlist K-Pop 4+ Stars with 257 tracks
+    >>> plex.sync_playlist('K-Pop 5 Stars', userRating__gte=10, genre__like='[kj]-?pop')
+    2019-06-01 08:54:22 EDT INFO __main__ 178 Creating playlist K-Pop 5 Stars with 78 tracks
+    >>> plex.sync_playlist('K-Pop 5 Stars', userRating__gte=10, genre__like='[kj]-?pop')
+    2019-06-01 08:54:58 EDT VERBOSE __main__ 196 Playlist K-Pop 5 Stars does not contain any tracks that should be removed
+    2019-06-01 08:54:58 EDT VERBOSE __main__ 208 Playlist K-Pop 5 Stars is not missing any tracks
+    2019-06-01 08:54:58 EDT INFO __main__ 212 Playlist K-Pop 5 Stars contains 78 tracks and is already in sync with the given criteria
+
 :author: Doug Skrypa
 """
 
 import logging
+import re
 from getpass import getpass
 from pathlib import Path
 
+import plexapi
 from plexapi.myplex import MyPlexAccount
+from plexapi.playlist import Playlist
 from plexapi.server import PlexServer
+from plexapi.utils import SEARCHTYPES
 from requests import Session
 from urllib3 import disable_warnings as disable_urllib3_warnings
 
@@ -20,6 +50,9 @@ __all__ = ['LocalPlexServer']
 log = logging.getLogger(__name__)
 
 disable_urllib3_warnings()
+
+# add compiled regex pattern search as a fetchItem operator
+plexapi.base.OPERATORS['sregex'] = lambda v, pat: pat.search(v)
 
 
 class LocalPlexServer:
@@ -64,20 +97,42 @@ class LocalPlexServer:
             return account._token
 
     @cached_property
-    def _sesssion(self):
+    def _session(self):
         session = Session()
         session.verify = False
         return PlexServer(self.url, self._token, session=session)
 
     @cached_property
     def music(self):
-        return self._sesssion.library.section('Music')
+        return self._session.library.section('Music')
+
+    def _ekey(self, search_type):
+        return '/library/sections/1/all?type={}'.format(SEARCHTYPES[search_type])
+
+    def _update_kwargs(self, kwargs):
+        """
+        Update the kwarg search filters for a fetchItem/fetchItems call using custom search filters.
+
+        Implemented custom filters:
+         - genre__like: Plex stores genres at the album level rather than the track level - this will run a search for
+           albums where re.search(value, album_genre) returns a match, then add a filter for the intended track search
+           so that only tracks that are in the albums with the given genre are returned.
+
+        :param dict kwargs: The kwargs that were passed to :meth:`.get_tracks` or a similar method
+        :return dict: Modified kwargs with custom search filters
+        """
+        genre__like = kwargs.pop('genre__like', None)
+        if genre__like is not None:
+            albums = self.music.fetchItems(self._ekey('album'), genre__tag__sregex=re.compile(genre__like, re.I))
+            album_keys = {a.key for a in albums}
+            kwargs['parentKey__in'] = album_keys
+        return kwargs
 
     def get_tracks(self, **kwargs):
-        return self.music.fetchItems('/library/sections/1/all?type=10', **kwargs)
+        return self.music.fetchItems(self._ekey('track'), **self._update_kwargs(kwargs))
 
     def get_track(self, **kwargs):
-        return self.music.fetchItem('/library/sections/1/all?type=10', **kwargs)
+        return self.music.fetchItem(self._ekey('track'), **self._update_kwargs(kwargs))
 
     def find_songs_by_rating_gte(self, rating, **kwargs):
         """
@@ -129,6 +184,55 @@ class LocalPlexServer:
                     log.info('{} rating from {} to {} for {}'.format(prefix, plex_stars, file_stars, file))
                     if not dry_run:
                         track.edit(**{'userRating.value': file_stars})
+
+    @property
+    def playlists(self):
+        return {p.title: p for p in self._session.playlists()}
+
+    def create_playlist(self, name, items):
+        if not items:
+            raise ValueError('An iterable containing one or more tracks/items must be provided')
+        return Playlist.create(self._session, name, items)
+
+    def sync_playlist(self, name, **criteria):
+        expected = self.get_tracks(**criteria)
+        playlists = self.playlists
+        if name not in playlists:
+            log.info('Creating playlist {} with {:,d} tracks'.format(name, len(expected)))
+            log.debug('Creating playlist {} with tracks: {}'.format(name, expected))
+            plist = self.create_playlist(name, expected)
+        else:
+            plist = playlists[name]
+            plist_items = plist.items()
+
+            to_remove = []
+            for track in plist_items:
+                if track not in expected:
+                    to_remove.append(track)
+
+            if to_remove:
+                log.info('Removing {:,d} tracks from playlist {}'.format(len(to_remove), name))
+                for track in to_remove:
+                    log.debug('Removing from playlist {}: {}'.format(name, track))
+                    plist.removeItem(track)
+            else:
+                log.log(19, 'Playlist {} does not contain any tracks that should be removed'.format(name))
+
+            to_add = []
+            for track in expected:
+                if track not in plist_items:
+                    to_add.append(track)
+
+            if to_add:
+                log.info('Adding {:,d} tracks to playlist {}'.format(len(to_add), name))
+                log.debug('Adding to playlist {}: {}'.format(name, to_add))
+                plist.addItems(to_add)
+            else:
+                log.log(19, 'Playlist {} is not missing any tracks'.format(name))
+
+            if not to_add and not to_remove:
+                fmt = 'Playlist {} contains {:,d} tracks and is already in sync with the given criteria'
+                log.info(fmt.format(name, len(plist_items)))
 
 
 def print_song_info(songs):
