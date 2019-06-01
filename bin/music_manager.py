@@ -510,6 +510,11 @@ def sort_by_wiki(
                 print()
             logged_messages = album_dir.cleanup_partial_matches(dry_run)
 
+    if src_path.is_dir() and not list(src_path.iterdir()):
+        log.info('{} empty directory: {}'.format(rm_prefix, src_path.as_posix()))
+        if not dry_run:
+            src_path.rmdir()
+
 
 def set_tags(paths, tag_ids, value, replace_pats, partial, dry_run):
     prefix, repl_msg, set_msg = ('[DRY RUN] ', 'Would replace', 'Would set') if dry_run else ('', 'Replacing', 'Setting')
