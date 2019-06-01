@@ -152,7 +152,7 @@ class ArgParser(ArgumentParser):
         """Add an argument with the given parameters to every subparser in this ArgParser, or itself if it has none"""
         if self.subparsers:
             for subparser in set(chain.from_iterable(sp.choices.values() for sp in self.subparsers.values())):
-                subparser.add_argument(*args, **kwargs)
+                subparser.add_common_arg(*args, **kwargs)
         else:
             self.add_argument(*args, **kwargs)
 
