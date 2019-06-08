@@ -131,6 +131,8 @@ def parse_name(text):
     if (' ' not in first_sentence) or (first_sentence.count('"') == 1 and stripped.count('"') % 2 == 1):
         first_sentence += period + stripped.partition('. ')[0].strip()
     first_sentence = normalize_roman_numerals(first_sentence.replace('\xa0', ' '))
+    if first_sentence.startswith('"') and first_sentence.endswith('"') and first_sentence.count('"') == 2:
+        first_sentence = unsurround(first_sentence)
     parser = ParentheticalParser()
     try:
         parts = parser.parse(first_sentence)    # Note: returned strs already stripped of leading/trailing spaces
