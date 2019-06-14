@@ -361,6 +361,8 @@ class WikiMatchable:
             return m
 
     def update_name(self, eng_name, cjk_name):
+        # fmt = '{}: Updating eng={!r}=>{!r}, cjk={!r}=>{!r}'
+        # log.info(fmt.format(self, self.english_name, eng_name, self.cjk_name, cjk_name), extra={'color': 'red'})
         self.english_name = normalize_roman_numerals(eng_name) if eng_name else self.english_name
         self.cjk_name = normalize_roman_numerals(cjk_name) if cjk_name else self.cjk_name
         self.name = multi_lang_name(self.english_name, self.cjk_name)

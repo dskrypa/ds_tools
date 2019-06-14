@@ -216,7 +216,7 @@ def parse_album_page(uri_path, clean_soup, side_info, client):
         intro_rx = parse_album_page._intro_rx
         title_rx = parse_album_page._title_rx
     except AttributeError:
-        intro_rx = parse_album_page._intro_rx = re.compile(r'^(.*?)\s+is\s+(?:a|the)\s+(.*?)\.\s')
+        intro_rx = parse_album_page._intro_rx = re.compile(r'^(.*?)\s+is\s+(?:an?|the)\s+(.*?)\.\s')
         title_rx = parse_album_page._title_rx = re.compile(
             r'^The \S+ Album ([{}])(.*)\1(.*)'.format(QMARKS + "'"), re.IGNORECASE
         )
@@ -580,7 +580,14 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
                 try:
                     soloist, of_group = collab.split(' of ')
                 except Exception as e:
-                    collabs.append({'artist': split_name(collab), 'artist_href': linkd.get(collab)})
+                    try:
+                        collabs.append({'artist': split_name(collab), 'artist_href': linkd.get(collab)})
+                    except ValueError as e1:
+                        soloist, of_group = split_name(collab, no_lang_check=True)
+                        collabs.append({
+                            'artist': split_name(soloist), 'artist_href': linkd.get(soloist),
+                            'of_group': split_name(of_group), 'group_href': linkd.get(of_group),
+                        })
                 else:
                     collabs.append({
                         'artist': split_name(soloist), 'artist_href': linkd.get(soloist),
@@ -729,6 +736,7 @@ def parse_discography_section(artist, clean_soup):
     h_levels = {'h3': 'language', 'h4': 'type'}
     lang, album_type = 'Korean', 'Unknown'
     ele = discography_h2.next_sibling
+    tds = None
     while True:
         while not isinstance(ele, Tag):     # Skip past NavigableString objects
             if ele is None:
@@ -766,10 +774,22 @@ def parse_discography_section(artist, clean_soup):
                 entry = parse_discography_entry(artist, li, album_type, lang, num)
                 if entry:
                     entries.append(entry)
+        elif ele.name == 'table':
+            in_table = True
+            tds = iter(ele.find_all('td'))
+            ele = next(tds).find('h3')
 
         elif ele.name in ('h2', 'div'):
             break
-        ele = ele.next_sibling
+
+        if ele.next_sibling is None and tds is not None:
+            td = next(tds)
+            if td:
+                ele = td.find('h3')
+            else:
+                ele = None
+        else:
+            ele = ele.next_sibling
     return entries
 
 
