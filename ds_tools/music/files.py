@@ -1204,6 +1204,12 @@ class SongFile(BaseSongFile):
                     )
                     if match:
                         return match
+
+                    if cjk:
+                        match = e.find_matching_alternative(WikiArtist, aliases=(cjk,), reraise=False)
+                        if match:
+                            return match
+
                 exc = e
             except CodeBasedRestException as e:
                 exc = e
