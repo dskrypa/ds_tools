@@ -1013,6 +1013,14 @@ class BaseSongFile(ClearableCachedPropertyMixin):
                 track = track.split(',')[0].strip()
             if track.startswith('('):
                 track = track[1:].strip()
+
+            try:                        # Strip any leading 0s
+                _track = int(track)
+            except Exception:
+                pass
+            else:
+                track = str(_track)
+
         return track
 
     @cached_property
