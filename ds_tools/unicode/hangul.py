@@ -42,8 +42,8 @@ ROMANIZED_END_CONSONANTS = [
 ]
 
 LEAD_CONSONANT_PERMUTATIONS = [
-    ('k', 'g'), ('kk', 'gg'), 'n', ('t', 'd'), ('tt', 'dd'), ('r', 'l'), 'm', ('p', 'b'), ('pp', 'bb'), 's', 'ss', '',
-    ('ch', 'j'), 'jj', 'ch', 'k', 't', 'p', 'h'
+    ('k', 'g'), ('kk', 'gg'), 'n', ('t', 'd'), ('tt', 'dd'), ('r', 'l'), 'm', ('p', 'b', 'v'), ('pp', 'bb'), 's', 'ss',
+    '', ('ch', 'j'), 'jj', 'ch', 'k', 't', 'p', 'h'
 ]
 VOWEL_PERMUTATIONS = [
     'a', 'ae', 'ya', 'yae', ('eo', 'u'), 'e', ('yeo', 'you', 'yu'), 'ye', ('o', 'oh'), 'wa', 'wae', 'oe', 'yo', ('u', 'oo'),
