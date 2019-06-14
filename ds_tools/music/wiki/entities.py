@@ -360,7 +360,7 @@ class WikiMatchable:
                 pass
             return m
 
-    def update_name(self, eng_name, cjk_name):
+    def update_name(self, eng_name, cjk_name, update_others=True):
         # fmt = '{}: Updating eng={!r}=>{!r}, cjk={!r}=>{!r}'
         # log.info(fmt.format(self, self.english_name, eng_name, self.cjk_name, cjk_name), extra={'color': 'red'})
         self.english_name = normalize_roman_numerals(eng_name) if eng_name else self.english_name
@@ -370,6 +370,14 @@ class WikiMatchable:
             del self.__dict__['aliases']
         except KeyError:
             pass
+
+        if update_others and isinstance(self, WikiTrack):
+            for track in self.collection.get_tracks():
+                if track is not self:
+                    eng_and_no_cjk = track.english_name == self.english_name and not track.cjk_name
+                    cjk_and_no_eng = track.cjk_name == self.cjk_name and not track.english_name
+                    if eng_and_no_cjk or cjk_and_no_eng:
+                        track.update_name(self.english_name, self.cjk_name, False)
 
     def __repr__(self):
         if hasattr(self, '_obj'):
@@ -669,9 +677,9 @@ class WikiMatchable:
             common_non_eng = self._non_eng_langs.intersection(other_langs)
             score_mod += 5 if common_non_eng else -15
             if common_non_eng:
-                _log.debug('score_mod += 15: common non-eng langs: {}'.format(common_non_eng))
+                _log.debug('score_mod += 5: common non-eng langs: {}'.format(common_non_eng))
             else:
-                _log.debug('score_mod -= 50: non-eng self:{} other:{}'.format(self._non_eng_langs, other_langs))
+                _log.debug('score_mod -= 15: non-eng self:{} other:{}'.format(self._non_eng_langs, other_langs))
 
         if isinstance(self, WikiSongCollection) and best_alias and best_val:
             # noinspection PyUnresolvedReferences
@@ -683,16 +691,23 @@ class WikiMatchable:
                 best_score = int(best_score * score / 100)
 
         final_score = best_score + score_mod
-        if final_score >= 100 and matchable.cjk_name and not getattr(self, 'cjk_name', None):
-            log.debug('Updating {!r}.cjk_name => {!r}'.format(self, matchable.cjk_name))
-            try:
-                self.update_name(None, matchable.cjk_name)
-            except AttributeError:
-                pass
-            # else:
-            #     if isinstance(self, WikiTrack) and isinstance(self.collection, WikiFeatureOrSingle):
-            #         if self.collection.english_name == self.english_name and not self.collection.cjk_name:
-            #             self.collection.update_name(None, matchable.cjk_name)
+        if final_score >= 100:
+            if matchable.cjk_name and not getattr(self, 'cjk_name', None):
+                log.debug('Updating {!r}.cjk_name => {!r}'.format(self, matchable.cjk_name))
+                try:
+                    self.update_name(None, matchable.cjk_name)
+                except AttributeError:
+                    pass
+                # else:
+                #     if isinstance(self, WikiTrack) and isinstance(self.collection, WikiFeatureOrSingle):
+                #         if self.collection.english_name == self.english_name and not self.collection.cjk_name:
+                #             self.collection.update_name(None, matchable.cjk_name)
+            elif getattr(matchable, 'english_name', None) and not getattr(self, 'english_name', None):
+                log.debug('Updating {!r}.english_name => {!r}'.format(self, matchable.english_name))
+                try:
+                    self.update_name(matchable.english_name, None)
+                except AttributeError:
+                    pass
 
         fmt = '{!r}=?={!r}: final_score={} (={} + {}), alias={!r}, val={!r}'
         _log.debug(fmt.format(self, other, final_score, best_score, score_mod, best_alias, best_val))
@@ -2760,7 +2775,16 @@ class WikiSongCollectionPart:
     @cached('_track_cache', exc=True)
     def get_tracks(self):
         artist_context = self._collection._artist_context
-        return [WikiTrack(info, self, artist_context) for info in self._track_list['tracks']]
+        tracks = [WikiTrack(info, self, artist_context) for info in self._track_list['tracks']]
+        for track in tracks:
+            if track.is_inst and (not track.english_name or not track.cjk_name):
+                for _track in tracks:
+                    if _track is not track and _track.english_name and _track.cjk_name:
+                        eng_and_no_cjk = track.english_name == _track.english_name and not track.cjk_name
+                        cjk_and_no_eng = track.cjk_name == _track.cjk_name and not track.english_name
+                        if eng_and_no_cjk or cjk_and_no_eng:
+                            track.update_name(_track.english_name, _track.cjk_name, False)
+        return tracks
 
     def expected_rel_dir(self, as_path=False, hide_edition=False):
         return self._collection.expected_rel_dir(as_path, self.title(hide_edition), self.released, self.year)
@@ -3327,6 +3351,17 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
     def __gt__(self, other):
         comparison_type_check(self, other, WikiTrack, '>')
         return self._cmp_attrs > other._cmp_attrs
+
+    @cached_property
+    def is_inst(self):
+        if self.version and self.version.lower().startswith('inst'):
+            return True
+        if self.misc:
+            try:
+                return any(m.lower().startswith('inst') for m in self.misc)
+            except Exception as e:
+                pass
+        return False
 
     def _formatted_name_parts(self, incl_collabs=True, incl_solo=True):
         self.__process_collabs()
