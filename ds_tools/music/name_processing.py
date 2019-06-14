@@ -435,7 +435,10 @@ def split_names(text):
 
 
 @cached(LRUCache(100))
-def split_name(name, unused=False, check_keywords=True, permissive=False, require_preceder=True, allow_cjk_mix=False):
+def split_name(
+    name, unused=False, check_keywords=True, permissive=False, require_preceder=True, allow_cjk_mix=False,
+    no_lang_check=False
+):
     """
     :param str|tuple name: A song/album/artist title
     :param bool unused: Return a 3-tuple instead of a 2-tuple, with the 3rd element being the content that was discarded
@@ -455,6 +458,8 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
 
     if not parts:
         raise ValueError('Unable to split {!r} into separate English/CJK strings (nothing was parsed)'.format(name))
+    if no_lang_check:
+        return parts
 
     eng, cjk, not_used = None, None, None
     langs = categorize_langs(parts)
@@ -465,10 +470,10 @@ def split_name(name, unused=False, check_keywords=True, permissive=False, requir
         lang = langs[0]
         if lang == LangCat.MIX:
             if has_parens(part) and require_preceder:
-                return split_name(part, unused, check_keywords, permissive, require_preceder=False)
+                return split_name(part, unused, check_keywords, permissive, False, allow_cjk_mix)
             elif ' / ' in part:
                 parts = tuple(map(str.strip, part.split(' / ', 1)))
-                return split_name(parts, unused, check_keywords, permissive, require_preceder)
+                return split_name(parts, unused, check_keywords, permissive, require_preceder, allow_cjk_mix)
             elif not has_parens(part) and LangCat.matches(part, LangCat.JPN, LangCat.CJK, detailed=True):
                 lang = LangCat.JPN
         try:
