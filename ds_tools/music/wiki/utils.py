@@ -41,7 +41,7 @@ PAGE_CATEGORIES = OrderedDict([
         'games', 'comics', 'deities', 'television seasons', 'appliances', 'standards', 'military', 'amusement',
         'episodes', 'hobbies', 'astronauts', 'war', 'economics', 'disasters', 'events', 'bugs', 'modules', 'elves',
         'dwarves', 'orcs', 'lists', 'twost', 'food', 'alcohol', 'pubs', 'geography', 'towns', 'cities', 'countries',
-        'counties', 'landmark', 'lake', 'ocean', 'forest', 'roads'
+        'counties', 'landmark', 'lake', 'ocean', 'forest', 'roads', 'manga'
     )),
 ])
 PATH_SANITIZATION_DICT = {c: '' for c in '*;?<>"'}
@@ -139,7 +139,7 @@ def get_page_category(url, cats, no_debug=False, raw=None):
                 for a in soupify(raw).find_all('a'):
                     if a.get('href') == expected:
                         return 'lyrics'
-        elif to_return == 'tv_series' and any(val in cats for val in ('banjun drama', 'lists')):
+        elif to_return == 'tv_series' and any(val in cats for val in ('banjun drama', 'lists', 'manga series')):
             return 'misc'
 
         if to_return:

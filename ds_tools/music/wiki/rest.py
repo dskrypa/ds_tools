@@ -151,6 +151,16 @@ class WikiClient(RestClient):
     def get_entity_base(self, uri_path, obj_type=None):
         raise NotImplementedError()
 
+    def get_category(self, uri_path):
+        if 'action=edit&redlink=1' in uri_path:
+            return None
+        if uri_path.startswith(('http', '//')):
+            uri_path = urlparse(uri_path).path
+        if uri_path.startswith((self.path_prefix, '/' + self.path_prefix)):
+            uri_path = uri_path[len(self.path_prefix)+1:]
+        raw, cats = self.get_entity_base(uri_path)
+        return get_page_category(uri_path, cats, no_debug=True, raw=raw)
+
     def is_any_category(self, uri_path, categories=None):
         """
         :param str uri_path: A uri path relative to this client's root path
