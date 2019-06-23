@@ -122,7 +122,12 @@ def parse_ost_page(uri_path, clean_soup, client):
                             if _eng and _cjk:
                                 name_parts = [' '.join(_eng), ' '.join(_cjk)]
                             else:
-                                raise WikiEntityParseException(err_msg) from e
+                                _parts = LangCat.split(name_parts[0])
+                                _cats = [LangCat.categorize(p) for p in _parts]
+                                if all(cat not in (LangCat.MIX, LangCat.ENG) for cat in _cats) and LangCat.HAN in _cats:
+                                    name_parts = ['', ' '.join(p for p, c in zip(_parts, _cats) if c == LangCat.HAN)]
+                                else:
+                                    raise WikiEntityParseException(err_msg) from e
                         else:
                             lc_name = name_parts[0].lower()
                             if section.endswith('OST') and i == 1 and lc_name.endswith(' title'):
