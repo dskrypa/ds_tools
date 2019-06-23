@@ -593,7 +593,10 @@ class WikiMatchable:
             return 0, None, None
         elif isinstance(self, WikiTrack):
             if track is not None:
-                score_mod += 15 if str(self.num) == str(track) else -40
+                if self.collection.contains_mixed_editions:
+                    score_mod += 15 if str(self.num) == str(track) else -5
+                else:
+                    score_mod += 15 if str(self.num) == str(track) else -40
             if disk is not None:
                 score_mod += 15 if str(self.disk) == str(disk) else -40
 
@@ -2685,6 +2688,14 @@ class WikiSongCollection(WikiEntity):
                 other = (other, alt_other)
         return super().score_match(other, *args, **kwargs)
 
+    @cached_property
+    def contains_mixed_editions(self):
+        try:
+            tracks = self.get_tracks()
+        except Exception as e:
+            return False
+        return any(t._edition_specific for t in tracks) and not all(t._edition_specific for t in tracks)
+
 
 class WikiSongCollectionPart:
     _part_rx = re.compile(r'((?:part|code no)\.?\s*\d+)', re.IGNORECASE)
@@ -2800,6 +2811,11 @@ class WikiSongCollectionPart:
         return self._collection.find_track(
             name, min_score, include_score, edition_or_part=self.edition, disk=self.disk, **kwargs
         )
+
+    @cached_property
+    def contains_mixed_editions(self):
+        tracks = self.get_tracks()
+        return any(t._edition_specific for t in tracks) and not all(t._edition_specific for t in tracks)
 
 
 class WikiAlbum(WikiSongCollection):
@@ -3364,6 +3380,12 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
             except Exception as e:
                 pass
         return False
+
+    @cached_property
+    def _edition_specific(self):
+        if self.version and 'only' in self.version.lower():
+            return True
+        return self.misc and any('only' in m.lower() for m in self.misc)
 
     def _formatted_name_parts(self, incl_collabs=True, incl_solo=True):
         self.__process_collabs()
