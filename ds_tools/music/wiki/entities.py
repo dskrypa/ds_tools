@@ -493,6 +493,8 @@ class WikiMatchable:
                     eng, cjk, extra = split_name(other, True)
                 except ValueError:
                     others = (other,)
+                    if LangCat.contains_any(other, LangCat.HAN):
+                        permutations = tuple(filter(None, (fuzz_process(o) for o in romanized_permutations(other) if o)))
                 else:
                     if eng == 'live':
                         others = [cjk]
@@ -548,7 +550,7 @@ class WikiMatchable:
         for _other in (obj,) if isinstance(obj, str) else obj:
             try:
                 # noinspection PyUnresolvedReferences
-                other_track_info = parse_track_info(self._track, _other, 'matching')
+                other_track_info = parse_track_info(self._track, _other, 'matching: {!r}'.format(_other))
             except Exception:
                 pass
             else:
