@@ -745,7 +745,7 @@ def parse_track_info(
             if track.get('version'):
                 _ver = track['version']
                 lc_version = _ver.lower()
-                if not any(val in lc_version for val in ('inst', 'acoustic')):
+                if not any(val in lc_version or val in lc_part for val in ('inst', 'acoustic')):
                     fmt = 'Multiple version entries found for {!r} from {!r} (had: {!r}, found: {!r})'
                     log.warning(fmt.format(text, context, _ver, part), extra={'color': 14})
                 misc.append('{} ver.'.format(_ver) if 'ver' not in lc_version else _ver)
@@ -791,7 +791,7 @@ def parse_track_info(
         try:
             track['name_parts'] = split_name(tuple(name_parts), allow_cjk_mix=True)
         except Exception as e:
-            log.error('Unexpected name_parts={!r} from {}'.format(name_parts, context))
+            log.error('Unexpected name_parts={!r} from {} for {}'.format(name_parts, context, track))
             raise e
 
     if collabs:
