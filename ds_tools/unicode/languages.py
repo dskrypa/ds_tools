@@ -160,6 +160,7 @@ class LangCat(Enum):
 
         indexes = []
         last = None
+        last_char = None
         i = 0
         for c in text:
             if c in ALL_PUNC_SYMBOLS_WS:
@@ -170,9 +171,13 @@ class LangCat(Enum):
                 current = cls.categorize(c)
                 if current != last:
                     last = current
-                    indexes.append(i)
+                    if last_char and last_char == '(':
+                        indexes.append(i - 1)
+                    else:
+                        indexes.append(i)
                     i = 0
             i += 1
+            last_char = c
 
         # log.debug('indexes: {}'.format(indexes))
         parts = []
