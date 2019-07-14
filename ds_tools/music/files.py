@@ -822,6 +822,12 @@ class BaseSongFile(ClearableCachedPropertyMixin):
         if m:
             album = '{} OST{}'.format(*m.groups())
 
+        m = re.match('(.*) `(.*)`$', album)
+        if m:
+            group, title = m.groups()
+            if group in self.tag_artist:
+                album = title
+
         return album.replace(' : ', ': ')
 
     @cached_property

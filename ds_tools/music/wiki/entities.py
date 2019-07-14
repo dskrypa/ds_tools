@@ -2835,7 +2835,7 @@ class WikiSongCollectionPart:
                 elif not hide_edition:
                     title += ' - {}'.format(self.edition)
 
-        if self.language:
+        if self.language and self.language.lower() != 'korean':
             title += ' ({} ver.)'.format(self.language)
         return title
 
