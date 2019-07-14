@@ -2788,9 +2788,10 @@ class WikiSongCollectionPart:
         return len(self._track_list['tracks'])
 
     @cached()
-    def title(self, hide_edition=False):
+    def title(self, hide_edition=False, lang=None):
         extra = ' '.join(map('({})'.format, self._info)) if self._info else ''
-        title = '{} {}'.format(self.name, extra) if extra else self.name
+        name = self.name if lang is None else getattr(self, '{}_name'.format(lang))
+        title = '{} {}'.format(name, extra) if extra else name
         if self.edition:
             if self.language and self.language.lower() in self.edition.lower():
                 pass
@@ -2806,6 +2807,13 @@ class WikiSongCollectionPart:
         if self.language:
             title += ' ({} ver.)'.format(self.language)
         return title
+
+    def titles(self, hide_edition=False):
+        for lang in (None, 'english', 'cjk'):
+            try:
+                yield self.title(hide_edition, lang)
+            except Exception as e:
+                pass
 
     @cached_property
     def released(self):
@@ -2947,10 +2955,10 @@ class WikiSoundtrack(WikiSongCollection):
 
     def _additional_aliases(self):
         addl_aliases = set(super()._additional_aliases())
-        addl_aliases.update(p.title() for p in self.parts)
+        addl_aliases.update(chain.from_iterable(p.titles() for p in self.parts))
         try:
             addl_aliases.update(e[0] for e in self.editions_and_disks)
-        except InvalidTrackListException:   # Happens when this obj was constructed from dico info
+        except InvalidTrackListException:   # Happens when this obj was constructed from disco info
             pass
 
         try:

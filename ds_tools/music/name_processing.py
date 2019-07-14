@@ -128,6 +128,8 @@ def parse_name(text):
     """
     stripped = text.strip()
     first_sentence, period, stripped = stripped.partition('. ')     # Note: space is intentional
+    if '.\n' in first_sentence and first_sentence.count('.') > 1:
+        first_sentence, period, stripped = first_sentence.partition('.\n')
     if (' ' not in first_sentence) or (first_sentence.count('"') == 1 and stripped.count('"') % 2 == 1):
         first_sentence += period + stripped.partition('. ')[0].strip()
     first_sentence = normalize_roman_numerals(first_sentence.replace('\xa0', ' '))
