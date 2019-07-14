@@ -55,7 +55,12 @@ def parse_discography_page(uri_path, clean_soup, artist):
                 lc_columns = list(map(str.lower, columns))
                 if lc_columns and lc_columns[-1] in ('album', 'drama'):                                     # Singles
                     tracks = []
-                    expanded = expanded_wiki_table(ele)
+                    try:
+                        expanded = expanded_wiki_table(ele)
+                    except IndexError as e:
+                        log.error('Encountered index error expanding {!r} table for {}'.format(album_type, uri_path))
+                        raise e
+
                     # log.debug('Expanded table: {}'.format(expanded))
                     for row in expanded:
                         if row[0].text.strip().isdigit():
@@ -176,32 +181,40 @@ def expanded_wiki_table(table_ele):
     :param table_ele: A bs4 <table> element
     :return list: A list of rows as lists of tr children elements
     """
+    default_ele = None
     rows = []
     row_spans = []
-    for tr in table_ele.find_all('tr'):
+    for tri, tr in enumerate(table_ele.find_all('tr')):
         eles = [tx for tx in tr.children if not isinstance(tx, NavigableString)]
-        # log.debug('{} => ({}) {}'.format(tr, len(eles), eles), extra={'color': 'cyan'})
+        # dbg_eles = '\n'.join('{}: {!r}'.format(i, str(s)) for i, s in enumerate(eles))
+        # log.debug('tr {} has {} eles:\n{}'.format(tri, len(eles), dbg_eles), extra={'color': 'cyan'})
         if all(ele.name == 'th' for ele in eles) or len(eles) == 1:
+            # log.debug('tr {} only contains th elements'.format(tri))
             continue
         elif not row_spans:  # 1st row
             row_spans = [(int(ele.get('rowspan') or 0) - 1, ele) for ele in eles]
             row = eles
+            # dbg_spans = '\n'.join('{}: {!r}'.format(i, str(s)) for i, s in enumerate(row_spans))
+            # log.debug('tr {} is the first row of content; row_spans:\n{}'.format(tri, dbg_spans))
         else:
-            # log.debug('spans ({}): {}'.format(len(row_spans), row_spans), extra={'color': 13})
+            # dbg_fmt = 'tr {} is row {} of content; row_spans ({}):\n{}'
+            # dbg_spans = '\n'.join('{}: {!r}'.format(i, str(s)) for i, s in enumerate(row_spans))
+            # log.debug(dbg_fmt.format(tri, len(rows) + 1, len(row_spans), dbg_spans), extra={'color': 13})
             row = []
-            # ele_iter = iter(eles)
             for i, (col_rows_left, spanned_ele) in enumerate(list(row_spans)):
                 if col_rows_left < 1:
-                    ele = eles.pop(0)
-                    colspan = int(ele.get('colspan', 0))
-                    if colspan:
-                        ele['colspan'] = colspan - 1
-                        eles.insert(0, ele)
-                    # try:
-                    #     ele = next(ele_iter)
-                    # except Exception as e:
-                    #     log.error('[{}] Error getting next ele: {}'.format(i, e), extra={'color': 'red'})
-                    #     raise e
+                    try:
+                        ele = eles.pop(0)
+                    except IndexError as e:     # Nothing was spanned to this cell, and no cell was explicitly defined
+                        if default_ele is None:
+                            default_ele = soupify('<td></td>').find('td')
+                        ele = default_ele
+                    else:
+                        colspan = int(ele.get('colspan', 0))
+                        if colspan:
+                            ele['colspan'] = colspan - 1
+                            eles.insert(0, ele)
+
                     row_spans[i] = (int(ele.get('rowspan') or 0) - 1, ele)
                     row.append(ele)
                 else:

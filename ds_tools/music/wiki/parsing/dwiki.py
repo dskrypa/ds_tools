@@ -9,11 +9,14 @@ from collections import OrderedDict
 from ....unicode import LangCat, romanized_permutations
 from ....utils import common_suffix
 from ...name_processing import eng_cjk_sort, split_name, str2list, has_parens
-from ..utils import multi_lang_name
+from ..utils import multi_lang_name, normalize_href
 from .exceptions import *
 from .common import *
 
-__all__ = ['parse_artist_osts', 'parse_drama_wiki_info_list', 'parse_ost_page', 'parse_tv_appearances']
+__all__ = [
+    'parse_artist_osts', 'parse_drama_wiki_info_list', 'parse_ost_page', 'parse_tv_appearances',
+    'parse_dwiki_group_members'
+]
 log = logging.getLogger(__name__)
 
 
@@ -275,3 +278,25 @@ def parse_drama_wiki_info_list(uri_path, info_ul, client):
 
         info[key] = value
     return info
+
+
+def parse_dwiki_group_members(artist, clean_soup):
+    members_span = clean_soup.find('span', id='Members')
+    if members_span:
+        members_h2 = members_span.parent
+        members_container = members_h2
+        for sibling in members_h2.next_siblings:
+            if sibling.name in ('ul', 'table'):
+                members_container = sibling
+                break
+
+        if members_container.name == 'ul':
+            for li in members_container.find_all('li'):
+                li_text = li.text.strip()
+                a = li.find('a')
+                href = normalize_href(a.get('href') if a else None)
+                if href:
+                    yield href, None
+                else:
+                    name, roles = li_text.split(',', maxsplit=1)
+                    yield None, split_name(name)

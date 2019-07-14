@@ -24,7 +24,8 @@ from ...utils import soupify, normalize_roman_numerals, ParentheticalParser
 from ..name_processing import eng_cjk_sort, fuzz_process, parse_name, revised_weighted_ratio, split_name
 from .exceptions import *
 from .utils import (
-    comparison_type_check, edition_combinations, get_page_category, multi_lang_name, sanitize_path, strify_collabs
+    comparison_type_check, edition_combinations, get_page_category, multi_lang_name, sanitize_path, strify_collabs,
+    normalize_href
 )
 from .rest import WikiClient, KindieWikiClient, KpopWikiClient, WikipediaClient, DramaWikiClient
 from .parsing import *
@@ -582,6 +583,8 @@ class WikiMatchable:
             if self._category != other._category and self._category is not None and other._category is not None:
                 log.debug('Unable to compare {} to {!r}: incompatible categories'.format(self, other))
                 return 0, None, None
+
+        # TODO: avg of title.lower() & fuzzed title instead of only fuzzed?
 
         _log = logr['scoring']
         matchable = self.__cached(other, isinstance(self, WikiSongCollection), track)
@@ -1286,7 +1289,8 @@ class WikiArtist(WikiPersonCollection):
                     href = href[6:] if href.startswith('/wiki/') else href
                     remaining = ''.join(a_text.partition('discography')[::2]).strip()
                     if href and '#' not in href and (not remaining or self.matches(remaining)):
-                        disco_links[a] = href
+                        if 'sm station' not in a.get('title', '').lower():
+                            disco_links[a] = href
             if disco_links:
                 uri_path = None
                 if len(disco_links) == 1:
@@ -1299,7 +1303,7 @@ class WikiArtist(WikiPersonCollection):
                             break
                     else:
                         fmt = '{}: Too many different discography links found: {}'
-                        log.error(fmt.format(self, ', '.join(sorted(disco_links))), extra={'color': 'yellow'})
+                        log.error(fmt.format(self, ', '.join(sorted(map(str, disco_links)))), extra={'color': 'yellow'})
 
                 if uri_path:
                     client = WikipediaClient()
@@ -1500,6 +1504,31 @@ class WikiArtist(WikiPersonCollection):
         for text, href in _associated.items():
             # log.debug('{}: Associated act from {}: a.text={!r}, a.href={!r}'.format(self, self.url, text, href))
             associated.append(WikiPersonCollection(href, name=text, client=self._client))
+
+        if isinstance(self._client, DramaWikiClient):
+            trivia_span = self._clean_soup.find('span', id='Trivia')
+            if trivia_span:
+                trivia_container = None
+                for i, sibling in enumerate(trivia_span.parent.next_siblings):
+                    if sibling.name == 'ul':
+                        trivia_container = sibling
+                        break
+                    elif i > 2:
+                        break
+
+                if trivia_container:
+                    pat = re.compile('KPOP group: .+ of (.*)', re.IGNORECASE)
+                    for li in trivia_container.find_all('li'):
+                        li_text = li.text.strip()
+                        m = pat.match(li_text)
+                        if m:
+                            for artist in split_artist_list(m.group(1), self, tuple(li.find_all('a')), self._client)[0]:
+                                group = artist['artist']
+                                href = artist['artist_href']
+                                a_act = WikiPersonCollection(href, name=group, client=self._client, no_fetch=not href)
+                                log.debug('{}: Found associated act: {}'.format(self, a_act))
+                                associated.append(a_act)
+
         return associated
 
     def find_song_collection(self, name, min_score=75, include_score=False, allow_alt=True, **kwargs):
@@ -1708,6 +1737,8 @@ class WikiGroup(WikiArtist):
             yield from find_group_members(self, self._clean_soup)
         elif isinstance(self._client, WikipediaClient):
             yield from parse_wikipedia_group_members(self, self._clean_soup)
+        elif isinstance(self._client, DramaWikiClient):
+            yield from parse_dwiki_group_members(self, self._clean_soup)
         else:
             log.warning('{}: No group member parsing has been configured for {}'.format(self, self.url))
 
@@ -1725,7 +1756,13 @@ class WikiGroup(WikiArtist):
                 log.log(5, fmt.format(self, member_name, self.url), extra={'color': 94})
                 members.append(WikiSinger(None, name=member_name, no_fetch=True, _member_of=self))
             elif href:
-                members.append(WikiSinger(href, _member_of=self))
+                try:
+                    members.append(WikiSinger(href, _member_of=self))
+                except CodeBasedRestException as e:
+                    if not isinstance(self._client, KpopWikiClient):
+                        members.append(WikiSinger(href, _member_of=self, client=self._client))
+                    else:
+                        raise e
             else:
                 members.append(WikiSinger(None, name=member_name, no_fetch=True, _member_of=self))
         return members
@@ -3178,7 +3215,11 @@ class WikiFeatureOrSingle(WikiSongCollection):
         for _track in _tracks:
             track = _track.copy()
             collabs = album_collabs.copy()
-            collabs.extend({'artist': name} for name in (track.get('collaborators') or []))
+            track_collabs = (
+                collab if isinstance(collab, dict) else {'artist': collab}
+                for collab in (track.get('collaborators') or [])
+            )
+            collabs.extend(track_collabs)
             track['collaborators'] = collabs
             if incl_info:
                 misc = track.get('misc') or []
@@ -3287,6 +3328,8 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                         if isinstance(collab['artist'], str):
                             name = collab['artist']
                         else:
+                            err_fmt = 'Unexpected collaborator artist for track {} from collection {}: {}'
+                            log.error(err_fmt.format(self.name, self.collection, collab['artist']))
                             raise e
                     else:
                         name = eng or cjk
