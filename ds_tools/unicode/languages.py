@@ -11,15 +11,17 @@ import unicodedata
 from enum import Enum
 
 from cachetools import LRUCache
+from pykakasi import kakasi
 
 from ..caching import cached
 from ..core import classproperty
 from ..utils import ALL_PUNCTUATION, ALL_SYMBOLS
+from .hangul import hangul_romanized_permutations, matches_hangul_permutation
 from .ranges import *
 
 __all__ = [
     'is_hangul', 'contains_hangul', 'is_japanese', 'contains_japanese', 'is_cjk', 'contains_cjk',
-    'is_any_cjk', 'contains_any_cjk', 'LangCat'
+    'is_any_cjk', 'contains_any_cjk', 'LangCat', 'romanized_permutations', 'matches_permutation'
 ]
 log = logging.getLogger(__name__)
 
@@ -302,3 +304,46 @@ def contains_any_cjk(a_str):
 def _print_unicode_names(a_str):
     for c in a_str:
         log.info('{!r}: {}'.format(c, unicodedata.name(c)))
+
+
+class J2R:
+    __instances = {}
+
+    def __new__(cls, mode, include_space=False):
+        key = (mode, include_space)
+        if key not in cls.__instances:
+            obj = super().__new__(cls)
+            cls.__instances[key] = obj
+        return cls.__instances[key]
+
+    def __init__(self, mode, include_space=False):
+        if not getattr(self, '_J2R__initialized', False):
+            k = kakasi()
+            k._mode.update({'J': 'a', 'H': 'a', 'K': 'a'})
+            k.setMode('r', mode)
+            if include_space:
+                k.setMode('s', True)
+            self.converter = k.getConverter()
+            self.__initialized = True
+
+    def romanize(self, text):
+        return self.converter.do(text)
+
+    @classmethod
+    def romanizers(cls, include_space=False):
+        for mode in kakasi._roman_vals:
+            yield J2R(mode, include_space=include_space)
+
+
+def romanized_permutations(text, include_space=True):
+    if contains_hangul(text):
+        return hangul_romanized_permutations(text, include_space=include_space)
+    return [j2r.romanize(text) for j2r in J2R.romanizers(include_space)]
+
+
+def matches_permutation(eng, cjk):
+    if contains_hangul(cjk):
+        return matches_hangul_permutation(eng, cjk)
+
+    lc_eng = ''.join(eng.lower().split())
+    return lc_eng in romanized_permutations(cjk, False)

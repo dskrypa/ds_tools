@@ -24,8 +24,7 @@ from ...utils import soupify, normalize_roman_numerals, ParentheticalParser
 from ..name_processing import eng_cjk_sort, fuzz_process, parse_name, revised_weighted_ratio, split_name
 from .exceptions import *
 from .utils import (
-    comparison_type_check, edition_combinations, get_page_category, multi_lang_name, sanitize_path, strify_collabs,
-    normalize_href
+    comparison_type_check, edition_combinations, get_page_category, multi_lang_name, sanitize_path, strify_collabs
 )
 from .rest import WikiClient, KindieWikiClient, KpopWikiClient, WikipediaClient, DramaWikiClient
 from .parsing import *
@@ -406,7 +405,7 @@ class WikiMatchable:
         _aliases = (
             getattr(self, attr, None) for attr in ('english_name', 'cjk_name', 'stylized_name', 'name', '_header_title')
         )
-        aliases = [a for a in _aliases if a]
+        aliases = list(filter(None, _aliases))
         try:
             # noinspection PyUnresolvedReferences
             aka = self.aka
@@ -419,6 +418,9 @@ class WikiMatchable:
                 else:
                     aliases.extend(aka)
 
+        cjk_name = getattr(self, 'cjk_name', None)
+        if cjk_name:
+            aliases.extend(romanized_permutations(cjk_name))
         aliases.extend([self.__abbrev_pat.sub('', alias) for alias in aliases])  # Remove periods from abbreviations
         return set(aliases)
 
@@ -502,8 +504,9 @@ class WikiMatchable:
                     eng, cjk, extra = split_name(other, True)
                 except ValueError:
                     others = (other,)
-                    if LangCat.contains_any(other, LangCat.HAN):
+                    if LangCat.contains_any(other, LangCat.asian_cats):
                         permutations = tuple(filter(None, (fuzz_process(o) for o in romanized_permutations(other) if o)))
+
                 else:
                     if eng == 'live':
                         others = [cjk]
@@ -512,13 +515,11 @@ class WikiMatchable:
 
                     if extra:
                         others = ['{} ({})'.format(s, extra) for s in others] + others
-            elif lang == LangCat.HAN:
+            elif lang in LangCat.asian_cats:
                 cjk = other
                 others = (other,)
                 permutations = tuple(filter(None, (fuzz_process(o) for o in romanized_permutations(other) if o)))
             else:
-                if lang in LangCat.asian_cats:
-                    cjk = other
                 others = (other,)
         elif isinstance(other, WikiEntity):
             others = other._fuzzed_aliases
@@ -614,9 +615,19 @@ class WikiMatchable:
             self_has = self.__has
             other_has = matchable.__has
             for key, self_val in self_has.items():
-                if (self_val and not other_has[key]) or (not self_val and other_has[key]):
-                    _log.debug('{!r}=?={!r}: score_mod-=25 (no {})'.format(self, other, key))
-                    score_mod -= 25
+                o_yes_self_no = other_has[key] and not self_val
+                o_no_self_yes = self_val and not other_has[key]
+                if o_yes_self_no or o_no_self_yes:
+                    lang = self.language or self.collection.language or ''
+                    ignore_due_to_lang = False
+                    if key == 'version' and o_yes_self_no and lang:
+                        lang = lang.lower()
+                        ignore_due_to_lang = any(lang in a for a in matchable._fuzzed_aliases)
+                    if ignore_due_to_lang:
+                        _log.debug('{!r}=?={!r}: ignoring no {} due to language'.format(self, other, key))
+                    else:
+                        _log.debug('{!r}=?={!r}: score_mod-=25 (no {})'.format(self, other, key))
+                        score_mod -= 25
 
             if self_has['version'] and other_has['version']:
                 self_lang = (self.language or '').lower()
@@ -1040,7 +1051,7 @@ class WikiTVSeries(WikiEntity):
                         log.error(err_msg)
                 else:
                     eng, cjk = self.english_name, self.cjk_name
-                    if not eng or (LangCat.matches(cjk, LangCat.HAN) and matches_permutation(eng, cjk)):
+                    if not eng or (LangCat.contains_any(cjk, LangCat.asian_cats) and matches_permutation(eng, cjk)):
                         eng_parts = [v for k, v in title_parts.items() if 'english' in k]
                         if not eng_parts:
                             eng_parts = [v for k, v in title_parts.items() if 'romaji' in k]
@@ -1062,7 +1073,7 @@ class WikiTVSeries(WikiEntity):
                 if self._header_title and LangCat.categorize(self._header_title) == LangCat.ENG:
                     if self.english_name and self.cjk_name and self.english_name != self._header_title:
                         eng, cjk = self.english_name, self.cjk_name
-                        if LangCat.matches(cjk, LangCat.HAN) and matches_permutation(eng, cjk):
+                        if LangCat.contains_any(cjk, LangCat.asian_cats) and matches_permutation(eng, cjk):
                             self._add_alias(self.english_name)
                             self.english_name = self._header_title
                     elif self.cjk_name and not self.english_name:
@@ -2593,11 +2604,11 @@ class WikiSongCollection(WikiEntity):
         parts = OrderedDict()
         bonus_rx = re.compile('^(.*)\s+bonus tracks?$', re.IGNORECASE)
         if self._track_lists is None:
-            parts[(None, None)] = WikiSongCollectionPart(self, None, None, None, None, self._get_tracks())
+            parts[(None, None)] = WikiSongCollectionPart(self, None, None, self.language, None, self._get_tracks())
         else:
             for track_list in self._track_lists:
                 section = track_list.get('section')
-                language = track_list.get('language')
+                language = track_list.get('language') or self.language
                 if section and not isinstance(section, str):
                     section = tuple(filter(None, section))
                     _section0 = section[0]
@@ -3085,7 +3096,7 @@ class WikiSoundtrack(WikiSongCollection):
             group_eng, group_cjk = artist_dict.get('of_group')
         except Exception:
             group_eng, group_cjk = None, None
-        if not group_eng and eng and cjk and LangCat.categorize(cjk) == LangCat.HAN and not self._find_href(aliases):
+        if not group_eng and eng and cjk and LangCat.categorize(cjk) in LangCat.asian_cats and not self._find_href(aliases):
             # Don't bother looking up solo artists that have no (valid) links on this page
             eng_lc_nospace = ''.join(eng.split()).lower()
             permutations = romanized_permutations(cjk)
@@ -3523,7 +3534,7 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
                 else:
                     full_feat = None
 
-                if LangCat.contains_any(feat, LangCat.HAN):
+                if LangCat.contains_any(feat, LangCat.asian_cats):
                     other_str = other
                     if full_feat:
                         other = {other_str.replace(feat, val) for val in romanized_permutations(feat)}

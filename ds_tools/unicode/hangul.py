@@ -14,8 +14,8 @@ from .ranges import *
 
 __all__ = [
     'compose_syllable', 'decompose_syllable', 'decompose_syllables', 'is_final_jamo', 'is_hangul_syllable', 'is_jamo',
-    'is_lead_jamo', 'is_vowel_jamo', 'revised_romanize', 'romanize', 'romanize_plus', 'romanized_permutations',
-    'matches_permutation'
+    'is_lead_jamo', 'is_vowel_jamo', 'revised_romanize', 'romanize', 'romanize_plus', 'hangul_romanized_permutations',
+    'matches_hangul_permutation'
 ]
 log = logging.getLogger(__name__)
 
@@ -274,7 +274,7 @@ def romanize_plus(text, name=False, space=False):
 
 
 @cached(LRUCache(100))
-def romanized_permutations(text, include_space=True):
+def hangul_romanized_permutations(text, include_space=True):
     romanized = []
     last_char = None
     for char in text:
@@ -332,9 +332,9 @@ def romanized_permutations(text, include_space=True):
     return permutations
 
 
-def matches_permutation(eng, han):
+def matches_hangul_permutation(eng, han):
     lc_eng = ''.join(eng.lower().split())
-    return lc_eng in romanized_permutations(han, False)
+    return lc_eng in hangul_romanized_permutations(han, False)
 
 
 def combo_options(list_with_opts, bases=None):
