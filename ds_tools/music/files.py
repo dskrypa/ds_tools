@@ -1439,6 +1439,7 @@ class SongFile(BaseSongFile):
         logged_messages = 0
         to_update = {}
         wiki_song = self.wiki_song
+        orig_artist = None
         if wiki_song is None:
             logged_messages += 1
             log.error('Unable to find wiki song match for {}'.format(self), extra={'red': True})
@@ -1453,6 +1454,13 @@ class SongFile(BaseSongFile):
                     artist = None
                 else:
                     raise e
+            else:
+                if artist._client and not isinstance(artist._client, KpopWikiClient):
+                    orig_artist = artist
+                    try:
+                        artist = artist.for_alt_site(KpopWikiClient._site)
+                    except Exception as e:
+                        pass
             if self.wiki_album:
                 updatable = ['artist', 'album_artist', 'album']
             else:
@@ -1470,12 +1478,25 @@ class SongFile(BaseSongFile):
                     artist = None
                 else:
                     raise e
+            else:
+                if artist._client and not isinstance(artist._client, KpopWikiClient):
+                    orig_artist = artist
+                    try:
+                        artist = artist.for_alt_site(KpopWikiClient._site)
+                    except Exception as e:
+                        pass
             updatable = ['title', 'artist', 'album_artist', 'album']
 
         try:
             album_artist = self.wiki_album.artist if self.wiki_album else None
         except NoPrimaryArtistError as e:
             album_artist = None
+        else:
+            if album_artist._client and not isinstance(album_artist._client, KpopWikiClient):
+                try:
+                    album_artist = album_artist.for_alt_site(KpopWikiClient._site)
+                except Exception as e:
+                    pass
 
         for field in updatable:
             file_value = self.tag_text(field, default=None)
@@ -1494,6 +1515,9 @@ class SongFile(BaseSongFile):
                     artist_name = None
                 if collab_mode in ('artist', 'both'):
                     collabs = [a.qualname if isinstance(a, WikiArtist) else str(a) for a in wiki_song.collaborators]
+                    if orig_artist is not None and orig_artist is not artist:
+                        orig_name = orig_artist.qualname
+                        collabs = [c for c in collabs if c != orig_name]
                     if artist_name and artist_name not in collabs:
                         collabs.insert(0, artist_name)
                     wiki_value = ', '.join(collabs)

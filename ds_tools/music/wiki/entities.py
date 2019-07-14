@@ -285,13 +285,19 @@ class WikiEntityMeta(type):
         return obj
 
     @staticmethod
-    def _create_via_search(cls, key, name_aliases, *clients):
+    def _create_via_search(cls, key, name_aliases, *clients, separate=False):
         clients = clients or (KpopWikiClient(), KindieWikiClient(), WikipediaClient())
         dbg_fmt = 'Search of {} for {!r} yielded non-match: {}'
         # Check 1st 3 results from each site for non-eng name
         for client in clients:
-            # log.debug('Attempting search of {} for: {!r}'.format(client._site, '|'.join(all_aliases)))
-            for link_text, link_href in client.search('|'.join(name_aliases))[:3]:
+            log.debug('Attempting search of {} for: {!r}'.format(client._site, '|'.join(name_aliases)))
+            if separate:    # fandom.com's search engine does NOT support any type of OR operator
+                results = list(chain.from_iterable(client.search(a)[:3] for a in name_aliases[:3]))
+            else:
+                results = client.search('|'.join(name_aliases))[:3]
+            # log.debug('Results from {} [separate={}]: {}'.format(client._site, separate, results))
+            for i, (link_text, link_href) in enumerate(results):
+                # log.debug('{} result {}: {!r}={}'.format(client._site, i, link_text, link_href))
                 try:
                     entity = cls(link_href, client=client)
                 except WikiTypeError as e:
@@ -304,7 +310,9 @@ class WikiEntityMeta(type):
                     else:
                         log.log(9, dbg_fmt.format(client.host, name_aliases, entity))
         else:
-            raise WikiEntityIdentificationException('No matches found for {!r} via search'.format(name_aliases))
+            if separate:
+                raise WikiEntityIdentificationException('No matches found for {!r} via search'.format(name_aliases))
+            return WikiEntityMeta._create_via_search(cls, key, name_aliases, *clients, separate=True)
 
     @staticmethod
     def _get_match(cls, key, client, cls_cat):
@@ -1493,7 +1501,13 @@ class WikiArtist(WikiPersonCollection):
 
     @cached()
     def expected_rel_path(self):
-        return Path(sanitize_path(self.english_name))
+        artist = self
+        if self._client and not isinstance(self._client, KpopWikiClient):
+            try:
+                artist = self.for_alt_site(KpopWikiClient._site)
+            except Exception as e:
+                pass
+        return Path(sanitize_path(artist.english_name))
 
     @cached_property
     def associated_acts(self):
@@ -2205,8 +2219,14 @@ class WikiSongCollection(WikiEntity):
     @cached()
     def expected_rel_path(self, true_soloist=False, base_title=None, released=None, year=None, hide_edition=False):
         rel_to_artist_dir = self.expected_rel_dir(True, base_title, released, year)
-        if not true_soloist and isinstance(self.artist, WikiSinger) and self.artist.member_of:
-            soloist = self.artist
+        artist = self.artist
+        if artist._client and not isinstance(artist._client, KpopWikiClient):
+            try:
+                artist = artist.for_alt_site(KpopWikiClient._site)
+            except Exception as e:
+                pass
+        if not true_soloist and isinstance(artist, WikiSinger) and artist.member_of:
+            soloist = artist
             artist_dir = soloist.member_of.expected_rel_path()
             soloist_name = soloist.english_name or soloist.name
             if self.album_type == 'Soundtrack':
@@ -2220,7 +2240,7 @@ class WikiSongCollection(WikiEntity):
                 else:
                     rel_to_artist_dir = Path('Solo', sanitize_path(soloist_name), rel_to_artist_dir.name)
         else:
-            artist_dir = self.artist.expected_rel_path()
+            artist_dir = artist.expected_rel_path()
         return artist_dir.joinpath(rel_to_artist_dir)
 
     def _has_no_valid_links(self, href, text):
