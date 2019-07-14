@@ -393,7 +393,7 @@ def split_names(text):
         except ValueError as e:
             if 'feat. ' in text:
                 parser = ParentheticalParser()
-                return [split_name(part, True, permissive=True) for part in parser.parse(text)]
+                return [split_name(part, True, allow_single_lang=True) for part in parser.parse(text)]
             # elif LangCat.categorize(text) == LangCat.MIX and has_parens(text):
             #     return [split_name(text, True, require_preceder=False)]
             else:
@@ -429,14 +429,26 @@ def split_names(text):
 
     unique_split = []
     for name in unique:
-        eng, cjk, of_group = split_name(name, True, permissive=True)
+        eng, cjk, of_group = split_name(name, True, allow_single_lang=True)
         unique_split.append((eng, cjk, of_group))
     return unique_split
 
 
+def split_name(*args, prefer_preceder=None, **kwargs):
+    if prefer_preceder is not None:
+        kwargs['require_preceder'] = True
+        try:
+            return _split_name(*args, **kwargs)
+        except ValueError:
+            kwargs['require_preceder'] = False
+            return _split_name(*args, **kwargs)
+    else:
+        return _split_name(*args, **kwargs)
+
+
 @cached(LRUCache(100))
-def split_name(
-    name, unused=False, check_keywords=True, permissive=False, require_preceder=True, allow_cjk_mix=False,
+def _split_name(
+    name, unused=False, check_keywords=True, allow_single_lang=False, require_preceder=True, allow_cjk_mix=False,
     no_lang_check=False
 ):
     """
@@ -470,10 +482,10 @@ def split_name(
         lang = langs[0]
         if lang == LangCat.MIX:
             if has_parens(part) and require_preceder:
-                return split_name(part, unused, check_keywords, permissive, False, allow_cjk_mix)
+                return split_name(part, unused, check_keywords, allow_single_lang, False, allow_cjk_mix)
             elif ' / ' in part:
                 parts = tuple(map(str.strip, part.split(' / ', 1)))
-                return split_name(parts, unused, check_keywords, permissive, require_preceder, allow_cjk_mix)
+                return split_name(parts, unused, check_keywords, allow_single_lang, require_preceder, allow_cjk_mix)
             elif not has_parens(part) and LangCat.matches(part, LangCat.JPN, LangCat.CJK, detailed=True):
                 lang = LangCat.JPN
         try:
@@ -501,7 +513,7 @@ def split_name(
                     eng, g_eng = parser.parse(eng)
                     cjk, g_cjk = parser.parse(cjk)
                     not_used = (g_eng, g_cjk)
-        elif permissive and LangCat.MIX not in langs and len(set(langs)) == 1:
+        elif allow_single_lang and LangCat.MIX not in langs and len(set(langs)) == 1:
             eng, cjk = eng_cjk_sort(parts[0])               # Soloist (Group) {all same lang}
             not_used = parts[1]
         elif langs[0] == LangCat.MIX and langs[1] != LangCat.MIX and has_parens(parts[0]):
@@ -559,6 +571,11 @@ def split_name(
                                 cjk = p1_parts[han_idx]
                     elif allow_cjk_mix and LangCat.contains_any_not(parts[1], LangCat.ENG):
                         eng, cjk = parts
+        elif langs[0] != LangCat.MIX and langs[1] == LangCat.MIX:
+            p1_langs = LangCat.categorize(parts[1], True)
+            if len(p1_langs) == 2 and langs[0] in p1_langs and ' ' not in parts[1]:
+                eng, cjk = split_name(parts[0])                         # Soloist (Group {mixed lang})
+                not_used = parts[1]
     elif len(parts) == 3:
         if LangCat.MIX not in langs and len(set(langs)) == 2:
             if langs[0] == langs[1] != langs[2]:

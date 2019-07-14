@@ -139,10 +139,7 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
             if _is_invalid_group(group):
                 group, group_href = None, None
             else:
-                try:
-                    group_name = split_name(group)
-                except ValueError:
-                    group_name = split_name(group, require_preceder=False)
+                group_name = split_name(group, prefer_preceder=True)
                 group_href = find_href(client, anchors, group_name, 'group')
 
     for i, artist in enumerate(filter(None, map(str.strip, delim_rx.split(artist_list)))):
@@ -153,10 +150,7 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
             if _is_invalid_group(group):
                 group, group_href = None, None
             else:
-                try:
-                    group_name = split_name(group)
-                except ValueError:
-                    group_name = split_name(group, require_preceder=False)
+                group_name = split_name(group, prefer_preceder=True)
                 group_href = find_href(client, anchors, group_name, 'group')
         elif artist.startswith('f(') and artist.endswith(')') and '+' in artist:
             group = 'f(x)'
@@ -243,44 +237,41 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
 
                 # log.debug('Processing: _artist={!r} from artist={!r}'.format(_artist, artist))
                 try:
-                    name = split_name(_artist)
-                except ValueError:
-                    try:
-                        name = split_name(_artist, require_preceder=False)
-                    except ValueError as e:
-                        err_msg = 'Unable to parse artist name={!r} from {}'.format(_artist, context)
-                        if not group and LangCat.categorize(_artist) == LangCat.ENG and has_parens(_artist):
-                            try:
-                                _name, group = ParentheticalParser().parse(_artist)
-                            except Exception as e1:
-                                err_msg = 'Unable to parse artist name={!r} from {}'.format(_artist, context)
-                                raise WikiEntityParseException(err_msg) from e1
-                            else:
-                                name = split_name(_name)
-                                if _is_invalid_group(group):
-                                    group, group_href = None, None
-                                else:
-                                    try:
-                                        group_name = split_name(group)
-                                    except ValueError:
-                                        group_name = split_name(group, require_preceder=False)
-                                    group_href = find_href(client, anchors, group_name, 'group')
+                    name = split_name(_artist, prefer_preceder=True)
+                except ValueError as e:
+                    err_msg = 'Unable to parse artist name={!r} from {}'.format(_artist, context)
+                    if not group and LangCat.categorize(_artist) == LangCat.ENG and has_parens(_artist):
+                        try:
+                            _name, group = ParentheticalParser().parse(_artist)
+                        except Exception as e1:
+                            err_msg = 'Unable to parse artist name={!r} from {}'.format(_artist, context)
+                            raise WikiEntityParseException(err_msg) from e1
                         else:
-                            if _artist.count('(') == 3 and LangCat.categorize(_artist) == LangCat.MIX:
-                                parts = ParentheticalParser().parse(_artist)
-                                # log.debug('3 parens: {!r} => {}'.format(_artist, parts))
-                                if len(parts) != 4:
-                                    raise WikiEntityParseException(err_msg) from e
+                            name = split_name(_name)
+                            if _is_invalid_group(group):
+                                group, group_href = None, None
+                            else:
+                                try:
+                                    group_name = split_name(group)
+                                except ValueError:
+                                    group_name = split_name(group, require_preceder=False)
+                                group_href = find_href(client, anchors, group_name, 'group')
+                    else:
+                        if _artist.count('(') == 3 and LangCat.categorize(_artist) == LangCat.MIX:
+                            parts = ParentheticalParser().parse(_artist)
+                            # log.debug('3 parens: {!r} => {}'.format(_artist, parts))
+                            if len(parts) != 4:
+                                raise WikiEntityParseException(err_msg) from e
 
-                                l0, l1, l2, l3 = categorize_langs(parts)
-                                if (l0 == l1 == LangCat.ENG) and (l2 == l3 and l2 in LangCat.asian_cats):
-                                    name = (parts[0], parts[2])
-                                    group = (parts[1], parts[3])
-                                    group_href = find_href(client, anchors, group, 'group')
-                                else:
-                                    raise WikiEntityParseException(err_msg) from e
+                            l0, l1, l2, l3 = categorize_langs(parts)
+                            if (l0 == l1 == LangCat.ENG) and (l2 == l3 and l2 in LangCat.asian_cats):
+                                name = (parts[0], parts[2])
+                                group = (parts[1], parts[3])
+                                group_href = find_href(client, anchors, group, 'group')
                             else:
                                 raise WikiEntityParseException(err_msg) from e
+                        else:
+                            raise WikiEntityParseException(err_msg) from e
 
                 try:
                     artist_dict = {'artist': name, 'artist_href': find_href(client, anchors, name, ('singer', 'group'))}
@@ -589,8 +580,8 @@ def album_num_type(details):
         return num, ' '.join(alb_type_desc[1:] if num else alb_type_desc)
     elif len(details) > 1 and details[0] == 'song' and details[1] in ('recorded', 'by'):
         return None, 'single'
-    elif 'extended play' in ' '.join(details) and details.index('extended') == 1:
-        num = NUMS.get(details[0])
+    elif 'extended play' in ' '.join(details) and details.index('extended') in (1, 2):
+        num = NUMS.get(details[1] if details[0] == 'solo' else details[0])
         return num, 'extended play'
     raise ValueError('Unable to determine album type from details: {}'.format(details))
 
