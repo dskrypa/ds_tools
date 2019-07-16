@@ -125,7 +125,14 @@ class LocalPlexServer:
         if genre__like is not None:
             albums = self.music.fetchItems(self._ekey('album'), genre__tag__sregex=re.compile(genre__like, re.I))
             album_keys = {a.key for a in albums}
+            log.debug('Replacing \'genre__like\' with parentKey__in={}'.format(album_keys))
             kwargs['parentKey__in'] = album_keys
+        artist = kwargs.pop('artist', None)
+        if artist is not None:
+            artists = self.music.fetchItems(self._ekey('artist'), title__contains=artist)
+            artist_keys = {a.key for a in artists}
+            log.debug('Replacing \'artist\' with grandparentKey__in={}'.format(artist_keys))
+            kwargs['grandparentKey__in'] = artist_keys
         return kwargs
 
     def get_tracks(self, **kwargs):
@@ -143,6 +150,10 @@ class LocalPlexServer:
 
     def find_song(self, path):
         return self.get_track(media__part__file=path)
+
+    def get_artists(self, name, mode='contains'):
+        kwargs = {'title__{}'.format(mode): name}
+        return self.music.fetchItems(self._ekey('artist'), **kwargs)
 
     def sync_ratings_to_files(self, path_filter=None, dry_run=False):
         """
