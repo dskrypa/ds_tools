@@ -5,6 +5,7 @@
 import functools
 import logging
 import time
+import traceback
 from collections import OrderedDict
 from operator import attrgetter
 from threading import Lock
@@ -13,7 +14,7 @@ from .itertools import partitioned
 
 __all__ = [
     'cached_property', 'cached_property_or_err', 'classproperty', 'partitioned_exec', 'rate_limited', 'timed',
-    'trace_entry'
+    'trace_entry', 'trace_entry_and_dump_stack'
 ]
 log = logging.getLogger(__name__)
 
@@ -158,6 +159,18 @@ def trace_entry(func):
         kwarg_str = ', '.join('{}={}'.format(k, '{!r}'.format(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
         print('{}({}, {})'.format(func.__name__, arg_str, kwarg_str))
         return func(*args, **kwargs)
+    return wrapper
+
+
+def trace_entry_and_dump_stack(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        arg_str = ', '.join('{!r}'.format(v) if isinstance(v, str) else str(v) for v in args)
+        kwarg_str = ', '.join('{}={}'.format(k, '{!r}'.format(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
+        print('{}({}, {})\n{}'.format(func.__name__, arg_str, kwarg_str, ''.join(traceback.format_stack())))
+        val = func(*args, **kwargs)
+        print('finished {}({}, {})'.format(func.__name__, arg_str, kwarg_str))
+        return val
     return wrapper
 
 
