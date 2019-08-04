@@ -740,9 +740,23 @@ def parse_discography_section(artist, clean_soup):
     while True:
         while not isinstance(ele, Tag):     # Skip past NavigableString objects
             if ele is None:
-                return entries
+                if tds is not None:
+                    try:
+                        td = next(tds)
+                    except StopIteration:
+                        return entries
+                    if td:
+                        ele = td.find('h3')
+                        lang = next(ele.children).get('id')
+                        # log.debug('Processing next cell in discography table for {}: {}'.format(artist, ele.text))
+                    else:
+                        ele = None
+                        # log.debug('No more cells in discography table for {}'.format(artist))
+                else:
+                    return entries
             ele = ele.next_sibling
 
+        # log.debug('Processing {} in discography for {}: {}'.format(ele.name, artist, ele.text if ele.name not in ('ul', 'table', 'div') else '[{}]'.format(ele.name)))
         val_type = h_levels.get(ele.name)
         if val_type == 'language':  # *almost* always h3, but sometimes type is h3
             val = next(ele.children).get('id')
@@ -773,21 +787,28 @@ def parse_discography_section(artist, clean_soup):
 
                 entry = parse_discography_entry(artist, li, album_type, lang, num)
                 if entry:
+                    # log.debug('Adding disco entry for {}: type={} lang={} li={}'.format(artist, album_type, lang, li))
                     entries.append(entry)
         elif ele.name == 'table':
-            in_table = True
             tds = iter(ele.find_all('td'))
             ele = next(tds).find('h3')
-
+            lang = next(ele.children).get('id')
+            # log.debug('Processing first cell in discography table for {}: {}'.format(artist, ele.text))
         elif ele.name in ('h2', 'div'):
             break
 
         if ele.next_sibling is None and tds is not None:
-            td = next(tds)
+            try:
+                td = next(tds)
+            except StopIteration:
+                return entries
             if td:
                 ele = td.find('h3')
+                lang = next(ele.children).get('id')
+                # log.debug('Processing next cell in discography table for {}: {}'.format(artist, ele.text))
             else:
                 ele = None
+                # log.debug('No more cells in discography table for {}'.format(artist))
         else:
             ele = ele.next_sibling
     return entries
