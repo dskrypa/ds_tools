@@ -11,7 +11,7 @@ from cachetools import LRUCache
 from ....caching import cached
 from ....core import datetime_with_tz
 from ....http import CodeBasedRestException
-from ....unicode import LangCat
+from ....unicode import LangCat, matches_permutation
 from ....utils import (
     DASH_CHARS, QMARKS, ListBasedRecursiveDescentParser, ALL_WHITESPACE, UnexpectedTokenError, ParentheticalParser,
     unsurround, has_unpaired
@@ -762,8 +762,15 @@ def parse_track_info(
                     part = part.partition('; lit. ')[0]
                     log.log(9, 'Discarding literal translation from {}: {!r}'.format(context, part))
 
+                part_lang = LangCat.categorize(part)
+                if part_lang == LangCat.MIX and ';' in part:
+                    cjk, eng = part.split(';', 1)
+                    if matches_permutation(eng, cjk):
+                        part = cjk
+                        part_lang = LangCat.categorize(part)
+
                 name_parts.append(part)
-                name_langs.append(LangCat.categorize(part))
+                name_langs.append(part_lang)
             else:
                 log.debug('Assuming {!r} from {!r} > {!r} is misc'.format(part, context, text), extra={'color': 70})
                 misc.append(part)
@@ -782,8 +789,11 @@ def parse_track_info(
         try:
             track['name_parts'] = split_name(tuple(name_parts), allow_cjk_mix=True)
         except Exception as e:
-            log.error('Unexpected name_parts={!r} from {} for {}'.format(name_parts, context, track))
-            raise e
+            if len(name_parts) == 1 and LangCat.categorize(name_parts[0]) == LangCat.MIX:
+                track['name_parts'] = name_parts
+            else:
+                log.error('Unexpected name_parts={!r} from {} for {}'.format(name_parts, context, track))
+                raise e
 
     if collabs:
         track['collaborators'] = collabs

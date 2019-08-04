@@ -342,6 +342,8 @@ def romanized_permutations(text, include_space=False):
 
 
 def matches_permutation(eng, cjk):
+    if not LangCat.matches(eng, LangCat.ENG) and LangCat.matches(cjk, LangCat.ENG):
+        eng, cjk = cjk, eng
     if contains_hangul(cjk):
         return matches_hangul_permutation(eng, cjk)
 

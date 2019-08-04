@@ -1548,6 +1548,10 @@ class WikiArtist(WikiPersonCollection):
     def soundtracks(self):
         return [album for album in self.discography if isinstance(album, WikiSoundtrack)]
 
+    @cached_property
+    def singles(self):
+        return [album for album in self.discography if isinstance(album, WikiFeatureOrSingle)]
+
     @cached()
     def expected_rel_path(self):
         artist = self
@@ -2874,7 +2878,7 @@ class WikiSongCollectionPart:
                 elif not hide_edition:
                     title += ' - {}'.format(self.edition)
 
-        if self.language and self.language.lower() != 'korean':
+        if self.language and self.language.lower() != 'korean' and not hide_edition:
             title += ' ({} ver.)'.format(self.language)
         return title
 
@@ -3298,8 +3302,13 @@ class WikiFeatureOrSingle(WikiSongCollection):
                 if not single:
                     # log.debug('{}: Using side bar track info'.format(self))
                     single = {'name_parts': (self.english_name, self.cjk_name), 'num': 1, 'misc': self._info}
+
+                self.__dict__['_part_track_counts'] = {1, 2}
                 single['collaborators'] = [a._as_collab() for a in self.collaborators]
-                tracks = [single]
+                inst = single.copy()
+                inst['version'] = 'Inst.'
+                inst['num'] = 2
+                tracks = [single, inst]
         return {'tracks': tracks}
 
     def __update_tracks(self, _tracks, incl_info=False):
