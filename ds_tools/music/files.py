@@ -31,7 +31,7 @@ from .patches import tag_repr
 from .name_processing import split_names, split_name
 from .wiki import (
     WikiArtist, WikiEntityIdentificationException, KpopWikiClient, WikiSongCollection, find_ost,
-    AmbiguousEntityException, WikiSinger, WikiSongCollectionPart, NoPrimaryArtistError, split_artist_list
+    AmbiguousEntityException, WikiSinger, WikiSongCollectionPart, NoPrimaryArtistError, split_artist_list,
 )
 
 __all__ = [
@@ -799,9 +799,7 @@ class BaseSongFile(ClearableCachedPropertyMixin):
     def tag_title(self):
         return self.tag_text('title')
 
-    @cached_property
-    def album_name_cleaned(self):
-        album = self.tag_text('album')
+    def _cleanup_album_name(self, album):
         m = re.match('(.*)\s*\[.*Album\]', album)
         if m:
             album = m.group(1).strip()
@@ -822,27 +820,42 @@ class BaseSongFile(ClearableCachedPropertyMixin):
         if m:
             album = '{} OST{}'.format(*m.groups())
 
-        m = re.match('(.*) `(.*)`$', album)
-        if m:
-            group, title = m.groups()
-            if group in self.tag_artist:
-                album = title
+        for pat in ('^(.*) `(.*)`$', '^(.*) - (.*)$'):
+            m = re.match(pat, album)
+            if m:
+                group, title = m.groups()
+                if group in self.tag_artist:
+                    album = title
+                break
 
         return album.replace(' : ', ': ')
 
+    def _extract_album_part(self, title):
+        part = None
+        m = re.match(r'^(.*)\s+((?:Part|Code No)\.?\s*\d+)$', title, re.IGNORECASE)
+        if m:
+            title = m.group(1).strip()
+            part = m.group(2).strip()
+
+        if title.endswith(' -'):
+            title = title[:-1].strip()
+        return title, part
+
+    @cached_property
+    def album_name_cleaned(self):
+        return self._cleanup_album_name(self.tag_text('album'))
+
     @cached_property
     def album_name_cleaned_plus_and_part(self):
-        title = self.album_name_cleaned
-        part = None
-        if 'OST' in title.upper():
-            m = re.match(r'^(.*)\s+((?:Part|Code No)\.?\s*\d+)$', title, re.IGNORECASE)
-            if m:
-                title = m.group(1).strip()
-                part = m.group(2).strip()
+        return self._extract_album_part(self.album_name_cleaned)
 
-            if title.endswith(' -'):
-                title = title[:-1].strip()
-        return title, part
+    @cached_property
+    def dir_name_cleaned(self):
+        return self._cleanup_album_name(self.path.parent.name)
+
+    @cached_property
+    def dir_name_cleaned_plus_and_part(self):
+        return self._extract_album_part(self.dir_name_cleaned)
 
     def set_title(self, title):
         self.set_text_tag('title', title, by_id=False)

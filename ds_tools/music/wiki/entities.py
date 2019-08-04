@@ -342,7 +342,7 @@ class WikiEntityMeta(type):
 
 class WikiMatchable:
     _category = None
-    __cache = LRUCache(300)
+    __cache = LRUCache(500)
     _int_pat = re.compile(r'\d+')
     __part_pat = re.compile(r'^(.*)part \d+$', re.IGNORECASE)
     __abbrev_pat = re.compile(r'\.(?!\s)')
@@ -367,6 +367,10 @@ class WikiMatchable:
             except TypeError:
                 pass
             return m
+
+    @classmethod
+    def score_simple(cls, a, b):
+        return cls.__cached(a).score_match(b)
 
     def update_name(self, eng_name, cjk_name, update_others=True):
         # fmt = '{}: Updating eng={!r}=>{!r}, cjk={!r}=>{!r}'
@@ -1391,6 +1395,8 @@ class WikiArtist(WikiPersonCollection):
                 if m:
                     title = m.group(1).strip()
                 uri_path = client.normalize_name(title)
+                if not entry.get('uri_path'):
+                    entry['uri_path'] = uri_path
                 # log.debug('Normalized title={!r} => uri_path={!r}'.format(title, uri_path))
             else:
                 client = WikiClient.for_site(entry['wiki'])
@@ -2655,7 +2661,7 @@ class WikiSongCollection(WikiEntity):
         try:
             return list(self._parts.values())
         except WikiAlbumPartProcessingError as e:
-            log.error(str(e))
+            log.log(19, str(e))
             log.log(19, traceback.format_exc())
             return []
 
@@ -2951,42 +2957,48 @@ class WikiSoundtrack(WikiSongCollection):
     _ost_name_paren_rx = re.compile(r'^(.*) \(.*\) OST$', re.IGNORECASE)
     _ost_simple_rx = re.compile(r'^(.* OST)', re.IGNORECASE)
     _mix_part_rx = re.compile(r'(.*OST)\s*\((.*OST)\) - (.*)', re.IGNORECASE)
+    _search_filters = []
 
     def __init__(self, uri_path=None, client=None, **kwargs):
         super().__init__(uri_path, client, **kwargs)
         if isinstance(self._client, DramaWikiClient):
-            if not self._raw:
-                raise WikiEntityInitException('WikiSoundtrack requires a valid uri_path')
-            self._track_lists = parse_ost_page(self._uri_path, self._clean_soup, client)
-            self._album_info = {
-                'track_lists': self._track_lists, 'num': None, 'type': 'OST', 'repackage': False, 'length': None,
-                'released': None, 'links': []
-            }
-            part_1 = self._track_lists[0]
-            eng, cjk = part_1['info']['title']
+            if self._raw:
+                self._track_lists = parse_ost_page(self._uri_path, self._clean_soup, client)
+                self._album_info = {
+                    'track_lists': self._track_lists, 'num': None, 'type': 'OST', 'repackage': False, 'length': None,
+                    'released': None, 'links': []
+                }
+                part_1 = self._track_lists[0]
+                eng, cjk = part_1['info']['title']
 
-            try:
-                eng, cjk = (self._ost_name_rx.match(val).group(1).strip() for val in (eng, cjk))
-            except Exception as e:
                 try:
-                    eng, cjk = (self._ost_simple_rx.match(val).group(1).strip() for val in (eng, cjk))
-                except Exception as e1:
-                    log.debug('OST @ {!r} had unexpected name: {!r} / {!r}'.format(self._uri_path, eng, cjk))
-                # raise WikiEntityInitException('Unexpected OST name for {}'.format(self._uri_path)) from e
-            self.english_name, self.cjk_name = eng, cjk
-            self.name = multi_lang_name(self.english_name, self.cjk_name)
-            try:
-                tv_series = self.tv_series
-            except AttributeError:
-                pass
+                    eng, cjk = (self._ost_name_rx.match(val).group(1).strip() for val in (eng, cjk))
+                except Exception as e:
+                    try:
+                        eng, cjk = (self._ost_simple_rx.match(val).group(1).strip() for val in (eng, cjk))
+                    except Exception as e1:
+                        log.debug('OST @ {!r} had unexpected name: {!r} / {!r}'.format(self._uri_path, eng, cjk))
+                    # raise WikiEntityInitException('Unexpected OST name for {}'.format(self._uri_path)) from e
+                self.english_name, self.cjk_name = eng, cjk
+                self.name = multi_lang_name(self.english_name, self.cjk_name)
+                try:
+                    tv_series = self.tv_series
+                except AttributeError:
+                    pass
+                else:
+                    self._add_aliases(('{} OST'.format(a) for a in tv_series.aliases))
             else:
-                self._add_aliases(('{} OST'.format(a) for a in tv_series.aliases))
+                self._track_lists = []
+                self._album_info = {
+                    'track_lists': self._track_lists, 'num': None, 'type': 'OST', 'repackage': False, 'length': None,
+                    'released': None, 'links': []
+                }
 
         if self._discography_entry:
             m = self._ost_name_rx.match(self._discography_entry.get('title', ''))
             if m:
                 self._intended = m.group(2).strip(), None
-                if not isinstance(self._client, DramaWikiClient):
+                if not isinstance(self._client, DramaWikiClient) or not self._raw:
                     title = m.group(1).strip()
                     try:
                         self.english_name, self.cjk_name = eng_cjk_sort(title)
@@ -3018,9 +3030,10 @@ class WikiSoundtrack(WikiSongCollection):
 
         return addl_aliases
 
-    def score_match(self, other, *args, **kwargs):
+    @classmethod
+    def _pre_match_prep(cls, other):
         if isinstance(other, str):
-            m0 = self._mix_part_rx.match(other)
+            m0 = cls._mix_part_rx.match(other)
             if m0:
                 lang_a, lang_b, part = m0.groups()
                 other = (
@@ -3029,18 +3042,23 @@ class WikiSoundtrack(WikiSongCollection):
                 )
                 # log.debug('other: {}'.format(other))
             else:
-                m1 = self._ost_name_rx.match(other)
+                m1 = cls._ost_name_rx.match(other)
                 if m1:
                     title1 = m1.group(1)
                     if title1.endswith(' -'):
                         title1 = title1[:-1].strip()
 
-                    m2 = self._ost_name_paren_rx.match(title1)
+                    m2 = cls._ost_name_paren_rx.match(title1)
                     if m2:
                         title2 = '{} OST'.format(m2.group(1).strip())
                         other = (other, title1, title2)
                     else:
                         other = (other, title1)
+        return other
+
+    def score_match(self, other, *args, **kwargs):
+        if isinstance(other, str):
+            other = self._pre_match_prep(other)
         # log.debug('{}: Comparing to: {}'.format(self, other))
         return super().score_match(other, *args, **kwargs)
 
@@ -3595,6 +3613,16 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
 
 
 def find_ost(artist, title, disco_entry):
+    empty_filters = WikiSoundtrack._search_filters is not None
+    if WikiSoundtrack._search_filters or empty_filters:
+        _title = WikiSoundtrack._pre_match_prep(title)
+        if (not any(WikiSoundtrack.score_simple(_title, f) for f in WikiSoundtrack._search_filters)) or empty_filters:
+            log.debug('Skipping full lookup for {} due to OST filter'.format(disco_entry))
+            client = WikiClient.for_site(disco_entry.get('wiki')) if disco_entry.get('wiki') else None
+            return WikiSoundtrack(
+                disco_entry.get('uri_path'), client, disco_entry=disco_entry, artist_context=artist, no_fetch=True
+            )
+
     try:
         norm_title_rx = find_ost._norm_title_rx
     except AttributeError:
@@ -3643,7 +3671,8 @@ def find_ost(artist, title, disco_entry):
     w_client = WikipediaClient()
     for client in (d_client, w_client):
         search_results = client.search(search_title)
-        for link_text, link_uri_path in search_results:
+        log.debug('Found {} search results for title={!r} from {}'.format(len(search_results), search_title, client._site), extra={'color':'yellow'})
+        for link_text, link_uri_path in search_results[:6]:
             try:
                 series = WikiTVSeries(link_uri_path, client)
             except AmbiguousEntityException:
@@ -3686,6 +3715,7 @@ def find_ost(artist, title, disco_entry):
                     )
 
     results = w_client.search(show_title)   # At this point, there was no exact match for this search
+    log.debug('Found {} search results for show={!r}'.format(len(results), show_title), extra={'color':'yellow'})
     if results:
         # log.debug('Trying to match {!r} to {!r}'.format(show_title, results[0][1]))
         try:

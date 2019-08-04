@@ -37,7 +37,7 @@ from ds_tools.core import localize
 from ds_tools.logging import LogManager
 from ds_tools.music import (
     iter_music_files, load_tags, iter_music_albums, iter_categorized_music_files, tag_repr, apply_mutagen_patches,
-    TagException, iter_album_dirs, RM_TAGS_ID3, RM_TAGS_MP4, NoPrimaryArtistError
+    TagException, iter_album_dirs, RM_TAGS_ID3, RM_TAGS_MP4, NoPrimaryArtistError, WikiSoundtrack
 )
 from ds_tools.output import colored, uprint, Table, SimpleColumn, TableBar
 from ds_tools.utils import num_suffix
@@ -90,6 +90,7 @@ def parser():
     wiki_sort_parser.add_argument('--true_soloist', '-S', action='store_true', help='For solo artists, use only their name instead of including their group and do not sort them with their group')
     wiki_sort_parser.add_argument('--collab_mode', '-c', choices=('title', 'artist', 'both'), default='artist', help='List collaborators in the artist tag, the title tag, or both (default: %(default)s)')
     wiki_sort_parser.add_argument('--hide_edition', '-E', action='store_true', help='Exclude the edition from the album title, if present (default: include it)')
+    wiki_sort_parser.add_argument('--no_ost_filter', '-F', action='store_true', help='Lookup full info for all OST albums (default: only those matching a file in the given path)')
 
     p2t_parser = parser.add_subparser('action', 'path2tag', help='Update tags based on the path to each file')
     p2t_parser.add_argument('path', help='A directory that contains directories that contain music files')
@@ -110,6 +111,7 @@ def parser():
 
     match_parser = parser.add_subparser('action', 'match', help='Test matching files in the given directory to songs from wiki')
     match_parser.add_argument('path', help='A directory that contains directories that contain music files')
+    match_parser.add_argument('--no_ost_filter', '-F', action='store_true', help='Lookup full info for all OST albums (default: only those matching a file in the given path)')
 
     wiki_list_parser = parser.add_subparser('action', 'wiki_list', help='List album/song metadata in the format expected in the wiki')
     wiki_list_parser.add_argument('path', help='A directory that contains directories that contain music files')
@@ -154,7 +156,7 @@ def main():
         sort_by_wiki(
             args.source, args.destination or args.source, args.allow_no_dest, args.basic_cleanup, args.move_unknown,
             args.allow_incomplete, args.unmatched_cleanup, args.true_soloist, args.collab_mode, args.hide_edition,
-            args.dry_run
+            args.dry_run, args.no_ost_filter
         )
     elif args.action == 'path2tag':
         path2tag(args.path, args.dry_run, args.title)
@@ -163,14 +165,14 @@ def main():
     elif args.action == 'list':
         list_dir2artist(args.path)
     elif args.action == 'match':
-        match_wiki(args.path)
+        match_wiki(args.path, args.no_ost_filter)
     elif args.action == 'wiki_list':
         wiki_list(args.path)
     else:
         log.error('Unconfigured action')
 
 
-def match_wiki(path):
+def match_wiki(path, no_ost_filter):
     cyan = lambda raw, pre: colored(pre, 'cyan')
     green = lambda raw, pre: colored(pre, 'green')
     yellow = lambda raw, pre: colored(pre, 'yellow')
@@ -189,6 +191,7 @@ def match_wiki(path):
         update_width=True
     )
 
+    set_ost_filter(path, no_ost_filter)
     rows = []
     for music_file in iter_music_files(path):
         try:
@@ -399,9 +402,23 @@ def wiki_list(path):
             log.info('#"{}" - {}'.format(song.tag_title, song.length_str))
 
 
+def set_ost_filter(path, no_ost_filter=False):
+    if no_ost_filter:
+        WikiSoundtrack._search_filters = None
+    else:
+        ost_filter = set()
+        for f in iter_music_files(path):
+            ost_filter.add(f.album_name_cleaned)
+            ost_filter.add(f.dir_name_cleaned)
+
+        WikiSoundtrack._search_filters = ost_filter
+
+    log.debug('OST Search Filter: {}'.format(WikiSoundtrack._search_filters))
+
+
 def sort_by_wiki(
     source_path, dest_dir, allow_no_dest, basic_cleanup, move_unknown, allow_incomplete, unmatched_cleanup,
-    true_soloist, collab_mode, hide_edition, dry_run
+    true_soloist, collab_mode, hide_edition, dry_run, no_ost_filter
 ):
     """
     Cleanup & sort files based on the information found when matching them to artists / albums / songs in various wikis
@@ -427,6 +444,8 @@ def sort_by_wiki(
     rm_prefix = '[DRY RUN] Would remove' if dry_run else 'Removing'
     dest_root = Path(dest_dir).expanduser().resolve()
     cwd = Path('.').resolve()
+
+    set_ost_filter(source_path, no_ost_filter)
 
     unplaced = 0
     dests = {}
