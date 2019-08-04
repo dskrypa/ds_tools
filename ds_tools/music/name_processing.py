@@ -285,24 +285,24 @@ def parse_name(text):
                     langs = (langs[0], LangCat.categorize(alt_lang_val))
 
                 if langs[0] != LangCat.ENG:
-                    err_msg = 'Unexpected langs={} for \'lang: value\' part={!r}'.format(langs, part)
+                    err_msg = 'Unexpected langs={} for \'lang: $value\' part={!r}'.format(langs, part)
                     raise NameFormatError(err_msg + _parse_dbg(base, cjk, stylized, aka, info, details_parts))
                 elif langs[1] == LangCat.MIX:
                     suffix = common_suffix((base, alt_lang_val))
                     if not suffix or LangCat.categorize(alt_lang_val[:-len(suffix)]) not in LangCat.asian_cats:
-                        if 'pronounced' in alt_lang_val:
-                            _split = tuple(map(str.strip, alt_lang_val.partition('pronounced')))
-                            part_0_lang = LangCat.categorize(_split[0])
-                            if part_0_lang in LangCat.asian_cats:
+                        rom_ind = next((ind for ind in ('pronounced', 'Hepburn:') if ind in alt_lang_val), None)
+                        if rom_ind:
+                            _split = tuple(map(str.strip, alt_lang_val.partition(rom_ind)))
+                            if LangCat.contains_any(_split[0], LangCat.asian_cats):
                                 cjk = _split[0]
-                                found_hangul = part_0_lang == LangCat.HAN
+                                found_hangul = LangCat.matches(_split[0], LangCat.HAN)
                                 continue
-                        err_msg = 'Unexpected lang mix={} for \'lang: value\' part={!r} given base'.format(langs, part)
+                        err_msg = 'Unexpected lang mix={} for \'lang: $value\' part={!r} given base'.format(langs, part)
                         raise NameFormatError(err_msg + _parse_dbg(base, cjk, stylized, aka, info, details_parts))
                 elif found_hangul and _lang_name.upper() == 'RR' and langs[1] == LangCat.ENG:
                     continue
                 elif langs[1] not in LangCat.asian_cats:
-                    err_msg = 'Unexpected langs={} for \'lang: value\' part={!r}'.format(langs, part)
+                    err_msg = 'Unexpected langs={} for \'lang: $value\' part={!r}'.format(langs, part)
                     raise NameFormatError(err_msg + _parse_dbg(base, cjk, stylized, aka, info, details_parts))
 
                 _is_hangul = langs[1] == LangCat.HAN
