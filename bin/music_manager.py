@@ -123,6 +123,8 @@ def parser():
 def main():
     args = parser().parse_args()
     LogManager.create_default_logger(args.verbose, log_path=None)
+    if args.verbose > 10:
+        logging.getLogger('ds_tools.music.wiki.entities.scoring').setLevel(logging.DEBUG)
 
     if args.action == 'info':
         if args.count:

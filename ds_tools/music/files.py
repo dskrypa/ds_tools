@@ -1354,6 +1354,16 @@ class SongFile(BaseSongFile):
                             self.album_name_cleaner, include_score=True, year=self.year, track_count=track_count
                         )
 
+                    raw_album_name = self.tag_text('album')
+                    if self.album_name_cleaned != raw_album_name and score < 100:
+                        log.debug('{}=={} with score={}; trying title={!r}'.format(self, album, score, raw_album_name), extra={'color': 'cyan'})
+                        raw_album, raw_score = artist.find_song_collection(
+                            raw_album_name, include_score=True, year=self.year, track_count=track_count
+                        )
+                        log.debug('{}=={} with score={}'.format(self, raw_album, raw_score), extra={'color': 'cyan'})
+                        if raw_score > score:
+                            album, score = raw_album, raw_score
+
                 self.wiki_scores['album'] = score
                 if album is None:
                     if not self._in_album_dir:

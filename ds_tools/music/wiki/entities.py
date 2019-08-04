@@ -346,6 +346,7 @@ class WikiMatchable:
     _int_pat = re.compile(r'\d+')
     __part_pat = re.compile(r'^(.*)part \d+$', re.IGNORECASE)
     __abbrev_pat = re.compile(r'\.(?!\s)')
+    __lang_ver_pat = re.compile(r'(.*)[(-](\w+) (?:ver\.?|version)[)-]$', re.IGNORECASE)
 
     def __init__(self):
         self._strip_special = False
@@ -515,10 +516,11 @@ class WikiMatchable:
                     others = (other,)
                     if LangCat.contains_any(other, LangCat.asian_cats):
                         permutations = tuple(filter(None, (fuzz_process(o) for o in romanized_permutations(other) if o)))
-
                 else:
                     if eng == 'live':
                         others = [cjk]
+                    elif eng.lower().endswith(('ver', 'ver.', 'version')) and eng.count(' ') == 1:
+                        others = [other, cjk]
                     else:
                         others = ['{} ({})'.format(eng, cjk), eng, cjk]
 
@@ -605,6 +607,10 @@ class WikiMatchable:
         # TODO: avg of title.lower() & fuzzed title instead of only fuzzed?
 
         _log = logr['scoring']
+        # if isinstance(self, WikiSongCollection):
+        #     _log.setLevel(logging.NOTSET)
+        # else:
+        #     _log.setLevel(logging.WARNING)
         matchable = self.__cached(other, isinstance(self, WikiSongCollection), track)
         # log.debug('fuzz({!r}) => {!r}'.format(other, matchable._fuzzed_aliases))
         # _log.debug('fuzz({!r}) => {}'.format(other, len(matchable._fuzzed_aliases)))
@@ -639,7 +645,7 @@ class WikiMatchable:
                         score_mod -= 25
 
             if self_has['version'] and other_has['version']:
-                self_lang = (self.language or '').lower()
+                self_lang = (self.language or self.collection.language or '').lower()
                 self_langs = ('chinese', 'mandarin') if self_lang in ('chinese', 'mandarin') else (self_lang,)
                 scored_lang, scored_ver = False, False
 
@@ -681,7 +687,7 @@ class WikiMatchable:
 
         own_count = len(self._fuzzed_aliases)
         other_count = len(matchable._fuzzed_aliases)
-        log.debug('{}: Comparing {} aliases against {} aliases (=> {:,d} comparisons)'.format(self, own_count, other_count, own_count * other_count))
+        _log.debug('{}: Comparing {} aliases against {} aliases (=> {:,d} comparisons)'.format(self, own_count, other_count, own_count * other_count))
 
         has_han_alias = any(LangCat.categorize(alias) == LangCat.HAN for alias in self._fuzzed_aliases)
 
@@ -723,14 +729,29 @@ class WikiMatchable:
             else:
                 _log.debug('score_mod -= 15: non-eng self:{} other:{}'.format(self._non_eng_langs, other_langs))
 
-        if isinstance(self, WikiSongCollection) and best_alias and best_val:
-            # noinspection PyUnresolvedReferences
-            m_self = self.__part_pat.match(best_alias)
-            # noinspection PyUnresolvedReferences
-            m_other = self.__part_pat.match(best_val)
-            if m_self and m_other:
-                score = revised_weighted_ratio(m_self.group(1), m_other.group(1))
-                best_score = int(best_score * score / 100)
+        if best_alias and best_val:
+            if best_alias == best_val:
+                score_mod += 10
+                _log.debug('score_mod += 10: {!r} is an exact match for {!r}'.format(best_alias, best_val))
+
+            if isinstance(self, WikiTrack):
+                # noinspection PyUnresolvedReferences
+                sm = self.__lang_ver_pat.search(best_alias)
+                # noinspection PyUnresolvedReferences
+                om = self.__lang_ver_pat.search(best_val)
+                if sm and om and sm.group(2).lower().strip() == om.group(2).lower().strip():
+                    simple_score, simple_alias, simple_val = WikiMatchable.score_simple(sm.group(1), om.group(1))
+                    fmt = '{}[{}]=={}[{}] with score={}, but with language stripped, {}=={} with score={}'
+                    _log.debug(fmt.format(self, best_alias, other, best_val, best_score, simple_alias, simple_val, simple_score), extra={'color': 'red'})
+                    best_score = simple_score
+            elif isinstance(self, WikiSongCollection):
+                # noinspection PyUnresolvedReferences
+                m_self = self.__part_pat.match(best_alias)
+                # noinspection PyUnresolvedReferences
+                m_other = self.__part_pat.match(best_val)
+                if m_self and m_other:
+                    score = revised_weighted_ratio(m_self.group(1), m_other.group(1))
+                    best_score = int(best_score * score / 100)
 
         final_score = best_score + score_mod
         if final_score >= 100:
@@ -2580,18 +2601,19 @@ class WikiSongCollection(WikiEntity):
     def editions_and_disks(self):
         bonus_rx = re.compile('^(.*)\s+bonus tracks?$', re.IGNORECASE)
         editions = []
-        for edition in self._track_lists:
-            section = edition.get('section')
-            if section and not isinstance(section, str):
-                section = section[0]
-            try:
-                m = bonus_rx.match(section or '')
-            except TypeError as e:
-                log.error('{}: Unexpected section value in {}: {}'.format(self, self.url, section))
-                raise e
-            name = m.group(1).strip() if m else section
-            disk = edition.get('disk')
-            editions.append((name, disk, self.get_tracks(name, disk)))
+        if self._track_lists:
+            for edition in self._track_lists:
+                section = edition.get('section')
+                if section and not isinstance(section, str):
+                    section = section[0]
+                try:
+                    m = bonus_rx.match(section or '')
+                except TypeError as e:
+                    log.error('{}: Unexpected section value in {}: {}'.format(self, self.url, section))
+                    raise e
+                name = m.group(1).strip() if m else section
+                disk = edition.get('disk')
+                editions.append((name, disk, self.get_tracks(name, disk)))
         return editions
 
     @cached_property

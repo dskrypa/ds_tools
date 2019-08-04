@@ -24,7 +24,7 @@ class Arg:
 
 
 COMMON_ARGS = {
-    'verbosity': ('add_common_arg', Arg('--verbose', '-v', action='count', help='Increase logging verbosity (can specify multiple times)')),
+    'verbosity': ('add_common_arg', Arg('--verbose', '-v', action='count', default=0, help='Increase logging verbosity (can specify multiple times)')),
     'extra_cols': ('add_common_sp_arg', Arg('--extra', '-e', action='count', default=0, help='Increase the number of columns displayed (can specify multiple times)')),
     'select': ('add_common_sp_arg', Arg('--select', '-s', help='Nested key to select, using JQ-like syntax')),
     'parallel': ('add_common_sp_arg', Arg('--parallel', '-P', type=int, default=1, help='Maximum number of workers to use in parallel (default: %(default)s)')),
