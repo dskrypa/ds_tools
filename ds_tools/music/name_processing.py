@@ -478,7 +478,7 @@ def _split_name(
     eng, cjk, not_used = None, None, None
     langs = categorize_langs(parts)
     s = 's' if len(parts) > 1 else ''
-    log.log(4, 'ParentheticalParser().parse({!r}) => {} part{}: {} ({})'.format(name, len(parts), s, parts, langs))
+    # log.log(4, 'ParentheticalParser().parse({!r}) => {} part{}: {} ({})'.format(name, len(parts), s, parts, langs))
     if len(parts) == 1:
         part = parts[0]
         lang = langs[0]

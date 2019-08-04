@@ -420,7 +420,12 @@ class WikiMatchable:
 
         cjk_name = getattr(self, 'cjk_name', None)
         if cjk_name:
-            aliases.extend(romanized_permutations(cjk_name))
+            permutations = romanized_permutations(cjk_name)
+            if len(permutations) > 1000:
+                log.debug('There are {:,d} romanizations of {!r} - skipping them'.format(len(permutations), cjk_name))
+            else:
+                aliases.extend(permutations)
+
         aliases.extend([self.__abbrev_pat.sub('', alias) for alias in aliases])  # Remove periods from abbreviations
         return set(aliases)
 
@@ -669,7 +674,13 @@ class WikiMatchable:
                     _log.debug('score_mod -= 20: track_count={} not in {}'.format(track_count, self._part_track_counts))
 
         best_score, best_alias, best_val = 0, None, None
+
+        own_count = len(self._fuzzed_aliases)
+        other_count = len(matchable._fuzzed_aliases)
+        log.debug('{}: Comparing {} aliases against {} aliases (=> {:,d} comparisons)'.format(self, own_count, other_count, own_count * other_count))
+
         has_han_alias = any(LangCat.categorize(alias) == LangCat.HAN for alias in self._fuzzed_aliases)
+
         for alias in self._fuzzed_aliases:
             alias_nums = self.__nums(alias)
             other_aliases = matchable._fuzzed_aliases
@@ -2996,12 +3007,15 @@ class WikiSoundtrack(WikiSongCollection):
             tv_series = self.tv_series
         except AttributeError:
             return addl_aliases
+        log.debug('{}: found self.tv_series: {}'.format(self, tv_series))
 
         all_aliases = self._aliases()
         all_aliases.update(addl_aliases)
-        for show_alias in tv_series.aliases:
+        for i, show_alias in enumerate(tv_series.aliases):
+            log.debug('{}: processing show_alias={!r} [{}]'.format(self, show_alias, i))
             if not any(show_alias in a for a in all_aliases):
                 addl_aliases.add(show_alias + ' OST')
+
         return addl_aliases
 
     def score_match(self, other, *args, **kwargs):

@@ -42,7 +42,7 @@ def poorly_defined_struct_test():
     
     Note: The latter example is how it ends up being done by flatbuffers!
     """
-    
+
     print(init)
     print('\nTest Results:\n')
     print(tests)
