@@ -335,7 +335,7 @@ class J2R:
             yield J2R(mode, include_space=include_space)
 
 
-def romanized_permutations(text, include_space=True):
+def romanized_permutations(text, include_space=False):
     if contains_hangul(text):
         return hangul_romanized_permutations(text, include_space=include_space)
     return [j2r.romanize(text) for j2r in J2R.romanizers(include_space)]

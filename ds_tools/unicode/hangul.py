@@ -274,7 +274,7 @@ def romanize_plus(text, name=False, space=False):
 
 
 @cached(LRUCache(100))
-def hangul_romanized_permutations(text, include_space=True):
+def hangul_romanized_permutations(text, include_space=False):
     romanized = []
     last_char = None
     for char in text:
@@ -303,7 +303,8 @@ def hangul_romanized_permutations(text, include_space=True):
             if end:
                 romanized.append(end)
             last_char = end or vowel
-            romanized.append(' ')
+            if include_space:
+                romanized.append(' ')
         else:
             romanized.append(char)
             last_char = char
@@ -327,14 +328,12 @@ def hangul_romanized_permutations(text, include_space=True):
     if text in ROMANIZED_MISC_NAMES:
         permutations.insert(0, ROMANIZED_MISC_NAMES[text])
 
-    if not include_space:
-        permutations = [''.join(p.split()) for p in permutations]
     return permutations
 
 
 def matches_hangul_permutation(eng, han):
     lc_eng = ''.join(eng.lower().split())
-    return lc_eng in hangul_romanized_permutations(han, False)
+    return lc_eng in {''.join(p.split()) for p in hangul_romanized_permutations(han, False)}
 
 
 def combo_options(list_with_opts, bases=None):
