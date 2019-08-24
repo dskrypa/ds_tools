@@ -2,7 +2,6 @@
 
 import argparse
 import logging
-import re
 import sys
 from pathlib import Path
 
@@ -33,11 +32,19 @@ def parser():
 
     obj_types = ('track', 'artist', 'album', 'tracks', 'artists', 'albums')
     ops = ', '.join(sorted(list(OPERATORS) + ['like']))
+
     find_parser = parser.add_subparser('action', 'find', help='Find Plex information')
     find_parser.add_argument('obj_type', choices=obj_types, help='Object type')
     find_parser.add_argument('title', nargs='*', default=None, help='Object title (optional)')
     find_parser.add_argument('--no_regescape', action='store_true', help='Do not escape regex special characters in regex/like queries')
     find_parser.add_argument('query', nargs=argparse.REMAINDER, help='Query in the format --field[__operation] value; valid operations: {}'.format(ops))
+
+    rate_parser = parser.add_subparser('action', 'rate', help='Update ratings in Plex')
+    rate_parser.add_argument('obj_type', choices=obj_types, help='Object type')
+    rate_parser.add_argument('rating', type=int, help='Rating out of 10')
+    rate_parser.add_argument('title', nargs='*', default=None, help='Object title (optional)')
+    rate_parser.add_argument('--no_regescape', action='store_true', help='Do not escape regex special characters in regex/like queries')
+    rate_parser.add_argument('query', nargs=argparse.REMAINDER, help='Query in the format --field[__operation] value; valid operations: {}'.format(ops))
 
     parser.add_common_sp_arg('--server_path_root', '-r', metavar='PATH', help='The root of the path to use from this computer to generate paths to files from the path used by Plex.  When you click on the "..." for a song in Plex and click "Get Info", there will be a path in the "Files" box - for example, "/media/Music/a_song.mp3".  If you were to access that file from this computer, and the path to that same file is "//my_nas/media/Music/a_song.mp3", then the server_path_root would be "//my_nas/" (only needed when not already cached)')
     parser.add_common_sp_arg('--server_url', '-u', metavar='URL', help='The proto://host:port to use to connect to your local Plex server - for example: "https://10.0.0.100:12000" (only needed when not already cached)')
@@ -79,44 +86,74 @@ def main():
         else:
             log.error('Unconfigured sync action')
     elif args.action == 'find':
-        obj_type = args.obj_type[:-1] if args.obj_type.endswith('s') else args.obj_type
-        title = ' '.join(args.title) if args.title else None
-        query = ' '.join(args.query)
-        kv_pat = re.compile(r'-?-?(\S+?)\s*[= ]\s*(\S.+?)(?:$|\s-)')
-        kwargs = dict(m.groups() for m in kv_pat.finditer(query))
-        if not args.no_regescape:
-            for key, val in kwargs.items():
-                try:
-                    op = key.rsplit('__', 1)[1]
-                except Exception:
-                    pass
-                else:
-                    if op in ('regex', 'iregex', 'like', 'not_like'):
-                        kwargs[key] = regexcape(val)
-
-        for key, val in kwargs.items():
-            try:
-                val = int(val)
-            except Exception:
-                try:
-                    val = float(val)
-                except Exception:
-                    pass
-                else:
-                    kwargs[key] = val
-            else:
-                kwargs[key] = val
-
-        log.debug('obj_type={}, title={!r}, query={!r} => {}'.format(obj_type, title, query, kwargs))
-        if title:
-            kwargs.setdefault('title__contains', title)
+        obj_type, kwargs = parse_filters(args.obj_type, args.title, args.query, args.no_regescape)
         objects = plex.find_objects(obj_type, **kwargs)
         if objects:
             print(bullet_list(objects))
         else:
             log.warning('No results.')
+    elif args.action == 'rate':
+        if args.rating < 0 or args.rating > 10:
+            raise ValueError('Ratings must be between 0 and 10')
+        obj_type, kwargs = parse_filters(args.obj_type, args.title, args.query, args.no_regescape)
+        objects = plex.find_objects(obj_type, **kwargs)
+        if not objects:
+            log.warning('No results.')
+        else:
+            for obj in objects:
+                log.info('{}: updating rating to {}'.format(obj, args.rating))
+                obj.edit(**{'userRating.value': args.rating})
     else:
         log.error('Unconfigured action')
+
+
+def parse_filters(obj_type, title, query, no_regescape):
+    obj_type = obj_type[:-1] if obj_type.endswith('s') else obj_type
+    title = ' '.join(title) if title else None
+    kwargs = {}
+    key = None
+    value = ''
+    for part in query:
+        if part.startswith('-'):
+            if key and value:
+                kwargs[key] = value.strip()
+                value = ''
+            while part.startswith('-'):
+                part = part[1:]
+            key = part
+        else:
+            value += part + ' '
+    if key and value:
+        kwargs[key] = value.strip()
+
+    if not no_regescape:
+        for key, val in kwargs.items():
+            try:
+                op = key.rsplit('__', 1)[1]
+            except Exception:
+                pass
+            else:
+                if op in ('regex', 'iregex', 'like', 'not_like'):
+                    kwargs[key] = regexcape(val)
+
+    for key, val in kwargs.items():
+        try:
+            val = int(val)
+        except Exception:
+            try:
+                val = float(val)
+            except Exception:
+                pass
+            else:
+                kwargs[key] = val
+        else:
+            kwargs[key] = val
+
+    log.debug('obj_type={}, title={!r}, query={!r} => {}'.format(obj_type, title, query, kwargs))
+    if title:
+        kwargs.setdefault('title__contains', title)
+
+    return obj_type, kwargs
 
 
 if __name__ == "__main__":
