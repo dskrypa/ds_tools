@@ -5,15 +5,39 @@ Note on fetchItems:
 The kwargs to fetchItem/fetchItems use __ to access nested attributes, but the only nested attributes available are
 those that are returned in the items in ``plex._session.query(plex._ekey(search_type))``, not the higher level objects.
 Example available attributes::\n
+    >>> data = plex._session.query(plex._ekey('track'))
+    >>> media = [c for c in data[0]]
+    >>> for m in media:
+    ...     m
+    ...     m.attrib
+    ...     print(', '.join(sorted(m.attrib)))
+    ...     for part in m:
+    ...         part
+    ...         part.attrib
+    ...         print(', '.join(sorted(part.attrib)))
+    ...
+    <Element 'Media' at 0x000001E4E3971458>
+    {'id': '76273', 'duration': '238680', 'bitrate': '320', 'audioChannels': '2', 'audioCodec': 'mp3', 'container': 'mp3'}
+    audioChannels, audioCodec, bitrate, container, duration, id
+    <Element 'Part' at 0x000001E4E48D9458>
+    {'id': '76387', 'key': '/library/parts/76387/1555183134/file.mp3', 'duration': '238680', 'file': '/path/to/song.mp3', 'size': '9773247', 'container': 'mp3', 'hasThumbnail': '1'}
+    container, duration, file, hasThumbnail, id, key, size
+
     >>> data = plex._session.query(plex._ekey('album'))
     >>> data[0]
-    <Element 'Directory' at 0x000001DF71118EF8>
-    >>> data[0].attrib.keys()
-    dict_keys(['ratingKey', 'key', 'parentRatingKey', 'type', 'title', 'parentKey', 'parentTitle', 'summary', 'index', 'year', 'thumb', 'parentThumb', 'originallyAvailableAt', 'addedAt', 'updatedAt', 'deepAnalysisVersion'])
-    >>> [c for c in data[0]]
-    [<Element 'Genre' at 0x000001DF711182C8>]
-    >>> {c.tag: c.attrib.keys() for c in data[0]}
-    {'Genre': dict_keys(['tag'])}
+    <Element 'Directory' at 0x000001E4E3C92458>
+    >>> print(', '.join(sorted(data[0].attrib.keys())))
+    addedAt, guid, index, key, loudnessAnalysisVersion, originallyAvailableAt, parentGuid, parentKey, parentRatingKey, parentThumb, parentTitle, ratingKey, summary, thumb, title, type, updatedAt, year
+    >>> elements = [c for c in data[0]]
+    >>> for e in elements:
+    ...     e
+    ...     e.attrib
+    ...     for sub_ele in e:
+    ...         sub_ele
+    ...         sub_ele.attrib
+    ...
+    <Element 'Genre' at 0x000001E4E3C929F8>
+    {'tag': 'K-pop'}
 
 Example playlist syncs::\n
     >>> plex.sync_playlist('K-Pop 3+ Stars', userRating__gte=6, genre__like='[kj]-?pop')
@@ -27,15 +51,38 @@ Example playlist syncs::\n
     2019-06-01 08:54:58 EDT VERBOSE __main__ 208 Playlist K-Pop 5 Stars is not missing any tracks
     2019-06-01 08:54:58 EDT INFO __main__ 212 Playlist K-Pop 5 Stars contains 78 tracks and is already in sync with the given criteria
 
+
+Object and element attributes and elements available for searching:
+ - track:
+    - attributes: addedAt, duration, grandparentGuid, grandparentKey, grandparentRatingKey, grandparentThumb,
+      grandparentTitle, guid, index, key, originalTitle, parentGuid, parentIndex, parentKey, parentRatingKey,
+      parentThumb, parentTitle, ratingKey, summary, thumb, title, type, updatedAt
+    - elements: media
+ - album:
+    - attributes: addedAt, guid, index, key, loudnessAnalysisVersion, originallyAvailableAt, parentGuid, parentKey,
+      parentRatingKey, parentThumb, parentTitle, ratingKey, summary, thumb, title, type, updatedAt, year
+    - elements: genre
+ - artist:
+    - attributes: addedAt, guid, index, key, lastViewedAt, ratingKey, summary, thumb, title, type, updatedAt,
+      userRating, viewCount
+    - elements: genre
+ - media:
+    - attributes: audioChannels, audioCodec, bitrate, container, duration, id
+    - elements: part
+ - genre:
+    - attributes: tag
+ - part:
+    - attributes: container, duration, file, hasThumbnail, id, key, size
+
 :author: Doug Skrypa
 """
 
 import logging
 import re
+from collections import defaultdict
 from getpass import getpass
 from pathlib import Path
 
-import plexapi
 from plexapi.myplex import MyPlexAccount
 from plexapi.playlist import Playlist
 from plexapi.server import PlexServer
@@ -44,15 +91,26 @@ from requests import Session
 from urllib3 import disable_warnings as disable_urllib3_warnings
 
 from ..core import InputValidationException, cached_property
+from ..unicode import LangCat
+from ..output import short_repr, bullet_list
 from .files import SongFile
+from .patches import apply_plex_patches
 
 __all__ = ['LocalPlexServer']
 log = logging.getLogger(__name__)
 
 disable_urllib3_warnings()
+apply_plex_patches()
 
-# add compiled regex pattern search as a fetchItem operator
-plexapi.base.OPERATORS['sregex'] = lambda v, pat: pat.search(v)
+CUSTOM_FILTERS = {
+    'genre': ('album', 'genre__tag', 'parentKey'),
+    'album': ('album', 'title', 'parentKey'),
+    'artist': ('artist', 'title', 'grandparentKey'),
+}
+CUSTOM_OPS = {
+    '__like': 'sregex',
+    '__not_like': 'nsregex'
+}
 
 
 class LocalPlexServer:
@@ -109,37 +167,97 @@ class LocalPlexServer:
     def _ekey(self, search_type):
         return '/library/sections/1/all?type={}'.format(SEARCHTYPES[search_type])
 
-    def _update_kwargs(self, kwargs):
+    def _update_track_kwargs(self, kwargs):
         """
-        Update the kwarg search filters for a fetchItem/fetchItems call using custom search filters.
+        Update the kwarg search filters for a fetchItem/fetchItems call for tracks using custom search filters.
 
         Implemented custom filters:
-         - genre__like: Plex stores genres at the album level rather than the track level - this will run a search for
-           albums where re.search(value, album_genre) returns a match, then add a filter for the intended track search
-           so that only tracks that are in the albums with the given genre are returned.
+         - *__like: Automatically compiles the given str value as a regex pattern and replaces 'like' with the custom
+           sregex filter function, which uses pattern.search() instead of re.match()
+         - *__not_like: Like __like, but translates to nsregex
+         - genre: Plex stores genres at the album and artist level rather than the track level - this filter first runs
+           a search for albums that match the given value, then adds a filter to the track search so that only tracks
+           that are in the albums with the given genre are returned.
+         - artist/album: Rather than needing to chain searches manually where artist/album objects are passed as the
+           values, they can now be provided as strings.  Similar to the genre search, a separate search is run first for
+           finding artists/albums that match the given value, then tracks from/in the given criteria are found by using
+           the parentKey__in/grandparentKey__in filters, respectfully.  In theory, this should be more efficient than
+           using the parentTitle/grandparentTitle filters, since any regex operations only need to be done on the
+           album/artist titles once instead of on each track's album/artist titles, and the track search can use a O(1)
+           set lookup against the discovered parent/grandparent keys.
 
         :param dict kwargs: The kwargs that were passed to :meth:`.get_tracks` or a similar method
         :return dict: Modified kwargs with custom search filters
         """
-        genre__like = kwargs.pop('genre__like', None)
-        if genre__like is not None:
-            albums = self.music.fetchItems(self._ekey('album'), genre__tag__sregex=re.compile(genre__like, re.I))
-            album_keys = {a.key for a in albums}
-            log.debug('Replacing \'genre__like\' with parentKey__in={}'.format(album_keys))
-            kwargs['parentKey__in'] = album_keys
-        artist = kwargs.pop('artist', None)
-        if artist is not None:
-            artists = self.music.fetchItems(self._ekey('artist'), title__contains=artist)
-            artist_keys = {a.key for a in artists}
-            log.debug('Replacing \'artist\' with grandparentKey__in={}'.format(artist_keys))
-            kwargs['grandparentKey__in'] = artist_keys
+        exclude_rated_dupes = kwargs.pop('exclude_rated_dupes', False)
+        for filter_key, filter_val in sorted(kwargs.items()):
+            keyword = next((val for val in CUSTOM_OPS if filter_key.endswith(val)), None)
+            if keyword:
+                kwargs.pop(filter_key)
+                target_key = '{}__{}'.format(filter_key[:-len(keyword)], CUSTOM_OPS[keyword])
+                filter_val = re.compile(filter_val, re.IGNORECASE) if isinstance(filter_val, str) else filter_val
+                log.debug('Replacing {!r} with {}={}'.format(filter_key, target_key, short_repr(filter_val)))
+                kwargs[target_key] = filter_val
+
+        for kw, (ekey, field, target) in sorted(CUSTOM_FILTERS.items()):
+            us_key = '{}__'.format(kw)
+            target_key = '{}__in'.format(target)
+            kw_args = {k: v for k, v in kwargs.items() if k == kw or k.startswith(us_key)}
+            if kw_args:
+                ekey_filters = {}
+                for filter_key in kw_args:
+                    filter_val = kwargs.pop(filter_key)
+                    try:
+                        base, op = filter_key.rsplit('__', 1)
+                    except ValueError:
+                        op = 'contains'
+                    else:
+                        if base.endswith('__not'):
+                            op = 'not__' + op
+
+                    ekey_filters['{}__{}'.format(field, op)] = filter_val
+
+                results = self.music.fetchItems(self._ekey(ekey), **ekey_filters)
+                keys = {a.key for a in results}
+                log.debug('Replacing {} with {}={}'.format('+'.join(sorted(kw_args)), target_key, short_repr(keys)))
+                if target_key in kwargs:
+                    keys = keys.intersection(kwargs[target_key])
+                    log.debug('Merging {} values: {}'.format(target_key, short_repr(keys)))
+                kwargs[target_key] = keys
+
+        if exclude_rated_dupes and 'userRating' in kwargs:
+            dupe_kwargs = kwargs.copy()
+            dupe_kwargs.pop('userRating')
+            dupe_kwargs['userRating__gte'] = 1
+            rated_tracks = self.music.fetchItems(self._ekey('track'), **dupe_kwargs)
+            rated_tracks_by_artist_key = defaultdict(set)
+            for track in rated_tracks:
+                rated_tracks_by_artist_key[track.grandparentKey].add(track.title)
+
+            def _filter(elem_attrib):
+                titles = rated_tracks_by_artist_key[elem_attrib['grandparentKey']]
+                if not titles:
+                    return True
+                title = elem_attrib['title']
+                if title in titles:
+                    return False
+                part = next((t for t in titles if t.startswith(title) or title.startswith(t)), None)
+                if not part:
+                    return True
+                elif len(part) > len(title):
+                    return title not in LangCat.split(part)
+                return part not in LangCat.split(title)
+
+            # kwargs['custom__custom'] = lambda a: a['title'] not in rated_tracks_by_artist_key[a['grandparentKey']]
+            kwargs['custom__custom'] = _filter
+
         return kwargs
 
     def get_tracks(self, **kwargs):
-        return self.music.fetchItems(self._ekey('track'), **self._update_kwargs(kwargs))
+        return self.music.fetchItems(self._ekey('track'), **self._update_track_kwargs(kwargs))
 
     def get_track(self, **kwargs):
-        return self.music.fetchItem(self._ekey('track'), **self._update_kwargs(kwargs))
+        return self.music.fetchItem(self._ekey('track'), **self._update_track_kwargs(kwargs))
 
     def find_songs_by_rating_gte(self, rating, **kwargs):
         """
@@ -216,16 +334,16 @@ class LocalPlexServer:
             plist = playlists[name]
             plist_items = plist.items()
 
-            to_remove = []
+            to_rm = []
             for track in plist_items:
                 if track not in expected:
-                    to_remove.append(track)
+                    to_rm.append(track)
 
-            if to_remove:
-                log.info('Removing {:,d} tracks from playlist {}'.format(len(to_remove), name))
-                for track in to_remove:
-                    log.debug('Removing from playlist {}: {}'.format(name, track))
-                    plist.removeItem(track)
+            if to_rm:
+                log.info('Removing {:,d} tracks from playlist {}:\n{}'.format(len(to_rm), name, bullet_list(to_rm)))
+                # for track in to_remove:
+                #     plist.removeItem(track)
+                plist.removeItems(to_rm)
             else:
                 log.log(19, 'Playlist {} does not contain any tracks that should be removed'.format(name))
 
@@ -235,13 +353,12 @@ class LocalPlexServer:
                     to_add.append(track)
 
             if to_add:
-                log.info('Adding {:,d} tracks to playlist {}'.format(len(to_add), name))
-                log.debug('Adding to playlist {}: {}'.format(name, to_add))
+                log.info('Adding {:,d} tracks to playlist {}:\n{}'.format(len(to_add), name, bullet_list(to_add)))
                 plist.addItems(to_add)
             else:
                 log.log(19, 'Playlist {} is not missing any tracks'.format(name))
 
-            if not to_add and not to_remove:
+            if not to_add and not to_rm:
                 fmt = 'Playlist {} contains {:,d} tracks and is already in sync with the given criteria'
                 log.info(fmt.format(name, len(plist_items)))
 
@@ -251,13 +368,16 @@ def print_song_info(songs):
         print('{} - {} - {} - {}'.format(stars(song.userRating), song.artist().title, song.album().title, song.title))
 
 
-def stars(rating, out_of=10, num_stars=5):
+def stars(rating, out_of=10, num_stars=5, chars=('*', ' ')):
+    """
+    Alternate chars: ('\u2605', '\u2730')
+    """
     if out_of < 1:
         raise ValueError('out_of must be > 0')
     filled = int(num_stars * rating / out_of)
     empty = num_stars - filled
-    # return '\u2605' * filled + '\u2606' * empty
-    return '*' * filled + ' ' * empty
+    a, b = chars
+    return a * filled + b * empty
 
 
 if __name__ == '__main__':

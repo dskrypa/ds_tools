@@ -26,6 +26,8 @@ class PermissiveJSONEncoder(json.JSONEncoder):
             return o.decode('utf-8')
         elif isinstance(o, datetime):
             return o.strftime('%Y-%m-%d %H:%M:%S %Z')
+        elif isinstance(o, type):
+            return str(o)
         return super().default(o)
 
 
@@ -38,15 +40,16 @@ class IndentedYamlDumper(yaml.SafeDumper):
 def prep_for_yaml(obj):
     if isinstance(obj, UserDict):
         obj = obj.data
+    # noinspection PyTypeChecker
     if isinstance(obj, dict):
         return {prep_for_yaml(k): prep_for_yaml(v) for k, v in obj.items()}
-    elif isinstance(obj, (list, set)):
+    elif isinstance(obj, (list, set, tuple, map)):
         return [prep_for_yaml(v) for v in obj]
     else:
         return obj
 
 
-def yaml_dump(data, force_single_yaml=False, indent_nested_lists=False):
+def yaml_dump(data, force_single_yaml=False, indent_nested_lists=False, default_flow_style=None, **kwargs):
     """
     Serialize the given data as YAML
 
@@ -57,14 +60,17 @@ def yaml_dump(data, force_single_yaml=False, indent_nested_lists=False):
     :return str: Yaml-formatted data
     """
     content = prep_for_yaml(data)
-    kwargs = {'explicit_start': True, 'width': float('inf'), 'allow_unicode': True}
+    kwargs.setdefault('explicit_start', True)
+    kwargs.setdefault('width', float('inf'))
+    kwargs.setdefault('allow_unicode', True)
     if indent_nested_lists:
         kwargs['Dumper'] = IndentedYamlDumper
 
     if isinstance(content, (dict, str)) or force_single_yaml:
-        kwargs['default_flow_style'] = False
+        kwargs.setdefault('default_flow_style', False if default_flow_style is None else default_flow_style)
         formatted = yaml.dump(content, **kwargs)
     else:
+        kwargs.setdefault('default_flow_style', True if default_flow_style is None else default_flow_style)
         formatted = yaml.dump_all(content, **kwargs)
     if formatted.endswith('...\n'):
         formatted = formatted[:-4]

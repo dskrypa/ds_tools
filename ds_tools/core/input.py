@@ -5,15 +5,35 @@ Input Handling
 """
 
 import logging
+from numbers import Number
+
+import yaml
 
 from .exceptions import InputValidationException
 
-__all__ = ['get_input', 'parse_yes_no', 'parse_full_yes_no']
+__all__ = ['get_input', 'parse_yes_no', 'parse_full_yes_no', 'parse_bool']
 log = logging.getLogger(__name__)
 
 
 class _NotSet:
     pass
+
+
+def parse_bool(value):
+    original = value
+    if isinstance(value, bool):
+        return value
+    value = yaml.safe_load(value)           # Handles 0/1/true/True/TRUE/false/False/FALSE
+    if isinstance(value, (Number, bool)):
+        return bool(value)
+    elif isinstance(value, str):
+        value = value.lower()
+        if value in ('t', 'y', 'yes'):
+            return True
+        elif value in ('f', 'n', 'no'):
+            return False
+    # ValueError works with argparse to provide a useful error message
+    raise ValueError('Unable to parse voolean value from input: {!r}'.format(original))
 
 
 def parse_yes_no(user_input):

@@ -52,6 +52,16 @@ def main():
             plex.sync_playlist('K-Pop 3+ Stars', userRating__gte=6, genre__like='[kj]-?pop')
             plex.sync_playlist('K-Pop 4+ Stars', userRating__gte=8, genre__like='[kj]-?pop')
             plex.sync_playlist('K-Pop 5 Stars', userRating__gte=10, genre__like='[kj]-?pop')
+            plex.sync_playlist(
+                'K-Pop Unrated',
+                userRating=0,
+                genre__like='[kj]-?pop',
+                genre__not_like='christmas',
+                title__not_like=r'(?:^|\()(?:intro|outro)(?:$|\s|:|\))|\(inst(?:\.?|rumental)|(?:japanese|jp|karaoke|mandarin|chinese) ver(?:\.|sion)|christmas|santa',
+                parentTitle__not_like='christmas|santa',
+                duration__gte=60000,
+                exclude_rated_dupes=True
+            )
         else:
             log.error('Unconfigured sync action')
     else:

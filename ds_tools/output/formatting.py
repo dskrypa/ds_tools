@@ -11,7 +11,10 @@ from collections.abc import Mapping, Sized, Iterable, Container
 
 from .color import colored
 
-__all__ = ['format_output', 'format_percent', 'format_tiered', 'pseudo_yaml', 'readable_bytes', 'to_bytes', 'to_str']
+__all__ = [
+    'format_output', 'format_percent', 'format_tiered', 'pseudo_yaml', 'readable_bytes', 'to_bytes', 'to_str',
+    'short_repr', 'bullet_list'
+]
 log = logging.getLogger(__name__)
 
 
@@ -25,6 +28,15 @@ def to_str(data):
     if isinstance(data, bytes):
         return data.decode('utf-8')
     return data
+
+
+def short_repr(obj, when_gt=100, parts=45, sep='...', func=repr, containers_only=True):
+    obj_repr = func(obj)
+    if containers_only and not isinstance(obj, Container):
+        return obj_repr
+    if len(obj_repr) > when_gt:
+        return '{}{}{}'.format(obj_repr[:parts], sep, obj_repr[-parts:])
+    return obj_repr
 
 
 def readable_bytes(file_size, dec_places=None, dec_by_unit=None):
@@ -150,3 +162,9 @@ def pseudo_yaml(obj, indent=4):
         except UnicodeEncodeError as e:
             lines.append(obj)
     return lines
+
+
+def bullet_list(data, bullet='-', indent=2, sort=True):
+    data = sorted(data) if sort else data
+    fmt = '{}{} {{}}'.format(' ' * indent, bullet)
+    return '\n'.join(fmt.format(line) for line in data)
