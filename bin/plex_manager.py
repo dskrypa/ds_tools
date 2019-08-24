@@ -6,6 +6,8 @@ import re
 import sys
 from pathlib import Path
 
+from plexapi.base import OPERATORS
+
 sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
 from ds_tools.argparsing import ArgParser
 from ds_tools.logging import LogManager
@@ -30,11 +32,12 @@ def parser():
     playlists_parser = sync_parser.add_subparser('sync_action', 'playlists', help='Sync playlists with custom filters')
 
     obj_types = ('track', 'artist', 'album', 'tracks', 'artists', 'albums')
+    ops = ', '.join(sorted(list(OPERATORS) + ['like']))
     find_parser = parser.add_subparser('action', 'find', help='Find Plex information')
     find_parser.add_argument('obj_type', choices=obj_types, help='Object type')
     find_parser.add_argument('title', nargs='*', default=None, help='Object title (optional)')
     find_parser.add_argument('--no_regescape', action='store_true', help='Do not escape regex special characters in regex/like queries')
-    find_parser.add_argument('query', nargs=argparse.REMAINDER, help='Query in the format --field[__operation] value')
+    find_parser.add_argument('query', nargs=argparse.REMAINDER, help='Query in the format --field[__operation] value; valid operations: {}'.format(ops))
 
     parser.add_common_sp_arg('--server_path_root', '-r', metavar='PATH', help='The root of the path to use from this computer to generate paths to files from the path used by Plex.  When you click on the "..." for a song in Plex and click "Get Info", there will be a path in the "Files" box - for example, "/media/Music/a_song.mp3".  If you were to access that file from this computer, and the path to that same file is "//my_nas/media/Music/a_song.mp3", then the server_path_root would be "//my_nas/" (only needed when not already cached)')
     parser.add_common_sp_arg('--server_url', '-u', metavar='URL', help='The proto://host:port to use to connect to your local Plex server - for example: "https://10.0.0.100:12000" (only needed when not already cached)')
