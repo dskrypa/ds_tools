@@ -94,6 +94,19 @@ def main():
                     if op in ('regex', 'iregex', 'like', 'not_like'):
                         kwargs[key] = regexcape(val)
 
+        for key, val in kwargs.items():
+            try:
+                val = int(val)
+            except Exception:
+                try:
+                    val = float(val)
+                except Exception:
+                    pass
+                else:
+                    kwargs[key] = val
+            else:
+                kwargs[key] = val
+
         log.debug('obj_type={}, title={!r}, query={!r} => {}'.format(obj_type, title, query, kwargs))
         if title:
             kwargs.setdefault('title__contains', title)
@@ -111,3 +124,5 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print()
+    except BrokenPipeError:
+        pass
