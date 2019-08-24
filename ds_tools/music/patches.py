@@ -78,6 +78,9 @@ def apply_plex_patches():
       - PlexObject to be sortable
     """
     OPERATORS.update({
+        'lc': lambda v, q: v.lower() == q.lower(),
+        'eq': lambda v, q: v == q,
+        'ieq': lambda v, q: v.lower() == q.lower(),
         'sregex': lambda v, pat: pat.search(v),
         'nsregex': lambda v, pat: not pat.search(v),
         'is': lambda v, q: v is q,

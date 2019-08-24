@@ -79,7 +79,7 @@ def main():
         obj_type = args.obj_type[:-1] if args.obj_type.endswith('s') else args.obj_type
         title = ' '.join(args.title) if args.title else None
         query = ' '.join(args.query)
-        kv_pat = re.compile(r'-?-?(\S+)\s*[= ]\s*(\S.+?)(?:$|\s-)')
+        kv_pat = re.compile(r'-?-?(\S+?)\s*[= ]\s*(\S.+?)(?:$|\s-)')
         kwargs = dict(m.groups() for m in kv_pat.finditer(query))
         if not args.no_regescape:
             for key, val in kwargs.items():
