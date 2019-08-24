@@ -9,7 +9,7 @@ from unicodedata import normalize
 
 from mutagen.id3._frames import Frame
 from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
-from plexapi.audio import Track
+from plexapi.audio import Track, Album, Artist
 from plexapi.base import OPERATORS, PlexObject
 from plexapi.playlist import Playlist
 
@@ -74,8 +74,8 @@ def apply_plex_patches():
       - PlexObject's _checkAttrs to fix op=exact behavior, and to support filtering based on if an attribute is not set
       - Playlist to support semi-bulk item removal (the Plex REST API does not have a bulk removal handler, but the
         removeItems method added below removes the reload step between items)
-      - Track to have a more readable/useful repr
-      - Track to be sortable
+      - Track, Album, and Artist to have more readable/useful reprs
+      - PlexObject to be sortable
     """
     OPERATORS.update({
         'sregex': lambda v, pat: pat.search(v),
@@ -202,11 +202,27 @@ def apply_plex_patches():
         rating = stars(self.userRating)
         return fmt.format(type(self).__name__, key, rating, self.title, self.grandparentTitle, self.parentTitle)
 
-    def track_lt(self, other):
-        return int(self.key.replace('/library/metadata/', '')) < int(other.key.replace('/library/metadata/', ''))
+    def plex_obj_lt(self, other):
+        return int(self._clean(self.key)) < int(other._clean(other.key))
+
+    def album_repr(self):
+        key = self.key.replace('/library/metadata/', '')
+        fmt = '<{}#{}[{}]({!r}, artist={!r}, genres={})>'
+        rating = stars(float(self._data.attrib.get('userRating', 0)))
+        genres = ', '.join(g.tag for g in self.genres)
+        return fmt.format(type(self).__name__, key, rating, self.title, self.parentTitle, genres)
+
+    def artist_repr(self):
+        key = self.key.replace('/library/metadata/', '')
+        fmt = '<{}#{}[{}]({!r}, genres={})>'
+        rating = stars(float(self._data.attrib.get('userRating', 0)))
+        genres = ', '.join(g.tag for g in self.genres)
+        return fmt.format(type(self).__name__, key, rating, self.title, genres)
 
     PlexObject._getAttrOperator = _get_attr_operator
     PlexObject._checkAttrs = _checkAttrs
+    PlexObject.__lt__ = plex_obj_lt
     Playlist.removeItems = removeItems
     Track.__repr__ = track_repr
-    Track.__lt__ = track_lt
+    Album.__repr__ = album_repr
+    Artist.__repr__ = artist_repr
