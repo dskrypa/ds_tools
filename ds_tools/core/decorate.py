@@ -70,7 +70,7 @@ def handle_exit(main):
             pass
         except Exception as e:
             if logger_has_non_null_handlers(log):
-                log.log(19, traceback.format_exc())
+                log.log(19, traceback.format_exc())     # hide tb since exc may be expected unless output is --verbose
                 log.error(e)
             else:               # If logging wasn't configured, or the error occurred before logging could be configured
                 print(traceback.format_exc(), file=sys.stderr)
