@@ -515,6 +515,7 @@ def _stream_handler_emit(self, record):
 
 
 def logger_has_non_null_handlers(logger):
+    # Based on logging.Logger.hasHandlers(), but checks that they are not all NullHandlers
     c = logger
     rv = False
     while c:

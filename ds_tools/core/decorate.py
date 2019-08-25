@@ -17,14 +17,14 @@ from .itertools import partitioned
 
 __all__ = [
     'cached_property', 'cached_property_or_err', 'classproperty', 'partitioned_exec', 'rate_limited', 'timed',
-    'trace_entry', 'trace_entry_and_dump_stack', 'handle_exit'
+    'trace_entry', 'trace_entry_and_dump_stack', 'wrap_main'
 ]
 log = logging.getLogger(__name__)
 
 ON_WINDOWS = platform.system().lower() == 'windows'
 
 
-def handle_exit(main):
+def wrap_main(main):
     """
     Handle quirks related to the inability to use ``signal.signal(signal.SIGPIPE, signal.SIG_DFL)`` in Windows, and
     standardize the handling of KeyboardInterrupt and logging of stack traces/errors on exit with ``sys.exit(1)``.
@@ -32,19 +32,6 @@ def handle_exit(main):
     :param main: The main function of a program
     :return: The main function, wrapped with exception handlers for common things that need to be handled at exit
     """
-    def logger_has_non_null_handlers(logger):
-        c = logger
-        rv = False
-        while c:
-            if c.handlers and not all(isinstance(h, logging.NullHandler) for h in c.handlers):
-                rv = True
-                break
-            if not c.propagate:
-                break
-            else:
-                c = c.parent
-        return rv
-
     @wraps(main)
     def run_main(*args, **kwargs):
         try:
@@ -69,7 +56,7 @@ def handle_exit(main):
         except BrokenPipeError:
             pass
         except Exception as e:
-            if logger_has_non_null_handlers(log):
+            if _logger_has_non_null_handlers(log):
                 log.log(19, traceback.format_exc())     # hide tb since exc may be expected unless output is --verbose
                 log.error(e)
             else:               # If logging wasn't configured, or the error occurred before logging could be configured
@@ -331,3 +318,19 @@ def retry_on_exception(retries=0, delay=0, *exception_classes, warn=True):
                         raise e
         return wrapper
     return decorator
+
+
+def _logger_has_non_null_handlers(logger):
+    # Based on logging.Logger.hasHandlers(), but checks that they are not all NullHandlers
+    # Copied from ds_tools.logging to prevent circular dependency
+    c = logger
+    rv = False
+    while c:
+        if c.handlers and not all(isinstance(h, logging.NullHandler) for h in c.handlers):
+            rv = True
+            break
+        if not c.propagate:
+            break
+        else:
+            c = c.parent
+    return rv
