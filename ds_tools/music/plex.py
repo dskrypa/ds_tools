@@ -107,6 +107,7 @@ CUSTOM_FILTERS = {
     'genre': ('album', 'genre__tag', {'track': 'parentKey'}),
     'album': ('album', 'title', {'track': 'parentKey'}),
     'artist': ('artist', 'title', {'track': 'grandparentKey', 'album': 'parentKey'}),
+    'in_playlist': ('playlist', 'title', {})
 }
 CUSTOM_OPS = {
     '__like': 'sregex',
@@ -211,6 +212,23 @@ class LocalPlexServer:
                             target_key = filter_key.replace('genre', 'genre__tag', 1)
                             log.debug('Replacing {} with {}'.format(filter_key, target_key))
                             kwargs[target_key] = kwargs.pop(filter_key)
+                elif kw == 'in_playlist':
+                    target_key = 'key__in'
+                    for filter_key in {k for k in kwargs if k == kw or k.startswith(us_key)}:
+                        filter_val = kwargs.pop(filter_key)
+                        lc_val = filter_val.lower()
+                        for pl_name, playlist in self.playlists.items():
+                            if pl_name.lower() == lc_val:
+                                log.debug('Replacing {} with {}'.format(filter_key, target_key))
+                                keys = {track.key for track in playlist.items()}
+                                if target_key in kwargs:
+                                    keys = keys.intersection(kwargs[target_key])
+                                    log.debug('Merging {} values: {}'.format(target_key, short_repr(keys)))
+                                kwargs[target_key] = keys
+                                break
+                        else:
+                            raise ValueError('Invalid playlist: {!r}'.format(filter_val))
+
                 continue
 
             kw_keys = {k for k in kwargs if k == kw or k.startswith(us_key)}
