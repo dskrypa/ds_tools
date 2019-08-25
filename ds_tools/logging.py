@@ -18,13 +18,12 @@ from logging import handlers
 from .core import validate_or_make_dir, TZ_LOCAL
 from .output import colored
 
-__all__ = ['LogManager', 'add_context_filter']
+__all__ = ['LogManager', 'add_context_filter', 'logger_has_non_null_handlers']
 log = logging.getLogger(__name__)
 
-ENTRY_FMT_DETAILED = '%(asctime)s %(levelname)s %(threadName)s %(name)s %(lineno)d %(message)s'
-DEFAULT_LOGGER_NAME = 'ds_tools'
-
 COLOR_CODED_THREADS = os.environ.get('DS_TOOLS_COLOR_CODED_THREAD_LOGS', '0') == '1'
+DEFAULT_LOGGER_NAME = 'ds_tools'
+ENTRY_FMT_DETAILED = '%(asctime)s %(levelname)s %(threadName)s %(name)s %(lineno)d %(message)s'
 
 
 class _NotSet:
@@ -490,8 +489,8 @@ def add_context_filter(filter_instance, name=None):
                 pass
 
 
-def stream_handler_repr(self):
-    # This monkey patch is to fix the case where the stream name is an int
+def _stream_handler_repr(self):
+    # This monkey patch is to fix the case where the stream name is an int; doesn't seem necessary in 3.7.4
     level = logging.getLevelName(self.level)
     name = str(getattr(self.stream, 'name', ''))
     if name:
@@ -499,10 +498,41 @@ def stream_handler_repr(self):
     return '<%s %s(%s)>' % (self.__class__.__name__, name, level)
 
 
-logging.StreamHandler.__repr__ = stream_handler_repr
+def _stream_handler_emit(self, record):
+    # This monkey patch is to fix handling of piped output on Windows
+    try:
+        msg = self.format(record)
+        stream = self.stream
+        # issue 35046: merged two stream.writes into one.
+        stream.write(msg + self.terminator)
+        self.flush()
+    except RecursionError:  # See issue 36272
+        raise
+    except (BrokenPipeError, OSError):  # Occurs when using |head
+        raise
+    except Exception:
+        self.handleError(record)
 
 
-if __name__ == '__main__':
-    lm = LogManager.create_default_logger(
-        2, log_path=None, date_fmt='%Y-%m-%d %H:%M:%S.%f %Z', entry_fmt='%(asctime)s %(name)s %(message)s'
-    )
+def logger_has_non_null_handlers(logger):
+    c = logger
+    rv = False
+    while c:
+        if c.handlers and not all(isinstance(h, logging.NullHandler) for h in c.handlers):
+            rv = True
+            break
+        if not c.propagate:
+            break
+        else:
+            c = c.parent
+    return rv
+
+
+logging.StreamHandler.__repr__ = _stream_handler_repr
+logging.StreamHandler.emit = _stream_handler_emit
+
+
+# if __name__ == '__main__':
+#     lm = LogManager.create_default_logger(
+#         2, log_path=None, date_fmt='%Y-%m-%d %H:%M:%S.%f %Z', entry_fmt='%(asctime)s %(name)s %(message)s'
+#     )

@@ -2,9 +2,11 @@
 :author: Doug Skrypa
 """
 
+import atexit
 import logging
 import string
 from numbers import Number
+from typing import Iterable, Hashable
 from unicodedata import normalize
 
 from mutagen.id3._frames import Frame
@@ -12,6 +14,8 @@ from mutagen.mp4 import AtomDataType, MP4Cover, MP4FreeForm, MP4Tags
 from plexapi.audio import Track, Album, Artist
 from plexapi.base import OPERATORS, PlexObject
 from plexapi.playlist import Playlist
+
+from .utils import stars
 
 __all__ = ['tag_repr', 'apply_mutagen_patches', 'apply_plex_patches']
 log = logging.getLogger(__name__)
@@ -64,7 +68,7 @@ def apply_mutagen_patches():
     MP4FreeForm.__repr__ = _MP4FreeForm_repr
 
 
-def apply_plex_patches():
+def apply_plex_patches(deinit_colorama=True):
     """
     Monkey-patch...
       - PlexObject's _getAttrOperator to avoid an O(n) operation (n=len(OPERATORS)) on every object in searches, and to
@@ -76,8 +80,13 @@ def apply_plex_patches():
         removeItems method added below removes the reload step between items)
       - Track, Album, and Artist to have more readable/useful reprs
       - PlexObject to be sortable
+
+    :param bool deinit_colorama: plexapi.utils imports tqdm (it uses it to print a progress bar during downloads); when
+      importing tqdm, tqdm imports and initializes colorama.  Colorama ends up raising exceptions when piping output to
+      ``| head``.  Defaults to True.
     """
     OPERATORS.update({
+        'custom': None,
         'lc': lambda v, q: v.lower() == q.lower(),
         'eq': lambda v, q: v == q,
         'ieq': lambda v, q: v.lower() == q.lower(),
@@ -85,9 +94,19 @@ def apply_plex_patches():
         'nsregex': lambda v, pat: not pat.search(v),
         'is': lambda v, q: v is q,
         'notset': lambda v, q: (not v) if q else v,
-        'custom': None
+        'is_odd': lambda v, q: divmod(int(float(v)), 2)[1],
+        'is_even': lambda v, q: not divmod(int(float(v)), 2)[1],
     })
     op_cache = {}
+
+    if deinit_colorama:
+        try:
+            import colorama
+        except ImportError:
+            pass
+        else:
+            colorama.deinit()
+            atexit.unregister(colorama.initialise.reset_all)
 
     def _bool(value):
         if isinstance(value, str):
@@ -121,15 +140,41 @@ def apply_plex_patches():
             op_cache[attr] = (base, op, operator)
             return base, op, operator
 
+    cast_funcs = {}
+
     def cast_func(op, query):
-        if op not in ('exists', 'notset'):
-            if isinstance(query, bool):
-                return lambda x: _bool(x)
-            elif isinstance(query, int):
-                return lambda x: float(x) if '.' in x else int(x)
-            elif isinstance(query, Number):
-                return type(query)
-        return lambda x: x
+        key = (op, tuple(query) if not isinstance(query, Hashable) else query)
+        try:
+            return cast_funcs[key]
+        except KeyError:
+            if op in ('is_odd', 'is_even'):
+                func = int
+            elif op not in ('exists', 'notset'):
+                if isinstance(query, bool):
+                    func = lambda x: _bool(x)
+                elif isinstance(query, int):
+                    func = lambda x: float(x) if '.' in x else int(x)
+                elif isinstance(query, Number):
+                    func = type(query)
+                elif op == 'in' and isinstance(query, Iterable) and not isinstance(query, str):
+                    types = {type(v) for v in query}
+                    if len(types) == 1:
+                        func = next(iter(types))
+                    elif all(isinstance(v, Number) for v in query):
+                        func = float
+                    else:
+                        log.debug('No common type found for values in {}'.format(query))
+                        func = lambda x: x
+                else:
+                    func = lambda x: x
+            else:
+                func = lambda x: x
+
+            if func is int:
+                func = lambda x: float(x) if '.' in x else int(x)
+
+            cast_funcs[key] = func
+            return func
 
     def get_attr_value(elem, attrstr, results=None):
         # log.debug('Fetching %s in %s', attrstr, elem.tag)
@@ -191,40 +236,31 @@ def apply_plex_patches():
         self.reload()
         return results
 
-    def stars(rating, out_of=10, num_stars=5, chars=('\u2605', '\u2730')):
-        if out_of < 1:
-            raise ValueError('out_of must be > 0')
-        filled = int(num_stars * rating / out_of)
-        empty = num_stars - filled
-        a, b = chars
-        return a * filled + b * empty
+    def cls_name(obj):
+        return type(obj).__name__
 
     def track_repr(self):
-        key = self.key.replace('/library/metadata/', '')
         fmt = '<{}#{}[{}]({!r}, artist={!r}, album={!r})>'
         rating = stars(self.userRating)
-        return fmt.format(type(self).__name__, key, rating, self.title, self.grandparentTitle, self.parentTitle)
-
-    def plex_obj_lt(self, other):
-        return int(self._clean(self.key)) < int(other._clean(other.key))
+        return fmt.format(cls_name(self), self._int_key(), rating, self.title, self.grandparentTitle, self.parentTitle)
 
     def album_repr(self):
-        key = self.key.replace('/library/metadata/', '')
         fmt = '<{}#{}[{}]({!r}, artist={!r}, genres={})>'
         rating = stars(float(self._data.attrib.get('userRating', 0)))
         genres = ', '.join(g.tag for g in self.genres)
-        return fmt.format(type(self).__name__, key, rating, self.title, self.parentTitle, genres)
+        return fmt.format(cls_name(self), self._int_key(), rating, self.title, self.parentTitle, genres)
 
     def artist_repr(self):
-        key = self.key.replace('/library/metadata/', '')
         fmt = '<{}#{}[{}]({!r}, genres={})>'
         rating = stars(float(self._data.attrib.get('userRating', 0)))
         genres = ', '.join(g.tag for g in self.genres)
-        return fmt.format(type(self).__name__, key, rating, self.title, genres)
+        return fmt.format(cls_name(self), self._int_key(), rating, self.title, genres)
 
     PlexObject._getAttrOperator = _get_attr_operator
     PlexObject._checkAttrs = _checkAttrs
-    PlexObject.__lt__ = plex_obj_lt
+    PlexObject._int_key = lambda self: int(self._clean(self.key))
+    PlexObject.__lt__ = lambda self, other: int(self._clean(self.key)) < int(other._clean(other.key))
+
     Playlist.removeItems = removeItems
     Track.__repr__ = track_repr
     Album.__repr__ = album_repr

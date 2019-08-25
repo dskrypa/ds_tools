@@ -4,10 +4,10 @@ Misc functions that did not fit anywhere else
 :author: Doug Skrypa
 """
 
-import re
 import functools
+import re
 
-__all__ = ['num_suffix']
+__all__ = ['num_suffix', 'PseudoJQ', 'bracket_dict_to_list', 'MatchHolder']
 
 
 def num_suffix(num):
@@ -25,20 +25,22 @@ def num_suffix(num):
 
 class MatchHolder:
     """
->>> import re
->>> match = MatchHolder()
->>> match
-MatchHolder(None)
->>> if match(re.search('some (string)', 'some string')):
-...     dir(match)
-...     match.groups()
-...     match.span()
-...
-['__class__', '__copy__', '__deepcopy__', '__delattr__', '__dir__', '__doc__', '__eq__', '__format__', '__ge__', '__getattribute__', '__gt__', '__hash__', '__init__', '__le__', '__lt__', '__ne__', '__new__', '__reduce__', '__reduce_ex__', '__repr__', '__setattr__', '__sizeof__', '__str__', '__subclasshook__', 'end', 'endpos', 'expand', 'group', 'groupdict', 'groups', 'lastgroup', 'lastindex', 'pos', 're', 'regs', 'span', 'start', 'string']
-('string',)
-(0, 11)
->>> match
-MatchHolder(<_sre.SRE_Match object; span=(0, 11), match='some string'>)
+    Note: This walrus (:=) operator in Python 3.8 renders this class unnecessary
+
+    >>> import re
+    >>> match = MatchHolder()
+    >>> match
+    MatchHolder(None)
+    >>> if match(re.search('some (string)', 'some string')):
+    ...     dir(match)
+    ...     match.groups()
+    ...     match.span()
+    ...
+    ['__class__', '__copy__', '__deepcopy__', '__delattr__', '__dir__', '__doc__', '__eq__', '__format__', '__ge__', '__getattribute__', '__gt__', '__hash__', '__init__', '__le__', '__lt__', '__ne__', '__new__', '__reduce__', '__reduce_ex__', '__repr__', '__setattr__', '__sizeof__', '__str__', '__subclasshook__', 'end', 'endpos', 'expand', 'group', 'groupdict', 'groups', 'lastgroup', 'lastindex', 'pos', 're', 'regs', 'span', 'start', 'string']
+    ('string',)
+    (0, 11)
+    >>> match
+    MatchHolder(<_sre.SRE_Match object; span=(0, 11), match='some string'>)
     """
     def __init__(self, match=None):
         self._match = match

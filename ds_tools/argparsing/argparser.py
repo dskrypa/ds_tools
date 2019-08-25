@@ -6,9 +6,13 @@ Wrapper around argparse to provide some additional functionality / shortcuts
 
 import inspect
 import os
+import re
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from copy import deepcopy
 from itertools import chain
+
+import yaml
+from yaml.parser import ParserError
 
 from .utils import COMMON_ARGS, update_subparser_constants
 
@@ -202,3 +206,39 @@ class ArgParser(ArgumentParser):
         parsed.__dict__.update(self.__constants)
         update_subparser_constants(self, parsed)
         return parsed
+
+    def parse_with_dynamic_args(self, from_field, args=None, namespace=None, req_subparser_value=False):
+        parsed = self.parse_args(args, namespace, req_subparser_value)
+        try:
+            dynamic = getattr(parsed, from_field)
+        except AttributeError:
+            return parsed, None
+
+        dynamic_str = ' '.join(dynamic) if not isinstance(dynamic, str) else dynamic
+        # print('Base args: {}\nProcessing args: {!r}'.format(parsed.__dict__, dynamic_str))
+        parser = type(self)(parents=[self], add_help=False)
+        pat = re.compile(r'(?:^|\s)(--?\S+?)[=\s]')
+        for m in pat.finditer(dynamic_str):
+            key = m.group(1)
+            # print('Found key: {!r}'.format(key))
+            parser.add_argument(key, nargs='+')
+
+        re_parsed = parser.parse_args(dynamic)
+        newly_parsed = {}
+        for k, v in re_parsed._get_kwargs():
+            try:
+                orig = parsed.__dict__[k]
+            except KeyError:
+                try:
+                    # Note: using yaml.safe_load to handle str/int/float/bool automatically
+                    newly_parsed[k] = yaml.safe_load(' '.join(v))
+                except ParserError:
+                    newly_parsed[k] = ' '.join(v)
+            else:
+                if self.get_default(k) == orig and v != orig:
+                    # print('Updating parsed[{!r}] => {!r}'.format(k, v))
+                    parsed.__dict__[k] = v
+
+        # print('re-parsed: {}\nnewly parsed: {}'.format(re_parsed.__dict__, newly_parsed))
+        # print('Final parsed args: {}'.format(parsed.__dict__))
+        return parsed, newly_parsed

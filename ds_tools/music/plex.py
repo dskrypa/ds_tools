@@ -95,6 +95,7 @@ from ..unicode import LangCat
 from ..output import short_repr, bullet_list
 from .files import SongFile
 from .patches import apply_plex_patches
+from .utils import stars
 
 __all__ = ['LocalPlexServer']
 log = logging.getLogger(__name__)
@@ -386,18 +387,6 @@ class LocalPlexServer:
 def print_song_info(songs):
     for song in songs:
         print('{} - {} - {} - {}'.format(stars(song.userRating), song.artist().title, song.album().title, song.title))
-
-
-def stars(rating, out_of=10, num_stars=5, chars=('*', ' ')):
-    """
-    Alternate chars: ('\u2605', '\u2730')
-    """
-    if out_of < 1:
-        raise ValueError('out_of must be > 0')
-    filled = int(num_stars * rating / out_of)
-    empty = num_stars - filled
-    a, b = chars
-    return a * filled + b * empty
 
 
 if __name__ == '__main__':
