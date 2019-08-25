@@ -246,13 +246,13 @@ class LocalPlexServer:
             rated_tracks = self.music.fetchItems(self._ekey('track'), **dupe_kwargs)
             rated_tracks_by_artist_key = defaultdict(set)
             for track in rated_tracks:
-                rated_tracks_by_artist_key[track.grandparentKey].add(track.title)
+                rated_tracks_by_artist_key[track.grandparentKey].add(track.title.lower())
 
             def _filter(elem_attrib):
                 titles = rated_tracks_by_artist_key[elem_attrib['grandparentKey']]
                 if not titles:
                     return True
-                title = elem_attrib['title']
+                title = elem_attrib['title'].lower()
                 if title in titles:
                     return False
                 part = next((t for t in titles if t.startswith(title) or title.startswith(t)), None)

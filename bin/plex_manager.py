@@ -125,7 +125,7 @@ def parse_filters(obj_type, title, filters, escape):
                 filters[key] = regexcape(val)
 
     if title:
-        filters.setdefault('title__contains', title)
+        filters.setdefault('title__like', title)
 
     log.debug('obj_type={}, title={!r} => query={}'.format(obj_type, title, filters))
     return obj_type, filters
