@@ -116,10 +116,12 @@ CUSTOM_OPS = {
 
 
 class LocalPlexServer:
-    def __init__(self, url=None, user=None, server_path_root=None, cache_dir='~/.plex'):
+    def __init__(self, url=None, user=None, server_path_root=None, cache_dir='~/.plex', music_library=None):
         self._cache = Path(cache_dir).expanduser().resolve()
         if not self._cache.exists():
             self._cache.mkdir(parents=True)
+
+        self.user = user
 
         if not url:
             url_path = self._cache.joinpath('server_url.txt')
@@ -128,7 +130,7 @@ class LocalPlexServer:
             if not url:
                 raise ValueError('A server URL must be provided or be in {}'.format(url_path.as_posix()))
         self.url = url
-        self.user = user
+
         if not server_path_root:
             root_path = self._cache.joinpath('server_path_root.txt')
             if root_path.exists():
@@ -136,6 +138,18 @@ class LocalPlexServer:
             if not server_path_root:
                 raise ValueError('A server root path must be provided or be in {}'.format(root_path.as_posix()))
         self.server_root = Path(server_path_root)
+
+        music_library_path = self._cache.joinpath('music_library_name.txt')
+        if not music_library:
+            if music_library_path.exists():
+                music_library = music_library_path.open('r').read().strip()
+            else:
+                music_library = 'Music'
+        else:
+            if not music_library_path.exists():
+                with music_library_path.open('w') as f:
+                    f.write(music_library + '\n')
+        self.music_library = music_library
 
     @cached_property
     def _token(self):
@@ -164,7 +178,7 @@ class LocalPlexServer:
 
     @cached_property
     def music(self):
-        return self._session.library.section('Music')
+        return self._session.library.section(self.music_library)
 
     def _ekey(self, search_type):
         return '/library/sections/1/all?type={}'.format(SEARCHTYPES[search_type])

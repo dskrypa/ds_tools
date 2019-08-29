@@ -50,6 +50,7 @@ def parser():
     parser.add_common_sp_arg('--server_url', '-u', metavar='URL', help='The proto://host:port to use to connect to your local Plex server - for example: "https://10.0.0.100:12000" (only needed when not already cached)')
     parser.add_common_sp_arg('--username', '-n', help='Plex username (only needed when a token is not already cached)')
     parser.add_common_sp_arg('--cache_dir', '-c', metavar='PATH', default='~/.plex', help='Directory in which your token and server_path_root / server_url should be cached (default: %(default)s)')
+    parser.add_common_sp_arg('--music_library', '-m', default=None, help='Name of the Music library to use (default: Music)')
 
     parser.include_common_args('verbosity', 'dry_run')
     return parser
@@ -60,7 +61,7 @@ def main():
     args, dynamic = parser().parse_with_dynamic_args('query')
     LogManager.create_default_logger(args.verbose, log_path=None)
 
-    plex = LocalPlexServer(args.server_url, args.username, args.server_path_root, args.cache_dir)
+    plex = LocalPlexServer(args.server_url, args.username, args.server_path_root, args.cache_dir, args.music_library)
 
     if args.action == 'sync':
         if args.sync_action == 'ratings':
