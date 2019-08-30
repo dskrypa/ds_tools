@@ -49,25 +49,44 @@ def main():
         else:
             log.info('Skipping non-directory at artist level: {}'.format(artist.as_posix()))
 
+    file_url_pat = re.compile(r'^\[.*\.com\](.*)', re.IGNORECASE)
+    dir_url_pats = [
+        re.compile(r'(.*)\[www.*\.com\]$', re.IGNORECASE),
+        re.compile(r'^\[.*\.com\](.*)$', re.IGNORECASE)
+    ]
     for artist in src_dir.iterdir():
         if artist.is_dir():
             for album in artist.iterdir():
                 if album.is_dir():
                     for f in album.iterdir():
-                        if f.suffix == '.url':
+                        if f.suffix in ('.url', '.htm', '.html', '.db'):
                             log.info('Deleting: {}'.format(f.as_posix()))
                             f.unlink()
+                        else:
+                            m = file_url_pat.match(f.name)
+                            if m:
+                                cleaned = f.with_name(m.group(1).strip())
+                                log.info('Renaming {} -> {}'.format(f.as_posix(), cleaned.as_posix()))
+                                try:
+                                    f.rename(cleaned)
+                                except OSError as e:
+                                    log.error(e)
 
-                    m = re.match(r'(.*)\[www.*\.com\]$', album.name)
-                    if m:
-                        cleaned = album.with_name(m.group(1).strip())
-                        log.info('Renaming {} -> {}'.format(album.as_posix(), cleaned.as_posix()))
-                        try:
-                            album.rename(cleaned)
-                        except OSError as e:
-                            log.error(e)
+                    for dir_url_pat in dir_url_pats:
+                        m = dir_url_pat.match(album.name)
+                        if m:
+                            try:
+                                cleaned = album.with_name(m.group(1).strip())
+                            except ValueError as e:
+                                log.error('Unable to rename {} - {}'.format(album.as_posix(), e))
+                            else:
+                                log.info('Renaming {} -> {}'.format(album.as_posix(), cleaned.as_posix()))
+                                try:
+                                    album.rename(cleaned)
+                                except OSError as e:
+                                    log.error(e)
                 else:
-                    log.info('Skipping non-directory at albumlevel: {}'.format(album.as_posix()))
+                    log.info('Skipping non-directory at album level: {}'.format(album.as_posix()))
         else:
             log.info('Skipping non-directory at artist level: {}'.format(artist.as_posix()))
 
