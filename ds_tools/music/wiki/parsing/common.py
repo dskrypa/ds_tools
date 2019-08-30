@@ -218,7 +218,8 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
                 if not _artist:
                     continue
 
-                if not group and '\'s ' in _artist:
+                _lc_art = _artist.lower()
+                if not group and '\'s ' in _artist and (not _lc_art.startswith('girl\'s day') or 'day\'s ' in _lc_art):
                     of_group, _artist = map(str.strip, _artist.split('\'s ', 1))
                     # log.debug('Processing: _artist={!r} group={!r} from {!r}'.format(_artist, of_group, artist))
                     try:
