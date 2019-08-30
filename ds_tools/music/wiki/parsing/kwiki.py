@@ -43,7 +43,13 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artists, compilation=F
     if not h2:
         raise WikiEntityParseException('Unable to find track list header for album {}'.format(uri_path))
 
-    disk_rx = re.compile(r'^(?:Dis[ck]|CD)\s*(\S+)\s*[{}]?\s*(.*)$'.format(DASH_CHARS + ':'), re.IGNORECASE)
+    try:
+        disk_rx = parse_album_tracks._disk_rx
+    except AttributeError:
+        disk_rx = parse_album_tracks._disk_rx = re.compile(
+            r'^(?:Dis[ck]|CD)\s*(\S+)\s*[{}]?\s*(.*)$'.format(DASH_CHARS + ':'), re.IGNORECASE
+        )
+
     unexpected_num_fmt = 'Unexpected disk number format for {}: {!r}'
     parser = ParentheticalParser(False)
     track_lists = []
@@ -131,6 +137,10 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artists, compilation=F
             section = ele.text.strip()
             last_section_idx = section_idx
             # log.debug('Found section={} on page={}: {!r}'.format(section_idx, uri_path, section))
+            if section.lower().startswith('cd+dvd'):
+                section, links = None, []
+                continue
+
             links = link_tuples(ele.find_all('a'))
             if has_parens(section):
                 try:
@@ -504,7 +514,7 @@ def parse_aside(aside, uri_path):
     return parsed
 
 
-def parse_discography_entry(artist, ele, album_type, lang, type_idx):
+def parse_discography_entry(artist, ele, album_type, lang, type_idx, links):
     ele_text = ele.text.strip()
     try:
         parsed = ParentheticalParser().parse(ele_text)
@@ -513,7 +523,7 @@ def parse_discography_entry(artist, ele, album_type, lang, type_idx):
         return None
 
     # log.debug('Parsed {!r} => {}'.format(ele_text, parsed))
-    links = link_tuples(ele.find_all('a'))
+    # links = link_tuples(ele.find_all('a'))
     linkd = dict(links)
     try:
         num_type_rx = parse_discography_entry._num_type_rx
@@ -770,6 +780,8 @@ def parse_discography_section(artist, clean_soup):
             album_type = next(ele.children).get('id')
         elif ele.name == 'ul':
             li_eles = list(ele.children)
+            last_li = None
+            from_ul = 0
             top_level_li_eles = li_eles.copy()
             num = 0
             while li_eles:
@@ -783,12 +795,24 @@ def parse_discography_section(artist, clean_soup):
                     except AttributeError as e:
                         log.error('{}: Error processing discography in ele: {}'.format(artist.url, ele))
                         raise e
-                    li_eles = list(ul.children) + li_eles  # insert elements from the nested list at top
+                    nested_lis = list(ul.children)
+                    _from_ul = len(nested_lis)
+                    li_eles = nested_lis + li_eles  # insert elements from the nested list at top
+                else:
+                    _from_ul = 0
 
-                entry = parse_discography_entry(artist, li, album_type, lang, num)
+                links = link_tuples(li.find_all('a'))
+                if not links and last_li and from_ul:
+                    links = link_tuples(last_li.find_all('a'))
+                entry = parse_discography_entry(artist, li, album_type, lang, num, links)
                 if entry:
                     # log.debug('Adding disco entry for {}: type={} lang={} li={}'.format(artist, album_type, lang, li))
                     entries.append(entry)
+                if _from_ul:
+                    from_ul = _from_ul
+                else:
+                    from_ul -= 1
+                last_li = li
         elif ele.name == 'table':
             tds = iter(ele.find_all('td'))
             ele = next(tds).find('h3')
