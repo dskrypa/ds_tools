@@ -231,6 +231,8 @@ class AlbumDir(ClearableCachedPropertyMixin):
         except Exception as e:
             log.error('Error determining wiki_album for one or more songs in {}: {}'.format(self, e))
             return None
+        else:
+            log.debug('Wiki albums found for {}: {}'.format(self, albums))
 
         if len(albums) == 1:
             # log.debug('{}: Found single album match: {}'.format(self, albums))
@@ -800,11 +802,15 @@ class BaseSongFile(ClearableCachedPropertyMixin):
         return self.tag_text('title')
 
     def _cleanup_album_name(self, album):
-        m = re.match('(.*)\s*\[.*Album\]', album)
+        m = re.match(r'^\[\d{4}[0-9.]*\](.*)', album, re.IGNORECASE)
         if m:
             album = m.group(1).strip()
 
-        m = re.match('^(.*?)-?\s*(?:the)?\s*[0-9](?:st|nd|rd|th)\s+\S*\s*album\s*(?:repackage)?\s*(.*)$', album, re.I)
+        m = re.match(r'(.*)\s*\[.*Album(?: repackage)?\]', album, re.IGNORECASE)
+        if m:
+            album = m.group(1).strip()
+
+        m = re.match(r'^(.*?)-?\s*(?:the)?\s*[0-9](?:st|nd|rd|th)\s+\S*\s*album\s*(?:repackage)?\s*(.*)$', album, re.I)
         if m:
             album = ' '.join(map(str.strip, m.groups())).strip()
 
@@ -1210,6 +1216,7 @@ class SongFile(BaseSongFile):
                 eng, cjk = artist_dict['artist']
                 _artists.append((eng, cjk, artist_dict.get('of_group')))
 
+        # log.debug('artist={!r} => {}'.format(self.tag_artist, artist_dicts))
         artists = []
         exc = None
         for eng, cjk, of_group in _artists:
