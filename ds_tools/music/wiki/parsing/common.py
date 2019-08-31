@@ -11,7 +11,7 @@ from cachetools import LRUCache
 from ....caching import cached
 from ....core import datetime_with_tz
 from ....http import CodeBasedRestException
-from ....unicode import LangCat, matches_permutation
+from ....unicode import LangCat, matches_permutation, romanized_permutations
 from ....utils import (
     DASH_CHARS, QMARKS, ListBasedRecursiveDescentParser, ALL_WHITESPACE, UnexpectedTokenError, ParentheticalParser,
     unsurround, has_unpaired
@@ -21,7 +21,8 @@ from .exceptions import *
 
 __all__ = [
     'album_num_type', 'first_side_info_val', 'LANG_ABBREV_MAP', 'link_tuples', 'NUM2INT', 'parse_date',
-    'parse_track_info', 'split_artist_list', 'TrackInfoParser', 'TrackListParser', 'find_href'
+    'parse_track_info', 'split_artist_list', 'TrackInfoParser', 'TrackListParser', 'find_href',
+    'parse_tracks_from_table'
 ]
 log = logging.getLogger(__name__)
 
@@ -823,3 +824,56 @@ def parse_date(dt_str, try_dateparser=False, source=None):
     src_msg = ' in {!r}'.format(source) if source else ''
     err_fmt = 'Datetime string {!r}{} did not match any expected format: {}'
     raise UnexpectedDateFormat(err_fmt.format(dt_str, src_msg, ', '.join(map(repr, dt_formats))))
+
+
+def parse_tracks_from_table(track_tbl, uri_path, client):
+    split_cats = (LangCat.HAN, LangCat.MIX)
+    tracks = []
+    for tr in track_tbl.find_all('tr'):
+        tds = tr.find_all('td')
+        if len(tds) >= 3:
+            include = None
+            name_info = tds[1].text
+            # log.debug('Processing line for tds[0].text={!r} name_info={!r}'.format(tds[0].text, name_info))
+            if tds[0].text.strip().lower() == 'total length:':
+                break
+            elif has_parens(name_info) and not LangCat.contains_any(name_info, LangCat.HAN):
+                name_info_parts = ParentheticalParser().parse(name_info)
+                # log.debug('Processing name_info={!r} => {}'.format(name_info, name_info_parts))
+                name_info = name_info_parts.pop(0)
+                include = {'misc': name_info_parts}
+            elif has_parens(name_info) and LangCat.contains_any(name_info, LangCat.HAN):
+                name_info_parts = ParentheticalParser().parse(name_info)
+                last_part = name_info_parts[-1]
+                if len(name_info_parts) > 1 and all(LangCat.contains_any(last_part, cat) for cat in split_cats):
+                    orig = name_info_parts.copy()
+                    eng_name = name_info_parts.pop(0)
+                    extras = LangCat.split(unsurround(name_info_parts.pop(-1)))
+                    rom = ''.join(extras.pop(-1).lower().replace('-', '').split())
+                    try:
+                        han = extras.pop(-1)
+                    except IndexError as e:
+                        fmt = 'Error on han: eng={!r} rom={!r} extras={} other={} page={}'
+                        log.error(fmt.format(eng_name, rom, extras, name_info_parts, uri_path))
+                        raise e
+
+                    # fmt = 'eng={!r} han={!r} rom={!r} extras={}, other={}'
+                    # log.debug(fmt.format(eng_name, han, rom, extras, name_info_parts))
+                    if LangCat.categorize(han) == LangCat.HAN and rom in romanized_permutations(han, False):
+                        name_parts = ['"{} ({})"'.format(eng_name, han)]
+                        if extras:
+                            name_info_parts.append('; '.join(extras))
+                        if name_info_parts:
+                            name_parts.extend('({})'.format(part) for part in name_info_parts)
+                        name_info = ' '.join(name_parts)
+                    elif eng_name.lower().endswith(rom.lower()):
+                        name_info = (eng_name, '{} {}'.format(han, rom))
+                    else:
+                        raise WikiEntityParseException('Unexpected name_info_parts={} in {}'.format(orig, uri_path))
+
+            track = parse_track_info(
+                tds[0].text, name_info, uri_path, tds[-1].text.strip(), client=client, include=include
+            )
+            tracks.append(track)
+
+    return tracks

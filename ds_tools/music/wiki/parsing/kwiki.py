@@ -18,7 +18,7 @@ from ...name_processing import has_parens, parse_name, split_name, str2list, cat
 from ..utils import synonym_pattern, get_page_category, normalize_href
 from .common import (
     album_num_type, first_side_info_val, LANG_ABBREV_MAP, link_tuples, NUM2INT, parse_track_info, parse_date,
-    TrackListParser, split_artist_list
+    TrackListParser, split_artist_list, parse_tracks_from_table
 )
 from .exceptions import NoTrackListException, WikiEntityParseException, UnexpectedDateFormat, TrackInfoParseException
 
@@ -63,6 +63,13 @@ def parse_album_tracks(uri_path, clean_soup, intro_links, artists, compilation=F
         ele_name = ele.name
         if ele_name == 'h2':
             break
+        elif ele_name == 'table' and 'tracklist' in ele.get('class'):
+            tracks = parse_tracks_from_table(ele, uri_path, client)
+            track_lists.append({
+                'section': section,
+                'tracks': tracks, 'links': links, 'disk': disk, 'language': language
+            })
+            section, language, links = None, None, []
         elif ele_name in ('ol', 'ul'):
             # log.debug('Processing section={!r} on {}'.format(section, uri_path))
             if section and (section if isinstance(section, str) else section[0]).lower().startswith('dvd'):
