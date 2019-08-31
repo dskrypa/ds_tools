@@ -2611,6 +2611,7 @@ class WikiSongCollection(WikiEntity):
         # log.debug('{}.get_tracks({!r}, {!r}) called'.format(self, edition_or_part, disk), extra={'color': 76})
         if self._intended is not None and edition_or_part is None and disk is None:
             if len(self._intended) == 3:    # edition, disk, track
+                # noinspection PyTupleAssignmentBalance
                 edition_or_part, disk, track_info = self._intended
                 return [
                     WikiTrack(track_info, part, self._artist_context)
@@ -2625,7 +2626,9 @@ class WikiSongCollection(WikiEntity):
         if not parts:
             fmt = 'Unable to find part of {} for edition_or_part={!r}, disk={!r} from {}'
             raise InvalidTrackListException(fmt.format(self, edition_or_part, disk, self._info_src))
-        return [t for p in parts for t in p.get_tracks()]
+
+        lang = self.language or 'Korean'
+        return [t for p in parts for t in p.get_tracks() if p.language == lang]
 
     @cached_property
     def editions_and_disks(self):
