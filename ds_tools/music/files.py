@@ -834,7 +834,7 @@ class BaseSongFile(ClearableCachedPropertyMixin):
                     album = title
                 break
 
-        return album.replace(' : ', ': ')
+        return album.replace(' : ', ': ').strip()
 
     def _extract_album_part(self, title):
         part = None
@@ -849,7 +849,8 @@ class BaseSongFile(ClearableCachedPropertyMixin):
 
     @cached_property
     def album_name_cleaned(self):
-        return self._cleanup_album_name(self.tag_text('album'))
+        cleaned = self._cleanup_album_name(self.tag_text('album'))
+        return cleaned if cleaned else self.tag_text('album')
 
     @cached_property
     def album_name_cleaned_plus_and_part(self):
