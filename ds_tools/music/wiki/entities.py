@@ -886,6 +886,12 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
             #     log.debug('Extracting aside')
             self.__side_info = aside.extract() if aside else None
 
+            for ele_id in ('wikipedia',):
+                rm_ele = content.find(id=ele_id)
+                if rm_ele:
+                    # log.debug('Extracting: {}'.format(rm_ele))
+                    rm_ele.extract()
+
             for ele_name in ('center',):
                 rm_ele = content.find(ele_name)
                 if rm_ele:
@@ -1542,6 +1548,16 @@ class WikiArtist(WikiPersonCollection):
                             no_fetch=True, name=name
                         )
                         discography.append(single)
+
+        by_title = defaultdict(list)
+        for entry in discography:
+            by_title[entry.title()].append(entry)
+
+        for title, entries in by_title.items():
+            if len(entries) > 1:
+                for entry in entries:
+                    entry.update_name('{} [{}]'.format(entry.english_name, entry.num_and_type), None, False)
+
         return discography
 
     @cached_property
@@ -2112,6 +2128,17 @@ class WikiSongCollection(WikiEntity):
                             self.cjk_name = cjk
                             break
 
+        if self._track_lists and disco_entry and self.english_name:
+            d_title = disco_entry.get('title') or version_title
+            d_lc_title = d_title.lower()
+            if LangCat.categorize(d_lc_title) == LangCat.ENG and d_lc_title != self.english_name.lower():
+                for track_list in self._track_lists:
+                    section = track_list.get('section')
+                    if isinstance(section, str) and section.lower() == d_lc_title:
+                        self.english_name = section
+                        self._intended = section, 1
+                        break
+
         self.name = multi_lang_name(self.english_name, self.cjk_name)
         if self._info:
             self.name = ' '.join(chain((self.name,), map('({})'.format, self._info)))
@@ -2237,7 +2264,6 @@ class WikiSongCollection(WikiEntity):
             return '{} {} {}'.format(self.album_num, lang.title(), self.album_type)
         return '{} {}'.format(self.album_num, self.album_type)
 
-    @cached()
     def title(self, hide_edition=False):
         extra = ' '.join(map('({})'.format, self._info)) if self._info else ''
         return '{} {}'.format(self.name, extra) if extra else self.name
