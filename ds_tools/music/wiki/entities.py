@@ -122,6 +122,7 @@ class WikiEntityMeta(type):
         orig_client = client
         # noinspection PyUnresolvedReferences
         cls_cat = cls._category
+        lang = disco_entry.get('language') if disco_entry else None
         alias_srcs = (name, aliases, disco_entry.get('title') if disco_entry and not no_fetch else None)
         _all_aliases = chain.from_iterable((a,) if isinstance(a, str) else a for a in alias_srcs if a)
         name_aliases = tuple(filter(None, _all_aliases))
@@ -154,7 +155,7 @@ class WikiEntityMeta(type):
                 if of_group and isinstance(of_group, WikiGroup):
                     return of_group.find_associated(name_aliases)
 
-                key = (uri_path, client, name_aliases)
+                key = (uri_path, client, name_aliases, lang)
                 obj = WikiEntityMeta._get_match(cls, key, client, cls_cat)  # Does a type check
                 if obj is not None:
                     return obj
@@ -231,7 +232,7 @@ class WikiEntityMeta(type):
         is_feat_collab = disco_entry and disco_entry.get('base_type') in ('features', 'collaborations', 'singles')
         if uri_path or is_feat_collab:
             uri_path = client.normalize_name(uri_path) if uri_path and ' ' in uri_path else uri_path
-            key = (uri_path, client, name_aliases)
+            key = (uri_path, client, name_aliases, lang)
             obj = WikiEntityMeta._get_match(cls, key, client, cls_cat)
             if obj is not None:
                 return obj
@@ -249,7 +250,7 @@ class WikiEntityMeta(type):
         else:
             exp_cls = cls
             raw = None
-            key = (uri_path, client, name_aliases)
+            key = (uri_path, client, name_aliases, lang)
 
         if key not in WikiEntityMeta._instances:
             obj = exp_cls.__new__(exp_cls, uri_path, client)
@@ -1555,8 +1556,21 @@ class WikiArtist(WikiPersonCollection):
 
         for title, entries in by_title.items():
             if len(entries) > 1:
+                by_lang = defaultdict(list)
                 for entry in entries:
-                    entry.update_name('{} [{}]'.format(entry.english_name, entry.num_and_type), None, False)
+                    by_lang[entry.language or 'Korean'].append(entry)
+
+                for lang, _entries in by_lang.items():
+                    # log.debug('{}: title={!r} has {} {} entries'.format(self, title, len(_entries), lang))
+                    suffix = ' ({} Ver.)'.format(lang) if lang != 'Korean' else ''
+                    if len(_entries) > 1:
+                        for entry in _entries:
+                            entry.update_name(
+                                '{}{} [{}]'.format(entry.english_name, suffix, entry.num_and_type), None, False
+                            )
+                    else:
+                        for entry in _entries:
+                            entry.update_name('{}{}'.format(entry.english_name, suffix), None, False)
 
         return discography
 
@@ -2285,10 +2299,11 @@ class WikiSongCollection(WikiEntity):
                 release_str = year or ''
             release_date = '[{}] '.format(release_str) if release_str else ''
 
+            title = '{}{}'.format(release_date, base_title)
             if numbered_type:
-                title = '{}{} [{}]'.format(release_date, base_title, self.num_and_type)
-            else:
-                title = '{}{}'.format(release_date, base_title)
+                suffix = ' [{}]'.format(self.num_and_type)
+                if not title.endswith(suffix):
+                    title += suffix
         else:
             title = base_title
 
