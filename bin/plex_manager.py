@@ -72,6 +72,7 @@ def main():
             else:
                 log.error('Unconfigured direction')
         elif args.sync_action == 'playlists':
+            plex.sync_playlist('K-Pop ALL', genre__like='[kj]-?pop')
             plex.sync_playlist('K-Pop 1 Star', userRating=2, genre__like='[kj]-?pop')
             plex.sync_playlist('K-Pop 2 Stars', userRating=4, genre__like='[kj]-?pop')
             plex.sync_playlist('K-Pop 3 Stars', userRating=6, genre__like='[kj]-?pop')
