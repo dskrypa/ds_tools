@@ -387,6 +387,8 @@ class LocalPlexServer:
     def sync_playlist(self, name, **criteria):
         expected = self.get_tracks(**criteria)
         playlists = self.playlists
+        add_fmt = 'Adding {:,d} tracks to playlist {} ({:,d} tracks => {:,d}):\n{}'
+        rm_fmt = 'Removing {:,d} tracks from playlist {} ({:,d} tracks => {:,d}):\n{}'
         if name not in playlists:
             log.info('Creating playlist {} with {:,d} tracks'.format(name, len(expected)))
             log.debug('Creating playlist {} with tracks: {}'.format(name, expected))
@@ -394,6 +396,7 @@ class LocalPlexServer:
         else:
             plist = playlists[name]
             plist_items = plist.items()
+            size = len(plist_items)
 
             to_rm = []
             for track in plist_items:
@@ -401,7 +404,8 @@ class LocalPlexServer:
                     to_rm.append(track)
 
             if to_rm:
-                log.info('Removing {:,d} tracks from playlist {}:\n{}'.format(len(to_rm), name, bullet_list(to_rm)))
+                log.info(rm_fmt.format(len(to_rm), name, size, size - len(to_rm), bullet_list(to_rm)))
+                size -= len(to_rm)
                 # for track in to_remove:
                 #     plist.removeItem(track)
                 plist.removeItems(to_rm)
@@ -414,8 +418,9 @@ class LocalPlexServer:
                     to_add.append(track)
 
             if to_add:
-                log.info('Adding {:,d} tracks to playlist {}:\n{}'.format(len(to_add), name, bullet_list(to_add)))
+                log.info(add_fmt.format(len(to_add), name, size, size + len(to_add), bullet_list(to_add)))
                 plist.addItems(to_add)
+                size += len(to_add)
             else:
                 log.log(19, 'Playlist {} is not missing any tracks'.format(name))
 
