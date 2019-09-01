@@ -80,6 +80,7 @@ def main():
             plex.sync_playlist('K-Pop 3 Stars', userRating=6, genre__like_exact='[kj]-?pop')
             plex.sync_playlist('K-Pop 3+ Stars', userRating__gte=6, genre__like_exact='[kj]-?pop')
             plex.sync_playlist('K-Pop 3\u00BD+ Stars', userRating__gte=7, genre__like_exact='[kj]-?pop')
+            plex.sync_playlist('K-Pop 4 Stars', userRating=8, genre__like_exact='[kj]-?pop')
             plex.sync_playlist('K-Pop 4+ Stars', userRating__gte=8, genre__like_exact='[kj]-?pop')
             plex.sync_playlist('K-Pop 5 Stars', userRating__gte=10, genre__like_exact='[kj]-?pop')
             plex.sync_playlist(
