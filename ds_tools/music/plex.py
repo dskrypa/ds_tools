@@ -283,12 +283,17 @@ class LocalPlexServer:
             for track in rated_tracks:
                 rated_tracks_by_artist_key[track.grandparentKey].add(track.title.lower())
 
+            pat = re.compile(r'(.*)\((?:Japanese|JP|Chinese|Mandarin)\s*(?:ver\.?(?:sion))?\)$', re.IGNORECASE)
+
             def _filter(elem_attrib):
                 titles = rated_tracks_by_artist_key[elem_attrib['grandparentKey']]
                 if not titles:
                     return True
                 title = elem_attrib['title'].lower()
                 if title in titles:
+                    return False
+                m = pat.match(title)
+                if m and m.group(1).strip() in titles:
                     return False
                 part = next((t for t in titles if t.startswith(title) or title.startswith(t)), None)
                 if not part:
