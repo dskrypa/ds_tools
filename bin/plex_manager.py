@@ -141,11 +141,11 @@ def parse_filters(obj_type, title, filters, escape, allow_inst):
         except Exception:
             pass
         else:
-            if op in ('regex', 'iregex', 'like', 'like2', 'not_like'):
+            if op in ('regex', 'iregex', 'like', 'like_exact', 'not_like'):
                 filters[key] = regexcape(val)
 
     if title:
-        filters.setdefault('title__like2', title)
+        filters.setdefault('title__like', title)
 
     if not allow_inst:
         filters.setdefault('title__not_like', 'inst(?:\.?|rumental)')
