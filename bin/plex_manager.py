@@ -116,11 +116,17 @@ def main():
 
 
 def parse_filters(obj_type, title, filters, escape):
+    """
+    :param str obj_type: Type of Plex object to find (tracks, albums, artists, etc)
+    :param list title: Parts of the name of the object(s) to find, if searching by title__like2
+    :param dict filters: Additional filters to apply during the search
+    :param escape: Characters that should be escaped instead of treated as special regex characters
+    :return tuple: (str(normalized object type), dict(filters))
+    """
     obj_type = obj_type[:-1] if obj_type.endswith('s') else obj_type
-    title = ' '.join(title) if title else None
-
     escape_tbl = str.maketrans({c: '\\' + c for c in '()[]{}^$+*.?|\\' if c in escape})
     regexcape = lambda text: text.translate(escape_tbl)
+    title = regexcape(' '.join(title)) if title else None
 
     for key, val in filters.items():
         try:
@@ -128,7 +134,7 @@ def parse_filters(obj_type, title, filters, escape):
         except Exception:
             pass
         else:
-            if op in ('regex', 'iregex', 'like', 'not_like'):
+            if op in ('regex', 'iregex', 'like', 'like2', 'not_like'):
                 filters[key] = regexcape(val)
 
     if title:
