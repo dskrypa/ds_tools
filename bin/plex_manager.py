@@ -37,6 +37,7 @@ def parser():
     find_parser.add_argument('obj_type', choices=obj_types, help='Object type')
     find_parser.add_argument('title', nargs='*', default=None, help='Object title (optional)')
     find_parser.add_argument('--escape', '-e', default='()', help='Escape the provided regex special characters (default: %(default)r)')
+    find_parser.add_argument('--allow_inst', '-I', action='store_true', help='Allow search results that include instrumental versions of songs')
     find_parser.add_argument('query', nargs=argparse.REMAINDER, help='Query in the format --field[__operation] value; valid operations: {}'.format(ops))
 
     rate_parser = parser.add_subparser('action', 'rate', help='Update ratings in Plex')
@@ -44,6 +45,7 @@ def parser():
     rate_parser.add_argument('rating', type=int, help='Rating out of 10')
     rate_parser.add_argument('title', nargs='*', default=None, help='Object title (optional)')
     rate_parser.add_argument('--escape', '-e', default='()', help='Escape the provided regex special characters (default: %(default)r)')
+    rate_parser.add_argument('--allow_inst', '-I', action='store_true', help='Allow search results that include instrumental versions of songs')
     rate_parser.add_argument('query', nargs=argparse.REMAINDER, help='Query in the format --field[__operation] value; valid operations: {}'.format(ops))
 
     parser.add_common_sp_arg('--server_path_root', '-r', metavar='PATH', help='The root of the path to use from this computer to generate paths to files from the path used by Plex.  When you click on the "..." for a song in Plex and click "Get Info", there will be a path in the "Files" box - for example, "/media/Music/a_song.mp3".  If you were to access that file from this computer, and the path to that same file is "//my_nas/media/Music/a_song.mp3", then the server_path_root would be "//my_nas/" (only needed when not already cached)')
@@ -92,7 +94,7 @@ def main():
         else:
             log.error('Unconfigured sync action')
     elif args.action == 'find':
-        obj_type, kwargs = parse_filters(args.obj_type, args.title, dynamic, args.escape)
+        obj_type, kwargs = parse_filters(args.obj_type, args.title, dynamic, args.escape, args.allow_inst)
         objects = plex.find_objects(obj_type, **kwargs)
         if objects:
             print(bullet_list(objects))
@@ -101,7 +103,7 @@ def main():
     elif args.action == 'rate':
         if args.rating < 0 or args.rating > 10:
             raise ValueError('Ratings must be between 0 and 10')
-        obj_type, kwargs = parse_filters(args.obj_type, args.title, dynamic, args.escape)
+        obj_type, kwargs = parse_filters(args.obj_type, args.title, dynamic, args.escape, args.allow_inst)
         objects = plex.find_objects(obj_type, **kwargs)
         if not objects:
             log.warning('No results.')
@@ -118,12 +120,13 @@ def main():
         log.error('Unconfigured action')
 
 
-def parse_filters(obj_type, title, filters, escape):
+def parse_filters(obj_type, title, filters, escape, allow_inst):
     """
     :param str obj_type: Type of Plex object to find (tracks, albums, artists, etc)
     :param list title: Parts of the name of the object(s) to find, if searching by title__like2
     :param dict filters: Additional filters to apply during the search
     :param escape: Characters that should be escaped instead of treated as special regex characters
+    :param bool allow_inst: Allow search results that include instrumental versions of songs
     :return tuple: (str(normalized object type), dict(filters))
     """
     obj_type = obj_type[:-1] if obj_type.endswith('s') else obj_type
@@ -142,6 +145,9 @@ def parse_filters(obj_type, title, filters, escape):
 
     if title:
         filters.setdefault('title__like2', title)
+
+    if not allow_inst:
+        filters.setdefault('title__not_like', 'inst(?:\.?|rumental)')
 
     log.debug('obj_type={}, title={!r} => query={}'.format(obj_type, title, filters))
     return obj_type, filters
