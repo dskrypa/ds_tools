@@ -11,7 +11,7 @@ sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
 from ds_tools.argparsing import ArgParser
 from ds_tools.core import wrap_main
 from ds_tools.logging import LogManager
-from ds_tools.music import apply_mutagen_patches
+from ds_tools.music import apply_mutagen_patches, track_repr
 from ds_tools.music.plex import LocalPlexServer
 from ds_tools.output import bullet_list
 
@@ -106,9 +106,11 @@ def main():
         if not objects:
             log.warning('No results.')
         else:
+            prefix = '[DRY RUN] Would update' if args.dry_run else 'Updating'
             for obj in objects:
-                log.info('{}: updating rating to {}'.format(obj, args.rating))
-                obj.edit(**{'userRating.value': args.rating})
+                log.info('{} {} => {}'.format(prefix, obj, track_repr(obj, args.rating)))
+                if not args.dry_run:
+                    obj.edit(**{'userRating.value': args.rating})
     else:
         log.error('Unconfigured action')
 

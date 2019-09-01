@@ -17,7 +17,7 @@ from plexapi.playlist import Playlist
 
 from .utils import stars
 
-__all__ = ['tag_repr', 'apply_mutagen_patches', 'apply_plex_patches']
+__all__ = ['tag_repr', 'apply_mutagen_patches', 'apply_plex_patches', 'track_repr']
 log = logging.getLogger(__name__)
 
 # Translate whitespace characters (such as \n, \r, etc.) to their escape sequences
@@ -66,6 +66,16 @@ def apply_mutagen_patches():
 
     MP4Cover.__repr__ = _MP4Cover_repr
     MP4FreeForm.__repr__ = _MP4FreeForm_repr
+
+
+def cls_name(obj):
+    return type(obj).__name__
+
+
+def track_repr(self, rating=None):
+    fmt = '<{}#{}[{}]({!r}, artist={!r}, album={!r})>'
+    rating = stars(rating or self.userRating)
+    return fmt.format(cls_name(self), self._int_key(), rating, self.title, self.grandparentTitle, self.parentTitle)
 
 
 def apply_plex_patches(deinit_colorama=True):
@@ -235,14 +245,6 @@ def apply_plex_patches(deinit_colorama=True):
         results = [self._server.query(uri_fmt.format(item.playlistItemID), method=del_method) for item in items]
         self.reload()
         return results
-
-    def cls_name(obj):
-        return type(obj).__name__
-
-    def track_repr(self):
-        fmt = '<{}#{}[{}]({!r}, artist={!r}, album={!r})>'
-        rating = stars(self.userRating)
-        return fmt.format(cls_name(self), self._int_key(), rating, self.title, self.grandparentTitle, self.parentTitle)
 
     def album_repr(self):
         fmt = '<{}#{}[{}]({!r}, artist={!r}, genres={})>'
