@@ -87,7 +87,7 @@ def main():
                 userRating=0,
                 genre__like_exact='[kj]-?pop',
                 genre__not_like='christmas',
-                title__not_like=r'(?:^|\()(?:intro|outro)(?:$|\s|:|\))|\(inst(?:\.?|rumental)|(?:japanese|jp|karaoke|mandarin|chinese) ver(?:\.|sion)|christmas|santa',
+                title__not_like=r'(?:^|\()(?:intro|outro)(?:$|\s|:|\))|\(inst(?:\.?|rumental)|(?:japanese|jp|karaoke|mandarin|chinese) ver(?:\.|sion)|christmas|santa|remix',
                 parentTitle__not_like='christmas|santa',
                 duration__gte=60000,
                 exclude_rated_dupes=True

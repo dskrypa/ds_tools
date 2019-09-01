@@ -387,10 +387,10 @@ class LocalPlexServer:
     def sync_playlist(self, name, **criteria):
         expected = self.get_tracks(**criteria)
         playlists = self.playlists
-        add_fmt = 'Adding {:,d} tracks to playlist {} ({:,d} tracks => {:,d}):\n{}'
-        rm_fmt = 'Removing {:,d} tracks from playlist {} ({:,d} tracks => {:,d}):\n{}'
+        add_fmt = 'Adding {:,d} tracks to playlist {} ({:,d} tracks => {:,d}):'
+        rm_fmt = 'Removing {:,d} tracks from playlist {} ({:,d} tracks => {:,d}):'
         if name not in playlists:
-            log.info('Creating playlist {} with {:,d} tracks'.format(name, len(expected)))
+            log.info('Creating playlist {} with {:,d} tracks'.format(name, len(expected)), extra={'color': 10})
             log.debug('Creating playlist {} with tracks: {}'.format(name, expected))
             plist = self.create_playlist(name, expected)
         else:
@@ -404,7 +404,8 @@ class LocalPlexServer:
                     to_rm.append(track)
 
             if to_rm:
-                log.info(rm_fmt.format(len(to_rm), name, size, size - len(to_rm), bullet_list(to_rm)))
+                log.info(rm_fmt.format(len(to_rm), name, size, size - len(to_rm)), extra={'color': 13})
+                print(bullet_list(to_rm))
                 size -= len(to_rm)
                 # for track in to_remove:
                 #     plist.removeItem(track)
@@ -418,7 +419,8 @@ class LocalPlexServer:
                     to_add.append(track)
 
             if to_add:
-                log.info(add_fmt.format(len(to_add), name, size, size + len(to_add), bullet_list(to_add)))
+                log.info(add_fmt.format(len(to_add), name, size, size + len(to_add)), extra={'color': 14})
+                print(bullet_list(to_add))
                 plist.addItems(to_add)
                 size += len(to_add)
             else:
@@ -426,7 +428,7 @@ class LocalPlexServer:
 
             if not to_add and not to_rm:
                 fmt = 'Playlist {} contains {:,d} tracks and is already in sync with the given criteria'
-                log.info(fmt.format(name, len(plist_items)))
+                log.info(fmt.format(name, len(plist_items)), extra={'color': 11})
 
 
 def print_song_info(songs):
