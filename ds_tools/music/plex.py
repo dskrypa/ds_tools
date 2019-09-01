@@ -111,6 +111,7 @@ CUSTOM_FILTERS = {
 }
 CUSTOM_OPS = {
     '__like': 'sregex',
+    '__like2': 'sregex',
     '__not_like': 'nsregex'
 }
 
@@ -211,6 +212,8 @@ class LocalPlexServer:
             if keyword:
                 kwargs.pop(filter_key)
                 target_key = '{}__{}'.format(filter_key[:-len(keyword)], CUSTOM_OPS[keyword])
+                if keyword == '__like2' and isinstance(filter_val, str):
+                    filter_val = filter_val.replace(' ', '.*?')
                 filter_val = re.compile(filter_val, re.IGNORECASE) if isinstance(filter_val, str) else filter_val
                 log.debug('Replacing {!r} with {}={}'.format(filter_key, target_key, short_repr(filter_val)))
                 kwargs[target_key] = filter_val
