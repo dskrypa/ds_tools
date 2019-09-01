@@ -207,6 +207,24 @@ class ArgParser(ArgumentParser):
         update_subparser_constants(self, parsed)
         return parsed
 
+    def _get_subparser(self, kwargs):
+        parser = self
+        for dest, sp_group in self.subparsers.items():
+            try:
+                name = kwargs[dest]
+            except KeyError:
+                pass
+            else:
+                parser = sp_group._name_parser_map[name]
+                break
+
+        if parser is not self:
+            try:
+                return parser._get_subparser(kwargs)
+            except AttributeError:
+                pass
+        return parser
+
     def parse_with_dynamic_args(self, from_field, args=None, namespace=None, req_subparser_value=False):
         parsed = self.parse_args(args, namespace, req_subparser_value)
         try:
@@ -216,14 +234,33 @@ class ArgParser(ArgumentParser):
 
         dynamic_str = ' '.join(dynamic) if not isinstance(dynamic, str) else dynamic
         # print('Base args: {}\nProcessing args: {!r}'.format(parsed.__dict__, dynamic_str))
-        parser = type(self)(parents=[self], add_help=False)
+        parser = self._get_subparser(dict(parsed._get_kwargs()))
+        rm_action = next((act for act in self._actions if act.dest == from_field), None)
+        if rm_action is not None:
+            # print('Removing action: {}'.format(rm_action))
+            self._remove_action(rm_action)
+        else:
+            rm_action = next((act for act in parser._actions if act.dest == from_field), None)
+            if rm_action is not None:
+                # print('Removing action: {}'.format(rm_action))
+                parser._remove_action(rm_action)
+
         pat = re.compile(r'(?:^|\s)(--?\S+?)[=\s]')
         for m in pat.finditer(dynamic_str):
             key = m.group(1)
             # print('Found key: {!r}'.format(key))
             parser.add_argument(key, nargs='+')
 
-        re_parsed = parser.parse_args(dynamic)
+        def _get_default(key):
+            base_default = self.get_default(key)
+            sp_default = parser.get_default(key)
+            if base_default is None and sp_default is not None:
+                return sp_default
+            elif base_default is not None and sp_default is None:
+                return base_default
+            return sp_default
+
+        re_parsed = self.parse_args(args, namespace, req_subparser_value)
         newly_parsed = {}
         for k, v in re_parsed._get_kwargs():
             try:
@@ -235,9 +272,12 @@ class ArgParser(ArgumentParser):
                 except ParserError:
                     newly_parsed[k] = ' '.join(v)
             else:
-                if self.get_default(k) == orig and v != orig:
-                    # print('Updating parsed[{!r}] => {!r}'.format(k, v))
-                    parsed.__dict__[k] = v
+                if v != orig:
+                    default = _get_default(k)
+                    # print('Different value found for key={!r}: orig={!r} new={!r} default={!r}'.format(k, orig, v, default))
+                    if default == orig:
+                        # print('Updating parsed[{!r}] => {!r}'.format(k, v))
+                        parsed.__dict__[k] = v
 
         # print('re-parsed: {}\nnewly parsed: {}'.format(re_parsed.__dict__, newly_parsed))
         # print('Final parsed args: {}'.format(parsed.__dict__))
