@@ -1727,7 +1727,7 @@ def iter_music_albums(paths):
 
 
 def iter_music_files(paths, include_backups=False):
-    if isinstance(paths, str):
+    if isinstance(paths, (str, Path)):
         paths = [paths]
 
     for path in paths:
