@@ -106,6 +106,7 @@ def apply_plex_patches(deinit_colorama=True):
         'notset': lambda v, q: (not v) if q else v,
         'is_odd': lambda v, q: divmod(int(float(v)), 2)[1],
         'is_even': lambda v, q: not divmod(int(float(v)), 2)[1],
+        'not_in': lambda v, q: v not in q
     })
     op_cache = {}
 
@@ -258,10 +259,14 @@ def apply_plex_patches(deinit_colorama=True):
         genres = ', '.join(g.tag for g in self.genres)
         return fmt.format(cls_name(self), self._int_key(), rating, self.title, genres)
 
+    def full_info(ele):
+        return {'_type': ele.tag, 'attributes': ele.attrib, 'elements': [full_info(e) for e in ele]}
+
     PlexObject._getAttrOperator = _get_attr_operator
     PlexObject._checkAttrs = _checkAttrs
     PlexObject._int_key = lambda self: int(self._clean(self.key))
     PlexObject.__lt__ = lambda self, other: int(self._clean(self.key)) < int(other._clean(other.key))
+    PlexObject.as_dict = lambda self: full_info(self._data)
 
     Playlist.removeItems = removeItems
     Track.__repr__ = track_repr

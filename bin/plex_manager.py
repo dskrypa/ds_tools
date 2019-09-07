@@ -13,7 +13,7 @@ from ds_tools.core import wrap_main
 from ds_tools.logging import LogManager
 from ds_tools.music import apply_mutagen_patches, stars
 from ds_tools.music.plex import LocalPlexServer
-from ds_tools.output import bullet_list
+from ds_tools.output import bullet_list, Printer
 
 log = logging.getLogger('ds_tools.{}'.format(__name__))
 
@@ -38,6 +38,8 @@ def parser():
     find_parser.add_argument('title', nargs='*', default=None, help='Object title (optional)')
     find_parser.add_argument('--escape', '-e', default='()', help='Escape the provided regex special characters (default: %(default)r)')
     find_parser.add_argument('--allow_inst', '-I', action='store_true', help='Allow search results that include instrumental versions of songs')
+    find_parser.add_argument('--full_info', '-F', action='store_true', help='Print all available info about the discovered objects')
+    find_parser.add_argument('--format', '-f', choices=Printer.formats, default='json-pretty', help='Output format to use for --full_info (default: %(default)s)')
     find_parser.add_argument('query', nargs=argparse.REMAINDER, help='Query in the format --field[__operation] value; valid operations: {}'.format(ops))
 
     rate_parser = parser.add_subparser('action', 'rate', help='Update ratings in Plex')
@@ -86,8 +88,8 @@ def main():
             plex.sync_playlist(
                 'K-Pop Unrated',
                 userRating=0,
-                genre__like_exact='[kj]-?pop',
-                genre__not_like='christmas',
+                genre__like_exact='k-?pop',
+                genre__not__like='christmas',
                 title__not_like=r'(?:^|\()(?:intro|outro)(?:$|\s|:|\))|\(inst(?:\.?|rumental)|(?:japanese|jp|karaoke|mandarin|chinese) ver(?:\.|sion)|christmas|santa|remix',
                 parentTitle__not_like='christmas|santa',
                 duration__gte=60000,
@@ -96,10 +98,14 @@ def main():
         else:
             log.error('Unconfigured sync action')
     elif args.action == 'find':
+        p = Printer(args.format)
         obj_type, kwargs = parse_filters(args.obj_type, args.title, dynamic, args.escape, args.allow_inst)
         objects = plex.find_objects(obj_type, **kwargs)
         if objects:
-            print(bullet_list(objects))
+            if args.full_info:
+                p.pprint({repr(obj): obj.as_dict() for obj in objects})
+            else:
+                print(bullet_list(objects))
         else:
             log.warning('No results.')
     elif args.action == 'rate':
