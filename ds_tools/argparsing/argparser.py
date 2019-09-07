@@ -245,11 +245,19 @@ class ArgParser(ArgumentParser):
                 # print('Removing action: {}'.format(rm_action))
                 parser._remove_action(rm_action)
 
+        known_options = set()
+        for act in chain(self._actions, parser._actions):
+            # print('Adding known options: {}'.format(act.option_strings))
+            known_options.update(act.option_strings)
+
         pat = re.compile(r'(?:^|\s)(--?\S+?)[=\s]')
         for m in pat.finditer(dynamic_str):
             key = m.group(1)
             # print('Found key: {!r}'.format(key))
-            parser.add_argument(key, nargs='+')
+            if key not in known_options:
+                parser.add_argument(key, nargs='+')
+            # else:
+            #     print('Skipping known key: {!r}'.format(key))
 
         def _get_default(key):
             base_default = self.get_default(key)
