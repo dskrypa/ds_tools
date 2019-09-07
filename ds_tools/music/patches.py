@@ -101,6 +101,7 @@ def apply_plex_patches(deinit_colorama=True):
         'eq': lambda v, q: v == q,
         'ieq': lambda v, q: v.lower() == q.lower(),
         'sregex': lambda v, pat: pat.search(v),
+        # 'nsregex': lambda v, pat: print('{} !~ {!r}: {}'.format(pat, v, not pat.search(v))) or not pat.search(v),
         'nsregex': lambda v, pat: not pat.search(v),
         'is': lambda v, q: v is q,
         'notset': lambda v, q: (not v) if q else v,
@@ -188,29 +189,46 @@ def apply_plex_patches(deinit_colorama=True):
             return func
 
     def get_attr_value(elem, attrstr, results=None):
-        # log.debug('Fetching %s in %s', attrstr, elem.tag)
+        # log.debug('Fetching {} in {}'.format(attrstr, elem.tag))
         try:
             attr, attrstr = attrstr.split('__', 1)
         except ValueError:
             lc_attr = attrstr.lower()
             # check were looking for the tag
             if lc_attr == 'etag':
+                # if elem.tag == 'Genre':
+                #     log.debug('Returning [{}]'.format(elem.tag))
                 return [elem.tag]
             # loop through attrs so we can perform case-insensitive match
             for _attr, value in elem.attrib.items():
                 if lc_attr == _attr.lower():
+                    # if elem.tag == 'Genre':
+                    #     log.debug('Returning {}'.format(value))
                     return [value]
+            # if elem.tag == 'Genre':
+            #     log.debug('Returning []')
             return []
         else:
             lc_attr = attr.lower()
             results = [] if results is None else results
             for child in (c for c in elem if c.tag.lower() == lc_attr):
                 results += get_attr_value(child, attrstr, results)
+            # if elem.tag == 'Genre':
+            #     log.debug('Returning {}'.format([r for r in results if r is not None]))
             return [r for r in results if r is not None]
+
+    def _cast(cast, value, attr, elem):
+        try:
+            return cast(value)
+        except ValueError:
+            log.error('Unable to cast attr={} value={} from elem={}'.format(attr, value, elem))
+            raise
 
     def _checkAttrs(self, elem, **kwargs):
         for attr, query in kwargs.items():
             attr, op, operator = _get_attr_operator(None, attr)
+            # if op == 'nsregex':
+            #     log.debug('Processing {!r} with op={}'.format(elem.attrib.get('title'), op))
             if op == 'custom':
                 if not query(elem.attrib):
                     return False
@@ -226,17 +244,16 @@ def apply_plex_patches(deinit_colorama=True):
                 else:
                     cast = cast_func(op, query)
                     # return if attr were looking for is missing
-                    for value in values:
-                        try:
-                            value = cast(value)
-                        except ValueError:
-                            log.error('Unable to cast attr={} value={} from elem={}'.format(attr, value, elem))
-                            raise
-                        else:
-                            if operator(value, query):
-                                break
+                    if op in ('ne', 'nsregex') or 'not' in op:
+                        # If any value is not truthy for a negative filter, then it should be filtered out
+                        if not all(operator(_cast(cast, value, attr, elem), query) for value in values):
+                            return False
                     else:
-                        return False
+                        for value in values:
+                            if operator(_cast(cast, value, attr, elem), query):
+                                break
+                        else:
+                            return False
         return True
 
     def removeItems(self, items):

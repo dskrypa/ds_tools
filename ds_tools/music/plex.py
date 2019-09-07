@@ -207,6 +207,7 @@ class LocalPlexServer:
         :return dict: Modified kwargs with custom search filters
         """
         exclude_rated_dupes = kwargs.pop('exclude_rated_dupes', False)
+        # Replace custom/shorthand ops with the real operators
         for filter_key, filter_val in sorted(kwargs.items()):
             keyword = next((val for val in CUSTOM_OPS if filter_key.endswith(val)), None)
             if keyword:
@@ -215,9 +216,11 @@ class LocalPlexServer:
                 if keyword == '__like' and isinstance(filter_val, str):
                     filter_val = filter_val.replace(' ', '.*?')
                 filter_val = re.compile(filter_val, re.IGNORECASE) if isinstance(filter_val, str) else filter_val
-                log.debug('Replacing {!r} with {}={}'.format(filter_key, target_key, short_repr(filter_val)))
+                log.debug('Replacing custom op {!r} with {}={}'.format(filter_key, target_key, short_repr(filter_val)))
                 kwargs[target_key] = filter_val
 
+        # Perform intermediate searches that are necessary for custom filters
+        filter_repl_fmt = 'Replacing custom filter {!r} with {}={}'
         for kw, (ekey, field, targets) in sorted(CUSTOM_FILTERS.items()):
             us_key = '{}__'.format(kw)
             try:
@@ -227,8 +230,9 @@ class LocalPlexServer:
                     for filter_key in {k for k in kwargs if k == kw or k.startswith(us_key)}:
                         if filter_key.startswith('genre') and not filter_key.startswith('genre__tag'):
                             target_key = filter_key.replace('genre', 'genre__tag', 1)
-                            log.debug('Replacing {} with {}'.format(filter_key, target_key))
-                            kwargs[target_key] = kwargs.pop(filter_key)
+                            filter_val = kwargs.pop(filter_key)
+                            log.debug(filter_repl_fmt.format(filter_key, target_key, short_repr(filter_val)))
+                            kwargs[target_key] = filter_val
                 elif kw == 'in_playlist':
                     target_key = 'key__in'
                     for filter_key in {k for k in kwargs if k == kw or k.startswith(us_key)}:
@@ -236,11 +240,11 @@ class LocalPlexServer:
                         lc_val = filter_val.lower()
                         for pl_name, playlist in self.playlists.items():
                             if pl_name.lower() == lc_val:
-                                log.debug('Replacing {} with {}'.format(filter_key, target_key))
+                                log.debug(filter_repl_fmt.format(filter_key, target_key, short_repr(filter_val)))
                                 keys = {track.key for track in playlist.items()}
                                 if target_key in kwargs:
                                     keys = keys.intersection(kwargs[target_key])
-                                    log.debug('Merging {} values: {}'.format(target_key, short_repr(keys)))
+                                    log.debug('Merged filter={!r} values => {}'.format(target_key, short_repr(keys)))
                                 kwargs[target_key] = keys
                                 break
                         else:
@@ -263,17 +267,24 @@ class LocalPlexServer:
 
                     ekey_filters['{}__{}'.format(field, op)] = filter_val
 
+                fmt = 'Performing intermediate search for custom filters={}: ekey={!r} with filters={}'
+                custom_filter_keys = '+'.join(sorted(kw_keys))
+                filter_repr = ', '.join('{}={}'.format(k, short_repr(v)) for k, v in ekey_filters.items())
+                log.debug(fmt.format(ekey, custom_filter_keys, filter_repr))
                 results = self.music.fetchItems(self._ekey(ekey), **ekey_filters)
                 if obj_type == 'album' and target_key == 'key__in':
                     keys = {'{}/children'.format(a.key) for a in results}
                 else:
                     keys = {a.key for a in results}
-                log.debug('Replacing {} with {}={}'.format('+'.join(sorted(kw_keys)), target_key, short_repr(keys)))
+
+                fmt = 'Replacing custom filters {} with {}={}'
+                log.debug(fmt.format(custom_filter_keys, target_key, short_repr(keys)))
                 if target_key in kwargs:
                     keys = keys.intersection(kwargs[target_key])
                     log.debug('Merging {} values: {}'.format(target_key, short_repr(keys)))
                 kwargs[target_key] = keys
 
+        # If excluding rated dupes, search for the tracks that were rated and have the same titles as unrated tracks
         if exclude_rated_dupes and obj_type == 'track' and 'userRating' in kwargs:
             dupe_kwargs = kwargs.copy()
             dupe_kwargs.pop('userRating')
