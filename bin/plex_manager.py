@@ -39,7 +39,7 @@ def parser():
     find_parser.add_argument('--escape', '-e', default='()', help='Escape the provided regex special characters (default: %(default)r)')
     find_parser.add_argument('--allow_inst', '-I', action='store_true', help='Allow search results that include instrumental versions of songs')
     find_parser.add_argument('--full_info', '-F', action='store_true', help='Print all available info about the discovered objects')
-    find_parser.add_argument('--format', '-f', choices=Printer.formats, default='json-pretty', help='Output format to use for --full_info (default: %(default)s)')
+    find_parser.add_argument('--format', '-f', choices=Printer.formats, default='yaml', help='Output format to use for --full_info (default: %(default)s)')
     find_parser.add_argument('query', nargs=argparse.REMAINDER, help='Query in the format --field[__operation] value; valid operations: {}'.format(ops))
 
     rate_parser = parser.add_subparser('action', 'rate', help='Update ratings in Plex')
