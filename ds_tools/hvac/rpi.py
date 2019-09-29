@@ -16,6 +16,8 @@ except ImportError:
     class SenseHat:
         pass
 
+from ..http import RestClient
+
 __all__ = ['EnvSensor']
 log = logging.getLogger(__name__)
 
@@ -25,14 +27,20 @@ class EnvSensor:
         self._sh = SenseHat()
         self.get_humidity = self._sh.get_humidity   # Relative humidity (%)
         self.get_pressure = self._sh.get_pressure   # Pressure in Millibars
+        self._2b = RestClient('rpi2b', 5000)
 
     def get_temps(self):
         cpu_temp = sensors_temperatures()['cpu-thermal'][0].current
+        try:
+            temp_real = self._2b.get('read', timeout=10).json()['temperature']
+        except Exception as e:
+            log.debug(f'error getting temp: {e}')
+            temp_real = None
         sh = self._sh
         temp_a = sh.get_temperature()
         temp_b = sh.get_temperature_from_humidity()
         temp_c = sh.get_temperature_from_pressure()
-        return cpu_temp, temp_a, temp_b, temp_c
+        return cpu_temp, temp_real, temp_a, temp_b, temp_c
 
     def get_temperature(self):
         try:
