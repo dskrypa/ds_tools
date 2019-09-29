@@ -6,3 +6,4 @@ Library for interacting with a Nest thermostat and other HVAC-related utilities.
 
 from .utils import *
 from .nest import *
+from .rpi import *

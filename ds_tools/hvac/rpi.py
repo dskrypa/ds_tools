@@ -16,7 +16,7 @@ except ImportError:
     class SenseHat:
         pass
 
-__all__ = []
+__all__ = ['EnvSensor']
 log = logging.getLogger(__name__)
 
 
@@ -25,6 +25,14 @@ class EnvSensor:
         self._sh = SenseHat()
         self.get_humidity = self._sh.get_humidity   # Relative humidity (%)
         self.get_pressure = self._sh.get_pressure   # Pressure in Millibars
+
+    def get_temps(self):
+        cpu_temp = sensors_temperatures()['cpu-thermal'][0].current
+        sh = self._sh
+        temp_a = sh.get_temperature()
+        temp_b = sh.get_temperature_from_humidity()
+        temp_c = sh.get_temperature_from_pressure()
+        return cpu_temp, temp_a, temp_b, temp_c
 
     def get_temperature(self):
         try:
