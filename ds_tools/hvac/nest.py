@@ -149,7 +149,7 @@ class NestWebClient(RestClient):
             info[serial][bucket_type] = bucket['value']
         return info
 
-    def get_state(self, serial=None):
+    def get_state(self, serial=None, fahrenheit=True):
         serial = self._validate_serial(serial)
         resp = self.app_launch(['device', 'shared'])
         info = resp[serial]
@@ -166,7 +166,7 @@ class NestWebClient(RestClient):
         state = {}
         for section, keys in temps.items():
             for key in keys:
-                state[key] = c2f(info[section][key])
+                state[key] = c2f(info[section][key]) if fahrenheit else info[section][key]
         for section, keys in non_temps.items():
             for key in keys:
                 state[key] = info[section][key]
