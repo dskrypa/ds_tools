@@ -14,7 +14,7 @@ import traceback
 import uuid
 from pathlib import Path
 
-import adafruit_dht as dht
+import Adafruit_DHT as dht
 import eventlet
 from flask import Flask, request, Response, jsonify
 from flask_socketio import SocketIO
