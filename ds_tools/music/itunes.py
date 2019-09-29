@@ -83,7 +83,7 @@ class ItunesLibrary:
             song_path = unescape(unquote(val_rx.match(loc).group(2)[17:]))
             file = SongFile(song_path)
             try:
-                file_stars = file.star_rating
+                file_stars = file.star_rating_10
             except Exception as e:
                 log.error('Error on {}'.format(song_path))
                 raise e
@@ -92,7 +92,7 @@ class ItunesLibrary:
                 itunes_rating = track_dict.get('Rating')
                 if itunes_rating is not None:
                     val = val_rx.match(itunes_rating[1]).group(2)
-                    itunes_stars = int(val) / 20
+                    itunes_stars = int(val) / 10
                 else:
                     itunes_stars = None
 
@@ -104,10 +104,10 @@ class ItunesLibrary:
                         changed = True
                         if itunes_rating is not None:
                             idx = itunes_rating[0]
-                            track[0][idx] = rating_fmt.format(file_stars * 20)
+                            track[0][idx] = rating_fmt.format(file_stars * 10)
                         else:
                             idx = track_dict['Sample Rate'][0] + 1
-                            track[0].insert(idx, rating_fmt.format(file_stars * 20))
+                            track[0].insert(idx, rating_fmt.format(file_stars * 10))
 
         if changed and not dry_run:
             track_lines = []
