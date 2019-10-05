@@ -9,6 +9,7 @@ import time
 from concurrent import futures
 from itertools import cycle
 from pathlib import Path
+from threading import Event
 
 from ..core import format_duration
 from ..output import readable_bytes
@@ -37,7 +38,7 @@ def copy_file(src_path, dst_path, verify=False, block_size=10485760):
     spinner = cycle('|/-\\')
     copied = 0
     elapsed = 0
-    can_run = True
+    finished = Event()
 
     def update_progress(_copied, _elapsed):
         nonlocal copied, elapsed
@@ -48,12 +49,12 @@ def copy_file(src_path, dst_path, verify=False, block_size=10485760):
         # Run this in a separate thread so that it doesn't slow down the copy thread
         pct = copied / src_size
         rate = readable_bytes((copied / elapsed) if elapsed else 0)
-        while can_run and pct < 1:
+        while not finished.is_set() and pct < 1:
             rate = readable_bytes((copied / elapsed) if elapsed else 0)
             pct_chars = int(pct * 10)
             bar = '{}{}{}'.format('=' * pct_chars, next(spinner), ' ' * (9 - pct_chars))
             print(fmt.format(format_duration(int(elapsed)), rate, pct, bar), end='' if pct < 1 else '\n')
-            time.sleep(0.3)
+            finished.wait(0.3)
             pct = copied / src_size
 
         if pct == 1:
@@ -69,7 +70,7 @@ def copy_file(src_path, dst_path, verify=False, block_size=10485760):
             try:
                 future.result()
             except BaseException:
-                can_run = False
+                finished.set()
                 print()
                 if dst_path.exists():
                     log.warning('Deleting incomplete {}'.format(dst_path))
@@ -99,17 +100,17 @@ def _copy_file(src_path, dst_path, cb, verify=False, block_size=10485760):
     :param int block_size: Number of bytes to read at a time (default: 10MB)
     """
     copied = 0
-    start = time.time()
+    start = time.monotonic()
     with src_path.open('rb') as src:
         with dst_path.open('wb') as dst:
             buf = src.read(block_size)
             while len(buf) > 0:
                 written = dst.write(buf)
                 copied += written
-                elapsed = time.time() - start
+                elapsed = time.monotonic() - start
                 if elapsed >= 0.3:
                     cb(copied, elapsed)
                 buf = src.read(block_size)
 
-            elapsed = time.time() - start
+            elapsed = time.monotonic() - start
             cb(copied, elapsed)
