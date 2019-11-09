@@ -75,7 +75,8 @@ def cls_name(obj):
 def track_repr(self, rating=None):
     fmt = '<{}#{}[{}]({!r}, artist={!r}, album={!r})>'
     rating = stars(rating or self.userRating)
-    return fmt.format(cls_name(self), self._int_key(), rating, self.title, self.grandparentTitle, self.parentTitle)
+    artist = self.originalTitle if self.grandparentTitle == 'Various Artists' else self.grandparentTitle
+    return fmt.format(cls_name(self), self._int_key(), rating, self.title, artist, self.parentTitle)
 
 
 def apply_plex_patches(deinit_colorama=True):
