@@ -810,7 +810,7 @@ def parse_discography_section(artist, clean_soup):
 
                 links = link_tuples(li.find_all('a'))
                 if not links and last_li and from_ul:
-                    links = link_tuples(last_li.find_all('a'))
+                    links = tuple((text, href) for text, href in link_tuples(last_li.find_all('a')) if text in li)
                 entry = parse_discography_entry(artist, li, album_type, lang, num, links)
                 if entry:
                     # log.debug('Adding disco entry for {}: type={} lang={} li={}'.format(artist, album_type, lang, li))
