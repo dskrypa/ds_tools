@@ -19,8 +19,7 @@ log = logging.getLogger(__name__)
 
 class ItunesLibrary:
     def __init__(self, lib_path=None):
-        self.lib_path = Path(lib_path if lib_path else '~/Music/iTunes/iTunes Music Library.xml').expanduser().resolve()
-
+        self.lib_path = Path(lib_path if lib_path else '~/Music/iTunes/Library.xml').expanduser().resolve()
         with self.lib_path.open('r', encoding='utf-8') as f:
             self._content = f.read()
 
@@ -76,7 +75,8 @@ class ItunesLibrary:
         val_rx = re.compile(r'<([^>]+)>(.*)</\1>')
         rating_fmt = '\t\t\t<key>Rating</key><integer>{}</integer>'
 
-        changed = False
+        already_correct = 0
+        changed = 0
         for track_key, track in self.tracks.items():
             track_dict = track[1]
             loc = track_dict['Location'][1]
@@ -85,29 +85,34 @@ class ItunesLibrary:
             try:
                 file_stars = file.star_rating_10
             except Exception as e:
-                log.error('Error on {}'.format(song_path))
-                raise e
+                log.error('Error on {}: {}'.format(song_path, e), extra={'color': 'red'})
+            else:
+                if file_stars is not None:
+                    itunes_rating = track_dict.get('Rating')
+                    if itunes_rating is not None:
+                        val = val_rx.match(itunes_rating[1]).group(2)
+                        itunes_stars = int(val) / 10
+                    else:
+                        itunes_stars = None
 
-            if file_stars is not None:
-                itunes_rating = track_dict.get('Rating')
-                if itunes_rating is not None:
-                    val = val_rx.match(itunes_rating[1]).group(2)
-                    itunes_stars = int(val) / 10
-                else:
-                    itunes_stars = None
+                    if file_stars == itunes_stars:
+                        already_correct += 1
+                        log.log(7, 'Rating is already correct for {}'.format(file))
+                    else:
+                        log.log(19, '{} rating from {} to {} for {}'.format(prefix, itunes_stars, file_stars, file))
+                        if not dry_run:
+                            changed += 1
+                            if itunes_rating is not None:
+                                idx = itunes_rating[0]
+                                track[0][idx] = rating_fmt.format(file_stars * 10)
+                            else:
+                                idx = track_dict['Sample Rate'][0] + 1
+                                track[0].insert(idx, rating_fmt.format(file_stars * 10))
 
-                if file_stars == itunes_stars:
-                    log.log(9, 'Rating is already correct for {}'.format(file))
-                else:
-                    log.info('{} rating from {} to {} for {}'.format(prefix, itunes_stars, file_stars, file))
-                    if not dry_run:
-                        changed = True
-                        if itunes_rating is not None:
-                            idx = itunes_rating[0]
-                            track[0][idx] = rating_fmt.format(file_stars * 10)
-                        else:
-                            idx = track_dict['Sample Rate'][0] + 1
-                            track[0].insert(idx, rating_fmt.format(file_stars * 10))
+        if already_correct:
+            log.info('Track ratings were already correct for {:,d} tracks'.format(already_correct))
+        if changed:
+            log.info('Track ratings were updated for {:,d} tracks'.format(changed))
 
         if changed and not dry_run:
             track_lines = []
