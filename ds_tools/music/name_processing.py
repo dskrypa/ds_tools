@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import types
+from os.path import commonprefix
 from unicodedata import normalize, combining
 
 from cachetools import LRUCache
@@ -120,10 +121,11 @@ def revised_weighted_ratio(p1, p2):
         return int(round(max(base, tsor, tser)))
 
 
-def parse_name(text):
+def parse_name(text, rev_links=None):
     """
 
     :param text:
+    :param dict|None rev_links: A dict of {href: text}, if available
     :return tuple: (base, cjk, stylized, aka, info)
     """
     stripped = text.strip()
@@ -280,6 +282,7 @@ def parse_name(text):
             else:
                 _lang_name, alt_lang_val = tuple(map(str.strip, part.split(':', 1)))
                 langs = categorize_langs((_lang_name, alt_lang_val))
+                # log.debug('lang_name={!r} alt_lang_val={!r} langs={!r}'.format(_lang_name, alt_lang_val, langs))
                 if langs[1] == LangCat.MIX and ' on ' in alt_lang_val:
                     alt_lang_val, _dob = map(str.strip, alt_lang_val.split(' on ', 1))
                     langs = (langs[0], LangCat.categorize(alt_lang_val))
@@ -288,6 +291,14 @@ def parse_name(text):
                     err_msg = 'Unexpected langs={} for \'lang: $value\' part={!r}'.format(langs, part)
                     raise NameFormatError(err_msg + _parse_dbg(base, cjk, stylized, aka, info, details_parts))
                 elif langs[1] == LangCat.MIX:
+                    _split = LangCat.split(alt_lang_val)
+                    _split_langs = categorize_langs(_split)
+                    if len(_split) == 2 and _split_langs[0] in LangCat.asian_cats and commonprefix((base, _split[1])) and base != _split[1]:
+                        cjk = _split[0]
+                        aka.append(_split[1])
+                        found_hangul = _split_langs[0] == LangCat.HAN
+                        continue
+
                     suffix = common_suffix((base, alt_lang_val))
                     if not suffix or LangCat.categorize(alt_lang_val[:-len(suffix)]) not in LangCat.asian_cats:
                         rom_ind = next((ind for ind in ('pronounced', 'Hepburn:') if ind in alt_lang_val), None)
@@ -346,6 +357,8 @@ def parse_name(text):
                 details_parts.append(remainder)
             aka.append(lit_translation)
         elif year_rx.match(part):
+            pass
+        elif rev_links and 'Help:IPA/English' in rev_links and rev_links['Help:IPA/English'] in part:
             pass
         else:
             _details_parts = list(map(str.strip, re.split('[;,]', details)))

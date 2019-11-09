@@ -1216,10 +1216,11 @@ class WikiArtist(WikiPersonCollection):
             elif isinstance(self._client, WikipediaClient):
                 page_text = self._clean_soup.text
                 if LangCat.categorize(page_text) == LangCat.MIX:
+                    rev_links = {href: text for text, href in link_tuples(self._all_anchors)}
                     try:
-                        name_parts = parse_name(page_text)
+                        name_parts = parse_name(page_text, rev_links)
                     except Exception as e:
-                        fmt = '{} while processing intro for {}: {}'
+                        fmt = '{} while processing intro(1) for {}: {}'
                         log.warning(fmt.format(type(e).__name__, self._client.url_for(uri_path), e))
                         if strict:
                             raise e
@@ -1231,7 +1232,7 @@ class WikiArtist(WikiPersonCollection):
                 try:
                     name_parts = parse_name(self._clean_soup.text)
                 except Exception as e:
-                    fmt = '{} while processing intro for {}: {}'
+                    fmt = '{} while processing intro(2) for {}: {}'
                     log.warning(fmt.format(type(e).__name__, self._client.url_for(uri_path), e))
                     if strict:
                         raise e
@@ -1818,11 +1819,17 @@ class WikiGroup(WikiArtist):
             clean_soup = self._clean_soup
             if re.search('^.* is (?:a|the) .*?sub-?unit of .*?group', clean_soup.text.strip()):
                 for i, a in enumerate(clean_soup.find_all('a')):
-                    href = a.get('href') or ""
+                    href = a.get('href') or ''
                     href = href[6:] if href.startswith('/wiki/') else href
                     if href and (href != self._uri_path):
-                        self.subunit_of = WikiGroup(href)
-                        break
+                        try:
+                            self.subunit_of = WikiGroup(href, client=self._client)
+                        except WikiTypeError:
+                            if i > 3:
+                                log.warning('Unable to find parent group for {}'.format(self))
+                                break
+                        else:
+                            break
 
     def __contains__(self, item):
         return item in self.members
