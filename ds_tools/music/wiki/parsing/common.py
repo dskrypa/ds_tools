@@ -278,9 +278,12 @@ def split_artist_list(artist_list, context=None, anchors=None, client=None):
                 try:
                     artist_dict = {'artist': name, 'artist_href': find_href(client, anchors, name, ('singer', 'group'))}
                 except Exception as e:
-                    fmt = 'While processing {!r}, error finding href for artist={!r} from {}: {}'
-                    log.error(fmt.format(context, name, anchors, e), extra={'color': 'red'})
-                    raise e
+                    if isinstance(e, ValueError) and 'No WikiClient class exists' in str(e):
+                        artist_dict = {'artist': name, 'artist_href': None}
+                    else:
+                        fmt = 'While processing {!r}, error finding href for artist={!r} from {}: {}'
+                        log.error(fmt.format(context, name, anchors, e), extra={'color': 'red'})
+                        raise
 
                 if group:
                     artist_dict['of_group'] = group
@@ -850,6 +853,8 @@ def parse_tracks_from_table(track_tbl, uri_path, client):
                     eng_name = name_info_parts.pop(0)
                     extras = LangCat.split(unsurround(name_info_parts.pop(-1)))
                     rom = ''.join(extras.pop(-1).lower().replace('-', '').split())
+                    if ';lit.' in rom:
+                        rom = rom.partition(';lit.')[0]
                     try:
                         han = extras.pop(-1)
                     except IndexError as e:
@@ -859,7 +864,7 @@ def parse_tracks_from_table(track_tbl, uri_path, client):
 
                     # fmt = 'eng={!r} han={!r} rom={!r} extras={}, other={}'
                     # log.debug(fmt.format(eng_name, han, rom, extras, name_info_parts))
-                    if LangCat.categorize(han) == LangCat.HAN and rom in romanized_permutations(han, False):
+                    if LangCat.categorize(han) == LangCat.HAN and matches_permutation(rom, han):
                         name_parts = ['"{} ({})"'.format(eng_name, han)]
                         if extras:
                             name_info_parts.append('; '.join(extras))
@@ -869,6 +874,9 @@ def parse_tracks_from_table(track_tbl, uri_path, client):
                     elif eng_name.lower().endswith(rom.lower()):
                         name_info = (eng_name, '{} {}'.format(han, rom))
                     else:
+                        # perms = romanized_permutations(han)
+                        # log.debug('rom={!r} not in {} romanized_permutations({!r})=>{!r}'.format(rom, len(perms), han, perms))
+                        # log.debug('rom={!r} not in {} romanized_permutations({!r})'.format(rom, len(perms), han))
                         raise WikiEntityParseException('Unexpected name_info_parts={} in {}'.format(orig, uri_path))
 
             track = parse_track_info(

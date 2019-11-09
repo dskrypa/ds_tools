@@ -1361,7 +1361,8 @@ class WikiArtist(WikiPersonCollection):
                 else:
                     for a, _uri_path in disco_links.items():
                         log.debug('Examining a={}, parent: {!r}'.format(a, a.parent))
-                        if 'main article' in a.parent.text.lower():
+                        a_text = a.parent.text.lower()
+                        if any(val in a_text for val in ('main article', self.english_name.lower(), self.cjk_name)):
                             uri_path = _uri_path
                             break
                     else:
@@ -1393,6 +1394,8 @@ class WikiArtist(WikiPersonCollection):
             except Exception as e:
                 log.debug('{}: Error parsing discography info from {}: {}'.format(self, self.url, e))
                 log.log(19, traceback.format_exc())
+
+            if not self._albums and not self._singles:
                 disco_page = self._disco_page
                 if disco_page:
                     self._albums, self._singles = disco_page._albums, disco_page._singles
@@ -2151,7 +2154,8 @@ class WikiSongCollection(WikiEntity):
 
         if self._track_lists and disco_entry and self.english_name:
             d_title = disco_entry.get('title') or version_title
-            d_lc_title = d_title.lower()
+            # log.debug('Title from disco_entry={!r}'.format(d_title))
+            d_lc_title = d_title.lower() if isinstance(d_title, str) else d_title[0].lower()
             if LangCat.categorize(d_lc_title) == LangCat.ENG and d_lc_title != self.english_name.lower():
                 for track_list in self._track_lists:
                     section = track_list.get('section')

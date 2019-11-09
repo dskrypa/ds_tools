@@ -46,8 +46,9 @@ LEAD_CONSONANT_PERMUTATIONS = [
     '', ('ch', 'j'), 'jj', 'ch', 'k', 't', 'p', 'h'
 ]
 VOWEL_PERMUTATIONS = [
+    # ㅏ,ㅐ,ㅑ,ㅒ,ㅓ,ㅔ,ㅕ,ㅖ,ㅗ,ㅘ,ㅙ,ㅚ,ㅛ,ㅜ,ㅝ,ㅞ,ㅟ,ㅠ,ㅡ,ㅢ,ㅣ
     'a', 'ae', 'ya', 'yae', ('eo', 'u'), 'e', ('yeo', 'you', 'yu'), 'ye', ('o', 'oh'), 'wa', 'wae', 'oe', 'yo', ('u', 'oo'),
-    ('weo', 'wo'), 'we', 'wi', ('yu', 'yoo'), 'eu', ('eui', 'ui', 'ee'), 'i'
+    ('weo', 'wo'), 'we', 'wi', ('yu', 'yoo'), 'eu', ('eui', 'ui', 'ee'), ('i', 'ee', 'y')
 ]
 END_CONSONANT_PERMUTATIONS = [
     '', ('k', 'g'), ('kk', 'gg'), ('ks', 'gs'), 'n', 'nj', 'nh', ('d', 't'), 'l', 'rk', 'rm', 'rb', 'rs', 'rt', 'rp',
@@ -70,6 +71,45 @@ ROMANIZED_NAME_SYLLABLES = {'희': ('h', 'ee', ''), '이': ('l', 'ee', ''), '박
 ROMANIZED_MISC_NAMES = {'죠지': 'george', '일레인': 'elaine'}
 SH_VOWELS = {'i', 'yeo', 'ya', 'yo', 'yu'}
 T_STOPS = {'s', 'ss', 'j', 'ch', 'h'}
+COMBO_CHANGES = {
+    'ㄱㄴ': 'ㅇㄴ',
+    'ㅋㄴ': 'ㅇㄴ',
+    'ㄲㄴ': 'ㅇㄴ',
+    'ㄱㅁ': 'ㅇㅁ',
+    'ㅋㅁ': 'ㅇㅁ',
+    'ㄷㄴ': 'ㄴㄴ',
+    'ㄷㅁ': 'ㄴㅁ',
+    'ㅅㄴ': 'ㄴㄴ',
+    'ㅆㄴ': 'ㄴㄴ',
+    'ㅅㅁ': 'ㄴㅁ',
+    'ㅈㄴ': 'ㄴㄴ',
+    'ㅈㅁ': 'ㄴㅁ',
+    'ㅊㄴ': 'ㄴㄴ',
+    'ㅊㅁ': 'ㄴㅁ',
+    'ㅌㄴ': 'ㄴㄴ',
+    'ㅌㅁ': 'ㄴㅁ',
+    'ㅎㄴ': 'ㄴㄴ',
+    'ㅎㅁ': 'ㄴㅁ',
+    'ㅂㄴ': 'ㅁㄴ',
+    'ㅂㅁ': 'ㅁㅁ',
+    'ㅍㄴ': 'ㅁㄴ',
+    'ㅍㅁ': 'ㅁㅁ',
+    'ㄱㅎ': 'ㅋㅇ',
+    'ㅎㄱ': 'ㅋㅇ',
+    'ㅎㄷ': 'ㅌㅇ',
+    'ㄷㅎ': 'ㅌㅇ',
+    'ㅂㅎ': 'ㅍㅇ',
+    'ㅎㅂ': 'ㅍㅇ',
+    'ㅈㅎ': 'ㅊㅇ',
+    'ㅎㅈ': 'ㅊㅇ',
+    'ㅎㅅ': 'ㅆㅇ',
+    'ㄱㅅ': 'ㅆㅇ',
+    'ㄱㄹ': 'ㅇㄴ',
+    'ㄴㄹ': 'ㄹㄹ',
+    'ㅁㄹ': 'ㅁㄴ',
+    'ㅇㄹ': 'ㅇㄴ',
+    'ㅂㄹ': 'ㅁㄴ'
+}
 
 
 def ambiguous_romanized():
@@ -277,6 +317,7 @@ def romanize_plus(text, name=False, space=False):
 def hangul_romanized_permutations(text, include_space=False):
     romanized = []
     last_char = None
+    last_end = None
     for char in text:
         c_ord = ord(char)
         if SYLLABLES_START <= c_ord <= SYLLABLES_END:
@@ -286,8 +327,40 @@ def hangul_romanized_permutations(text, include_space=False):
                 i, rem = divmod(c_ord - 44032, 588)
                 m, f = divmod(rem, 28)
                 lead = LEAD_CONSONANT_PERMUTATIONS[i]
+                # log.debug('{!r} => {}({}) {}({}) {}({})'.format(
+                #     char, chr(JAMO_CONSONANTS_START + JAMO_LEAD_OFFSETS[i]), i, chr(m + JAMO_VOWELS_START), m,
+                #     chr(JAMO_CONSONANTS_START + JAMO_END_OFFSETS[f]) if f > 0 else '-', f
+                # ))
+                if last_end:
+                    _key = chr(JAMO_CONSONANTS_START + JAMO_END_OFFSETS[last_end]) + chr(JAMO_CONSONANTS_START + JAMO_LEAD_OFFSETS[i])
+                    if _key in COMBO_CHANGES:
+                        # log.debug('({}, {})={!r} => {!r}'.format(last_end, i, _key, COMBO_CHANGES[_key]))
+                        a, b = map(ord, COMBO_CHANGES[_key])
+                        a = JAMO_END_OFFSETS.index(a - JAMO_CONSONANTS_START)
+                        b = JAMO_LEAD_OFFSETS.index(b - JAMO_CONSONANTS_START)
+                        idx = -2 if romanized[-1] == ' ' else -1
+                        old = romanized[idx]
+                        addl_end = END_CONSONANT_PERMUTATIONS[a]
+                        addl_lead = LEAD_CONSONANT_PERMUTATIONS[b]
+                        romanized[idx] = tuple(set(chain(
+                            (old,) if isinstance(old, str) else old,
+                            (addl_end,) if isinstance(addl_end, str) else addl_end
+                        )))
+                        # orig_lead = lead
+                        lead = tuple(set(chain(
+                            (lead,) if isinstance(lead, str) else lead,
+                            (addl_lead,) if isinstance(addl_lead, str) else addl_lead
+                        )))
+                        # fmt = '{!r}({}, {})=>{!r}({}, {}) =>> old={!r} => {!r}, lead={!r} => {!r}'
+                        # log.debug(fmt.format(_key, last_end, i, COMBO_CHANGES[_key], a, b, old, romanized[idx], orig_lead, lead))
+
                 vowel = VOWEL_PERMUTATIONS[m]
-                end = END_CONSONANT_PERMUTATIONS[f] if f > 0 else None
+                if f > 0:
+                    end = END_CONSONANT_PERMUTATIONS[f]
+                    last_end = f
+                else:
+                    end = None
+                    last_end = None
 
                 if i == 11:         # ㅇ
                     if m == 8:      # ㅗ
@@ -295,8 +368,8 @@ def hangul_romanized_permutations(text, include_space=False):
                     elif m == 13:   # ㅜ
                         lead = tuple(set((lead, 'w') if isinstance(lead, str) else chain(lead, ('w',))))
 
-            if lead == 's' and (vowel in SH_VOWELS or (isinstance(vowel, tuple) and any(v in SH_VOWELS for v in vowel))):
-                lead = ('s', 'sh')
+            if 's' in lead and (vowel in SH_VOWELS or (isinstance(vowel, tuple) and any(v in SH_VOWELS for v in vowel))):
+                lead = tuple(set((lead, 'sh') if isinstance(lead, str) else chain(lead, ('sh',))))
 
             romanized.append(lead)
             romanized.append(vowel)
@@ -332,7 +405,8 @@ def hangul_romanized_permutations(text, include_space=False):
 
 
 def matches_hangul_permutation(eng, han):
-    lc_eng = ''.join(eng.lower().split())
+    lc_letters = set('abcdefghijklmnopqrstuvwxyz')
+    lc_eng = ''.join(c for c in eng.lower() if c in lc_letters)
     return lc_eng in {''.join(p.split()) for p in hangul_romanized_permutations(han, False)}
 
 

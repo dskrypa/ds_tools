@@ -347,5 +347,6 @@ def matches_permutation(eng, cjk):
     if contains_hangul(cjk):
         return matches_hangul_permutation(eng, cjk)
 
-    lc_eng = ''.join(eng.lower().split())
+    lc_letters = set('abcdefghijklmnopqrstuvwxyz')
+    lc_eng = ''.join(c for c in eng.lower() if c in lc_letters)
     return lc_eng in romanized_permutations(cjk, False)

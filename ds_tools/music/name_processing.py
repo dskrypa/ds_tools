@@ -490,7 +490,7 @@ def _split_name(
 
     eng, cjk, not_used = None, None, None
     langs = categorize_langs(parts)
-    s = 's' if len(parts) > 1 else ''
+    # s = 's' if len(parts) > 1 else ''
     # log.log(4, 'ParentheticalParser().parse({!r}) => {} part{}: {} ({})'.format(name, len(parts), s, parts, langs))
     if len(parts) == 1:
         part = parts[0]
@@ -591,6 +591,8 @@ def _split_name(
             if len(p1_langs) == 2 and langs[0] in p1_langs and ' ' not in parts[1]:
                 eng, cjk = split_name(parts[0])                         # Soloist (Group {mixed lang})
                 not_used = parts[1]
+        elif langs[0] == LangCat.NUL and langs[1] == LangCat.NUL and not parts[1]:  # number or time or something
+            eng, cjk = parts
     elif len(parts) == 3:
         if LangCat.MIX not in langs and len(set(langs)) == 2:
             if langs[0] == langs[1] != langs[2]:
