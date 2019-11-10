@@ -98,6 +98,8 @@ def parse_ost_page(uri_path, clean_soup, client):
         tracks = []
         page_eng_cjk_artists = set()
         track_table = info_ul.find_next_sibling('table')
+        if track_table is None:
+            raise WikiEntityParseException('Unable to find track table in {}'.format(uri_path))
         for i, tr in enumerate(track_table.find_all('tr')):
             tds = tr.find_all('td')
             if tds:

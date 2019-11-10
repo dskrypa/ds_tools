@@ -286,7 +286,10 @@ def is_any_cjk(a_str, strip_punc=True, strip_nums=True):
 
 
 def contains_hangul(a_str):
-    return any(is_hangul(c) for c in a_str)
+    try:
+        return any(is_hangul(c) for c in a_str)
+    except TypeError:   # likely NoneType is not iterable
+        return False
 
 
 def contains_japanese(a_str):

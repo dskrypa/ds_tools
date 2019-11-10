@@ -424,16 +424,23 @@ class WikiMatchable:
                 else:
                     aliases.extend(aka)
 
-        cjk_name = getattr(self, 'cjk_name', None)
-        if cjk_name:
-            permutations = romanized_permutations(cjk_name)
-            if len(permutations) > 1000:
-                log.debug('There are {:,d} romanizations of {!r} - skipping them'.format(len(permutations), cjk_name))
-            else:
-                aliases.extend(permutations)
+        # cjk_name = getattr(self, 'cjk_name', None)
+        # if cjk_name:
+        #     permutations = romanized_permutations(cjk_name)
+        #     if len(permutations) > 1000:
+        #         log.debug('There are {:,d} romanizations of {!r} - skipping them'.format(len(permutations), cjk_name))
+        #     else:
+        #         aliases.extend(permutations)
 
         aliases.extend([self.__abbrev_pat.sub('', alias) for alias in aliases])  # Remove periods from abbreviations
         return set(aliases)
+
+    @property
+    def _has_romanization(self):
+        return bool(getattr(self, 'cjk_name', None))
+
+    def _matches_romanization(self, text):
+        return matches_permutation(text, self.cjk_name)
 
     def _additional_aliases(self):
         return set()
@@ -458,9 +465,10 @@ class WikiMatchable:
     def _fuzzed_aliases(self):
         if self._is_plain_matchable:
             # noinspection PyUnresolvedReferences
-            fuzzed, cjk, rom_permutations = self._fuzz_other(self._obj)
+            fuzzed, cjk = self._fuzz_other(self._obj)
+            # fuzzed, cjk, rom_permutations = self._fuzz_other(self._obj)
             self.cjk_name = cjk
-            self._rom_permutations = rom_permutations
+            # self._rom_permutations = rom_permutations
             return fuzzed
 
         try:
@@ -515,8 +523,8 @@ class WikiMatchable:
                     eng, cjk, extra = split_name(other, True)
                 except ValueError:
                     others = (other,)
-                    if LangCat.contains_any(other, LangCat.asian_cats):
-                        permutations = tuple(filter(None, (fuzz_process(o) for o in romanized_permutations(other) if o)))
+                    # if LangCat.contains_any(other, LangCat.asian_cats):
+                    #     permutations = tuple(filter(None, (fuzz_process(o) for o in romanized_permutations(other) if o)))
                 else:
                     if eng == 'live':
                         others = [cjk]
@@ -530,7 +538,7 @@ class WikiMatchable:
             elif lang in LangCat.asian_cats:
                 cjk = other
                 others = (other,)
-                permutations = tuple(filter(None, (fuzz_process(o) for o in romanized_permutations(other) if o)))
+                # permutations = tuple(filter(None, (fuzz_process(o) for o in romanized_permutations(other) if o)))
             else:
                 others = (other,)
         elif isinstance(other, WikiEntity):
@@ -544,7 +552,8 @@ class WikiMatchable:
             fuzzed = tuple(filter(None, (fuzz_process(o, strip_special=False) for o in others) if process else others))
         else:
             fuzzed = tuple(filter(None, (fuzz_process(o) for o in others if o) if process else others))
-        return fuzzed, cjk, permutations
+        # return fuzzed, cjk, permutations
+        return fuzzed, cjk
 
     @cached_property
     def __has(self):
@@ -685,27 +694,29 @@ class WikiMatchable:
                     _log.debug('score_mod -= 20: track_count={} not in {}'.format(track_count, self._part_track_counts))
 
         best_score, best_alias, best_val = 0, None, None
-
         own_count = len(self._fuzzed_aliases)
         other_count = len(matchable._fuzzed_aliases)
         _log.debug('{}: Comparing {} aliases against {} aliases (=> {:,d} comparisons)'.format(self, own_count, other_count, own_count * other_count))
 
-        has_han_alias = any(LangCat.categorize(alias) == LangCat.HAN for alias in self._fuzzed_aliases)
-
+        # has_han_alias = any(LangCat.categorize(alias) == LangCat.HAN for alias in self._fuzzed_aliases)
+        other_aliases = matchable._fuzzed_aliases
         for alias in self._fuzzed_aliases:
             alias_nums = self.__nums(alias)
-            other_aliases = matchable._fuzzed_aliases
-            if not has_han_alias and matchable._rom_permutations:
-                if LangCat.categorize(alias) in (LangCat.ENG, LangCat.MIX):
-                    other_aliases = chain(matchable._fuzzed_aliases, matchable._rom_permutations)
+            is_cjk_alias = LangCat.contains_any(alias, LangCat.asian_cats)
+            # other_aliases = matchable._fuzzed_aliases
+            # if not has_han_alias and matchable._rom_permutations:
+            #     if LangCat.categorize(alias) in (LangCat.ENG, LangCat.MIX):
+            #         other_aliases = chain(matchable._fuzzed_aliases, matchable._rom_permutations)
 
             for val in other_aliases:
-                val_nums = matchable.__nums(val)
-                if best_score >= 100:
-                    break
-
                 score = revised_weighted_ratio(alias, val)
-                if alias_nums != val_nums:
+                if score < 90:
+                    if is_cjk_alias and LangCat.matches(val, LangCat.ENG):
+                        score = 100 if self._matches_romanization(val) else score
+                    elif not is_cjk_alias and LangCat.contains_any(val, LangCat.asian_cats):
+                        score = 100 if matchable._matches_romanization(alias) else score
+
+                if alias_nums != matchable.__nums(val):
                     score -= 30
                 if ('live' in alias and 'live' not in val) or ('live' in val and 'live' not in alias):
                     score -= 25
@@ -714,6 +725,8 @@ class WikiMatchable:
                 _log.debug('{!r}=?={!r}: score={}, alias={!r}, val={!r}'.format(self, other_repr, score, alias, val))
                 if score > best_score:
                     best_score, best_alias, best_val = score, alias, val
+                if best_score >= 100:
+                    break
 
         best_is_eng = LangCat.categorize(best_alias) == LangCat.ENG
         val_is_eng = LangCat.categorize(best_val) == LangCat.ENG
@@ -935,7 +948,7 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
 
             bad_classes = (
                 'toc', 'mw-editsection', 'reference', 'hatnote', 'infobox', 'noprint', 'box-Multiple_issues',
-                'box-Unreliable_sources', 'box-BLP_sources'
+                'box-Unreliable_sources', 'box-BLP_sources', 'ambox-one_source'
             )
             for clz in bad_classes:
                 for rm_ele in content.find_all(class_=clz):
@@ -1606,7 +1619,10 @@ class WikiArtist(WikiPersonCollection):
             _associated = self._side_info.get('associated acts', {})
         for text, href in _associated.items():
             # log.debug('{}: Associated act from {}: a.text={!r}, a.href={!r}'.format(self, self.url, text, href))
-            associated.append(WikiPersonCollection(href, name=text, client=self._client))
+            try:
+                associated.append(WikiPersonCollection(href, name=text, client=self._client))
+            except WikiTypeError as e:
+                log.debug('{}: Unexpected type for associated act with name={!r} href={!r}'.format(self, text, href))
 
         if isinstance(self._client, DramaWikiClient):
             trivia_span = self._clean_soup.find('span', id='Trivia')
@@ -2083,6 +2099,8 @@ class WikiSongCollection(WikiEntity):
                     d_no_artist = True
                 else:
                     d_no_artist = False
+
+                d_artist_name = d_artist_name[0] if isinstance(d_artist_name, (list, tuple)) else d_artist_name
                 d_lc_artist = d_artist_name.lower() if d_artist_name else ''
 
                 if d_no_artist or d_artist_uri_path in artists_hrefs or d_lc_artist in map(str.lower, artists_names):
@@ -2273,7 +2291,8 @@ class WikiSongCollection(WikiEntity):
         try:
             return DISCOGRAPHY_TYPE_MAP[self._base_type]
         except KeyError as e:
-            raise MusicWikiException('{}: Unexpected album base_type: {!r}'.format(self, self._base_type)) from e
+            log.warning('{}: Unexpected album base_type: {!r}'.format(self, self._base_type))
+            return 'UNKNOWN'
 
     @cached_property
     def album_num(self):
@@ -2407,7 +2426,7 @@ class WikiSongCollection(WikiEntity):
             return WikiArtist(href, name=name, of_group=of_group, client=self._client, no_fetch=True)
 
         try:
-            # log.debug('{}: Looking for artist href={!r} name={!r} of_group={!r}'.format(self, href, name, of_group))
+            log.debug('{}: Looking for artist href={!r} name={!r} of_group={!r}'.format(self, href, name, of_group))
             return WikiArtist(href, name=name, of_group=of_group, client=self._client)
         except AmbiguousEntityException as e:
             # log.debug('{}: artist={} => ambiguous'.format(self, artist))
@@ -2463,8 +2482,8 @@ class WikiSongCollection(WikiEntity):
                 fmt = '{}\'s artist={!r} has an ambiguous href={}'
                 log.log(log_lvl, fmt.format(self, name, e.url), extra={'color': (11, 9)})
             else:
-                fmt = '{}\'s artist={!r} doesn\'t appear to be an artist: {}'
-                log.log(log_lvl, fmt.format(self, name, e), extra={'color': (11, 9)})
+                fmt = '{}\'s artist={!r} with href={!r} doesn\'t appear to be an artist: {}'
+                log.log(log_lvl, fmt.format(self, name, href, e), extra={'color': (11, 9)})
                 # raise e
             return WikiArtist(href, name=name, no_fetch=True)
         except WikiEntityInitException as e:
@@ -2689,8 +2708,10 @@ class WikiSongCollection(WikiEntity):
         try:
             artist = self._artists[0]['artist']
         except Exception as e:
-            log.error('Unable to get artist from {} / {}'.format(self, self._artists))
-            raise e
+            _artist = self.artist
+            artist = tuple(sorted({'artist': _artist.name_tuple, 'artist_href': _artist._uri_path}.items()))
+            # log.error('Unable to get artist from {} / {}'.format(self, self._artists))
+            # raise e
 
         packages = []
         for album in self._albums:
@@ -3411,7 +3432,21 @@ class WikiTrack(WikiMatchable, DictAttrPropertyMixin):
         self._info = info   # num, length, language, version, name_parts, collaborators, misc, artist
         self._artist_context = artist_context
         self.collection = collection
-        self.english_name, self.cjk_name = self._info['name_parts']
+        # log.debug('Initializing track from={!r} with name={!r}'.format(collection, self._info['name_parts']))
+        try:
+            self.english_name, self.cjk_name = self._info['name_parts']
+        except ValueError:
+            if len(self._info['name_parts']) == 1:
+                name = self._info['name_parts'][0]
+                lang = LangCat.categorize(name)
+                if lang in (LangCat.MIX, LangCat.ENG):
+                    self.english_name = name
+                    self.cjk_name = ''
+                else:
+                    self.english_name = ''
+                    self.cjk_name = name
+            else:
+                raise
         self.name = multi_lang_name(self.english_name, self.cjk_name)
         # fmt = 'WikiTrack: artist_context={}, collection={}, name={}, collabs={}'
         # log.debug(fmt.format(artist_context, collection, self.name, self._info.get('collaborators')))
