@@ -11,12 +11,14 @@ from cachetools import LRUCache
 from ....caching import cached
 from ....core import datetime_with_tz
 from ....http import CodeBasedRestException
-from ....unicode import LangCat, matches_permutation, romanized_permutations
+from ....unicode import LangCat, matches_permutation
 from ....utils import (
     DASH_CHARS, QMARKS, ListBasedRecursiveDescentParser, ALL_WHITESPACE, UnexpectedTokenError, ParentheticalParser,
     unsurround, has_unpaired
 )
-from ...name_processing import categorize_langs, combine_name_parts, eng_cjk_sort, str2list, split_name, has_parens
+from ...name_processing import (
+    categorize_langs, combine_name_parts, eng_cjk_sort, str2list, split_name, has_parens, parse_name
+)
 from .exceptions import *
 
 __all__ = [
@@ -874,9 +876,6 @@ def parse_tracks_from_table(track_tbl, uri_path, client):
                     elif eng_name.lower().endswith(rom.lower()):
                         name_info = (eng_name, '{} {}'.format(han, rom))
                     else:
-                        # perms = romanized_permutations(han)
-                        # log.debug('rom={!r} not in {} romanized_permutations({!r})=>{!r}'.format(rom, len(perms), han, perms))
-                        # log.debug('rom={!r} not in {} romanized_permutations({!r})'.format(rom, len(perms), han))
                         raise WikiEntityParseException('Unexpected name_info_parts={} in {}'.format(orig, uri_path))
 
             track = parse_track_info(

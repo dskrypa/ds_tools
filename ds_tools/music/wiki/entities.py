@@ -1207,10 +1207,12 @@ class WikiArtist(WikiPersonCollection):
                     m = re.match(r'^(.*)\((.*)\)$', self.english_name)
                     if m:
                         lc_nospace_rom = ''.join(m.group(1).lower().split())
-                        for permutation in romanized_permutations(self.cjk_name):
-                            if ''.join(permutation.split()) == lc_nospace_rom:
-                                self.english_name = m.group(2).strip()
-                                break
+                        if matches_permutation(lc_nospace_rom, self.cjk_name):
+                            self.english_name = m.group(2).strip()
+                        # for permutation in romanized_permutations(self.cjk_name):
+                        #     if ''.join(permutation.split()) == lc_nospace_rom:
+                        #         self.english_name = m.group(2).strip()
+                        #         break
                 elif self.cjk_name and not self.english_name and 'name (romaji)' in self._profile:
                     self.english_name = self._profile['name (romaji)']
             elif isinstance(self._client, WikipediaClient):
@@ -3212,12 +3214,14 @@ class WikiSoundtrack(WikiSongCollection):
         if not group_eng and eng and cjk and LangCat.categorize(cjk) in LangCat.asian_cats and not self._find_href(aliases):
             # Don't bother looking up solo artists that have no (valid) links on this page
             eng_lc_nospace = ''.join(eng.split()).lower()
-            permutations = romanized_permutations(cjk)
-            # log.debug('Comparing {!r} to: {}'.format(eng_lc_nospace, permutations))
-            if any(''.join(p.split()) == eng_lc_nospace for p in permutations):
+            if matches_permutation(eng_lc_nospace, cjk):
                 # log.debug('No lookup being done for {!r}'.format(parts))
                 return WikiArtist(aliases=aliases, no_fetch=True)
-
+            # permutations = romanized_permutations(cjk)
+            # log.debug('Comparing {!r} to: {}'.format(eng_lc_nospace, permutations))
+            # if any(''.join(p.split()) == eng_lc_nospace for p in permutations):
+                # log.debug('No lookup being done for {!r}'.format(parts))
+                # return WikiArtist(aliases=aliases, no_fetch=True)
         try:
             try:
                 return WikiArtist(aliases=aliases, of_group=group_eng)

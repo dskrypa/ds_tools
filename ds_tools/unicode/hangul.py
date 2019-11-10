@@ -5,6 +5,7 @@ Tools for working with hangul
 """
 
 import logging
+import re
 from itertools import chain, product
 
 from cachetools import LRUCache
@@ -313,8 +314,7 @@ def romanize_plus(text, name=False, space=False):
     return ''.join(romanized).strip()
 
 
-@cached(LRUCache(100))
-def hangul_romanized_permutations(text, include_space=False):
+def _hangul_romanized_permutations(text, include_space=False):
     romanized = []
     last_char = None
     last_end = None
@@ -397,6 +397,40 @@ def hangul_romanized_permutations(text, include_space=False):
         combined_1.append(''.join(simple))
 
     # log.debug('{!r} => {}'.format(text, combined_1))
+    return combined_1
+
+
+@cached(LRUCache(300))
+def hangul_romanized_permutations_pattern(text, include_space=False):
+    combined_1 = _hangul_romanized_permutations(text, include_space)
+    pat = []
+    for chars in combined_1:
+        if isinstance(chars, str):
+            pat.append(chars)
+        else:
+            singles = []
+            doubles = []
+            for char in chars:
+                if len(char) == 1:
+                    singles.append(char)
+                else:
+                    doubles.append(char)
+
+            if singles and doubles:
+                single_str = '[{}]'.format(''.join(singles))
+                double_str = '(?:{}|{})'.format('|'.join(doubles), single_str)
+                pat.append(double_str)
+            elif singles:
+                single_str = '[{}]'.format(''.join(singles))
+                pat.append(single_str)
+            else:
+                double_str = '(?:{})'.format('|'.join(doubles))
+                pat.append(double_str)
+    return re.compile(''.join(pat))
+
+
+def hangul_romanized_permutations(text, include_space=False):
+    combined_1 = _hangul_romanized_permutations(text, include_space)
     permutations = list(map(str.strip, combo_options(combined_1)))
     if text in ROMANIZED_MISC_NAMES:
         permutations.insert(0, ROMANIZED_MISC_NAMES[text])
@@ -404,10 +438,12 @@ def hangul_romanized_permutations(text, include_space=False):
     return permutations
 
 
+@cached(LRUCache(300))
 def matches_hangul_permutation(eng, han):
     lc_letters = set('abcdefghijklmnopqrstuvwxyz')
     lc_eng = ''.join(c for c in eng.lower() if c in lc_letters)
-    return lc_eng in {''.join(p.split()) for p in hangul_romanized_permutations(han, False)}
+    return bool(hangul_romanized_permutations_pattern(han).match(lc_eng))
+    # return lc_eng in {''.join(p.split()) for p in hangul_romanized_permutations(han, False)}
 
 
 def combo_options(list_with_opts, bases=None):

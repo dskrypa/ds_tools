@@ -8,9 +8,9 @@ from itertools import chain
 
 from bs4.element import NavigableString
 
-from ....unicode import LangCat, romanized_permutations
-from ....utils import DASH_CHARS, num_suffix, soupify, unsurround, ParentheticalParser
-from ...name_processing import parse_name, str2list, split_name, has_parens
+from ....unicode import LangCat
+from ....utils import DASH_CHARS, num_suffix, soupify, unsurround
+from ...name_processing import parse_name, str2list, split_name
 from .exceptions import *
 from .common import *
 

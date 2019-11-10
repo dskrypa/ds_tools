@@ -6,9 +6,9 @@ import logging
 import re
 from collections import OrderedDict
 
-from ....unicode import LangCat, romanized_permutations
+from ....unicode import LangCat, matches_permutation
 from ....utils import common_suffix
-from ...name_processing import eng_cjk_sort, split_name, str2list, has_parens
+from ...name_processing import eng_cjk_sort, split_name, str2list
 from ..utils import multi_lang_name, normalize_href
 from .exceptions import *
 from .common import *
@@ -209,13 +209,18 @@ def parse_drama_wiki_info_list(uri_path, info_ul, client):
                 # log.debug('Exception while processing parts={!r}: {}'.format(parts, e))
                 langs = [LangCat.categorize(p) for p in parts]
                 if len(parts) == 3 and langs[0] == LangCat.HAN and langs[1] == langs[2] == LangCat.ENG:
-                    permutations = {''.join(p.split()) for p in romanized_permutations(parts[0])}
-                    # log.debug('Comparing {!r} => {!r} to {!r}'.format(parts[0], permutations, parts[1]))
                     lc_parts = [''.join(p.lower().split()) for p in parts[1:]]
-                    if all(p in permutations for p in lc_parts):
+                    if all(matches_permutation(p, parts[0]) for p in lc_parts):
                         value = ('', parts[0])
-                    elif lc_parts[0] in permutations:
+                    elif matches_permutation(lc_parts[0], parts[0]):
                         value = (parts[2], parts[0])
+
+                    # permutations = {''.join(p.split()) for p in romanized_permutations(parts[0])}
+                    # # log.debug('Comparing {!r} => {!r} to {!r}'.format(parts[0], permutations, parts[1]))
+                    # if all(p in permutations for p in lc_parts):
+                    #     value = ('', parts[0])
+                    # elif lc_parts[0] in permutations:
+                    #     value = (parts[2], parts[0])
                 elif len(parts) == 2 and all(lang in LangCat.asian_cats for lang in langs):
                     value = ('', parts[0])
                     fmt = 'No english title found for {}; 2 non-eng titles found: {!r} (keeping) / {!r} (discarding)'
