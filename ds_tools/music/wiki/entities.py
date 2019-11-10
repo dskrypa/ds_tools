@@ -393,6 +393,10 @@ class WikiMatchable:
                     if eng_and_no_cjk or cjk_and_no_eng:
                         track.update_name(self.english_name, self.cjk_name, False)
 
+    @property
+    def name_tuple(self):
+        return self.english_name, self.cjk_name
+
     def __repr__(self):
         if hasattr(self, '_obj'):
             return repr(self._obj)
@@ -855,10 +859,6 @@ class WikiEntity(WikiMatchable, metaclass=WikiEntityMeta):
 
     def _additional_aliases(self):
         return self.__additional_aliases
-
-    @property
-    def name_tuple(self):
-        return self.english_name, self.cjk_name
 
     @cached_property
     def url(self):

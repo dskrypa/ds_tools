@@ -1541,6 +1541,7 @@ class SongFile(BaseSongFile):
                 except Exception as e:
                     pass
 
+        title_value = None
         for field in updatable:
             file_value = self.tag_text(field, default=None)
             if field == 'album_artist':
@@ -1550,7 +1551,6 @@ class SongFile(BaseSongFile):
                     wiki_value = artist.member_of.name
                 else:
                     wiki_value = artist.name
-
             elif field == 'artist':
                 if artist:
                     artist_name = artist.name if true_soloist else artist.qualname
@@ -1567,9 +1567,11 @@ class SongFile(BaseSongFile):
                 else:
                     wiki_value = artist_name
             elif field == 'title':
-                wiki_value = wiki_song.custom_name(collab_mode in ('title', 'both'))
+                wiki_value = title_value = wiki_song.custom_name(collab_mode in ('title', 'both'))
             elif field == 'album':
                 wiki_value = wiki_song.collection.title(hide_edition)
+                if len(self.album_dir_obj.songs) == 1 and wiki_value != title_value and wiki_value in wiki_song.name_tuple:
+                    wiki_value = title_value
             else:
                 raise ValueError('Unexpected field: {}'.format(field))
 
