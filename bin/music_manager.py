@@ -91,6 +91,7 @@ def parser():
     wiki_sort_parser.add_argument('--collab_mode', '-c', choices=('title', 'artist', 'both'), default='artist', help='List collaborators in the artist tag, the title tag, or both (default: %(default)s)')
     wiki_sort_parser.add_argument('--hide_edition', '-E', action='store_true', help='Exclude the edition from the album title, if present (default: include it)')
     wiki_sort_parser.add_argument('--no_ost_filter', '-F', action='store_true', help='Lookup full info for all OST albums (default: only those matching a file in the given path)')
+    wiki_sort_parser.add_argument('--url', '-U', help='Force the given URL to be used as the match for the given source directory')
 
     p2t_parser = parser.add_subparser('action', 'path2tag', help='Update tags based on the path to each file')
     p2t_parser.add_argument('path', help='A directory that contains directories that contain music files')
@@ -158,7 +159,7 @@ def main():
         sort_by_wiki(
             args.source, args.destination or args.source, args.allow_no_dest, args.basic_cleanup, args.move_unknown,
             args.allow_incomplete, args.unmatched_cleanup, args.true_soloist, args.collab_mode, args.hide_edition,
-            args.dry_run, args.no_ost_filter
+            args.dry_run, args.no_ost_filter, args.url
         )
     elif args.action == 'path2tag':
         path2tag(args.path, args.dry_run, args.title)
@@ -420,7 +421,7 @@ def set_ost_filter(path, no_ost_filter=False):
 
 def sort_by_wiki(
     source_path, dest_dir, allow_no_dest, basic_cleanup, move_unknown, allow_incomplete, unmatched_cleanup,
-    true_soloist, collab_mode, hide_edition, dry_run, no_ost_filter
+    true_soloist, collab_mode, hide_edition, dry_run, no_ost_filter, url=None
 ):
     """
     Cleanup & sort files based on the information found when matching them to artists / albums / songs in various wikis
@@ -440,6 +441,8 @@ def sort_by_wiki(
     :param str collab_mode: List collaborators in the artist tag, the title tag, or both
     :param bool hide_edition: Exclude the edition from the album title, if present (default: include it)
     :param bool dry_run: Print the actions that would be taken instead of taking them
+    :param bool no_ost_filter:
+    :param str|None url: Force the given URL to be used as the match for the given source directory
     """
     _dest_dir = dest_dir
     mv_prefix = '[DRY RUN] Would move' if dry_run else 'Moving'
@@ -455,6 +458,8 @@ def sort_by_wiki(
     exists = set()
     album_dirs = []
     for i, album_dir in enumerate(iter_album_dirs(source_path)):
+        if url and i:
+            raise ValueError('Please specify only a single album directory when using --url / -U')
         album_dirs.append(album_dir)
         album_dir.remove_bad_tags(dry_run)
         album_dir.fix_song_tags(dry_run)
@@ -524,7 +529,7 @@ def sort_by_wiki(
         if i and logged_messages:
             print()
         logged_messages = album_dir.update_song_tags_and_names(
-            allow_incomplete, true_soloist, collab_mode, dry_run, dest_root, hide_edition
+            allow_incomplete, true_soloist, collab_mode, dry_run, dest_root, hide_edition, url
         )
         if unmatched_cleanup and not album_dir.wiki_album:
             if logged_messages:

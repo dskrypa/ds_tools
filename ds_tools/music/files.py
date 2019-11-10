@@ -333,8 +333,10 @@ class AlbumDir(ClearableCachedPropertyMixin):
         return None
 
     @cached()
-    def expected_rel_path(self, true_soloist=False, hide_edition=False):
-        if self.wiki_album_part:
+    def expected_rel_path(self, true_soloist=False, hide_edition=False, url=None):
+        if url:
+            return WikiSongCollection(url).expected_rel_path(true_soloist, hide_edition)
+        elif self.wiki_album_part:
             return self.wiki_album_part.expected_rel_path(true_soloist, hide_edition)
         elif self.wiki_album:
             return self.wiki_album.expected_rel_path(true_soloist)
@@ -520,8 +522,12 @@ class AlbumDir(ClearableCachedPropertyMixin):
         return logged_messages
 
     def update_song_tags_and_names(
-        self, allow_incomplete, true_soloist, collab_mode, dry_run, dest_root=None, hide_edition=False
+        self, allow_incomplete, true_soloist, collab_mode, dry_run, dest_root=None, hide_edition=False, url=None
     ):
+        if url:
+            self.__dict__['wiki_album'] = WikiSongCollection(url)
+            self.__dict__['wiki_artist'] = self.wiki_album.artist
+
         logged_messages = 0
         if not self.wiki_artist and not self._is_full_ost:
             log.error('Unable to find wiki artist match for {} - skipping tag updates'.format(self), extra={'red': True})
