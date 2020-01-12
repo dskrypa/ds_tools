@@ -36,7 +36,7 @@ class _NotSet:
 def init_logging(
         verbosity=0, *, log_path=_NotSet, names=_NotSet, date_fmt=None, entry_fmt=None, file_fmt=None, file_perm=0o666,
         file_lvl=logging.DEBUG, file_dir=None, filename_fmt='{prog}.{user}.{time}{uniq}.log', file_handler_opts=None,
-        fix_sigpipe=True, patch_emit='quiet', replace_handlers=True, lvl_names=_NotSet, set_levels=None
+        fix_sigpipe=True, patch_emit='quiet', replace_handlers=True, lvl_names=_NotSet, set_levels=None, streams=True
 ):
     """
     Configures stream handlers for stdout and stderr so that logs with level logging.INFO and below are sent to stdout
@@ -100,6 +100,7 @@ def init_logging(
     :param bool replace_handlers: Remove any existing handlers on loggers before adding handlers to them
     :param dict lvl_names: Mapping of {int(level): str(name)} to set non-default log level names
     :param dict set_levels: Mapping of {str(logger name): int(level)} to set the log level for the given loggers
+    :param bool streams: Log to stdout and stderr (default: True).
     :return str|None: The path to which logs are being written, or None if no file handler was configured.
     """
     if fix_sigpipe:
@@ -116,6 +117,10 @@ def init_logging(
         names = {names}
     logging.getLogger().setLevel(logging.NOTSET)            # Default is 30 / WARNING
     loggers = [logging.getLogger(name) for name in names]
+    for logger in loggers:
+        logger.setLevel(logging.NOTSET)                     # Let handlers deal with log levels
+        if replace_handlers:
+            logger.handlers = []
 
     if lvl_names is _NotSet:
         lvl_names = {lvl: 'DBG_{}'.format(lvl) for lvl in range(1, 10)}
@@ -126,29 +131,27 @@ def init_logging(
             if (name not in logging._nameToLevel) and (lvl not in logging._levelToName):
                 logging.addLevelName(lvl, name)
 
-    entry_fmt = entry_fmt or (ENTRY_FMT_DETAILED if verbosity and verbosity > 2 else '%(message)s')
-    date_fmt = date_fmt or '%Y-%m-%d %H:%M:%S %Z'
+    date_fmt = date_fmt or '%Y-%m-%d %H:%M:%S %Z'   # used by stream & file handlers
+    if streams:
+        entry_fmt = entry_fmt or (ENTRY_FMT_DETAILED if verbosity and verbosity > 2 else '%(message)s')
 
-    stdout_handler = logging.StreamHandler(open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1))
-    stdout_handler.setLevel(logging.DEBUG + 2 - verbosity if verbosity else logging.INFO)
-    stdout_handler.addFilter(create_filter(lambda lvl: lvl < logging.WARNING))
-    stdout_handler.name = 'stdout'
+        stdout_handler = logging.StreamHandler(open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1))
+        stdout_handler.setLevel(logging.DEBUG + 2 - verbosity if verbosity else logging.INFO)
+        stdout_handler.addFilter(create_filter(lambda lvl: lvl < logging.WARNING))
+        stdout_handler.name = 'stdout'
 
-    stderr_handler = logging.StreamHandler(open(sys.stderr.fileno(), mode='w', encoding='utf-8', buffering=1))
-    stderr_handler.setLevel(logging.INFO)
-    stderr_handler.addFilter(create_filter(lambda lvl: lvl >= logging.WARNING))
-    stderr_handler.name = 'stderr'
+        stderr_handler = logging.StreamHandler(open(sys.stderr.fileno(), mode='w', encoding='utf-8', buffering=1))
+        stderr_handler.setLevel(logging.INFO)
+        stderr_handler.addFilter(create_filter(lambda lvl: lvl >= logging.WARNING))
+        stderr_handler.name = 'stderr'
 
-    stream_formatter = ColorLogFormatter(entry_fmt, date_fmt)
-    stream_handlers = (stdout_handler, stderr_handler)
-    for handler in stream_handlers:
-        handler.setFormatter(stream_formatter)
-    for logger in loggers:
-        logger.setLevel(logging.NOTSET)
-        if replace_handlers:
-            logger.handlers = []
+        stream_formatter = ColorLogFormatter(entry_fmt, date_fmt)
+        stream_handlers = (stdout_handler, stderr_handler)
         for handler in stream_handlers:
-            logger.addHandler(handler)
+            handler.setFormatter(stream_formatter)
+        for logger in loggers:
+            for handler in stream_handlers:
+                logger.addHandler(handler)
 
     if set_levels:
         if not isinstance(set_levels, dict):

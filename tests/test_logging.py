@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+
+import logging
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.append(Path(__file__).parents[1].as_posix())
+from ds_tools.logging import init_logging
+
+log = logging.getLogger(__name__)
+
+
+class LoggingInitTest(unittest.TestCase):
+    def _cleanup(self, *names):
+        for name in names:
+            logger = logging.getLogger(name)
+            logger.handlers[0].close()
+            del logger.handlers[0]
+
+    def test_log_path_name(self):
+        this_file_name = Path(__file__).stem
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = init_logging(filename_fmt='{prog}.log', file_dir=tmp_dir, names='test', streams=False)
+            self.assertEqual(Path(log_path).name, '{}.log'.format(this_file_name))
+            self._cleanup('test')
+
+    def test_log_path_uniq(self):
+        this_file_name = Path(__file__).stem
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path_1 = init_logging(filename_fmt='{prog}{uniq}.log', file_dir=tmp_dir, names='test1', streams=False)
+            log_path_2 = init_logging(filename_fmt='{prog}{uniq}.log', file_dir=tmp_dir, names='test2', streams=False)
+            self.assertEqual(Path(log_path_1).stem, this_file_name)
+            self.assertEqual(Path(log_path_2).stem, '{}-0'.format(this_file_name))
+            self._cleanup('test1', 'test2')
+
+
+if __name__ == '__main__':
+    try:
+        unittest.main(warnings='ignore', verbosity=2, exit=False)
+    except KeyboardInterrupt:
+        print()
