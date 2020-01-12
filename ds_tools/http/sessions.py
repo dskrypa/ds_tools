@@ -16,6 +16,7 @@ import requests
 from wrapt import synchronized
 
 from ..core import rate_limited
+from ..concurrency.futures import as_future
 from .exceptions import CodeBasedRestException
 
 __all__ = ['proxy_bypass_append', 'requests_session', 'http_cleanup', 'RestClient']
@@ -211,6 +212,21 @@ class RestClient:
 
     def delete(self, endpoint, **kwargs):
         return self.request('DELETE', endpoint, **kwargs)
+
+    def async_request(self, *args, **kwargs):
+        return as_future(self.request, args, kwargs)
+
+    def async_get(self, endpoint, **kwargs):
+        return as_future(self.request, ('GET', endpoint), kwargs)
+
+    def async_put(self, endpoint, **kwargs):
+        return as_future(self.request, ('PUT', endpoint), kwargs)
+
+    def async_post(self, endpoint, **kwargs):
+        return as_future(self.request, ('POST', endpoint), kwargs)
+
+    def async_delete(self, endpoint, **kwargs):
+        return as_future(self.request, ('DELETE', endpoint), kwargs)
 
 
 @atexit_register
