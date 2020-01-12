@@ -9,9 +9,9 @@ import logging
 import sys
 from pathlib import Path
 
-sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
+sys.path.append(Path(__file__).resolve().parents[1].as_posix())
 from ds_tools.argparsing import ArgParser
-from ds_tools.logging import LogManager
+from ds_tools.logging import init_logging
 from ds_tools.lyric_fetcher import SITE_CLASS_MAPPING, HybridLyricFetcher
 
 log = logging.getLogger('ds_tools.{}'.format(__name__))
@@ -81,7 +81,7 @@ def parser():
 # noinspection PyTypeChecker
 def main():
     args = parser().parse_args(req_subparser_value=True)
-    LogManager.create_default_logger(args.verbose, log_path=None)
+    init_logging(args.verbose, log_path=None)
 
     if args.action == 'file_get':
         args.action = 'hybrid_get'

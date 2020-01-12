@@ -7,9 +7,10 @@ Introspection utilities that build upon the built-in introspection module.
 import re
 from collections import OrderedDict
 from contextlib import suppress
-from inspect import Signature, Parameter, _empty
+from inspect import Signature, Parameter, _empty, stack, getsourcefile
+from pathlib import Path
 
-__all__ = ['arg_vals_with_defaults', 'split_arg_vals_with_defaults', 'insert_kwonly_arg']
+__all__ = ['arg_vals_with_defaults', 'split_arg_vals_with_defaults', 'insert_kwonly_arg', 'get_caller_script']
 
 
 def arg_vals_with_defaults(sig, *args, **kwargs):
@@ -141,3 +142,13 @@ def insert_kwonly_arg(func, param, description, param_type='', sig=None):
     params.insert(sig_pos, param)
     func.__signature__ = Signature(params)
     return func
+
+
+def get_caller_script():
+    """
+    :return str: The filename (without its extension) of the top-level script/program that is currently running
+    """
+    try:
+        return Path(getsourcefile(stack()[-1][0])).stem
+    except (TypeError, AttributeError):
+        return '{}_interactive'.format(Path(__file__).stem)

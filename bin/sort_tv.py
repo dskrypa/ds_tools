@@ -5,9 +5,9 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
+sys.path.append(Path(__file__).resolve().parents[1].as_posix())
 from ds_tools.argparsing import ArgParser
-from ds_tools.logging import LogManager
+from ds_tools.logging import init_logging
 from ds_tools.shell import exec_local, ExternalProcessException
 
 log = logging.getLogger('ds_tools.{}'.format(__name__))
@@ -22,7 +22,7 @@ def parser():
 
 def main():
     args = parser().parse_args()
-    LogManager.create_default_logger(args.verbose, log_path=None)
+    init_logging(args.verbose, log_path=None)
 
     src_dir = Path(args.path).expanduser().resolve()
     ep_pat = re.compile(r'^(.+)[^a-zA-Z0-9]S(\d+)E(\d+)\D.*', re.IGNORECASE)

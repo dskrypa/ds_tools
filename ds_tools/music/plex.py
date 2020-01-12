@@ -90,7 +90,8 @@ from plexapi.utils import SEARCHTYPES
 from requests import Session
 from urllib3 import disable_warnings as disable_urllib3_warnings
 
-from ..core import InputValidationException, cached_property
+from ..compat import cached_property
+from ..core import InputValidationException
 from ..unicode import LangCat
 from ..output import short_repr, bullet_list
 from .files import SongFile
@@ -448,7 +449,5 @@ def print_song_info(songs):
 
 
 if __name__ == '__main__':
-    # from ds_tools.logging import LogManager
     from .patches import apply_mutagen_patches
     apply_mutagen_patches()
-    # lm = LogManager.create_default_logger(2, log_path=None, entry_fmt='%(asctime)s %(name)s %(message)s')

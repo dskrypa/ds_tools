@@ -9,9 +9,9 @@ from csv import DictReader
 from hashlib import sha1
 from pathlib import Path
 
-sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
+sys.path.append(Path(__file__).resolve().parents[1].as_posix())
 from ds_tools.argparsing import ArgParser
-from ds_tools.logging import LogManager
+from ds_tools.logging import init_logging
 
 log = logging.getLogger('ds_tools.{}'.format(__name__))
 LIST_PATH = os.path.expanduser('~/etc/pwned-passwords-sha1-ordered-by-count-v4.txt')
@@ -31,7 +31,7 @@ def parser():
 
 def main():
     args = parser().parse_args()
-    LogManager.create_default_logger(args.verbose, log_path=None)
+    init_logging(args.verbose, log_path=None)
 
     if args.from_file:
         pws = defaultdict(lambda: defaultdict(set))

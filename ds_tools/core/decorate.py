@@ -16,8 +16,8 @@ from threading import Lock
 from .itertools import partitioned
 
 __all__ = [
-    'cached_property', 'cached_property_or_err', 'classproperty', 'partitioned_exec', 'rate_limited', 'timed',
-    'trace_entry', 'trace_entry_and_dump_stack', 'wrap_main'
+    'cached_property_or_err', 'classproperty', 'partitioned_exec', 'rate_limited', 'timed', 'trace_entry',
+    'trace_entry_and_dump_stack', 'wrap_main'
 ]
 log = logging.getLogger(__name__)
 
@@ -73,23 +73,6 @@ def wrap_main(main):
             except Exception:
                 pass
     return run_main
-
-
-class cached_property:
-    """
-    A decorator that converts a method into a lazy property.  The wrapped method id called the first time to retrieve
-    the result, and then that calculated result is used the next time the value is accessed.  Deleting the attribute
-    from the instance resets the cached value and will cause it to be re-computed.
-    """
-    def __init__(self, func):
-        self.__doc__ = func.__doc__
-        self.func = func
-
-    def __get__(self, obj, cls):
-        if obj is None:
-            return self
-        value = obj.__dict__[self.func.__name__] = self.func(obj)
-        return value
 
 
 class cached_property_or_err:

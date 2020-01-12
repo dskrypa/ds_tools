@@ -14,7 +14,7 @@ from exifread import process_file
 
 sys.path.append(Path(__file__).resolve().parents[1].as_posix())
 from ds_tools.argparsing import ArgParser
-from ds_tools.logging import LogManager
+from ds_tools.logging import init_logging
 
 log = logging.getLogger('ds_tools.{}'.format(__name__))
 
@@ -29,7 +29,7 @@ def parser():
 
 def main():
     args = parser().parse_args()
-    LogManager.create_default_logger(args.verbose, log_path=None)
+    init_logging(args.verbose, log_path=None)
 
     dry_run = args.dry_run
     src_dir = Path(args.source)

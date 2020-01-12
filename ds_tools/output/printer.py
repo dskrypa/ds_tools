@@ -11,7 +11,7 @@ import pprint
 import types
 from collections.abc import Mapping, Sized, Iterable, Container
 
-from ..core import PermissiveJSONEncoder, yaml_dump
+from ..core.serialization import PermissiveJSONEncoder, yaml_dump
 from .formatting import format_tiered, pseudo_yaml
 from .table import Table
 from .terminal import uprint

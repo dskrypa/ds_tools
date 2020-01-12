@@ -12,7 +12,7 @@ from threading import Thread
 from flask import Flask, request
 
 sys.path.append(Path(__file__).parents[1].as_posix())
-from ds_tools.logging import LogManager
+from ds_tools.logging import init_logging
 from ds_tools.http import RestClient
 
 log = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ class FuturesTest(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    LogManager.create_default_logger(4, log_path=None)
+    init_logging(4, log_path=None)
     try:
         unittest.main(warnings='ignore', verbosity=2, exit=False)
     except KeyboardInterrupt:

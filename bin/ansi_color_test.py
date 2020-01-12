@@ -4,7 +4,7 @@ import sys
 from argparse import ArgumentParser
 from pathlib import Path
 
-sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
+sys.path.append(Path(__file__).resolve().parents[1].as_posix())
 from ds_tools.output.color import colored, HEX_COLORS_REVERSE
 
 ATTRS = [

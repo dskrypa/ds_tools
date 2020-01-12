@@ -17,7 +17,7 @@ import bs4
 from cachetools import LRUCache
 
 from ...caching import cached, DictAttrProperty, DictAttrPropertyMixin
-from ...core import cached_property
+from ...compat import cached_property
 from ...http import CodeBasedRestException
 from ...unicode import LangCat, romanized_permutations, matches_permutation
 from ...utils import soupify, normalize_roman_numerals, ParentheticalParser

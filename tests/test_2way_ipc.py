@@ -9,7 +9,7 @@ from random import randint
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(BASE_DIR)
-from ds_tools.logging import LogManager
+from ds_tools.logging import init_logging
 from ds_tools.concurrency.ipc_process import InvalidRequest, IpcConnection, RequestType, WorkerProcess
 
 log = logging.getLogger('ds_tools.{}'.format(__name__))
@@ -22,7 +22,7 @@ class IpcTester(unittest.TestCase):
         proc.start()
         proc.join(0.5)
 
-        LogManager.create_default_logger(0, log_path=None)
+        init_logging(0, log_path=None)
 
         with futures.ThreadPoolExecutor(max_workers=8) as executor:
             _futures = {

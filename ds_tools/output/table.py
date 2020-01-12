@@ -12,7 +12,7 @@ from unicodedata import normalize
 
 from wcwidth import wcswidth
 
-from ..core import cached_property
+from ..compat import cached_property
 from .color import colored
 from .exceptions import TableFormatException
 from .terminal import uprint, _uout, Terminal

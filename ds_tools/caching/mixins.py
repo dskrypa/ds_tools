@@ -7,7 +7,7 @@ Mixins
 import logging
 from contextlib import suppress
 
-from ..core import cached_property
+from ..compat import cached_property
 
 __all__ = [
     'ClearableCachedPropertyMixin', 'DictAttrProperty', 'DictAttrPropertyMixin', 'DictAttrPropertyMeta',

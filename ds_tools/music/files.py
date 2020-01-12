@@ -22,7 +22,8 @@ from mutagen.id3 import ID3, TDRC, POPM
 from mutagen.mp4 import MP4Tags
 
 from ..caching import ClearableCachedPropertyMixin, cached
-from ..core import cached_property, format_duration, datetime_with_tz
+from ..compat import cached_property
+from ..core import format_duration, datetime_with_tz
 from ..http import CodeBasedRestException
 from ..output import colored
 from ..unicode import contains_hangul, LangCat

@@ -11,9 +11,9 @@ import sys
 from bs4 import BeautifulSoup
 from pathlib import Path
 
-sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
+sys.path.append(Path(__file__).resolve().parents[1].as_posix())
 from ds_tools.http import RestClient
-from ds_tools.logging import LogManager
+from ds_tools.logging import init_logging
 from ds_tools.output import Table, SimpleColumn
 
 log = logging.getLogger('ds_tools.{}'.format(__name__))
@@ -29,7 +29,7 @@ def main():
 
     parser.add_argument('--limit', '-L', type=int, default=5, help='Limit on the number of links to retrieve')
     args = parser.parse_args()
-    LogManager.create_default_logger(args.verbose, log_path=None)
+    init_logging(args.verbose, log_path=None)
 
 
     crawler = WikiCrawler()

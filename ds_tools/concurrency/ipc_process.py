@@ -12,7 +12,7 @@ from enum import Enum
 from multiprocessing import Process, Pipe, Event, Lock
 from threading import Thread
 
-from ..logging import LogManager
+from ..logging import init_logging
 
 __all__ = ['InvalidRequest', 'IpcConnection', 'RequestType', 'WorkerProcess']
 log = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ class WorkerProcess:
 
     @classmethod
     def init_and_run(cls, *args, verbose=0, **kwargs):
-        LogManager.create_default_logger(verbose, log_path=None)
+        init_logging(verbose, log_path=None)
         instance = cls(*args, ** kwargs)
         instance.start_threads()
 

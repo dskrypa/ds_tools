@@ -11,10 +11,10 @@ from fnmatch import fnmatch
 from pathlib import Path
 from urllib.parse import quote as url_quote
 
-sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
+sys.path.append(Path(__file__).resolve().parents[1].as_posix())
 from ds_tools.argparsing import ArgParser
 from ds_tools.caching import DBCache
-from ds_tools.logging import LogManager
+from ds_tools.logging import init_logging
 from ds_tools.output import uprint
 
 log = logging.getLogger('ds_tools.{}'.format(__name__))
@@ -40,7 +40,7 @@ def parser():
 
 def main():
     args = parser().parse_args()
-    LogManager.create_default_logger(args.verbose, log_path=None)
+    init_logging(args.verbose, log_path=None)
 
     cache = DBCache(None, db_path=args.path)
 

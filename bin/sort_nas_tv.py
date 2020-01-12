@@ -6,10 +6,10 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
+sys.path.append(Path(__file__).resolve().parents[1].as_posix())
 from ds_tools.argparsing import ArgParser
 from ds_tools.fs import copy_file
-from ds_tools.logging import LogManager
+from ds_tools.logging import init_logging
 
 log = logging.getLogger('ds_tools.{}'.format(__name__))
 
@@ -31,7 +31,7 @@ def norm_show(show):
 
 def main():
     args = parser().parse_args()
-    LogManager.create_default_logger(args.verbose, log_path=None)
+    init_logging(args.verbose, log_path=None)
 
     src_dir = Path(args.src_path).expanduser().resolve()
     src_moved_dir = src_dir.parent.joinpath('{}_moved'.format(src_dir.name))

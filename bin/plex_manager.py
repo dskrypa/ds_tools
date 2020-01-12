@@ -7,10 +7,10 @@ from pathlib import Path
 
 from plexapi.base import OPERATORS
 
-sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
+sys.path.append(Path(__file__).resolve().parents[1].as_posix())
 from ds_tools.argparsing import ArgParser
 from ds_tools.core import wrap_main
-from ds_tools.logging import LogManager
+from ds_tools.logging import init_logging
 from ds_tools.music import apply_mutagen_patches, stars
 from ds_tools.music.plex import LocalPlexServer
 from ds_tools.output import bullet_list, Printer
@@ -63,7 +63,7 @@ def parser():
 @wrap_main
 def main():
     args, dynamic = parser().parse_with_dynamic_args('query')
-    LogManager.create_default_logger(args.verbose, log_path=None)
+    init_logging(args.verbose, log_path=None)
 
     plex = LocalPlexServer(args.server_url, args.username, args.server_path_root, args.cache_dir, args.music_library)
 

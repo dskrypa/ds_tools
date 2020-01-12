@@ -1,5 +1,5 @@
 """
-Futures that do not require a pool/executor.  Mostly modeled after the concurrent.futures package.
+Utilities for working with Future objects from the stdlib concurrent.futures package.
 
 :author: Doug Skrypa
 """
@@ -17,12 +17,13 @@ _names = defaultdict(count)
 
 def as_future(func, args=(), kwargs=None):
     """
-    Executes the given function in a separate thread.  Returns a :class:`Future` object immediately.
+    Executes the given function in a separate thread.  Returns a :class:`Future<concurrent.futures.Future>` object
+    immediately.
 
     :param func: The function to execute
     :param args: Positional arguments for the function
     :param kwargs: Keyword arguments for the function
-    :return: A :class:`Future` object from :mod:`concurrent.futures` that will hold the results of executing the given
+    :return: A :class:`Future<concurrent.futures.Future>` object that will hold the results of executing the given
       function
     """
     future = Future()
@@ -35,11 +36,11 @@ def as_future(func, args=(), kwargs=None):
 
 def _run_func(future, func, args=(), kwargs=None):
     """
-    Used by :class:`Future` as the :class:`Thread` target function, to wrap the execution of the given function and
-    capture any exceptions / store its results.
+    Used by :class:`Future<concurrent.futures.Future>` as the :class:`Thread<threading.Thread>` target function, to wrap
+    the execution of the given function and capture any exceptions / store its results.
 
-    :param Future future: The :class:`Future` object in which the results of executing the given function should be
-      stored
+    :param Future future: The :class:`Future<concurrent.futures.Future>` object in which the results of executing the
+      given function should be stored
     :param func: The function to execute
     :param args: Positional arguments for the function
     :param kwargs: Keyword arguments for the function

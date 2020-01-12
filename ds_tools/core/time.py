@@ -252,9 +252,3 @@ def timedelta_to_str(delta):
     if delta.days != 0:
         td_str = '{:d}d, {}'.format(delta.days, td_str)
     return td_str
-
-
-if __name__ == '__main__':
-    from ds_tools.logging import LogManager
-    lm = LogManager.create_default_logger(2, log_path=None, levels={'ds_tools.utils.time.parse': 'DEBUG'})
-

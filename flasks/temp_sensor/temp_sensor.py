@@ -23,7 +23,7 @@ from werkzeug.http import HTTP_STATUS_CODES as codes
 
 flask_dir = Path(__file__).resolve().parent
 sys.path.append(flask_dir.parents[1].as_posix())
-from ds_tools.logging import LogManager
+from ds_tools.logging import init_logging
 
 log = logging.getLogger('ds_tools.temp_sensor.server')
 
@@ -120,12 +120,13 @@ if __name__ == '__main__':
     parser.add_argument('--port', '-p', type=int, help='Port to use', required=True)
     parser.add_argument('--verbose', '-v', action='count', help='Print more verbose log info (may be specified multiple times to increase verbosity)')
     args = parser.parse_args()
-    lm = LogManager.create_default_logger(args.verbose, log_path=None)
+    init_logging(args.verbose, names=None, log_path=None)
 
     flask_logger = logging.getLogger('flask.app')
-    for handler in lm.logger.handlers:
+    for handler in logging.getLogger().handlers:
         if handler.name == 'stderr':
             flask_logger.addHandler(handler)
+            break
 
     run_args = {'port': args.port}
     if args.use_hostname:

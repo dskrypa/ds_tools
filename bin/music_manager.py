@@ -31,10 +31,10 @@ import mutagen.id3._frames
 from mutagen.id3 import ID3, TDRC
 from mutagen.mp4 import MP4Tags
 
-sys.path.append(Path(__file__).expanduser().resolve().parents[1].as_posix())
+sys.path.append(Path(__file__).resolve().parents[1].as_posix())
 from ds_tools.argparsing import ArgParser
 from ds_tools.core import localize
-from ds_tools.logging import LogManager
+from ds_tools.logging import init_logging
 from ds_tools.music import (
     iter_music_files, load_tags, iter_music_albums, iter_categorized_music_files, tag_repr, apply_mutagen_patches,
     TagException, iter_album_dirs, RM_TAGS_ID3, RM_TAGS_MP4, NoPrimaryArtistError, WikiSoundtrack
@@ -123,7 +123,7 @@ def parser():
 
 def main():
     args = parser().parse_args()
-    LogManager.create_default_logger(args.verbose, log_path=None)
+    init_logging(args.verbose, log_path=None)
     if args.verbose > 10:
         logging.getLogger('ds_tools.music.wiki.entities.scoring').setLevel(logging.DEBUG)
 

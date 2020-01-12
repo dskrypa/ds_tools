@@ -8,7 +8,7 @@ from urllib.parse import urlparse, unquote
 
 import bs4
 
-from ...core import cached_property
+from ...compat import cached_property
 from ...utils import soupify
 from ..exceptions import MusicException
 
