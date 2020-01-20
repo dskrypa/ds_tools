@@ -13,7 +13,7 @@ optional_dependencies = {
     'beautifulsoup': ['beautifulsoup4'],    # ds_tools.utils.soup
     'cffi': ['cffi'],                       # bin/cffi_test.py
     'translate': ['googletrans'],           # ds_tools.unicode.translate
-    'J2R': ['kakasi'],                      # ds_tools.unicode.languages
+    'J2R': ['pykakasi'],                    # ds_tools.unicode.languages
     'exif': ['exifread']                    # bin/exif_sort.py
 }
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
