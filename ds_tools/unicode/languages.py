@@ -11,7 +11,10 @@ import unicodedata
 from enum import Enum
 
 from cachetools import LRUCache
-from pykakasi import kakasi
+try:
+    from pykakasi import kakasi
+except ImportError:
+    kakasi = None
 
 from ..caching import cached
 from ..core import classproperty
@@ -321,7 +324,10 @@ class J2R:
 
     def __init__(self, mode, include_space=False):
         if not getattr(self, '_J2R__initialized', False):
-            k = kakasi()
+            try:
+                k = kakasi()
+            except TypeError as e:
+                raise RuntimeError('Missing required package: pykakasi') from e
             k._mode.update({'J': 'a', 'H': 'a', 'K': 'a'})
             k.setMode('r', mode)
             if include_space:
@@ -334,7 +340,11 @@ class J2R:
 
     @classmethod
     def romanizers(cls, include_space=False):
-        for mode in kakasi._roman_vals:
+        try:
+            roman_vals = kakasi._roman_vals
+        except AttributeError as e:
+            raise RuntimeError('Missing required package: pykakasi') from e
+        for mode in roman_vals:
             yield J2R(mode, include_space=include_space)
 
 

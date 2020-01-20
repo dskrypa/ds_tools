@@ -1,14 +1,10 @@
 #!/usr/bin/env python
 
-import re
 from itertools import chain
 from pathlib import Path
 from setuptools import setup, find_packages
 
 project_root = Path(__file__).resolve().parent
-
-with project_root.joinpath('requirements.txt').open('r', encoding='utf-8') as f:
-    requirements = f.read().splitlines()
 
 with project_root.joinpath('readme.rst').open('r', encoding='utf-8') as f:
     long_description = f.read()
@@ -17,18 +13,24 @@ optional_dependencies = {
     'yaml': ['PyYAML>=5.3'],
     'beautifulsoup': ['beautifulsoup4'],
     'cffi': ['cffi'],
-    'translate': ['googletrans']
+    'translate': ['googletrans'],
+    'J2R': ['kakasi'],
+    'exif': ['exifread']
 }
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
 
-# Filter optional dependencies out from the contents of requirements.txt
-split_pat = re.compile('^(.+?)[>=<]=')
-optional_flat = set()
-for dep in set(map(str.lower, chain.from_iterable(optional_dependencies.values()))):
-    m = split_pat.match(dep)
-    optional_flat.add(m.group(1) if m else dep)
-optional_flat = tuple(optional_flat)
-requirements = [req for req in requirements if not req.lower().startswith(optional_flat)]
+requirements = [
+    'requests_client @ git+git://github.com/dskrypa/requests_client',
+    'tz_aware_dt @ git+git://github.com/dskrypa/tz_aware_dt',
+    'beautifulsoup4',
+    'SQLAlchemy',
+    'wrapt',
+    'cachetools',
+    'requests',
+    'tzlocal',
+    'wcwidth'
+]
+
 
 setup(
     name='ds_tools',
