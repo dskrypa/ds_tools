@@ -224,42 +224,33 @@ def timed(func):
     return wrapper
 
 
-def rate_limited(interval=0):
+def rate_limited(interval=0, log_lvl=logging.DEBUG):
     """
     :param float interval: Interval between allowed invocations in seconds
+    :param int log_lvl: The log level that should be used to indicate that the wrapped function is being delayed
     """
-    if isinstance(interval, (attrgetter, str)):
+    is_attrgetter = isinstance(interval, (attrgetter, str))
+    if is_attrgetter:
         interval = attrgetter(interval) if isinstance(interval, str) else interval
 
     def decorator(func):
         last_call = 0
         lock = Lock()
-
-        if isinstance(interval, attrgetter):
-            @functools.wraps(func)
-            def wrapper(self, *args, **kwargs):
-                nonlocal last_call, lock
-                obj_interval = interval(self)
-                with lock:
-                    elapsed = time.time() - last_call
-                    if elapsed < obj_interval:
-                        wait = obj_interval - elapsed
-                        log.debug('Rate limited method {!r} is being delayed {:,.3f} seconds'.format(func.__name__, wait))
-                        time.sleep(wait)
-                    last_call = time.time()
-                    return func(*args, **kwargs)
-        else:
-            @functools.wraps(func)
-            def wrapper(*args, **kwargs):
-                nonlocal last_call, lock
-                with lock:
-                    elapsed = time.time() - last_call
-                    if elapsed < interval:
-                        wait = interval - elapsed
-                        log.debug('Rate limited function {!r} is being delayed {:,.3f} seconds'.format(func.__name__, wait))
-                        time.sleep(wait)
-                    last_call = time.time()
-                    return func(*args, **kwargs)
+        log_fmt = 'Rate limited {} {!r} is being delayed {{:,.3f}} seconds'.format(
+            'method' if is_attrgetter else 'function', func.__name__
+        )
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            nonlocal last_call, lock
+            obj_interval = interval(args[0]) if is_attrgetter else interval
+            with lock:
+                elapsed = time.monotonic() - last_call
+                if elapsed < obj_interval:
+                    wait = obj_interval - elapsed
+                    log.log(log_lvl, log_fmt.format(wait))
+                    time.sleep(wait)
+                last_call = time.monotonic()
+                return func(*args, **kwargs)
         return wrapper
     return decorator
 

@@ -10,6 +10,7 @@ import os
 import signal
 import sys
 import time
+from collections import ChainMap
 from contextlib import suppress
 from datetime import datetime
 from getpass import getuser
@@ -21,12 +22,19 @@ from tzlocal import get_localzone
 
 from .output.color import colored
 
-__all__ = ['init_logging', 'add_context_filter', 'logger_has_non_null_handlers']
+__all__ = [
+    'init_logging', 'add_context_filter', 'logger_has_non_null_handlers', 'ENTRY_FMT_DETAILED',
+    'ENTRY_FMT_DETAILED_PID', 'ENTRY_FMT_DETAILED_PID_UID', 'ENTRY_FMT_DETAILED_UID', 'DatetimeFormatter',
+    'ColorLogFormatter', 'ColorThreadFormatter'
+]
 log = logging.getLogger(__name__)
 
 COLOR_CODED_THREADS = os.environ.get('DS_TOOLS_COLOR_CODED_THREAD_LOGS', '0') == '1'
-DEFAULT_LOG_DIR = Path('/var/tmp/{}/script_logs'.format(getuser()))
+DEFAULT_LOG_DIR = '/var/tmp/{user}/script_logs'
 ENTRY_FMT_DETAILED = '%(asctime)s %(levelname)s %(threadName)s %(name)s %(lineno)d %(message)s'
+ENTRY_FMT_DETAILED_PID = '%(asctime)s %(levelname)s %(process)d %(threadName)s %(name)s %(lineno)d %(message)s'
+ENTRY_FMT_DETAILED_UID = '%(asctime)s %(levelname)s %(threadName)s %(name)s %(lineno)d [%(uid)s] %(message)s'
+ENTRY_FMT_DETAILED_PID_UID = '%(asctime)s %(levelname)s %(process)d %(threadName)s %(name)s %(lineno)d [%(uid)s] %(message)s'
 
 
 class _NotSet:
@@ -34,9 +42,10 @@ class _NotSet:
 
 
 def init_logging(
-        verbosity=0, *, log_path=_NotSet, names=_NotSet, date_fmt=None, entry_fmt=None, file_fmt=None, file_perm=0o666,
-        file_lvl=logging.DEBUG, file_dir=None, filename_fmt='{prog}.{user}.{time}{uniq}.log', file_handler_opts=None,
-        fix_sigpipe=True, patch_emit='quiet', replace_handlers=True, lvl_names=_NotSet, set_levels=None, streams=True
+        verbosity=0, *, log_path=_NotSet, names=_NotSet, date_fmt=None, millis=False, entry_fmt=None, file_fmt=None,
+        file_perm=0o666, file_lvl=logging.DEBUG, file_dir=None, filename_fmt='{prog}.{user}.{time}{uniq}.log',
+        file_handler_opts=None, fix_sigpipe=True, patch_emit='quiet', replace_handlers=True, lvl_names=_NotSet,
+        lvl_names_add=None, set_levels=None, streams=True, reopen_streams=True, color_threads=None
 ):
     """
     Configures stream handlers for stdout and stderr so that logs with level logging.INFO and below are sent to stdout
@@ -64,6 +73,7 @@ def init_logging(
       package that this function is in.
     :param str date_fmt: The `datetime format code
       <https://docs.python.org/3/library/datetime.html#strftime-and-strptime-format-codes>`_ to use for timestamps
+    :param bool millis: Include milliseconds in the datetime format (ignored if ``date_fmt`` is specified)
     :param str entry_fmt: The stream handler `log message format
       <https://docs.python.org/3/library/logging.html#logrecord-attributes>`_ to use for stdout/stderr.  If not
       specified, the default is based on the specified verbosity - '%(message)s' is used when verbosity < 3, otherwise
@@ -99,8 +109,12 @@ def init_logging(
       that could not be written.
     :param bool replace_handlers: Remove any existing handlers on loggers before adding handlers to them
     :param dict lvl_names: Mapping of {int(level): str(name)} to set non-default log level names
+    :param dict lvl_names_add: Additional level names to add, besides the defaults
     :param dict set_levels: Mapping of {str(logger name): int(level)} to set the log level for the given loggers
     :param bool streams: Log to stdout and stderr (default: True).
+    :param bool reopen_streams: Reopen stdout/stderr to ensure UTF-8 output
+    :param bool color_threads: Use :class:`ColorThreadFormatter` to color-code output for threads.  If specified, this
+      overrides the ``DS_TOOLS_COLOR_CODED_THREAD_LOGS`` environment variable
     :return str|None: The path to which logs are being written, or None if no file handler was configured.
     """
     if fix_sigpipe:
@@ -126,26 +140,34 @@ def init_logging(
         lvl_names = {lvl: 'DBG_{}'.format(lvl) for lvl in range(1, 10)}
         lvl_names.update({lvl: 'Lv_{}'.format(lvl) for lvl in range(11, 19)})
         lvl_names[19] = 'VERBOSE'
+    if lvl_names_add:
+        lvl_names = lvl_names or {}
+        lvl_names.update(lvl_names_add)
     if lvl_names:
         for lvl, name in lvl_names.items():
             if (name not in logging._nameToLevel) and (lvl not in logging._levelToName):
                 logging.addLevelName(lvl, name)
 
-    date_fmt = date_fmt or '%Y-%m-%d %H:%M:%S %Z'   # used by stream & file handlers
+    date_fmt = date_fmt or ('%Y-%m-%d %H:%M:%S.%f %Z' if millis else '%Y-%m-%d %H:%M:%S %Z')    # used by all handlers
     if streams:
         entry_fmt = entry_fmt or (ENTRY_FMT_DETAILED if verbosity and verbosity > 2 else '%(message)s')
 
-        stdout_handler = logging.StreamHandler(open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1))
+        stdout = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1) if reopen_streams else sys.stdout
+        stdout_handler = logging.StreamHandler(stdout)
         stdout_handler.setLevel(logging.DEBUG + 2 - verbosity if verbosity else logging.INFO)
         stdout_handler.addFilter(create_filter(lambda lvl: lvl < logging.WARNING))
         stdout_handler.name = 'stdout'
 
-        stderr_handler = logging.StreamHandler(open(sys.stderr.fileno(), mode='w', encoding='utf-8', buffering=1))
+        stderr = open(sys.stderr.fileno(), mode='w', encoding='utf-8', buffering=1) if reopen_streams else sys.stderr
+        stderr_handler = logging.StreamHandler(stderr)
         stderr_handler.setLevel(logging.INFO)
         stderr_handler.addFilter(create_filter(lambda lvl: lvl >= logging.WARNING))
         stderr_handler.name = 'stderr'
 
-        stream_formatter = ColorLogFormatter(entry_fmt, date_fmt)
+        if color_threads or (COLOR_CODED_THREADS and color_threads is not False):
+            stream_formatter = ColorThreadFormatter(entry_fmt, date_fmt)
+        else:
+            stream_formatter = ColorLogFormatter(entry_fmt, date_fmt)
         stream_handlers = (stdout_handler, stderr_handler)
         for handler in stream_handlers:
             handler.setFormatter(stream_formatter)
@@ -161,7 +183,7 @@ def init_logging(
 
     if log_path is not None:
         if log_path is _NotSet:
-            log_dir = Path(file_dir) if file_dir else DEFAULT_LOG_DIR
+            log_dir = Path(file_dir if file_dir else DEFAULT_LOG_DIR.format(user=getuser()))
             try:
                 prog = Path(inspect.getsourcefile(inspect.stack()[-1][0])).stem
             except (TypeError, AttributeError):
@@ -210,6 +232,7 @@ def create_filter(filter_fn):
 
 
 class DatetimeFormatter(logging.Formatter):
+    """Enables use of ``%f`` (micro/milliseconds) in datetime formats."""
     _local_tz = get_localzone()
 
     def formatTime(self, record, datefmt=None):
@@ -223,9 +246,14 @@ class DatetimeFormatter(logging.Formatter):
 
 
 class ColorLogFormatter(DatetimeFormatter):
+    """
+    Uses ANSI escape codes to colorize stdout/stderr logging output.  Colors may be specified by using the ``extra``
+    parameter when logging, for example::\n
+        log.error('An error occurred', extra={'color': 'red'})
+    """
     def format(self, record):
         formatted = super().format(record)
-        color = getattr(record, 'color', None) or ('red' if getattr(record, 'red', False) else None)
+        color = getattr(record, 'color', None)
         if color:
             if isinstance(color, (str, int)):
                 formatted = colored(formatted, color)
@@ -233,37 +261,25 @@ class ColorLogFormatter(DatetimeFormatter):
                 formatted = colored(formatted, **color)
             else:
                 formatted = colored(formatted, *color)
-        if COLOR_CODED_THREADS:
-            try:
-                threadno = int(record.threadName.split('-')[1])
-            except Exception:
-                pass
-            else:
-                color_num = threadno % 256
-                while color_num in (0, 16, 17, 18, 19, 232, 233, 234, 235, 236, 237):
-                    color_num += 51
-                    if color_num > 255:
-                        color_num %= 256
-                formatted = colored(formatted, color_num)
         return formatted
 
 
-def create_formatter(should_format_fn, format_fn):
-    """
-    Example usage of an extra attribute: ``log.error('Example message', extra={'red': True})``
-
-    :param should_format_fn: fn(record) that returns True for the format to be applied, False otherwise
-    :param format_fn: fn(message) that returns the formatted message
-    :return: A custom, uninitialized subclass of logging.Formatter
-    """
-    class CustomLogFormatter(DatetimeFormatter):
-        def format(self, record):
-            formatted = super(CustomLogFormatter, self).format(record)
-            if should_format_fn(record):
-                formatted = format_fn(formatted)
-            return formatted
-
-    return CustomLogFormatter
+class ColorThreadFormatter(ColorLogFormatter):
+    """Use a different color for each thread's logged messages."""
+    def format(self, record):
+        formatted = super().format(record)
+        try:
+            threadno = int(record.threadName.split('-')[1])
+        except Exception:
+            pass
+        else:
+            color_num = threadno % 256
+            while color_num in (0, 16, 17, 18, 19, 232, 233, 234, 235, 236, 237):
+                color_num += 51
+                if color_num > 255:
+                    color_num %= 256
+            formatted = colored(formatted, color_num)
+        return formatted
 
 
 def prep_log_dir(log_path, perm_change_prefix='/var/tmp/', new_dir_permissions=0o1777):
@@ -339,7 +355,7 @@ def update_level(name, level, verbosity='set', handlers=True, handlers_only=Fals
 
 def get_logger_info(only_with_handlers=False, non_null_handlers_only=False, test_filters=False):
     loggers = {}
-    for lname, logger in logging.Logger.manager.loggerDict.items():
+    for lname, logger in ChainMap(logging.Logger.manager.loggerDict, {None: logging.getLogger()}).items():
         entry = {'type': type(logger).__qualname__}
         try:
             entry['level'] = logger.level
