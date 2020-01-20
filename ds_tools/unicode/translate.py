@@ -10,7 +10,7 @@ from googletrans import Translator
 
 from ..caching import cached, DBCache
 from ..core import rate_limited
-from ..http.sessions import IMITATE_HEADERS
+from ..http.imitate import IMITATE_HEADERS
 
 __all__ = ['GoogleTranslator']
 log = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ class GoogleTranslator(Translator):
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.session.headers.update(IMITATE_HEADERS['firefox@win10'])
+        self.session.headers.update(IMITATE_HEADERS['firefox72@win10'])
         self._resp_cache = DBCache('translations', cache_subdir='translate')
         self._translate = cached(self._resp_cache, lock=True, key=translate_key)(self._translate)
         self._translate = rate_limited(1)(self._translate)

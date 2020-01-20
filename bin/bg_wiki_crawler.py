@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Python 3 / Requests rewrite of an old script used to pull BLU spell info from BG Wiki for FFXI to be used as an example.
 
@@ -11,12 +11,13 @@ import sys
 from bs4 import BeautifulSoup
 from pathlib import Path
 
+from requests_client import RequestsClient
+
 sys.path.append(Path(__file__).resolve().parents[1].as_posix())
-from ds_tools.http import RestClient
 from ds_tools.logging import init_logging
 from ds_tools.output import Table, SimpleColumn
 
-log = logging.getLogger('ds_tools.{}'.format(__name__))
+log = logging.getLogger(__name__)
 
 
 def main():
@@ -30,7 +31,6 @@ def main():
     parser.add_argument('--limit', '-L', type=int, default=5, help='Limit on the number of links to retrieve')
     args = parser.parse_args()
     init_logging(args.verbose, log_path=None)
-
 
     crawler = WikiCrawler()
     if args.list_descriptions:
@@ -51,13 +51,9 @@ def main():
         print(crawler.get_soup(args.endpoint))
 
 
-class WikiCrawler(RestClient):
+class WikiCrawler(RequestsClient):
     def __init__(self):
-        super().__init__('www.bg-wiki.com')
-
-    @property
-    def _url_fmt(self):
-        return 'https://{}/{}'
+        super().__init__('https://www.bg-wiki.com')
 
     def get_soup(self, endpoint, **kwargs):
         resp = self.get(endpoint, **kwargs)

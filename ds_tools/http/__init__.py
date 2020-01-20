@@ -6,4 +6,3 @@ Utilities for working with Requests sessions.
 
 from .exceptions import *
 from .req_saver import *
-from .sessions import *

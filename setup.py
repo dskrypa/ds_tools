@@ -15,7 +15,9 @@ with project_root.joinpath('readme.rst').open('r', encoding='utf-8') as f:
 
 optional_dependencies = {
     'yaml': ['PyYAML>=5.3'],
-    'beautifulsoup': ['beautifulsoup4']
+    'beautifulsoup': ['beautifulsoup4'],
+    'cffi': ['cffi'],
+    'translate': ['googletrans']
 }
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
 
@@ -45,6 +47,6 @@ setup(
         'Programming Language :: Python :: 3.8'
     ],
     python_requires='~=3.5',
-    install_requires=['wheel'] + requirements,
+    install_requires=requirements,
     extras_require=optional_dependencies
 )
