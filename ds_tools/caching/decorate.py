@@ -16,6 +16,7 @@ import logging
 import os
 import warnings
 from contextlib import suppress
+from datetime import datetime
 from functools import update_wrapper, wraps
 from getpass import getuser
 from inspect import Signature, Parameter
@@ -25,7 +26,7 @@ from threading import RLock
 from wrapt import synchronized
 
 from ..core import (
-    flatten_mapping, PermissiveJSONEncoder, validate_or_make_dir, split_arg_vals_with_defaults, insert_kwonly_arg, now
+    flatten_mapping, PermissiveJSONEncoder, validate_or_make_dir, split_arg_vals_with_defaults, insert_kwonly_arg
 )
 from .caches import DBCache
 from .exceptions import CacheLockWarning
@@ -255,7 +256,7 @@ def disk_cached(prefix='/var/tmp/script_cache/', ext=None, date_fmt='%Y-%m-%d', 
                 cache_file_base = '{}{}_{}_'.format(prefix, func.__name__, getuser())
             else:
                 cache_file_base = '{}_{}_'.format(prefix, getuser())
-            cache_file = cache_file_base + '{}.{}'.format(now(date_fmt), ext)
+            cache_file = cache_file_base + '{}.{}'.format(datetime.now().strftime(date_fmt), ext)
             cache_dir = os.path.dirname(cache_file)
             validate_or_make_dir(cache_dir, permissions=0o17777)
 

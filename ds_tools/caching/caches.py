@@ -6,6 +6,7 @@ Dict-like cache classes to be used with the :func:`cached<.caching.decorate.cach
 
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlencode, quote as url_quote
 
@@ -15,7 +16,7 @@ from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.exc import NoSuchTableError, OperationalError
 from wrapt import synchronized
 
-from ..core import validate_or_make_dir, get_user_cache_dir, ScopedSession, now
+from ..core import validate_or_make_dir, get_user_cache_dir, ScopedSession
 
 __all__ = ['DBCache', 'DBCacheEntry', 'FSCache']
 log = logging.getLogger(__name__)
@@ -78,18 +79,18 @@ class FSCache:
     def dated_html_key_func(cls, date_fmt='%Y-%m-%d', include_host=True):
         def key_func(self, endpoint, *args, **kwargs):
             if include_host:
-                return '{}__{}__{}'.format(self.host, now(date_fmt), url_quote(endpoint, ''))
+                return '{}__{}__{}'.format(self.host, datetime.now().strftime(date_fmt), url_quote(endpoint, ''))
             else:
-                return '{}__{}'.format(now(date_fmt), url_quote(endpoint, ''))
+                return '{}__{}'.format(datetime.now().strftime(date_fmt), url_quote(endpoint, ''))
         return key_func
 
     @classmethod
     def dated_html_key(cls, self, endpoint, *args, **kwargs):
-        return '{}__{}__{}'.format(self.host, now('%Y-%m-%d'), url_quote(endpoint, ''))
+        return '{}__{}__{}'.format(self.host, datetime.now().strftime('%Y-%m-%d'), url_quote(endpoint, ''))
 
     @classmethod
     def dated_html_key_nohost(cls, self, endpoint, *args, **kwargs):
-        return '{}__{}'.format(now('%Y-%m-%d'), url_quote(endpoint, ''))
+        return '{}__{}'.format(datetime.now().strftime('%Y-%m-%d'), url_quote(endpoint, ''))
 
     @synchronized
     def keys(self):
@@ -165,7 +166,7 @@ class DBCache:
             else:
                 self.cache_dir = get_user_cache_dir(cache_subdir)
             db_file_prefix = '{}.'.format(prefix)
-            current_db = '{}{}.db'.format(db_file_prefix, now(time_fmt))
+            current_db = '{}{}.db'.format(db_file_prefix, datetime.now().strftime(time_fmt))
 
             if not preserve_old:
                 for fname in os.listdir(self.cache_dir):

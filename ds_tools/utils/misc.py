@@ -7,7 +7,7 @@ Misc functions that did not fit anywhere else
 import functools
 import re
 
-__all__ = ['num_suffix', 'PseudoJQ', 'bracket_dict_to_list', 'MatchHolder']
+__all__ = ['num_suffix', 'PseudoJQ', 'bracket_dict_to_list', 'MatchHolder', 'longest_repeating_subsequence']
 
 
 def num_suffix(num):
@@ -156,3 +156,31 @@ def bracket_dict_to_list(obj):
         return [bracket_dict_to_list(v) for v in obj]
     else:
         return obj
+
+
+def longest_repeating_subsequence(seq):
+    n = len(seq)
+    lcsre = [[0 for x in range(n + 1)] for y in range(n + 1)]
+
+    res = type(seq)()
+    res_length = 0
+
+    # building table in bottom-up manner
+    index = 0
+    for i in range(1, n + 1):
+        for j in range(i + 1, n + 1):
+            # (j-i) > LCSRe[i-1][j-1] to remove overlapping
+            if seq[i - 1] == seq[j - 1] and lcsre[i - 1][j - 1] < (j - i):
+                lcsre[i][j] = lcsre[i - 1][j - 1] + 1
+                # updating maximum length of the subsequence and updating the finishing index of the suffix
+                if lcsre[i][j] > res_length:
+                    res_length = lcsre[i][j]
+                    index = max(i, index)
+            else:
+                lcsre[i][j] = 0
+
+    # If we have non-empty result, then insert all elements from first element to last element of the sequence
+    if res_length > 0:
+        for i in range(index - res_length + 1, index + 1):
+            res = res + seq[i - 1]
+    return res

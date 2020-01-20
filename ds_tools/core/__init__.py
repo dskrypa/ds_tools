@@ -12,6 +12,5 @@ from .introspection import *
 from .itertools import *
 from .serialization import *
 from .sql import *
-from .time import *
 
 from .decorate import *                             # Depends on .itertools

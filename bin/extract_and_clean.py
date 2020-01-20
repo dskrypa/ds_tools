@@ -4,15 +4,16 @@ import logging
 import os
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.append(Path(__file__).resolve().parents[1].as_posix())
 from ds_tools.argparsing import ArgParser
-from ds_tools.core import now, DATE_FMT
+# from ds_tools.core import now, DATE_FMT
 from ds_tools.logging import init_logging
 from ds_tools.shell import exec_local
 
-log = logging.getLogger('ds_tools.{}'.format(__name__))
+log = logging.getLogger(__name__)
 
 
 def parser():
@@ -27,7 +28,7 @@ def main():
     init_logging(args.verbose, log_path=None)
 
     src_dir = Path(args.path).expanduser().resolve()
-    zip_dir = src_dir.parent.joinpath('extracted_{}'.format(now(DATE_FMT)))
+    zip_dir = src_dir.parent.joinpath('extracted_{}'.format(datetime.now().strftime('%Y-%m-%d')))
 
     for artist in src_dir.iterdir():
         if artist.is_dir():

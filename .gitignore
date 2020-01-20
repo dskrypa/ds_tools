@@ -1,8 +1,5 @@
-.idea
+venv/
+.idea/
+__pycache__/
+*.pyc
 flasks/link_fetcher/
-primes/*.gz
-primes/build
-primes/*.pyd
-primes/*.c
-primes/*.html
-__pycache__

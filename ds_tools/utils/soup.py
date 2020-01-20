@@ -83,9 +83,20 @@ from collections import Callable, OrderedDict
 from collections.abc import Iterable, Container
 from urllib.parse import urlparse
 
-from bs4 import BeautifulSoup, DEFAULT_OUTPUT_ENCODING
-from bs4.element import AttributeValueWithCharsetSubstitution, EntitySubstitution, NavigableString, Tag, PageElement
-from requests import Response
+try:
+    # noinspection PyUnresolvedReferences
+    from bs4 import BeautifulSoup, DEFAULT_OUTPUT_ENCODING
+    # noinspection PyUnresolvedReferences
+    from bs4.element import AttributeValueWithCharsetSubstitution, NavigableString, Tag, PageElement
+except ImportError:
+    bs4_available = False
+else:
+    try:
+        from bs4.dammit import EntitySubstitution       # Location in 4.8.2
+    except ImportError:
+        # noinspection PyUnresolvedReferences
+        from bs4.element import EntitySubstitution      # Location in 4.7.1
+    bs4_available = True
 
 __all__ = ['soupify', 'fix_html_prettify', 'HtmlSoup']
 
@@ -130,7 +141,7 @@ def _should_skip(content, match_value):
 
 class HtmlSoup:
     def __init__(self, content, mode='html.parser'):
-        if isinstance(content, Response):
+        if not isinstance(content, (BeautifulSoup, str)) and hasattr(content, 'text'):  # requests.Response
             content = content.text
         if isinstance(content, str):
             content = BeautifulSoup(content, mode)
@@ -302,3 +313,14 @@ def decode_contents(self, indent_level=None, eventual_encoding=DEFAULT_OUTPUT_EN
             if pretty_print and not self.name == 'pre':
                 s.append('\n')
     return ''.join(s)
+
+
+# If BS4 is unavailable, make functions raise RuntimeErrors
+
+if not bs4_available:
+    def _missing_dependency(*args, **kwargs):
+        raise RuntimeError('Please install beautifulsoup4 to use this function')
+
+    soupify = _missing_dependency
+    fix_html_prettify = _missing_dependency
+    HtmlSoup.__init__ = _missing_dependency
