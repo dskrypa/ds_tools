@@ -10,12 +10,11 @@ with project_root.joinpath('readme.rst').open('r', encoding='utf-8') as f:
     long_description = f.read()
 
 optional_dependencies = {
-    'yaml': ['PyYAML>=5.3'],
-    'beautifulsoup': ['beautifulsoup4'],
-    'cffi': ['cffi'],
-    'translate': ['googletrans'],
-    'J2R': ['kakasi'],
-    'exif': ['exifread']
+    'beautifulsoup': ['beautifulsoup4'],    # ds_tools.utils.soup
+    'cffi': ['cffi'],                       # bin/cffi_test.py
+    'translate': ['googletrans'],           # ds_tools.unicode.translate
+    'J2R': ['kakasi'],                      # ds_tools.unicode.languages
+    'exif': ['exifread']                    # bin/exif_sort.py
 }
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
 
@@ -28,7 +27,8 @@ requirements = [
     'cachetools',
     'requests',
     'tzlocal',
-    'wcwidth'
+    'wcwidth',
+    'PyYAML'
 ]
 
 
