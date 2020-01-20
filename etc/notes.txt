@@ -1,5 +1,0 @@
-Regex to match unescaped double quotes that are not wrapping docstrings:
-(?<!["\\])"(?!")
-
-When replacing with PyCharm, select the 'Except String Literals' filter to prevent matching double quotes in strings
-that are already using single quotes.

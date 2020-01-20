@@ -91,7 +91,7 @@ def get_input(prompt, skip=False, retry=0, parser=parse_yes_no, *, default=_NotS
         if default is _NotSet:
             raise ValueError('Unable to skip user prompt without a default value: {!r}'.format(prompt))
         return default
-    suffix = ' ' if not prompt.endswith(' ') else ""
+    suffix = ' ' if not prompt.endswith(' ') else ''
 
     while retry >=0:
         try:

@@ -6,8 +6,9 @@ Misc functions that did not fit anywhere else
 
 import functools
 import re
+import sys
 
-__all__ = ['num_suffix', 'PseudoJQ', 'bracket_dict_to_list', 'MatchHolder', 'longest_repeating_subsequence']
+__all__ = ['num_suffix', 'PseudoJQ', 'bracket_dict_to_list', 'MatchHolder', 'longest_repeating_subsequence', 'diamond']
 
 
 def num_suffix(num):
@@ -184,3 +185,28 @@ def longest_repeating_subsequence(seq):
         for i in range(index - res_length + 1, index + 1):
             res = res + seq[i - 1]
     return res
+
+
+def diamond():
+    """
+    Imitates the <> diamond operator from Perl.
+
+    Note: On Windows, EOF = [ctrl]+[z] (followed by [enter])
+
+    Example usage::\n
+        for line in diamond():
+            print(line)
+
+    :return: Generator that yields lines (str) from stdin or the files with the names in sys.argv
+    """
+    nlstrip = lambda s: s.rstrip('\n')
+
+    if len(sys.argv) == 1:
+        yield from map(nlstrip, sys.stdin.readlines())
+    else:
+        for file in sys.argv[1:]:
+            if file == '-':
+                yield from map(nlstrip, sys.stdin.readlines())
+            else:
+                with open(file, 'r') as f:
+                    yield from map(nlstrip, f.readlines())
