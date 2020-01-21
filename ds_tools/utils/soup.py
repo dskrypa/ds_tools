@@ -204,7 +204,7 @@ def decode(self, indent_level=None, eventual_encoding=DEFAULT_OUTPUT_ENCODING, f
     """
     # First off, turn a string formatter into a function. This will stop the lookup from happening over and over again.
     if not isinstance(formatter, Callable):
-        formatter = self._formatter_for_name(formatter)
+        formatter = self.formatter_for_name(formatter)
 
     attrs = []
     if self.attrs:
@@ -294,7 +294,7 @@ def decode_contents(self, indent_level=None, eventual_encoding=DEFAULT_OUTPUT_EN
     """
     # First off, turn a string formatter into a function. This will stop the lookup from happening over and over again.
     if not isinstance(formatter, Callable):
-        formatter = self._formatter_for_name(formatter)
+        formatter = self.formatter_for_name(formatter)
 
     pretty_print = (indent_level is not None)
     s = []
