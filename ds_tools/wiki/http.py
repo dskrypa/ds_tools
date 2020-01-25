@@ -42,7 +42,7 @@ class MediaWikiClient(RequestsClient):
             headers.setdefault('Accept-Language', 'en-US,en;q=0.5')
             # headers.setdefault('Upgrade-Insecure-Requests', '1')
             super().__init__(*args, **kwargs)
-            if self.host == 'en.wikipedia.org' and not self.path_prefix:
+            if self.host in ('en.wikipedia.org', 'www.generasia.com'):
                 self.path_prefix = 'w'
             if MediaWikiClient._siteinfo_cache is None:
                 MediaWikiClient._siteinfo_cache = TTLDBCache('siteinfo', cache_subdir='wiki', ttl=3600 * 24)
