@@ -295,6 +295,9 @@ class DBCache:
 
 
 class TTLDBCache(DBCache):
+    """
+    :param int ttl: The time to live, in seconds, for entries in this DBCache
+    """
     def __init__(self, *args, ttl, **kwargs):
         # noinspection PyTypeChecker
         super().__init__(*args, entry_cls=TTLDBCacheEntry, **kwargs)

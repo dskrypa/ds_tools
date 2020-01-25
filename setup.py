@@ -10,11 +10,12 @@ with project_root.joinpath('readme.rst').open('r', encoding='utf-8') as f:
     long_description = f.read()
 
 optional_dependencies = {
-    'beautifulsoup': ['beautifulsoup4'],    # ds_tools.utils.soup
-    'cffi': ['cffi'],                       # bin/cffi_test.py
-    'translate': ['googletrans'],           # ds_tools.unicode.translate
-    'J2R': ['pykakasi'],                    # ds_tools.unicode.languages
-    'exif': ['exifread']                    # bin/exif_sort.py
+    'beautifulsoup': ['beautifulsoup4'],                # ds_tools.utils.soup
+    'cffi': ['cffi'],                                   # bin/cffi_test.py
+    'translate': ['googletrans'],                       # ds_tools.unicode.translate
+    'J2R': ['pykakasi'],                                # ds_tools.unicode.languages
+    'exif': ['exifread'],                               # bin/exif_sort.py
+    'wiki': ['mwparserfromhell', 'wikitextparser'],     # ds_tools.wiki.page
 }
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
 
@@ -34,7 +35,7 @@ requirements = [
 
 setup(
     name='ds_tools',
-    version='2020.01.25',
+    version='2020.01.25-1',
     author='Doug Skrypa',
     author_email='dskrypa@gmail.com',
     description='Misc Python 3 libraries and scripts',
