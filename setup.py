@@ -34,7 +34,7 @@ requirements = [
 
 setup(
     name='ds_tools',
-    version='2020.01.20',
+    version='2020.01.25',
     author='Doug Skrypa',
     author_email='dskrypa@gmail.com',
     description='Misc Python 3 libraries and scripts',

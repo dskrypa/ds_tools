@@ -6,11 +6,12 @@ Dict-like cache classes to be used with the :func:`cached<.caching.decorate.cach
 
 import logging
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlencode, quote as url_quote
 
-from sqlalchemy import create_engine, MetaData, Table, Column, PickleType
+from sqlalchemy import create_engine, MetaData, Table, Column, PickleType, Integer
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.exc import NoSuchTableError, OperationalError
@@ -18,10 +19,11 @@ from wrapt import synchronized
 
 from ..core import validate_or_make_dir, get_user_cache_dir, ScopedSession
 
-__all__ = ['DBCache', 'DBCacheEntry', 'FSCache']
+__all__ = ['DBCache', 'DBCacheEntry', 'FSCache', 'TTLDBCacheEntry', 'TTLDBCache']
 log = logging.getLogger(__name__)
 
 Base = declarative_base()
+_NotSet = object()
 
 
 class FSCache:
@@ -137,11 +139,23 @@ class DBCacheEntry(Base):
     """A key, value pair for use in :class:`DBCache`"""
     __tablename__ = 'cache'
 
-    key = Column(PickleType, primary_key=True)
+    key = Column(PickleType, primary_key=True, index=True, unique=True)
     value = Column(PickleType)
 
     def __repr__(self):
         return '<{}({!r})>'.format(type(self).__name__, self.key)
+
+
+class TTLDBCacheEntry(Base):
+    """A key, value pair for use in :class:`TTLDBCache`"""
+    __tablename__ = 'ttl_cache'
+
+    key = Column(PickleType, primary_key=True, index=True, unique=True)
+    value = Column(PickleType)
+    created = Column(Integer, index=True)
+
+    def __repr__(self):
+        return '<{}({!r}, created={})>'.format(type(self).__name__, self.key, self.created)
 
 
 class DBCache:
@@ -152,13 +166,19 @@ class DBCache:
 
     Based on the args provided and the current user, the final path will be: ``db_dir/file_prefix.user.timestamp.db``
 
-    :param str file_prefix: Prefix for DB cache file names
-    :param str time_fmt: Datetime format to use for DB cache file names
-    :param str|None db_dir: Directory in which DB cache files should be stored; default: result of
+    :param str prefix: Prefix for DB cache file names
+    :param str|None cache_dir: Directory in which DB cache files should be stored; default: result of
       :func:`get_user_cache_dir<ds_tools.utils.filesystem.get_user_cache_dir>`
+    :param str cache_subdir: Sub directory within the chosen cache_dir in which the DB should be stored
+    :param str time_fmt: Datetime format to use for DB cache file names
     :param bool preserve_old: True to preserve old cache files, False (default) to delete them
+    :param str db_path: An explicit path to use for the DB instead of a dynamically generated one
+    :param entry_cls: The class to use for DB entries
     """
-    def __init__(self, prefix, cache_dir=None, cache_subdir=None, time_fmt='%Y-%m', preserve_old=False, db_path=None):
+    def __init__(
+            self, prefix, cache_dir=None, cache_subdir=None, time_fmt='%Y-%m', preserve_old=False, db_path=None,
+            entry_cls=DBCacheEntry
+    ):
         if not db_path:
             if cache_dir:
                 self.cache_dir = os.path.join(cache_dir, cache_subdir) if cache_subdir else cache_dir
@@ -185,28 +205,29 @@ class DBCache:
             if not _path.exists():
                 os.makedirs(_path.parent.as_posix())
 
+        self._entry_cls = entry_cls
         self.engine = create_engine('sqlite:///{}'.format(db_path), echo=False)
         self.meta = MetaData(self.engine)
         try:
-            self.table = Table(DBCacheEntry.__tablename__, self.meta, autoload=True)
+            self.table = Table(self._entry_cls.__tablename__, self.meta, autoload=True)
         except NoSuchTableError as e:
             Base.metadata.create_all(self.engine)
-            self.table = Table(DBCacheEntry.__tablename__, self.meta, autoload=True)
+            self.table = Table(self._entry_cls.__tablename__, self.meta, autoload=True)
         self.db_session = ScopedSession(self.engine)
 
     def keys(self):
         with self.db_session as session:
-            for entry in session.query(DBCacheEntry):
+            for entry in session.query(self._entry_cls):
                 yield entry.key
 
     def values(self):
         with self.db_session as session:
-            for entry in session.query(DBCacheEntry):
+            for entry in session.query(self._entry_cls):
                 yield entry.value
 
     def items(self):
         with self.db_session as session:
-            for entry in session.query(DBCacheEntry):
+            for entry in session.query(self._entry_cls):
                 yield entry.key, entry.value
 
     def get(self, item, default=None):
@@ -215,12 +236,41 @@ class DBCache:
         except KeyError:
             return default
 
+    def setdefault(self, key, default):
+        try:
+            return self[key]
+        except KeyError:
+            self[key] = default
+            return default
+
+    def pop(self, key, default=_NotSet):
+        with synchronized(self):
+            try:
+                value = self[key]
+            except KeyError:
+                if default is _NotSet:
+                    raise
+                return default
+            else:
+                del self[key]
+                return value
+
+    def __len__(self):
+        with synchronized(self):
+            with self.db_session as session:
+                return session.query(self._entry_cls).count()
+
+    def __contains__(self, item):
+        with synchronized(self):
+            with self.db_session as session:
+                return session.query(self._entry_cls).filter_by(key=item).scalar()
+
     def __getitem__(self, item):
         with synchronized(self):
             with self.db_session as session:
                 try:
                     # log.debug('Trying to return {!r}'.format(item))
-                    return session.query(DBCacheEntry).filter_by(key=item).one().value
+                    return session.query(self._entry_cls).filter_by(key=item).one().value
                 except (NoResultFound, OperationalError) as e:
                     # log.debug('Did not have cached: {!r}'.format(item))
                     raise KeyError(item) from e
@@ -228,7 +278,8 @@ class DBCache:
     def __setitem__(self, key, value):
         with synchronized(self):
             with self.db_session as session:
-                entry = DBCacheEntry(key=key, value=value)
+                # noinspection PyArgumentList
+                entry = self._entry_cls(key=key, value=value)
                 session.merge(entry)
                 session.commit()
 
@@ -236,8 +287,77 @@ class DBCache:
         with synchronized(self):
             with self.db_session as session:
                 try:
-                    session.query(DBCacheEntry).filter_by(key=key).delete()
+                    session.query(self._entry_cls).filter_by(key=key).delete()
                 except (NoResultFound, OperationalError) as e:
                     raise KeyError(key) from e
                 else:
                     session.commit()
+
+
+class TTLDBCache(DBCache):
+    def __init__(self, *args, ttl, **kwargs):
+        # noinspection PyTypeChecker
+        super().__init__(*args, entry_cls=TTLDBCacheEntry, **kwargs)
+        self._ttl = int(ttl)
+
+    def expire(self, expiration=None):
+        """
+        :param int expiration: A unix epoch timestamp - items created before this time will be removed from the cache.
+          Defaults to the given TTL seconds earlier than the current time.
+        """
+        with synchronized(self):
+            if expiration is None:
+                expiration = int(time.time()) - self._ttl
+            with self.db_session as session:
+                try:
+                    # noinspection PyUnresolvedReferences
+                    session.query(self._entry_cls).filter(self._entry_cls.created < expiration).delete()
+                except (NoResultFound, OperationalError) as e:
+                    pass
+                else:
+                    session.commit()
+
+    def keys(self):
+        with synchronized(self):
+            self.expire()
+            with self.db_session as session:
+                for entry in session.query(self._entry_cls):
+                    yield entry.key
+
+    def values(self):
+        with synchronized(self):
+            self.expire()
+            with self.db_session as session:
+                for entry in session.query(self._entry_cls):
+                    yield entry.value
+
+    def items(self):
+        with synchronized(self):
+            self.expire()
+            with self.db_session as session:
+                for entry in session.query(self._entry_cls):
+                    yield entry.key, entry.value
+
+    def __len__(self):
+        with synchronized(self):
+            self.expire()
+            return super().__len__()
+
+    def __contains__(self, item):
+        with synchronized(self):
+            self.expire()
+            return super().__contains__(item)
+
+    def __setitem__(self, key, value):
+        with synchronized(self):
+            self.expire()
+            with self.db_session as session:
+                # noinspection PyArgumentList
+                entry = self._entry_cls(key=key, value=value, created=int(time.time()))
+                session.merge(entry)
+                session.commit()
+
+    def __getitem__(self, item):
+        with synchronized(self):
+            self.expire()
+            return super().__getitem__(item)

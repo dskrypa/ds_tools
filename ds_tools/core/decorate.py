@@ -161,11 +161,11 @@ def partitioned_exec(n, container_factory, merge_fn=None, pos=0):
     def decorator(func):
         if isinstance(n, attrgetter):
             @functools.wraps(func)
-            def wrapper(self, *args, **kwargs):
+            def wrapper(*args, **kwargs):
+                args = list(args)           # necessary to replace the value at a given index
+                self = args[0]
                 psize = n(self)
-                args = [self] + list(args)
                 merged = container_factory()
-
                 use_kw = isinstance(pos, str)
                 for partition in partitioned(list(kwargs[pos] if use_kw else args[pos]), psize):
                     if use_kw:
