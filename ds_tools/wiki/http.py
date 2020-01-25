@@ -13,7 +13,7 @@ from distutils.version import LooseVersion
 from urllib.parse import urlparse
 
 from requests_client import RequestsClient
-from ..caching import TTLDBCache
+from ..caching import TTLDBCache, DBCache
 from ..core import partitioned
 from ..compat import cached_property
 from .exceptions import WikiResponseError, PageMissingError
@@ -42,9 +42,12 @@ class MediaWikiClient(RequestsClient):
             headers.setdefault('Accept-Language', 'en-US,en;q=0.5')
             # headers.setdefault('Upgrade-Insecure-Requests', '1')
             super().__init__(*args, **kwargs)
+            if self.host == 'en.wikipedia.org' and not self.path_prefix:
+                self.path_prefix = 'w'
             if MediaWikiClient._siteinfo_cache is None:
                 MediaWikiClient._siteinfo_cache = TTLDBCache('siteinfo', cache_subdir='wiki', ttl=3600 * 24)
             self._page_cache = TTLDBCache(f'{self.host}_pages', cache_subdir='wiki', ttl=ttl)
+            self._norm_title_cache = DBCache(f'{self.host}_normalized_titles', cache_subdir='wiki', time_fmt='%Y')
             self.__initialized = True
 
     @cached_property
@@ -65,6 +68,10 @@ class MediaWikiClient(RequestsClient):
         versions.
         """
         return LooseVersion(self.siteinfo['generator'].split()[-1])
+
+    @cached_property
+    def article_path_prefix(self):
+        return self.siteinfo['articlepath'].replace('$1', '')
 
     def _update_params(self, params):
         """Include useful default parameters, and handle conversion of lists/tuples/sets to pipe-delimited strings."""
@@ -263,7 +270,12 @@ class MediaWikiClient(RequestsClient):
         pages = {}
         for title in titles:
             try:
-                page = self._page_cache[title]
+                norm_title = self._norm_title_cache[title]
+            except KeyError:
+                norm_title = title
+
+            try:
+                page = self._page_cache[norm_title]
             except KeyError:
                 need.append(title)
             else:
@@ -282,6 +294,11 @@ class MediaWikiClient(RequestsClient):
                         'categories': data.get('categories', []),
                         'wikitext': revisions[0] if revisions else None
                     }
+
+            if len(pages) == 1 and len(need) == 1:                  # TODO: Add normalized titles for multiple pages
+                norm_title, page = next(iter(pages.items()))
+                self._norm_title_cache[need[0]] = norm_title
+                self._page_cache[need[0]] = page
         return pages
 
     def query_page(self, title):
@@ -336,3 +353,10 @@ class MediaWikiClient(RequestsClient):
         if offset is not None:
             params['sroffset'] = offset
         return self.query(list='search', srsearch=query, srlimit=limit, **params)
+
+    @classmethod
+    def page_for_article(cls, article_url):
+        client = cls(article_url, nopath=True)
+        article_path = urlparse(article_url).path
+        title = article_path.replace(client.article_path_prefix, '', 1)
+        return client.get_page(title)

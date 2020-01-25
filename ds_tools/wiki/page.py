@@ -81,7 +81,7 @@ class WikiPageSection:
     Stores the :class:`Section<wikitextparser.Section>` object that contains the real section data.
     """
     def __init__(self, section, parent=None):
-        self.title = Parser().parse(section.title).strip_code()
+        self.title = Parser().parse(section.title).strip_code().strip()
         self.level = section.level
         self.section = section
         self.children = OrderedDict()
