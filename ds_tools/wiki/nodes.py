@@ -117,7 +117,10 @@ class Link(BasicNode):
 class List(CompoundNode):
     @cached_property
     def children(self):
-        return [as_node(WikiText(val)) for val in map(str.strip, self.raw.items)]
+        values = [as_node(WikiText(val)) for val in map(str.strip, self.raw.items)]
+        for sublist in self.raw.sublists():
+            values.append(List(sublist))
+        return values
 
 
 class Table(CompoundNode):
