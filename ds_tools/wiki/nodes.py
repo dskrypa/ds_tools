@@ -56,6 +56,9 @@ class CompoundNode(Node):
     def __iter__(self):
         yield from self.children
 
+    def __len__(self):
+        return len(self.children)
+
 
 class MappingNode(CompoundNode):
     @cached_property
@@ -67,6 +70,12 @@ class MappingNode(CompoundNode):
 
     def __getitem__(self, item):
         return self.children[item]
+
+    def items(self):
+        return self.children.items()
+
+    def values(self):
+        return self.children.values()
 
 
 class MixedNode(CompoundNode):
@@ -204,7 +213,7 @@ def as_node(wiki_text):
         raw_objs = prop() if hasattr(prop, '__call__') else prop
         if raw_objs:
             node = node_cls(raw_objs[0])
-            if node.raw.string == wiki_text.string:
+            if node.raw.string.strip() == wiki_text.string.strip():
                 return node
             compound = CompoundNode(wiki_text)
             before, table_str, after = map(str.strip, wiki_text.string.partition(node.raw.string))
