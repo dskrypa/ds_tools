@@ -15,7 +15,8 @@ optional_dependencies = {
     'translate': ['googletrans'],                       # ds_tools.unicode.translate
     'J2R': ['pykakasi'],                                # ds_tools.unicode.languages
     'exif': ['exifread'],                               # bin/exif_sort.py
-    'wiki': ['mwparserfromhell', 'wikitextparser'],     # ds_tools.wiki.page
+    # 'wiki': ['mwparserfromhell', 'wikitextparser'],     # ds_tools.wiki - May not need mwparserfromhell anymore
+    'wiki': ['wikitextparser'],                         # ds_tools.wiki
 }
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
 
@@ -35,7 +36,7 @@ requirements = [
 
 setup(
     name='ds_tools',
-    version='2020.01.25-1',
+    version='2020.01.26',
     author='Doug Skrypa',
     author_email='dskrypa@gmail.com',
     description='Misc Python 3 libraries and scripts',

@@ -1,9 +1,10 @@
 """
 Utilities for processing MediaWiki pages into a more usable form.
 
-Uses two libraries for parsing wikitext due to strengths and limitations of each:\n
+Notes:\n
   - :mod:`wikitextparser` handles lists, but does not handle stripping of formatting around strings
   - :mod:`mwparserfromhell` does not handle lists, but does handle stripping of formatting around strings
+    - Replaced the need for this module for now by implementing :func:`strip_style<.utils.strip_style>`
 
 :author: Doug Skrypa
 """
@@ -11,10 +12,11 @@ Uses two libraries for parsing wikitext due to strengths and limitations of each
 import logging
 from collections import OrderedDict
 
-from mwparserfromhell.parser import Parser
 from wikitextparser import WikiText
 
 from ..compat import cached_property
+from .nodes import ListNode, WikiNode, TableNode
+from .utils import strip_style
 
 __all__ = ['WikiPage', 'WikiPageSection']
 log = logging.getLogger(__name__)
@@ -26,40 +28,54 @@ class WikiPage:
         self.title = title
         self.content = content
         self.categories = categories
-        self.parsed = WikiText(content)
+        self.parsed = WikiText(content.replace('\xa0', ' '))    # \xa0 = non-breaking space / &nbsp;
 
     def __repr__(self):
         return f'<{type(self).__name__}[{self.title!r} @ {self.site}]>'
 
     @cached_property
     def infobox(self):
+        """
+        Turns the infobox into a dict.  Values are returned as :class:`WikiText<wikitextparser.WikiText>` to allow for
+        further processing of links or other data structures.  Wiki lists are converted to Python lists of WikiText
+        values.
+        """
         data = {}
         infobox = self.parsed.templates[0]
         for arg in infobox.arguments:
-            key = arg.name.strip()
+            key = strip_style(arg.name)
             list_vals = arg.lists()
             if list_vals:
-                vals = []
-                for val in map(str.strip, list_vals[0].items):
-                    pval = WikiText(val)
-                    links = pval.wikilinks
-                    if links and links[0].string == val:
-                        vals.append(links[0])
-                    else:
-                        vals.append(pval)
-                data[key] = vals
+                data[key] = ListNode(list_vals[0])
             else:
-                data[key] = WikiText(arg.value.strip())
+                data[key] = WikiNode.for_text(arg.value.strip())
         return data
 
     @cached_property
     def intro(self):
-        infobox_end = self.parsed.templates[0].span[1]
-        intro = self.parsed.sections[0][infobox_end:].strip()
-        return WikiText(intro)
+        """
+        Neither parser provides access to the 1st paragraph directly when an infobox template precedes it - need to
+        remove the infobox from the 1st section, or any other similar elements.
+        """
+        intro_section = self.parsed.sections[0]
+        templates = intro_section.templates
+        if templates:
+            infobox_end = templates[0].span[1]
+            intro = intro_section[infobox_end:].strip()
+            return WikiNode.for_text(intro)
+
+        tags = intro_section.tags()
+        if tags:
+            tag = tags[0].string
+            intro = intro_section.string.partition(tag)[2]
+        else:
+            intro = intro_section.string
+
+        return WikiNode.for_text(intro)
 
     @cached_property
     def sections(self):
+        """Both parsers provide a flat list of sections - this provides a view of them nested by level"""
         sections = iter(self.parsed.sections)
         root = WikiPageSection(next(sections))
         last_by_level = {0: root}
@@ -81,9 +97,9 @@ class WikiPageSection:
     Stores the :class:`Section<wikitextparser.Section>` object that contains the real section data.
     """
     def __init__(self, section, parent=None):
-        self.title = Parser().parse(section.title).strip_code().strip()
+        self.title = strip_style(section.title).strip()
         self.level = section.level
-        self.section = section
+        self.raw_content = section
         self.children = OrderedDict()
         self.parent = parent
 
@@ -110,12 +126,34 @@ class WikiPageSection:
                 pass
         raise KeyError(f'Cannot find section={title!r} in {self} or any subsections')
 
-    def pprint_headers(self, indent=''):
-        print(f'{indent}{"=" * self.level}{self.title}{"=" * self.level}')
-        for sub_section in self.children.values():
-            sub_section.pprint_headers(indent + (' ' * 4))
+    def content(self):
+        """
+        WIP - return this section's content, processed into a form that makes it easier to work with
+        """
+        tables = self.raw_content.tables
+        if tables:
+            if len(tables) == 1:
+                return TableNode(tables[0])
+            return [TableNode(t) for t in tables]
 
-    def pprint_reprs(self):
-        print(f'{" " * (self.level * 4)}{self}')
-        for sub_section in self.children.values():
-            sub_section.pprint_reprs()
+        lists = self.raw_content.lists()
+        if lists:
+            if len(lists) == 1:
+                return ListNode(lists[0])
+            return [ListNode(lst) for lst in lists]
+
+        return self.raw_content
+
+    def pprint(self, mode='reprs', indent=''):
+        if mode == 'content':
+            print(self.raw_content.pformat())
+            for child in self.children.values():
+                child.pprint()
+        elif mode == 'headers':
+            print(f'{indent}{"=" * self.level}{self.title}{"=" * self.level}')
+            for child in self.children.values():
+                child.pprint(mode, indent=indent + ' ' * 4)
+        elif mode == 'reprs':
+            print(f'{indent}{self}')
+            for child in self.children.values():
+                child.pprint(mode, indent=indent + ' ' * 4)
