@@ -1,4 +1,11 @@
 """
+Takes the next step with WikiText parsed by :mod:`wikitextparser` to process it into nodes based on what each section
+actually contains.  This is only necessary because that library stops short of providing a fully processed tree; it
+returns a generic :class:`WikiText<wikitextparser.WikiText>` object that must be poked and prodded to extract nested
+data structures.
+
+This is still a work in process - some data types are not fully handled yet, and some aspects are subject to change.
+
 :author: Doug Skrypa
 """
 
@@ -219,7 +226,7 @@ def as_node(wiki_text):
             before, table_str, after = map(str.strip, wiki_text.string.partition(node.raw.string))
             if before:
                 before_node = as_node(before)
-                if type(before_node) is CompoundNode:
+                if type(before_node) is CompoundNode:                   # It was not a subclass that stands on its own
                     compound.children.extend(before_node.children)
                 else:
                     compound.children.append(before_node)
