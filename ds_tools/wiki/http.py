@@ -114,6 +114,8 @@ class MediaWikiClient(RequestsClient):
                 params['iwprop'] = 'url'
             else:
                 params['iwurl'] = 1
+        if 'categories' in properties:              # https://www.mediawiki.org/wiki/Special:MyLanguage/API:Categories
+            params['cllimit'] = 500     # default: 10
 
         titles = params.pop('titles', None)
         if titles:
