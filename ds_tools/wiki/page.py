@@ -16,6 +16,7 @@ from .nodes import Root, Template, MixedNode, String
 
 __all__ = ['WikiPage']
 log = logging.getLogger(__name__)
+IGNORE_CATEGORY_PREFIXES = ('album chart usages for',)
 
 
 class WikiPage(Root):
@@ -23,10 +24,15 @@ class WikiPage(Root):
         super().__init__(content)
         self.site = site
         self.title = title
-        self.categories = categories
+        self._categories = categories
 
     def __repr__(self):
         return f'<{type(self).__name__}[{self.title!r} @ {self.site}]>'
+
+    @cached_property
+    def categories(self):
+        categories = {cat for cat in map(str.lower, self._categories) if not cat.startswith(IGNORE_CATEGORY_PREFIXES)}
+        return categories
 
     @cached_property
     def infobox(self):

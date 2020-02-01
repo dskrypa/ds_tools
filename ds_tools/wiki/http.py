@@ -73,6 +73,9 @@ class MediaWikiClient(RequestsClient):
     def article_path_prefix(self):
         return self.siteinfo['articlepath'].replace('$1', '')
 
+    def article_url_to_title(self, url):
+        return urlparse(url).path.replace(self.article_path_prefix, '', 1)
+
     def _update_params(self, params):
         """Include useful default parameters, and handle conversion of lists/tuples/sets to pipe-delimited strings."""
         params['format'] = 'json'
@@ -357,6 +360,4 @@ class MediaWikiClient(RequestsClient):
     @classmethod
     def page_for_article(cls, article_url):
         client = cls(article_url, nopath=True)
-        article_path = urlparse(article_url).path
-        title = article_path.replace(client.article_path_prefix, '', 1)
-        return client.get_page(title)
+        return client.get_page(client.article_url_to_title(article_url))
