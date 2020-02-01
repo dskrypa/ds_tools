@@ -153,7 +153,11 @@ class List(CompoundNode):
     def children(self):
         return [ListEntry(val) for val in map(str.strip, self.raw.fullitems)]
 
-
+    def iter_flat(self):
+        for child in self.children:
+            yield child
+            if child.children:
+                yield from child.children
 
 
 class Table(CompoundNode):
