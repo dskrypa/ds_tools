@@ -69,6 +69,11 @@ class CompoundNode(Node):
     def __len__(self):
         return len(self.children)
 
+    def find_all(self, node_cls):
+        for value in self:
+            if isinstance(value, node_cls):
+                yield value
+
 
 class MappingNode(CompoundNode):
     @cached_property
