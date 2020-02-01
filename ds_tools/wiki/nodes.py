@@ -86,6 +86,7 @@ class MappingNode(CompoundNode):
 
 
 class MixedNode(CompoundNode):
+    """A node that contains text and links"""
     @cached_property
     def children(self):
         return extract_links(self.raw)
@@ -106,7 +107,7 @@ class String(BasicNode):
 class Link(BasicNode):
     def __init__(self, raw):
         super().__init__(raw)
-        self.link = raw.wikilinks[0]
+        self.link = self.raw.wikilinks[0]
         self.title = self.link.title    # target = title + fragment
         self.text = self.link.text
 
@@ -172,24 +173,35 @@ class Table(CompoundNode):
         return processed
 
 
-class Template(CompoundNode):
+class Template(BasicNode):
     def __init__(self, raw):
         super().__init__(raw)
         self.name = self.raw.name.strip()
 
     def __repr__(self):
-        return f'<{type(self).__name__}({self.name!r}: {self.children!r})>'
+        return f'<{type(self).__name__}({self.name!r}: {self.value!r})>'
 
     @cached_property
-    def children(self):
-        return [as_node(arg) for arg in self.raw.arguments]
+    def value(self):
+        args = self.raw.arguments
+        if not args:
+            return None
+        arg = args[0]
+        if arg.name == '1' and arg.string.startswith('|'):
+            if len(args) == 1:
+                return as_node(arg.value)
+            return [as_node(a.value) for a in args]
 
-    def as_mapping(self):
-        node = MappingNode(self.raw)
-        for arg in self.raw.arguments:
+        mapping = MappingNode(self.raw)
+        for arg in args:
             key = strip_style(arg.name)
-            node[key] = as_node(arg.value.strip())
-        return node
+            mapping[key] = as_node(arg.value.strip())
+        return mapping
+
+    def __getitem__(self, item):
+        if self.value is None:
+            raise TypeError('Cannot index a template with no value')
+        return self.value[item]
 
 
 class Root(Node):
@@ -243,22 +255,32 @@ class Section(Node):
     @cached_property
     def content(self):
         if self.level == 0:
-            return as_node(self.raw)
+            return as_node(self.raw.string.strip())         # without .string here, .tags() returns the full page's tags
         return as_node(self.raw.string.partition('\n')[2])  # chop off the header
 
-    def pprint(self, mode='reprs', indent=''):
+    def pprint(self, mode='reprs', indent='', recurse=True):
         if mode == 'content':
             print(self.raw.pformat())
-            for child in self.children.values():
-                child.pprint()
+            if recurse:
+                for child in self.children.values():
+                    child.pprint(mode, recurse=recurse)
         elif mode == 'headers':
             print(f'{indent}{"=" * self.level}{self.title}{"=" * self.level}')
-            for child in self.children.values():
-                child.pprint(mode, indent=indent + ' ' * 4)
+            if recurse:
+                for child in self.children.values():
+                    child.pprint(mode, indent=indent + ' ' * 4, recurse=recurse)
         elif mode == 'reprs':
             print(f'{indent}{self}')
-            for child in self.children.values():
-                child.pprint(mode, indent=indent + ' ' * 4)
+            if recurse:
+                for child in self.children.values():
+                    child.pprint(mode, indent=indent + ' ' * 4, recurse=recurse)
+
+
+def short_repr(text):
+    if len(text) <= 50:
+        return repr(text)
+    else:
+        return repr(f'{text[:24]}...{text[-23:]}')
 
 
 def as_node(wiki_text):
@@ -269,19 +291,23 @@ def as_node(wiki_text):
     if isinstance(wiki_text, str):
         wiki_text = WikiText(wiki_text)
 
+    # TODO: If a given node is inside another node type, skip splitting on it until processing the inside of that node
     func_to_node = [
-        ('tables', Table), ('lists', List), ('tags', BasicNode), ('comments', BasicNode), ('templates', Template)
+        ('tags', BasicNode), ('templates', Template), ('tables', Table), ('lists', List), ('comments', BasicNode)
     ]
     for name, node_cls in func_to_node:
         prop = getattr(wiki_text, name)
         raw_objs = prop() if hasattr(prop, '__call__') else prop
+        # log.debug(f'Found {len(raw_objs):>03d} {name:>9s} in [{short_repr(wiki_text)}]')
         if raw_objs:
             node = node_cls(raw_objs[0])
             if node.raw.string.strip() == wiki_text.string.strip():
+                # log.debug('  > It was the only thing in this node')
                 return node
             compound = CompoundNode(wiki_text)
-            before, table_str, after = map(str.strip, wiki_text.string.partition(node.raw.string))
+            before, node_str, after = map(str.strip, wiki_text.string.partition(node.raw.string))
             if before:
+                # log.debug(f'  > It had something before it: [{short_repr(before)}]')
                 before_node = as_node(before)
                 if type(before_node) is CompoundNode:                   # It was not a subclass that stands on its own
                     compound.children.extend(before_node.children)
@@ -290,6 +316,7 @@ def as_node(wiki_text):
 
             compound.children.append(node)
             if after:
+                # log.debug(f'  > It had something after it: [{short_repr(after)}]')
                 after_node = as_node(after)
                 if type(after_node) is CompoundNode:
                     compound.children.extend(after_node.children)
@@ -298,10 +325,12 @@ def as_node(wiki_text):
 
             return compound
 
+    # log.debug(f'No complex objs found in [{wiki_text[:30]!r}]')
     links = wiki_text.wikilinks
     if not links:
         return String(wiki_text)
-    elif len(links) == 1 and links[0].string == strip_style(wiki_text.string):
+    elif len(links) == 1 or strip_style(links[0].string) == strip_style(wiki_text.string):
+        # Reason for using or: (at least) file links support nested links, which are displayed as text under the file
         return Link(wiki_text)
 
     return MixedNode(wiki_text)

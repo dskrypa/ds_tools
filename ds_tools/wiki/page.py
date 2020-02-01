@@ -12,8 +12,7 @@ Notes:\n
 import logging
 
 from ..compat import cached_property
-from .nodes import Root, as_node, MappingNode
-from .utils import strip_style
+from .nodes import Root, as_node, Template, MixedNode, String, Link
 
 __all__ = ['WikiPage']
 log = logging.getLogger(__name__)
@@ -36,14 +35,12 @@ class WikiPage(Root):
         further processing of links or other data structures.  Wiki lists are converted to Python lists of WikiText
         values.
         """
-        templates = self.raw.sections[0].templates
-        if templates:
-            infobox = templates[0]
-            node = MappingNode(infobox)
-            for arg in infobox.arguments:
-                key = strip_style(arg.name)
-                node[key] = as_node(arg.value.strip())
-            return node
+        try:
+            for node in self.sections.content:
+                if isinstance(node, Template) and 'infobox' in node.name.lower():
+                    return node
+        except Exception as e:
+            log.debug(f'Error iterating over first section content: {e}')
         return None
 
     @cached_property
@@ -52,17 +49,10 @@ class WikiPage(Root):
         Neither parser provides access to the 1st paragraph directly when an infobox template precedes it - need to
         remove the infobox from the 1st section, or any other similar elements.
         """
-        intro_section = self.raw.sections[0]
-        templates = intro_section.templates
-        if templates:
-            infobox_end = templates[0].span[1]
-            intro = intro_section[infobox_end:].strip()
-            return as_node(intro)
-
-        tags = intro_section.tags()
-        if tags:
-            tag = tags[0].string
-            intro = intro_section.string.partition(tag)[2]
-        else:
-            intro = intro_section.string
-        return as_node(intro)
+        try:
+            for node in self.sections.content:
+                if isinstance(node, (MixedNode, String)):
+                    return node
+        except Exception as e:
+            log.debug(f'Error iterating over first section content: {e}')
+        return None
