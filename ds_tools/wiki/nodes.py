@@ -247,6 +247,12 @@ class Section(Node):
     def __getitem__(self, item):
         return self.children[item]
 
+    @property
+    def descendant_levels(self):
+        if self.children:
+            return max(c.descendant_levels for c in self.children.values()) + 1
+        return 0
+
     def find(self, title):
         try:
             return self.children[title]
