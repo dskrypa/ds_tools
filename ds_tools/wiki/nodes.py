@@ -50,15 +50,18 @@ class BasicNode(Node):
 
 
 class CompoundNode(Node):
-    def __init__(self, raw):
-        super().__init__(raw)
-
     @cached_property
     def children(self):
         return []
 
     def __repr__(self):
         return f'<{type(self).__name__}({self.children!r})>'
+
+    def __getitem__(self, item):
+        return self.children[item]
+
+    def __setitem__(self, key, value):
+        self.children[key] = value
 
     def __iter__(self):
         yield from self.children
@@ -71,12 +74,6 @@ class MappingNode(CompoundNode):
     @cached_property
     def children(self):
         return ordered_dict()
-
-    def __setitem__(self, key, value):
-        self.children[key] = value
-
-    def __getitem__(self, item):
-        return self.children[item]
 
     def items(self):
         return self.children.items()
@@ -97,7 +94,7 @@ class String(BasicNode):
         self.value = strip_style(self.raw.string)
 
     def __repr__(self):
-        return f'<{type(self).__name__}({self.raw.string!r})>'
+        return f'<{type(self).__name__}({self.raw.string.strip()!r})>'
 
     def __str__(self):
         return self.value
@@ -114,13 +111,49 @@ class Link(BasicNode):
         return f'<{type(self).__name__}({self.link.string!r})>'
 
 
-class List(CompoundNode):
+class ListEntry(CompoundNode):
+    def __init__(self, raw):
+        super().__init__(raw)
+        if type(self.raw) is WikiText:
+            try:
+                as_list = self.raw.lists()[0]
+            except IndexError:
+                self.value = as_node(self.raw)
+                self._children = None
+            else:
+                self.value = as_node(as_list.items[0])
+                try:
+                    self._children = as_list.sublists()[0].string
+                except IndexError:
+                    self._children = None
+
+    def __repr__(self):
+        if self._children:
+            return f'<{type(self).__name__}({self.value!r}, {self.children!r})>'
+        return f'<{type(self).__name__}({self.value!r})>'
+
     @cached_property
     def children(self):
-        values = [as_node(WikiText(val)) for val in map(str.strip, self.raw.items)]
-        for sublist in self.raw.sublists():
-            values.append(List(sublist))
-        return values
+        if not self._children:
+            return []
+        children = [child[1:] for child in map(str.strip, self._children.splitlines())]
+        return List('\n'.join(children)).children
+
+
+class List(CompoundNode):
+    def __init__(self, raw):
+        super().__init__(raw)
+        if type(self.raw) is WikiText:
+            try:
+                self.raw = self.raw.lists()[0]
+            except IndexError as e:
+                raise ValueError('Invalid wiki list value') from e
+
+    @cached_property
+    def children(self):
+        return [ListEntry(val) for val in map(str.strip, self.raw.fullitems)]
+
+
 
 
 class Table(CompoundNode):
