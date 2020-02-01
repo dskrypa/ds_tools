@@ -284,12 +284,13 @@ class Section(Node):
 
 
 WTP_TYPE_METHOD_NODE_MAP = {
-    'Tag': 'tags',              # Requires .tags() to be called before being in ._type_to_spans
     'Template': 'templates',
+    'Comment': 'comments',
+    'Tag': 'tags',              # Requires .tags() to be called before being in ._type_to_spans
     'Table': 'tables',          # Requires .tables to be accessed before being in ._type_to_spans
     'WikiList': 'lists',        # Requires .lists() to be called before being in ._type_to_spans
-    'Comment': 'comments'
 }
+WTP_ACCESS_FIRST = {'Tag', 'Table', 'WikiList'}
 WTP_ATTR_TO_NODE_MAP = {'tags': BasicNode, 'templates': Template, 'tables': Table, 'lists': List, 'comments': BasicNode}
 
 
@@ -303,16 +304,19 @@ def short_repr(text):
 def as_node(wiki_text):
     """
     :param str|WikiText wiki_text: The content to process
-    :return Node: A :class:`Node` of subclass thereof
+    :return Node: A :class:`Node` or subclass thereof
     """
     if isinstance(wiki_text, str):
         wiki_text = WikiText(wiki_text)
 
     node_start = wiki_text.span[0]
-    values = {'lists': wiki_text.lists(), 'tables': wiki_text.tables, 'tags': wiki_text.tags()}
+    values = {}
     first = None
     first_attr = None
     for wtp_type, attr in WTP_TYPE_METHOD_NODE_MAP.items():
+        if wtp_type in WTP_ACCESS_FIRST:
+            value = getattr(wiki_text, attr)
+            values[attr] = value() if hasattr(value, '__call__') else value
         span = next(iter(wiki_text._subspans(wtp_type)), None)
         if span:
             start = span[0]
@@ -326,8 +330,8 @@ def as_node(wiki_text):
         if first_attr in values:
             raw_objs = values[first_attr]
         else:
-            prop = getattr(wiki_text, first_attr)
-            raw_objs = prop() if hasattr(prop, '__call__') else prop
+            value = getattr(wiki_text, first_attr)
+            raw_objs = value() if hasattr(value, '__call__') else value
 
         # log.debug(f'Found {len(raw_objs):>03d} {name:>9s} in [{short_repr(wiki_text)}]')
         node = WTP_ATTR_TO_NODE_MAP[first_attr](raw_objs[0])
