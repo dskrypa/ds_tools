@@ -59,9 +59,9 @@ class MediaWikiClient(RequestsClient):
         try:
             return self._siteinfo_cache[self.host]
         except KeyError:
-            params = {'action': 'query', 'format': 'json', 'meta': 'siteinfo', 'siprop': 'general'}
+            params = {'action': 'query', 'format': 'json', 'meta': 'siteinfo', 'siprop': 'general|interwikimap'}
             resp = self.get('api.php', params=params)
-            self._siteinfo_cache[self.host] = siteinfo = resp.json()['query']['general']
+            self._siteinfo_cache[self.host] = siteinfo = resp.json()['query']
             return siteinfo
 
     @cached_property
@@ -70,11 +70,16 @@ class MediaWikiClient(RequestsClient):
         The version of MediaWiki that this site is running.  Used to adjust query parameters due to API changes between
         versions.
         """
-        return LooseVersion(self.siteinfo['generator'].split()[-1])
+        return LooseVersion(self.siteinfo['general']['generator'].split()[-1])
+
+    @cached_property
+    def interwiki_map(self):
+        rows = self.siteinfo['interwikimap']
+        return {row['prefix']: row['url'] for row in rows}
 
     @cached_property
     def article_path_prefix(self):
-        return self.siteinfo['articlepath'].replace('$1', '')
+        return self.siteinfo['general']['articlepath'].replace('$1', '')
 
     def article_url_to_title(self, url):
         return urlparse(url).path.replace(self.article_path_prefix, '', 1)
