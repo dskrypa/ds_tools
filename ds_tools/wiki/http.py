@@ -21,27 +21,30 @@ from .page import WikiPage
 
 __all__ = ['MediaWikiClient']
 log = logging.getLogger(__name__)
+URL_REGEX = re.compile('^[a-zA-Z]+://')
 
 
 class MediaWikiClient(RequestsClient):
     _siteinfo_cache = None
     _instances = {}
     def __new__(cls, host_or_url, *args, **kwargs):
-        host = urlparse(host_or_url).hostname if re.match('^[a-zA-Z]+://', host_or_url) else host_or_url
+        host = urlparse(host_or_url).hostname if URL_REGEX.match(host_or_url) else host_or_url
         try:
             return cls._instances[host]
         except KeyError:
             cls._instances[host] = instance = super().__new__(cls)
             return instance
 
-    def __init__(self, *args, ttl=3600, **kwargs):
+    def __init__(self, host_or_url, *args, ttl=3600, **kwargs):
         if not getattr(self, '_MediaWikiClient__initialized', False):
             headers = kwargs.get('headers') or {}
             headers.setdefault('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8')
             headers.setdefault('Accept-Encoding', 'gzip, deflate')
             headers.setdefault('Accept-Language', 'en-US,en;q=0.5')
             # headers.setdefault('Upgrade-Insecure-Requests', '1')
-            super().__init__(*args, **kwargs)
+            if not URL_REGEX.match(host_or_url):
+                kwargs.setdefault('scheme', 'https')
+            super().__init__(host_or_url, *args, **kwargs)
             if self.host in ('en.wikipedia.org', 'www.generasia.com'):
                 self.path_prefix = 'w'
             if MediaWikiClient._siteinfo_cache is None:
