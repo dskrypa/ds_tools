@@ -12,7 +12,7 @@ Notes:\n
 import logging
 
 from ..compat import cached_property
-from .nodes import Root, as_node, Template, MixedNode, String, Link
+from .nodes import Root, Template, MixedNode, String
 
 __all__ = ['WikiPage']
 log = logging.getLogger(__name__)

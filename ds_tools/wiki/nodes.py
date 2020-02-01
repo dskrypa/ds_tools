@@ -211,6 +211,9 @@ class Root(Node):
             page_text = WikiText(page_text.replace('\xa0', ' '))
         super().__init__(page_text)
 
+    def __getitem__(self, item):
+        return self.sections[item]
+
     @cached_property
     def sections(self):
         sections = iter(self.raw.sections)
@@ -230,9 +233,13 @@ class Root(Node):
 class Section(Node):
     def __init__(self, raw):
         super().__init__(raw)
-        self.title = strip_style(raw.title)
-        self.level = raw.level
+        self.title = strip_style(self.raw.title)
+        self.level = self.raw.level
         self.children = ordered_dict()
+
+    # @cached_property
+    # def _standalone(self):
+    #     return WikiText(self.raw.string)
 
     def __repr__(self):
         return f'<{type(self).__name__}[{self.level}: {self.title}]>'
@@ -256,7 +263,7 @@ class Section(Node):
     def content(self):
         if self.level == 0:
             return as_node(self.raw.string.strip())         # without .string here, .tags() returns the full page's tags
-        return as_node(self.raw.string.partition('\n')[2])  # chop off the header
+        return as_node(self.raw.contents.strip())           # chop off the header
 
     def pprint(self, mode='reprs', indent='', recurse=True):
         if mode == 'content':
@@ -276,6 +283,16 @@ class Section(Node):
                     child.pprint(mode, indent=indent + ' ' * 4, recurse=recurse)
 
 
+WTP_TYPE_METHOD_NODE_MAP = {
+    'Tag': 'tags',              # Requires .tags() to be called before being in ._type_to_spans
+    'Template': 'templates',
+    'Table': 'tables',          # Requires .tables to be accessed before being in ._type_to_spans
+    'WikiList': 'lists',        # Requires .lists() to be called before being in ._type_to_spans
+    'Comment': 'comments'
+}
+WTP_ATTR_TO_NODE_MAP = {'tags': BasicNode, 'templates': Template, 'tables': Table, 'lists': List, 'comments': BasicNode}
+
+
 def short_repr(text):
     if len(text) <= 50:
         return repr(text)
@@ -291,49 +308,62 @@ def as_node(wiki_text):
     if isinstance(wiki_text, str):
         wiki_text = WikiText(wiki_text)
 
-    # TODO: If a given node is inside another node type, skip splitting on it until processing the inside of that node
-    func_to_node = [
-        ('tags', BasicNode), ('templates', Template), ('tables', Table), ('lists', List), ('comments', BasicNode)
-    ]
-    for name, node_cls in func_to_node:
-        prop = getattr(wiki_text, name)
-        raw_objs = prop() if hasattr(prop, '__call__') else prop
+    node_start = wiki_text.span[0]
+    values = {'lists': wiki_text.lists(), 'tables': wiki_text.tables, 'tags': wiki_text.tags()}
+    first = None
+    first_attr = None
+    for wtp_type, attr in WTP_TYPE_METHOD_NODE_MAP.items():
+        span = next(iter(wiki_text._subspans(wtp_type)), None)
+        if span:
+            start = span[0]
+            if first is None or first > start:
+                first = start
+                first_attr = attr
+                if first == node_start:
+                    break
+
+    if first_attr:
+        if first_attr in values:
+            raw_objs = values[first_attr]
+        else:
+            prop = getattr(wiki_text, first_attr)
+            raw_objs = prop() if hasattr(prop, '__call__') else prop
+
         # log.debug(f'Found {len(raw_objs):>03d} {name:>9s} in [{short_repr(wiki_text)}]')
-        if raw_objs:
-            node = node_cls(raw_objs[0])
-            if node.raw.string.strip() == wiki_text.string.strip():
-                # log.debug('  > It was the only thing in this node')
-                return node
-            compound = CompoundNode(wiki_text)
-            before, node_str, after = map(str.strip, wiki_text.string.partition(node.raw.string))
-            if before:
-                # log.debug(f'  > It had something before it: [{short_repr(before)}]')
-                before_node = as_node(before)
-                if type(before_node) is CompoundNode:                   # It was not a subclass that stands on its own
-                    compound.children.extend(before_node.children)
-                else:
-                    compound.children.append(before_node)
+        node = WTP_ATTR_TO_NODE_MAP[first_attr](raw_objs[0])
+        if node.raw.string.strip() == wiki_text.string.strip():
+            # log.debug('  > It was the only thing in this node')
+            return node
+        compound = CompoundNode(wiki_text)
+        before, node_str, after = map(str.strip, wiki_text.string.partition(node.raw.string))
+        if before:
+            # log.debug(f'  > It had something before it: [{short_repr(before)}]')
+            before_node = as_node(before)
+            if type(before_node) is CompoundNode:  # It was not a subclass that stands on its own
+                compound.children.extend(before_node.children)
+            else:
+                compound.children.append(before_node)
 
-            compound.children.append(node)
-            if after:
-                # log.debug(f'  > It had something after it: [{short_repr(after)}]')
-                after_node = as_node(after)
-                if type(after_node) is CompoundNode:
-                    compound.children.extend(after_node.children)
-                else:
-                    compound.children.append(after_node)
+        compound.children.append(node)
+        if after:
+            # log.debug(f'  > It had something after it: [{short_repr(after)}]')
+            after_node = as_node(after)
+            if type(after_node) is CompoundNode:
+                compound.children.extend(after_node.children)
+            else:
+                compound.children.append(after_node)
 
-            return compound
+        return compound
+    else:
+        # log.debug(f'No complex objs found in [{wiki_text[:30]!r}]')
+        links = wiki_text.wikilinks
+        if not links:
+            return String(wiki_text)
+        elif len(links) == 1 or strip_style(links[0].string) == strip_style(wiki_text.string):
+            # Reason for using or: (at least) file links support nested links, which are displayed as text under the file
+            return Link(wiki_text)
 
-    # log.debug(f'No complex objs found in [{wiki_text[:30]!r}]')
-    links = wiki_text.wikilinks
-    if not links:
-        return String(wiki_text)
-    elif len(links) == 1 or strip_style(links[0].string) == strip_style(wiki_text.string):
-        # Reason for using or: (at least) file links support nested links, which are displayed as text under the file
-        return Link(wiki_text)
-
-    return MixedNode(wiki_text)
+        return MixedNode(wiki_text)
 
 
 def extract_links(raw):
@@ -341,18 +371,21 @@ def extract_links(raw):
         end_pat = extract_links._end_pat
         start_pat = extract_links._start_pat
     except AttributeError:
-        end_pat = extract_links._end_pat = re.compile(r'^(.*?)([\'"]+)$')
-        start_pat = extract_links._start_pat = re.compile(r'^([\'"]+)(.*)$')
+        end_pat = extract_links._end_pat = re.compile(r'^(.*?)([\'"]+)$', re.DOTALL)
+        start_pat = extract_links._start_pat = re.compile(r'^([\'"]+)(.*)$', re.DOTALL)
 
     content = []
     raw_str = raw.string.strip()
     for link in raw.wikilinks:
         before, link_text, raw_str = map(str.strip, raw_str.partition(link.string))
+        # log.debug(f'Split raw into:\nbefore={before!r}\nlink={link_text!r}\nafter={raw_str!r}\n')
         if before and raw_str:
             bm = end_pat.match(before)
             if bm:
+                # log.debug(f' > Found quotes at the end of before: {bm.group(2)}')
                 am = start_pat.match(raw_str)
                 if am:
+                    # log.debug(f' > Found quotes at the beginning of after: {am.group(1)}')
                     before = bm.group(1).strip()
                     link_text = f'{bm.group(2)}{link_text}{am.group(1)}'
                     raw_str = am.group(2).strip()
