@@ -16,7 +16,7 @@ from .nodes import Root, Template, MixedNode, String
 
 __all__ = ['WikiPage']
 log = logging.getLogger(__name__)
-IGNORE_CATEGORY_PREFIXES = ('album chart usages for',)
+IGNORE_CATEGORY_PREFIXES = ('album chart usages for', 'discography article stubs')
 
 
 class WikiPage(Root):
