@@ -78,6 +78,9 @@ class MappingNode(CompoundNode):
     def items(self):
         return self.children.items()
 
+    def keys(self):
+        return self.children.keys()
+
     def values(self):
         return self.children.values()
 
@@ -170,9 +173,23 @@ class Table(CompoundNode):
 
 
 class Template(CompoundNode):
+    def __init__(self, raw):
+        super().__init__(raw)
+        self.name = self.raw.name.strip()
+
+    def __repr__(self):
+        return f'<{type(self).__name__}({self.name!r}: {self.children!r})>'
+
     @cached_property
     def children(self):
-        return []       # TODO
+        return [as_node(arg) for arg in self.raw.arguments]
+
+    def as_mapping(self):
+        node = MappingNode(self.raw)
+        for arg in self.raw.arguments:
+            key = strip_style(arg.name)
+            node[key] = as_node(arg.value.strip())
+        return node
 
 
 class Root(Node):
