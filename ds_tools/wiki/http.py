@@ -144,20 +144,29 @@ class MediaWikiClient(RequestsClient):
             for title, data in _parsed.items():
                 full = parsed[title]
                 for key, val in data.items():
-                    full_val = full[key]
                     if key == 'iwlinks':
+                        try:
+                            full_val = full[key]
+                        except KeyError:
+                            full_val = full[key] = defaultdict(dict)  # Mapping of {wiki name: {title: full url}}
+
                         for iw_name, iw_links in val.items():
                             full_val[iw_name].update(iw_links)
                     else:
-                        if isinstance(full_val, list):
-                            full_val.extend(val)
-                        elif isinstance(full_val, dict):
-                            full_val.update(val)
-                        elif key in skip_merge:
-                            pass
+                        try:
+                            full_val = full[key]
+                        except KeyError:
+                            full[key] = val
                         else:
-                            base = f'Unexpected value to merge for title={title!r} key={key!r}'
-                            log.error(f'{base} type={type(full_val).__name__} full_val={full_val!r} new val={val!r}')
+                            if isinstance(full_val, list):
+                                full_val.extend(val)
+                            elif isinstance(full_val, dict):
+                                full_val.update(val)
+                            elif key in skip_merge:
+                                pass
+                            else:
+                                base = f'Unexpected value to merge for title={title!r} key={key!r} '
+                                log.error(f'{base}type={type(full_val).__name__} full_val={full_val!r} new val={val!r}')
 
         return parsed
 
