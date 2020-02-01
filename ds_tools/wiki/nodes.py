@@ -248,9 +248,9 @@ class Section(Node):
         return self.children[item]
 
     @property
-    def descendant_levels(self):
+    def depth(self):
         if self.children:
-            return max(c.descendant_levels for c in self.children.values()) + 1
+            return max(c.depth for c in self.children.values()) + 1
         return 0
 
     def find(self, title):
