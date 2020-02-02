@@ -348,7 +348,11 @@ def as_node(wiki_text):
         # log.debug(f'Types available: {wiki_text._type_to_spans.keys()}; ExtensionTags: {wiki_text._type_to_spans["ExtensionTag"]}')
         if wtp_type in WTP_ACCESS_FIRST:
             value = getattr(wiki_text, attr)
-            values[attr] = value() if hasattr(value, '__call__') else value
+            value = value() if hasattr(value, '__call__') else value
+            try:
+                values[attr].extend(value)
+            except KeyError:
+                values[attr] = value
         span = next(iter(wiki_text._subspans(wtp_type)), None)
         if span:
             # log.debug(f'Found {wtp_type:>8s} @ {span}')
