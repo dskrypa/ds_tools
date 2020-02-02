@@ -12,7 +12,7 @@ Notes:\n
 import logging
 
 from ..compat import cached_property
-from .nodes import Root, Template, MixedNode, String
+from .nodes import Root, Template, MixedNode, String, CompoundNode
 
 __all__ = ['WikiPage']
 log = logging.getLogger(__name__)
@@ -44,12 +44,16 @@ class WikiPage(Root):
         further processing of links or other data structures.  Wiki lists are converted to Python lists of WikiText
         values.
         """
-        try:
-            for node in self.sections.content:
-                if isinstance(node, Template) and 'infobox' in node.name.lower():
-                    return node
-        except Exception as e:
-            log.debug(f'Error iterating over first section content: {e}')
+        section_0_content = self.sections.content
+        if isinstance(section_0_content, CompoundNode):
+            try:
+                for node in self.sections.content:
+                    if isinstance(node, Template) and 'infobox' in node.name.lower():
+                        return node
+            except Exception as e:
+                log.debug(f'Error iterating over first section content: {e}')
+        elif isinstance(section_0_content, Template) and 'infobox' in section_0_content.name.lower():
+            return section_0_content
         return None
 
     @cached_property
