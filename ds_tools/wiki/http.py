@@ -9,8 +9,11 @@ import json
 import logging
 import re
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from distutils.version import LooseVersion
 from urllib.parse import urlparse
+
+from requests import RequestException
 
 from requests_client import RequestsClient
 from ..caching import TTLDBCache, DBCache
@@ -27,6 +30,7 @@ URL_REGEX = re.compile('^[a-zA-Z]+://')
 class MediaWikiClient(RequestsClient):
     _siteinfo_cache = None
     _instances = {}
+
     def __new__(cls, host_or_url, *args, **kwargs):
         host = urlparse(host_or_url).hostname if URL_REGEX.match(host_or_url) else host_or_url
         try:
@@ -388,3 +392,48 @@ class MediaWikiClient(RequestsClient):
     def page_for_article(cls, article_url):
         client = cls(article_url, nopath=True)
         return client.get_page(client.article_url_to_title(article_url))
+
+    @classmethod
+    def get_multi_site_page(cls, title, sites):
+        """
+        :param str title: A page title
+        :param iterable sites: A list or other iterable that yields site host strings
+        :return tuple: Tuple containing mappings of {site: WikiPage}, {site: errors}
+        """
+        clients = [cls(site, nopath=True) for site in sites]
+        with ThreadPoolExecutor(max_workers=max(1, len(clients))) as executor:
+            _futures = {executor.submit(client.get_page, title): client.host for client in clients}
+            results = {}
+            errors = {}
+            for future in as_completed(_futures):
+                site = _futures[future]
+                try:
+                    results[site] = future.result()
+                except (RequestException, PageMissingError) as e:
+                    log.error(f'Error retrieving page={title!r} from site={site}: {e}')
+                    errors[site] = e
+
+            return results, errors
+
+    @classmethod
+    def get_multi_site_pages(cls, site_title_map):
+        """
+        :param dict site_title_map: Mapping of {site: list(titles)}
+        :return tuple: Tuple containing mappings of {site: results}, {site: errors}
+        """
+        client_title_map = {cls(site, nopath=True): titles for site, titles in site_title_map.items()}
+        with ThreadPoolExecutor(max_workers=max(1, len(client_title_map))) as executor:
+            _futures = {
+                executor.submit(client.get_pages, titles): client.host for client, titles in client_title_map.items()
+            }
+            results = {}
+            errors = {}
+            for future in as_completed(_futures):
+                site = _futures[future]
+                try:
+                    results[site] = future.result()
+                except RequestException as e:
+                    log.error(f'Error retrieving pages from site={site}: {e}')
+                    errors[site] = e
+
+            return results, errors
