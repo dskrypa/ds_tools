@@ -262,15 +262,14 @@ class Section(Node):
         self.level = self.raw.level
         self.children = ordered_dict()
 
-    # @cached_property
-    # def _standalone(self):
-    #     return WikiText(self.raw.string)
-
     def __repr__(self):
         return f'<{type(self).__name__}[{self.level}: {self.title}]>'
 
     def __getitem__(self, item):
         return self.children[item]
+
+    def __iter__(self):
+        yield from self.children.values()
 
     @property
     def depth(self):
