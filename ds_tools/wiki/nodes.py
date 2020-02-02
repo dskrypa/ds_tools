@@ -356,6 +356,9 @@ def as_node(wiki_text):
                 if first == node_start:
                     break
 
+    if first_attr == 'tags' and len(values[first_attr]) == 1 and values[first_attr][0].name == 'small':
+        first_attr = None   # Treat it like a String
+
     if first_attr:
         if first_attr in values:
             raw_objs = values[first_attr]

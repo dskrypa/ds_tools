@@ -39,7 +39,7 @@ class MediaWikiClient(RequestsClient):
             cls._instances[host] = instance = super().__new__(cls)
             return instance
 
-    def __init__(self, host_or_url, *args, ttl=3600, **kwargs):
+    def __init__(self, host_or_url, *args, ttl=3600 * 6, **kwargs):
         if not getattr(self, '_MediaWikiClient__initialized', False):
             headers = kwargs.get('headers') or {}
             headers.setdefault('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8')
