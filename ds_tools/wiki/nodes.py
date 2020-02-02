@@ -259,7 +259,7 @@ class Table(CompoundNode):
         node_fn = lambda row: as_node(row, self.preserve_comments)
         processed = []
         for data_row, cell_row in zip(data_rows, cell_rows):
-            if int(cell_row[0].attrs.get('colspan', 1)) == len(headers):
+            if int(cell_row[0].attrs.get('colspan', 1)) >= len(headers):    # Some tables have an incorrect value...
                 processed.append(TableSeparator(node_fn(data_row[0])))
             else:
                 processed.append(ordered_dict(zip(headers, map(node_fn, data_row))))
