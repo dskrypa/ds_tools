@@ -385,8 +385,7 @@ def as_node(wiki_text):
         links = wiki_text.wikilinks
         if not links:
             return String(wiki_text)
-        elif len(links) == 1 or strip_style(links[0].string) == strip_style(wiki_text.string):
-            # Reason for using or: (at least) file links support nested links, which are displayed as text under the file
+        elif strip_style(links[0].string) == strip_style(wiki_text.string):
             return Link(wiki_text)
 
         return MixedNode(wiki_text)
