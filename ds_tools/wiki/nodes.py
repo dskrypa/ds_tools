@@ -153,11 +153,17 @@ class ListEntry(CompoundNode):
         return f'<{type(self).__name__}({self.value!r})>'
 
     @cached_property
-    def children(self):
+    def sub_list(self):
         if not self._children:
+            return None
+        return List('\n'.join(child[1:] for child in map(str.strip, self._children.splitlines())))
+
+    @cached_property
+    def children(self):
+        sub_list = self.sub_list
+        if not sub_list:
             return []
-        children = [child[1:] for child in map(str.strip, self._children.splitlines())]
-        return List('\n'.join(children)).children
+        return sub_list.children
 
 
 class List(CompoundNode):
@@ -175,9 +181,9 @@ class List(CompoundNode):
 
     def iter_flat(self):
         for child in self.children:
-            yield child
-            if child.children:
-                yield from child.children
+            yield child.value
+            if child.sub_list:
+                yield from child.sub_list.iter_flat()
 
 
 class Table(CompoundNode):
