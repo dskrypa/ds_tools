@@ -418,10 +418,13 @@ class MediaWikiClient(RequestsClient):
     @classmethod
     def get_multi_site_pages(cls, site_title_map):
         """
-        :param dict site_title_map: Mapping of {site: list(titles)}
+        :param dict site_title_map: Mapping of {site|MediaWikiCLient: list(titles)}
         :return tuple: Tuple containing mappings of {site: results}, {site: errors}
         """
-        client_title_map = {cls(site, nopath=True): titles for site, titles in site_title_map.items()}
+        client_title_map = {
+            (site if isinstance(site, cls) else cls(site, nopath=True)): titles
+            for site, titles in site_title_map.items()
+        }
         with ThreadPoolExecutor(max_workers=max(1, len(client_title_map))) as executor:
             _futures = {
                 executor.submit(client.get_pages, titles): client.host for client, titles in client_title_map.items()
