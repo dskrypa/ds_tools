@@ -16,10 +16,11 @@ from .nodes import Root, Template, MixedNode, String
 
 __all__ = ['WikiPage']
 log = logging.getLogger(__name__)
-IGNORE_CATEGORY_PREFIXES = ('album chart usages for', 'discography article stubs')
 
 
 class WikiPage(Root):
+    _ignore_category_prefixes = ()
+
     def __init__(self, title, site, content, categories):
         super().__init__(content)
         self.site = site
@@ -31,7 +32,9 @@ class WikiPage(Root):
 
     @cached_property
     def categories(self):
-        categories = {cat for cat in map(str.lower, self._categories) if not cat.startswith(IGNORE_CATEGORY_PREFIXES)}
+        categories = {
+            cat for cat in map(str.lower, self._categories) if not cat.startswith(self._ignore_category_prefixes)
+        }
         return categories
 
     @cached_property
