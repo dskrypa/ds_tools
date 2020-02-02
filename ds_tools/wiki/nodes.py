@@ -22,7 +22,7 @@ from .utils import strip_style
 
 __all__ = [
     'Node', 'BasicNode', 'CompoundNode', 'MappingNode', 'MixedNode', 'String', 'Link', 'List', 'Table', 'Template',
-    'Root', 'Section', 'as_node', 'extract_links'
+    'Root', 'Section', 'as_node', 'extract_links', 'TableSeparator'
 ]
 log = logging.getLogger(__name__)
 PY_LT_37 = sys.version_info.major == 3 and sys.version_info.minor < 7
@@ -188,14 +188,90 @@ class List(CompoundNode):
             if child.sub_list:
                 yield from child.sub_list.iter_flat()
 
+    def as_dict(self, sep=':'):
+        data = {}
+        for line in map(str.strip, self.raw.items):
+            key, val = map(as_node, map(str.strip, line.split(sep, maxsplit=1)))
+            if isinstance(key, String):
+                data[key.value] = val
+            elif isinstance(key, Link):
+                data[key.text] = val
+            else:
+                data[key.raw.string] = val
+                log.debug(f'Unexpected key type on line: {line!r}')
+        return data
+
 
 class Table(CompoundNode):
+    def __init__(self, raw):
+        super().__init__(raw)
+        if type(self.raw) is WikiText:
+            try:
+                self.raw = self.raw.tables[0]
+            except IndexError as e:
+                raise ValueError('Invalid wiki table value') from e
+        self.caption = self.raw.caption.strip()
+        self._header_rows = None
+        self._raw_headers = None
+
+    @cached_property
+    def headers(self):
+        data_rows = iter(self.raw.data())
+        cell_headers = next(iter(self.raw.cells()))
+        spans = [int(cell.attrs.get('rowspan', 1)) for cell in cell_headers]
+        self._header_rows = max(spans)
+        self._raw_headers = []
+        str_headers = []
+
+        for _ in range(self._header_rows):
+            data_headers = next(data_rows)
+            data_cells = [as_node(data) for data in data_headers]
+            self._raw_headers.append(data_cells)
+            cell_strs = []
+            for cell in data_cells:
+                while isinstance(cell, CompoundNode):
+                    cell = cell[0]
+                if isinstance(cell, String):
+                    cell_strs.append(cell.value)
+                elif isinstance(cell, Link):
+                    cell_strs.append(cell.text)
+                else:
+                    log.debug(f'Unexpected cell type; using data instead: {cell}')
+            str_headers.append(cell_strs)
+
+        headers = []
+        for span, *header_vals in zip(spans, *str_headers):
+            span -= 1
+            while span:
+                header_vals.pop()
+                span -= 1
+            headers.append(':'.join(map(strip_style, header_vals)))
+        return headers
+
     @cached_property
     def children(self):
-        rows = iter(self.raw.cells())
-        columns = [strip_style(cell.value) for cell in next(rows)]
-        processed = [ordered_dict(zip(columns, map(as_node, row))) for row in rows]
+        headers = self.headers
+        data_rows = iter(self.raw.data())
+        cell_rows = iter(self.raw.cells())
+        for _ in range(self._header_rows):
+            next(data_rows)
+            next(cell_rows)
+
+        processed = []
+        for data_row, cell_row in zip(data_rows, cell_rows):
+            if int(cell_row[0].attrs.get('colspan', 1)) == len(headers):
+                processed.append(TableSeparator(as_node(data_row[0])))
+            else:
+                processed.append(ordered_dict(zip(headers, map(as_node, data_row))))
         return processed
+
+
+class TableSeparator:
+    def __init__(self, value):
+        self.value = value
+
+    def __repr__(self):
+        return f'<{type(self).__name__}({self.value!r})>'
 
 
 class Template(BasicNode):
