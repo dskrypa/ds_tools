@@ -116,6 +116,17 @@ class Link(BasicNode):
         self.title = self.link.title    # target = title + fragment
         self.text = self.link.text
 
+    @cached_property
+    def interwiki(self):
+        return ':' in self.title
+
+    @cached_property
+    def iw_key_title(self):
+        if self.interwiki:
+            iw_site, iw_title = map(str.strip, self.title.split(':', maxsplit=1))
+            return iw_site.lower(), iw_title
+        raise ValueError(f'{self} is not an interwiki link')
+
     def __repr__(self):
         return f'<{type(self).__name__}({self.link.string!r})>'
 

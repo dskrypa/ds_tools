@@ -29,6 +29,7 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 ALL_PUNC_SYMBOLS_WS = ALL_PUNCTUATION + ALL_SYMBOLS + string.whitespace
+LANG_CAT_NAMES = ['NULL', 'MIX', 'English', 'Korean', 'Japanese', 'Chinese', 'Thai', 'Greek', 'Cyrillic', 'UNKNOWN']
 NUM_STRIP_TBL = str.maketrans({c: '' for c in '0123456789'})
 PUNC_STRIP_TBL = str.maketrans({c: '' for c in string.punctuation})
 PUNC_SYMBOL_STRIP_TBL = str.maketrans({c: '' for c in ALL_PUNCTUATION + ALL_SYMBOLS})
@@ -139,16 +140,16 @@ class LangCat(Enum):
 
     @classmethod
     def for_name(cls, language):
-        lang = language.lower()
-        if lang in ('english', 'spanish'):
-            return cls.ENG
-        elif lang == 'korean':
+        lang = language.lower().strip()
+        if lang in ('english', 'eng', 'en', 'spanish'):     # A better enum value would have been latin, since this is
+            return cls.ENG                                  # more about unicode than actual language
+        elif lang in ('korean', 'hangul', 'kor', 'kr', 'ko'):
             return cls.HAN
-        elif lang == 'japanese':
+        elif lang in ('japanese', 'jp', 'jpn', 'jap'):
             return cls.JPN
         elif lang == 'thai':
             return cls.THAI
-        elif lang in ('chinese', 'mandarin'):
+        elif lang in ('chinese', 'mandarin', 'chn'):
             return cls.CJK
         elif lang in ('russian',):
             return cls.CYR
@@ -211,6 +212,10 @@ class LangCat(Enum):
     @classmethod
     def sort(cls, texts):
         return [text for cat, text in sorted((cls.categorize(text), text) for text in texts)]
+
+    @property
+    def full_name(self):
+        return LANG_CAT_NAMES[self.value]
 
 
 def _strip_non_word_chars(text):
