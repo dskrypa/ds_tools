@@ -36,7 +36,7 @@ requirements = [
 
 setup(
     name='ds_tools',
-    version='2020.02.02-10',
+    version='2020.02.02-11',
     author='Doug Skrypa',
     author_email='dskrypa@gmail.com',
     description='Misc Python 3 libraries and scripts',
@@ -45,8 +45,7 @@ setup(
     packages=find_packages(),
     classifiers=[
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.5',
-        'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.6',    # Minimum due to use of f-strings
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8'
     ],

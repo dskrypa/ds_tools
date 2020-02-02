@@ -17,6 +17,7 @@ from collections import OrderedDict
 from wikitextparser import WikiText
 
 from ..compat import cached_property
+# from ..output import colored
 from .utils import strip_style
 
 __all__ = [
@@ -316,6 +317,7 @@ class Section(Node):
 WTP_TYPE_METHOD_NODE_MAP = {
     'Template': 'templates',
     'Comment': 'comments',
+    'ExtensionTag': 'tags',
     'Tag': 'tags',              # Requires .tags() to be called before being in ._type_to_spans
     'Table': 'tables',          # Requires .tables to be accessed before being in ._type_to_spans
     'WikiList': 'lists',        # Requires .lists() to be called before being in ._type_to_spans
@@ -344,16 +346,23 @@ def as_node(wiki_text):
     first = None
     first_attr = None
     for wtp_type, attr in WTP_TYPE_METHOD_NODE_MAP.items():
+        # log.debug(f'Types available: {wiki_text._type_to_spans.keys()}; ExtensionTags: {wiki_text._type_to_spans["ExtensionTag"]}')
         if wtp_type in WTP_ACCESS_FIRST:
             value = getattr(wiki_text, attr)
             values[attr] = value() if hasattr(value, '__call__') else value
         span = next(iter(wiki_text._subspans(wtp_type)), None)
         if span:
+            # log.debug(f'Found {wtp_type:>8s} @ {span}')
             start = span[0]
             if first is None or first > start:
+                # if first is None:
+                #     log.debug(f'  > It was the first object found')
+                # else:
+                #     log.debug(f'  > It came before the previously discovered first object')
                 first = start
                 first_attr = attr
                 if first == node_start:
+                    # log.debug(f'    > It is definitely the first object')
                     break
 
     try:
@@ -369,13 +378,19 @@ def as_node(wiki_text):
             value = getattr(wiki_text, first_attr)
             raw_objs = value() if hasattr(value, '__call__') else value
 
-        # log.debug(f'Found {len(raw_objs):>03d} {name:>9s} in [{short_repr(wiki_text)}]')
-        node = WTP_ATTR_TO_NODE_MAP[first_attr](raw_objs[0])
+        # if first > 10:
+        #     obj_area = f'{wiki_text[first-10:first]}{colored(wiki_text[first], "red")}{wiki_text[first+1:first+10]}'
+        # else:
+        #     obj_area = f'{colored(wiki_text[0], "red")}{wiki_text[1:20]}'
+        # log.debug(f'Found {first_attr:>9s} @ pos={first:>7,d} start={node_start:>7,d}  in [{short_repr(wiki_text)}]: [{obj_area}]')
+        raw_obj = raw_objs[0]
+        node = WTP_ATTR_TO_NODE_MAP[first_attr](raw_obj)
         if node.raw.string.strip() == wiki_text.string.strip():
             # log.debug('  > It was the only thing in this node')
             return node
         compound = CompoundNode(wiki_text)
         before, node_str, after = map(str.strip, wiki_text.string.partition(node.raw.string))
+
         if before:
             # log.debug(f'  > It had something before it: [{short_repr(before)}]')
             before_node = as_node(before)
