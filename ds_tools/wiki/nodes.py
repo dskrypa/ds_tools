@@ -69,10 +69,12 @@ class CompoundNode(Node):
     def __len__(self):
         return len(self.children)
 
-    def find_all(self, node_cls):
+    def find_all(self, node_cls, recurse=False):
         for value in self:
             if isinstance(value, node_cls):
                 yield value
+            if recurse and isinstance(value, CompoundNode):
+                yield from value.find_all(node_cls)
 
 
 class MappingNode(CompoundNode):
