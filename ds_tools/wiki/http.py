@@ -77,6 +77,14 @@ class MediaWikiClient(RequestsClient):
         rows = self.siteinfo['interwikimap']
         return {row['prefix']: row['url'] for row in rows}
 
+    def interwiki_client(self, iw_map_key):
+        try:
+            url = self.interwiki_map[iw_map_key]
+        except KeyError:
+            return None
+        else:
+            return MediaWikiClient(url, nopath=True)
+
     @cached_property
     def article_path_prefix(self):
         return self.siteinfo['general']['articlepath'].replace('$1', '')
