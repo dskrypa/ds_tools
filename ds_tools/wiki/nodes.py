@@ -371,7 +371,7 @@ def as_node(wiki_text):
     try:
         if first_attr == 'tags' and len(values[first_attr]) == 1 and values[first_attr][0].name == 'small':
             first_attr = None   # Treat it like a String
-    except TypeError:           # Sometimes tag names are not available, it seems
+    except (TypeError, KeyError):
         pass
 
     if first_attr:
