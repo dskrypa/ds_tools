@@ -413,6 +413,8 @@ def as_node(wiki_text):
     :param str|WikiText wiki_text: The content to process
     :return Node: A :class:`Node` or subclass thereof
     """
+    if wiki_text is None:
+        return wiki_text
     if isinstance(wiki_text, str):
         wiki_text = WikiText(wiki_text)
 
