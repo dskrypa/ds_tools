@@ -350,18 +350,6 @@ class MediaWikiClient(RequestsClient):
                     return page
             raise PageMissingError(title, self.host, f'but results were found for: {", ".join(sorted(results))}')
 
-    def get_pages(self, titles):
-        raw_pages = self.query_pages(titles)
-        pages = {
-            title: WikiPage(title, self.host, page['wikitext'], page['categories'])
-            for title, page in raw_pages.items()
-        }
-        return pages
-
-    def get_page(self, title):
-        page = self.query_page(title)
-        return WikiPage(page['title'], self.host, page['wikitext'], page['categories'])
-
     def parse_page(self, page):
         resp = self.parse(page=page, prop=['wikitext', 'text', 'categories', 'links', 'iwlinks', 'displaytitle'])
         return resp
@@ -388,21 +376,34 @@ class MediaWikiClient(RequestsClient):
             params['sroffset'] = offset
         return self.query(list='search', srsearch=query, srlimit=limit, **params)
 
-    @classmethod
-    def page_for_article(cls, article_url):
-        client = cls(article_url, nopath=True)
-        return client.get_page(client.article_url_to_title(article_url))
+    def get_pages(self, titles, preserve_comments=False):
+        raw_pages = self.query_pages(titles)
+        pages = {
+            title: WikiPage(title, self.host, page['wikitext'], page['categories'], preserve_comments)
+            for title, page in raw_pages.items()
+        }
+        return pages
+
+    def get_page(self, title, preserve_comments=False):
+        page = self.query_page(title)
+        return WikiPage(page['title'], self.host, page['wikitext'], page['categories'], preserve_comments)
 
     @classmethod
-    def get_multi_site_page(cls, title, sites):
+    def page_for_article(cls, article_url, preserve_comments=False):
+        client = cls(article_url, nopath=True)
+        return client.get_page(client.article_url_to_title(article_url), preserve_comments)
+
+    @classmethod
+    def get_multi_site_page(cls, title, sites, preserve_comments=False):
         """
         :param str title: A page title
         :param iterable sites: A list or other iterable that yields site host strings
+        :param bool preserve_comments: Whether HTML comments should be dropped or included in parsed nodes
         :return tuple: Tuple containing mappings of {site: WikiPage}, {site: errors}
         """
         clients = [cls(site, nopath=True) for site in sites]
         with ThreadPoolExecutor(max_workers=max(1, len(clients))) as executor:
-            _futures = {executor.submit(client.get_page, title): client.host for client in clients}
+            _futures = {executor.submit(client.get_page, title, preserve_comments): client.host for client in clients}
             results = {}
             errors = {}
             for future in as_completed(_futures):
@@ -416,9 +417,10 @@ class MediaWikiClient(RequestsClient):
             return results, errors
 
     @classmethod
-    def get_multi_site_pages(cls, site_title_map):
+    def get_multi_site_pages(cls, site_title_map, preserve_comments=False):
         """
         :param dict site_title_map: Mapping of {site|MediaWikiCLient: list(titles)}
+        :param bool preserve_comments: Whether HTML comments should be dropped or included in parsed nodes
         :return tuple: Tuple containing mappings of {site: results}, {site: errors}
         """
         client_title_map = {
@@ -427,7 +429,8 @@ class MediaWikiClient(RequestsClient):
         }
         with ThreadPoolExecutor(max_workers=max(1, len(client_title_map))) as executor:
             _futures = {
-                executor.submit(client.get_pages, titles): client.host for client, titles in client_title_map.items()
+                executor.submit(client.get_pages, titles, preserve_comments): client.host
+                for client, titles in client_title_map.items()
             }
             results = {}
             errors = {}
