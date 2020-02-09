@@ -266,7 +266,10 @@ class Table(CompoundNode):
             if int(cell_row[0].attrs.get('colspan', 1)) >= len(headers):    # Some tables have an incorrect value...
                 processed.append(TableSeparator(node_fn(data_row[0])))
             else:
-                processed.append(ordered_dict(zip(headers, map(node_fn, data_row))))
+                row = MappingNode(cell_row, self.root, self.preserve_comments)
+                row.children.update(zip(headers, map(node_fn, data_row)))
+                processed.append(row)
+                # processed.append(ordered_dict(zip(headers, map(node_fn, data_row))))
         return processed
 
 
