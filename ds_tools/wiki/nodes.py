@@ -77,7 +77,7 @@ class CompoundNode(Node):
             if isinstance(value, node_cls):
                 yield value
             if recurse and isinstance(value, CompoundNode):
-                yield from value.find_all(node_cls)
+                yield from value.find_all(node_cls, recurse)
 
 
 class MappingNode(CompoundNode):

@@ -59,7 +59,7 @@ class WikiPage(Root):
                     if isinstance(node, Template) and 'infobox' in node.name.lower():
                         return node
             except Exception as e:
-                log.debug(f'Error iterating over first section content of {self}: {e}')
+                log.log(9, f'Error iterating over first section content of {self}: {e}')
         return None
 
     @cached_property
@@ -73,5 +73,5 @@ class WikiPage(Root):
                 if isinstance(node, (MixedNode, String)):
                     return node
         except Exception as e:
-            log.debug(f'Error iterating over first section content: {e}')
+            log.log(9, f'Error iterating over first section content of {self}: {e}')
         return None
