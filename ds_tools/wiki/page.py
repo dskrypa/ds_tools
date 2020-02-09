@@ -29,8 +29,7 @@ class WikiPage(Root):
         :param list|iterable categories: This page's categories
         :param bool preserve_comments: Whether HTML comments should be dropped or included in parsed nodes
         """
-        super().__init__(content, preserve_comments=preserve_comments)
-        self.site = site
+        super().__init__(content, site, preserve_comments=preserve_comments)
         self.title = title
         self._categories = categories
 
@@ -52,15 +51,15 @@ class WikiPage(Root):
         values.
         """
         section_0_content = self.sections.content
-        if isinstance(section_0_content, CompoundNode):
+        if isinstance(section_0_content, Template) and 'infobox' in section_0_content.name.lower():
+            return section_0_content
+        elif isinstance(section_0_content, CompoundNode):
             try:
                 for node in self.sections.content:
                     if isinstance(node, Template) and 'infobox' in node.name.lower():
                         return node
             except Exception as e:
-                log.debug(f'Error iterating over first section content: {e}')
-        elif isinstance(section_0_content, Template) and 'infobox' in section_0_content.name.lower():
-            return section_0_content
+                log.debug(f'Error iterating over first section content of {self}: {e}')
         return None
 
     @cached_property

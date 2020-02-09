@@ -30,11 +30,12 @@ ordered_dict = OrderedDict if PY_LT_37 else dict            # 3.7+ dict retains 
 
 
 class Node:
-    def __init__(self, raw, preserve_comments=False):
+    def __init__(self, raw, site=None, preserve_comments=False):
         if isinstance(raw, str):
             raw = WikiText(raw)
         self.raw = raw
         self.preserve_comments = preserve_comments
+        self.site = site
 
     def stripped(self, *args, **kwargs):
         return strip_style(self.raw.string, *args, **kwargs)
@@ -98,12 +99,12 @@ class MixedNode(CompoundNode):
     """A node that contains text and links"""
     @cached_property
     def children(self):
-        return extract_links(self.raw)
+        return extract_links(self.raw, self.site)
 
 
 class String(BasicNode):
-    def __init__(self, raw):
-        super().__init__(raw)
+    def __init__(self, raw, site=None):
+        super().__init__(raw, site)
         self.value = strip_style(self.raw.string)
 
     def __repr__(self):
@@ -114,8 +115,8 @@ class String(BasicNode):
 
 
 class Link(BasicNode):
-    def __init__(self, raw):
-        super().__init__(raw)
+    def __init__(self, raw, site=None):
+        super().__init__(raw, site)
         self.link = self.raw.wikilinks[0]
         self.title = self.link.title    # target = title + fragment
         self.text = self.link.text
@@ -132,20 +133,22 @@ class Link(BasicNode):
         raise ValueError(f'{self} is not an interwiki link')
 
     def __repr__(self):
+        if self.site:
+            return f'<{type(self).__name__}({self.link.string!r}) @ {self.site}>'
         return f'<{type(self).__name__}({self.link.string!r})>'
 
 
 class ListEntry(CompoundNode):
-    def __init__(self, raw, preserve_comments=False):
-        super().__init__(raw, preserve_comments)
+    def __init__(self, raw, site=None, preserve_comments=False):
+        super().__init__(raw, site, preserve_comments)
         if type(self.raw) is WikiText:
             try:
                 as_list = self.raw.lists()[0]
             except IndexError:
-                self.value = as_node(self.raw, preserve_comments)
+                self.value = as_node(self.raw, self.site, preserve_comments)
                 self._children = None
             else:
-                self.value = as_node(as_list.items[0], preserve_comments)
+                self.value = as_node(as_list.items[0], self.site, preserve_comments)
                 try:
                     self._children = as_list.sublists()[0].string
                 except IndexError:
@@ -160,7 +163,8 @@ class ListEntry(CompoundNode):
     def sub_list(self):
         if not self._children:
             return None
-        return List('\n'.join(c[1:] for c in map(str.strip, self._children.splitlines())), self.preserve_comments)
+        content = '\n'.join(c[1:] for c in map(str.strip, self._children.splitlines()))
+        return List(content, self.site, self.preserve_comments)
 
     @cached_property
     def children(self):
@@ -171,8 +175,8 @@ class ListEntry(CompoundNode):
 
 
 class List(CompoundNode):
-    def __init__(self, raw, preserve_comments=False):
-        super().__init__(raw, preserve_comments)
+    def __init__(self, raw, site=None, preserve_comments=False):
+        super().__init__(raw, site, preserve_comments)
         if type(self.raw) is WikiText:
             try:
                 self.raw = self.raw.lists()[0]
@@ -181,7 +185,7 @@ class List(CompoundNode):
 
     @cached_property
     def children(self):
-        return [ListEntry(val, self.preserve_comments) for val in map(str.strip, self.raw.fullitems)]
+        return [ListEntry(val, self.site, self.preserve_comments) for val in map(str.strip, self.raw.fullitems)]
 
     def iter_flat(self):
         for child in self.children:
@@ -191,7 +195,7 @@ class List(CompoundNode):
 
     def as_dict(self, sep=':'):
         data = {}
-        node_fn = lambda x: as_node(x.strip(), self.preserve_comments)
+        node_fn = lambda x: as_node(x.strip(), self.site, self.preserve_comments)
         for line in map(str.strip, self.raw.items):
             key, val = map(node_fn, line.split(sep, maxsplit=1))
             if isinstance(key, String):
@@ -205,8 +209,8 @@ class List(CompoundNode):
 
 
 class Table(CompoundNode):
-    def __init__(self, raw, preserve_comments=False):
-        super().__init__(raw, preserve_comments)
+    def __init__(self, raw, site=None, preserve_comments=False):
+        super().__init__(raw, site, preserve_comments)
         if type(self.raw) is WikiText:
             try:
                 self.raw = self.raw.tables[0]
@@ -227,7 +231,7 @@ class Table(CompoundNode):
 
         for _ in range(self._header_rows):
             data_headers = next(data_rows)
-            data_cells = [as_node(data, self.preserve_comments) for data in data_headers]
+            data_cells = [as_node(data, self.site, self.preserve_comments) for data in data_headers]
             self._raw_headers.append(data_cells)
             cell_strs = []
             for cell in data_cells:
@@ -256,7 +260,7 @@ class Table(CompoundNode):
             next(data_rows)
             next(cell_rows)
 
-        node_fn = lambda row: as_node(row, self.preserve_comments)
+        node_fn = lambda row: as_node(row, self.site, self.preserve_comments)
         processed = []
         for data_row, cell_row in zip(data_rows, cell_rows):
             if int(cell_row[0].attrs.get('colspan', 1)) >= len(headers):    # Some tables have an incorrect value...
@@ -275,8 +279,8 @@ class TableSeparator:
 
 
 class Template(BasicNode):
-    def __init__(self, raw, preserve_comments=False):
-        super().__init__(raw, preserve_comments)
+    def __init__(self, raw, site=None, preserve_comments=False):
+        super().__init__(raw, site, preserve_comments)
         self.name = self.raw.name.strip()
 
     def __repr__(self):
@@ -290,13 +294,13 @@ class Template(BasicNode):
         arg = args[0]
         if arg.name == '1' and arg.string.startswith('|'):
             if len(args) == 1:
-                return as_node(arg.value, self.preserve_comments)
-            return [as_node(a.value, self.preserve_comments) for a in args]
+                return as_node(arg.value, self.site, self.preserve_comments)
+            return [as_node(a.value, self.site, self.preserve_comments) for a in args]
 
-        mapping = MappingNode(self.raw, self.preserve_comments)
+        mapping = MappingNode(self.raw, self.site, self.preserve_comments)
         for arg in args:
             key = strip_style(arg.name)
-            mapping[key] = as_node(arg.value.strip(), self.preserve_comments)
+            mapping[key] = as_node(arg.value.strip(), self.site, self.preserve_comments)
         return mapping
 
     def __getitem__(self, item):
@@ -307,10 +311,10 @@ class Template(BasicNode):
 
 class Root(Node):
     # Children = sections
-    def __init__(self, page_text, preserve_comments=False):
+    def __init__(self, page_text, site=None, preserve_comments=False):
         if isinstance(page_text, str):
             page_text = WikiText(page_text.replace('\xa0', ' '))
-        super().__init__(page_text, preserve_comments)
+        super().__init__(page_text, site, preserve_comments)
 
     def __getitem__(self, item):
         return self.sections[item]
@@ -318,25 +322,26 @@ class Root(Node):
     @cached_property
     def sections(self):
         sections = iter(self.raw.sections)
-        root = Section(next(sections), self.preserve_comments)
+        root = Section(next(sections), self, self.preserve_comments)
         last_by_level = {0: root}
         for sec in sections:
             parent_lvl = sec.level - 1
             while parent_lvl > 0 and parent_lvl not in last_by_level:
                 parent_lvl -= 1
             parent = last_by_level[parent_lvl]
-            section = Section(sec, self.preserve_comments)
+            section = Section(sec, self, self.preserve_comments)
             parent.children[section.title] = section
             last_by_level[section.level] = section
         return root
 
 
 class Section(Node):
-    def __init__(self, raw, preserve_comments=False):
-        super().__init__(raw, preserve_comments)
+    def __init__(self, raw, root, preserve_comments=False):
+        super().__init__(raw, root.site, preserve_comments)
         self.title = strip_style(self.raw.title)
         self.level = self.raw.level
         self.children = ordered_dict()
+        self.root = root
 
     def __repr__(self):
         return f'<{type(self).__name__}[{self.level}: {self.title}]>'
@@ -368,8 +373,8 @@ class Section(Node):
     @cached_property
     def content(self):
         if self.level == 0:                                 # without .string here, .tags() returns the full page's tags
-            return as_node(self.raw.string.strip(), self.preserve_comments)
-        return as_node(self.raw.contents.strip(), self.preserve_comments)           # chop off the header
+            return as_node(self.raw.string.strip(), self.site, self.preserve_comments)
+        return as_node(self.raw.contents.strip(), self.site, self.preserve_comments)    # chop off the header
 
     def pprint(self, mode='reprs', indent='', recurse=True):
         if mode == 'content':
@@ -408,9 +413,10 @@ def short_repr(text):
         return repr(f'{text[:24]}...{text[-23:]}')
 
 
-def as_node(wiki_text, preserve_comments=False):
+def as_node(wiki_text, site=None, preserve_comments=False):
     """
     :param str|WikiText wiki_text: The content to process
+    :param str site: The site of origin for this node
     :param bool preserve_comments: Whether HTML comments should be dropped or included in parsed nodes
     :return Node: A :class:`Node` or subclass thereof
     """
@@ -467,17 +473,17 @@ def as_node(wiki_text, preserve_comments=False):
         #     obj_area = f'{colored(wiki_text[0], "red")}{wiki_text[1:20]}'
         # log.debug(f'Found {first_attr:>9s} @ pos={first:>7,d} start={node_start:>7,d}  in [{short_repr(wiki_text)}]: [{obj_area}]')
         raw_obj = raw_objs[0]
-        node = WTP_ATTR_TO_NODE_MAP[first_attr](raw_obj, preserve_comments)
+        node = WTP_ATTR_TO_NODE_MAP[first_attr](raw_obj, site, preserve_comments)
         if node.raw.string.strip() == wiki_text.string.strip():
             # log.debug('  > It was the only thing in this node')
             return None if drop else node
 
-        compound = CompoundNode(wiki_text)
+        compound = CompoundNode(wiki_text, site, preserve_comments)
         before, node_str, after = map(str.strip, wiki_text.string.partition(node.raw.string))
 
         if before:
             # log.debug(f'  > It had something before it: [{short_repr(before)}]')
-            before_node = as_node(before, preserve_comments)
+            before_node = as_node(before, site, preserve_comments)
             if drop and not after:
                 return before_node
             elif type(before_node) is CompoundNode:             # It was not a subclass that stands on its own
@@ -490,7 +496,7 @@ def as_node(wiki_text, preserve_comments=False):
 
         if after:
             # log.debug(f'  > It had something after it: [{short_repr(after)}]')
-            after_node = as_node(after, preserve_comments)
+            after_node = as_node(after, site, preserve_comments)
             if drop and not before:
                 return after_node
             elif type(after_node) is CompoundNode:
@@ -506,14 +512,14 @@ def as_node(wiki_text, preserve_comments=False):
         # log.debug(f'No complex objs found in [{wiki_text[:30]!r}]')
         links = wiki_text.wikilinks
         if not links:
-            return String(wiki_text)
+            return String(wiki_text, site)
         elif strip_style(links[0].string) == strip_style(wiki_text.string):
-            return Link(wiki_text)
+            return Link(wiki_text, site)
 
-        return MixedNode(wiki_text)
+        return MixedNode(wiki_text, site)
 
 
-def extract_links(raw):
+def extract_links(raw, site=None):
     try:
         end_pat = extract_links._end_pat
         start_pat = extract_links._start_pat
@@ -537,9 +543,9 @@ def extract_links(raw):
                     link_text = f'{bm.group(2)}{link_text}{am.group(1)}'
                     raw_str = am.group(2).strip()
         if before:
-            content.append(String(before))
-        content.append(Link(WikiText(link_text)))
+            content.append(String(before, site))
+        content.append(Link(WikiText(link_text), site))
 
     if raw_str:
-        content.append(String(raw_str))
+        content.append(String(raw_str, site))
     return content
