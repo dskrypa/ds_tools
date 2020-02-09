@@ -300,7 +300,7 @@ class Template(BasicNode):
         mapping = MappingNode(self.raw, self.root, self.preserve_comments)
         for arg in args:
             key = strip_style(arg.name)
-            mapping[key] = as_node(arg.value.strip(), self.root, self.preserve_comments)
+            mapping[key] = as_node(arg.value.strip(), self.root, self.preserve_comments, strict_tags=True)
         return mapping
 
     def __getitem__(self, item):
@@ -413,11 +413,23 @@ def short_repr(text):
         return repr(f'{text[:24]}...{text[-23:]}')
 
 
-def as_node(wiki_text, root=None, preserve_comments=False):
+def wiki_attr_values(wiki_text, attr, known_values=None):
+    if known_values:
+        try:
+            return known_values[attr]
+        except KeyError:
+            pass
+    value = getattr(wiki_text, attr)
+    return value() if hasattr(value, '__call__') else value
+
+
+def as_node(wiki_text, root=None, preserve_comments=False, strict_tags=False):
     """
     :param str|WikiText wiki_text: The content to process
     :param Root root: The root node that is an ancestor of this node
     :param bool preserve_comments: Whether HTML comments should be dropped or included in parsed nodes
+    :param bool strict_tags: If True, require tags to be either self-closing or have a matching closing tag to consider
+      it a tag, otherwise classify it as a string.
     :return Node: A :class:`Node` or subclass thereof
     """
     if wiki_text is None:
@@ -432,13 +444,16 @@ def as_node(wiki_text, root=None, preserve_comments=False):
     for wtp_type, attr in WTP_TYPE_METHOD_NODE_MAP.items():
         # log.debug(f'Types available: {wiki_text._type_to_spans.keys()}; ExtensionTags: {wiki_text._type_to_spans["ExtensionTag"]}')
         if wtp_type in WTP_ACCESS_FIRST:
-            value = getattr(wiki_text, attr)
-            value = value() if hasattr(value, '__call__') else value
-            try:
-                values[attr].extend(value)
-            except KeyError:
-                values[attr] = value
-        span = next(iter(wiki_text._subspans(wtp_type)), None)
+            values[attr] = wiki_attr_values(wiki_text, attr)
+        type_spans = iter(wiki_text._subspans(wtp_type))
+        span = next(type_spans, None)
+        if span and strict_tags and attr == 'tags':
+            obj_str = wiki_attr_values(wiki_text, attr, values)[0].string
+            close_str = f'</{obj_str[1:-1]}>'
+            if not obj_str.endswith('/>') and close_str not in wiki_text:
+                log.log(9, f'Treating {obj_str!r} as a string because strict_tags=True')
+                span = next(type_spans, None)
+
         if span:
             # log.debug(f'Found {wtp_type:>8s} @ {span}')
             start = span[0]
@@ -460,12 +475,7 @@ def as_node(wiki_text, root=None, preserve_comments=False):
         pass
 
     if first_attr:
-        if first_attr in values:
-            raw_objs = values[first_attr]
-        else:
-            value = getattr(wiki_text, first_attr)
-            raw_objs = value() if hasattr(value, '__call__') else value
-
+        raw_objs = wiki_attr_values(wiki_text, first_attr, values)
         drop = first_attr == 'comments' and not preserve_comments
         # if first > 10:
         #     obj_area = f'{wiki_text[first-10:first]}{colored(wiki_text[first], "red")}{wiki_text[first+1:first+10]}'
