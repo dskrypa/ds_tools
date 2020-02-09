@@ -200,12 +200,12 @@ class MediaWikiClient(RequestsClient):
         try:
             results = response['query']
         except KeyError:
-            log.debug(f'Response for {resp.url} contained no \'query\' key: {", ".join(response)}')
+            log.debug(f'Response from {resp.url} contained no \'query\' key; found: {", ".join(response)}')
             return {}, None
         try:
             pages = results['pages']
         except KeyError:
-            log.debug(f'Response for {resp.url} contained a \'query\' key but no \'pages\': {", ".join(results)}')
+            log.debug(f'Query results from {resp.url} contained no \'pages\' key; found: {", ".join(results)}')
             return {}, None
         else:
             redirects = results.get('redirects', [])
@@ -342,6 +342,7 @@ class MediaWikiClient(RequestsClient):
             qlog.debug(f'Found {len(resp)} pages: [{", ".join(map(repr, sorted(resp)))}]')
             for title, data in resp.items():
                 if data.get('pageid') is None:      # The page does not exist
+                    qlog.debug(f'No page was found for title={title!r} - caching null page')
                     self._page_cache[title] = None
                 else:
                     revisions = data.get('revisions')
@@ -354,16 +355,20 @@ class MediaWikiClient(RequestsClient):
                     if redirected_from:
                         qlog.debug(norm_fmt.format(redirected_from, title, 'redirect'))
                         self._norm_title_cache[redirected_from] = title
-                        pages[norm_to_orig[redirected_from]] = entry
+                        pages[norm_to_orig.pop(redirected_from)] = entry
                     else:
                         norm_title = normalize(title)
                         if title not in need:           # Not all sites indicate when a redirect happened
                             if norm_title in norm_to_orig:
                                 qlog.debug(norm_fmt.format(norm_title, title, 'quiet redirect'))
                                 self._norm_title_cache[norm_title] = title
-                                pages[norm_to_orig[norm_title]] = entry
+                                pages[norm_to_orig.pop(norm_title)] = entry
                             else:
                                 log.debug(f'Received page for title={title!r} that did not match any requested title')
+
+            for title in norm_to_orig.values():
+                qlog.debug(f'No content was returned for title={title!r} - caching null page')
+                self._page_cache[title] = None
 
         return pages
 
