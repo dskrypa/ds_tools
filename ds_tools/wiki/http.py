@@ -311,7 +311,7 @@ class MediaWikiClient(RequestsClient):
         pages = {}
         for title in titles:
             try:
-                norm_title = self._norm_title_cache[title.upper()]
+                norm_title = self._norm_title_cache[normalize(title)]
             except KeyError:
                 norm_title = title
             else:
@@ -330,7 +330,8 @@ class MediaWikiClient(RequestsClient):
                     qlog.debug(f'Found empty content in page cache for title={norm_title!r}')
 
         if need:
-            uc_to_orig = {title.upper(): title for title in need}       # Return the exact titles that were requested
+            norm_fmt = 'Storing title normalization for {!r} => {!r} [{}]'
+            norm_to_orig = {normalize(title): title for title in need}  # Return the exact titles that were requested
             kwargs = {'generator': 'search', 'gsrsearch': need, 'gsrwhat': 'nearmatch'} if search else {}
             resp = self.query(titles=need, rvprop='content', prop=['revisions', 'categories'], **kwargs)
             qlog.debug(f'Found {len(resp)} pages: [{", ".join(map(repr, sorted(resp)))}]')
@@ -344,18 +345,18 @@ class MediaWikiClient(RequestsClient):
                         'categories': data.get('categories', []),
                         'wikitext': revisions[0] if revisions else None
                     }
-                    redirected_from = (data['redirected_from'] or '').upper()
+                    redirected_from = normalize(data['redirected_from'] or '')
                     if redirected_from:
-                        qlog.debug(f'Storing title normalization for {redirected_from!r} => {title!r} [redirect]')
+                        qlog.debug(norm_fmt.format(redirected_from, title, 'redirect'))
                         self._norm_title_cache[redirected_from] = title
-                        pages[uc_to_orig[redirected_from]] = entry
+                        pages[norm_to_orig[redirected_from]] = entry
                     else:
-                        uc_title = title.upper()
+                        norm_title = normalize(title)
                         if title not in need:           # Not all sites indicate when a redirect happened
-                            if uc_title in uc_to_orig:
-                                qlog.debug(f'Storing title normalization for {uc_title!r} => {title!r} [quiet redirect]')
-                                self._norm_title_cache[uc_title] = title
-                                pages[uc_to_orig[uc_title]] = entry
+                            if norm_title in norm_to_orig:
+                                qlog.debug(norm_fmt.format(norm_title, title, 'quiet redirect'))
+                                self._norm_title_cache[norm_title] = title
+                                pages[norm_to_orig[norm_title]] = entry
                             else:
                                 log.debug(f'Received page for title={title!r} that did not match any requested title')
 
@@ -466,6 +467,10 @@ class MediaWikiClient(RequestsClient):
                     errors[site] = e
 
             return results, errors
+
+
+def normalize(title):
+    return title.upper().replace(' ', '_')
 
 
 if __name__ == '__main__':
