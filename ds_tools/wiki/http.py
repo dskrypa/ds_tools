@@ -402,16 +402,19 @@ class MediaWikiClient(RequestsClient):
         return client.get_page(client.article_url_to_title(article_url), preserve_comments)
 
     @classmethod
-    def get_multi_site_page(cls, title, sites, preserve_comments=False):
+    def get_multi_site_page(cls, title, sites, preserve_comments=False, search=False):
         """
         :param str title: A page title
         :param iterable sites: A list or other iterable that yields site host strings
         :param bool preserve_comments: Whether HTML comments should be dropped or included in parsed nodes
+        :param bool search: Whether the provided title should also be searched for, in case there is not an exact match.
         :return tuple: Tuple containing mappings of {site: WikiPage}, {site: errors}
         """
         clients = [cls(site, nopath=True) for site in sites]
         with ThreadPoolExecutor(max_workers=max(1, len(clients))) as executor:
-            _futures = {executor.submit(client.get_page, title, preserve_comments): client.host for client in clients}
+            _futures = {
+                executor.submit(client.get_page, title, preserve_comments, search): client.host for client in clients
+            }
             results = {}
             errors = {}
             for future in as_completed(_futures):
