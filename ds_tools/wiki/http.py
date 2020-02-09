@@ -384,9 +384,9 @@ class MediaWikiClient(RequestsClient):
     def get_pages(self, titles, preserve_comments=False):
         raw_pages = self.query_pages(titles)
         pages = {
-            title: WikiPage(title, self.host, page['wikitext'], page['categories'], preserve_comments)
-            for title, page in raw_pages.items()
-        }
+            result_title: WikiPage(page['title'], self.host, page['wikitext'], page['categories'], preserve_comments)
+            for result_title, page in raw_pages.items()
+        }   # The result_title may have redirected to the actual title
         return pages
 
     def get_page(self, title, preserve_comments=False):
