@@ -13,6 +13,7 @@ import logging
 import re
 import sys
 from collections import OrderedDict
+from collections.abc import MutableMapping
 
 from wikitextparser import WikiText
 
@@ -66,8 +67,11 @@ class CompoundNode(Node):
     def __setitem__(self, key, value):
         self.children[key] = value
 
+    def __delitem__(self, key):
+        del self.children[key]
+
     def __iter__(self):
-        yield from self.children
+        return iter(self.children)
 
     def __len__(self):
         return len(self.children)
@@ -80,19 +84,15 @@ class CompoundNode(Node):
                 yield from value.find_all(node_cls, recurse)
 
 
-class MappingNode(CompoundNode):
+class MappingNode(CompoundNode, MutableMapping):
+    def __init__(self, raw, root=None, preserve_comments=False, content=None):
+        super().__init__(raw, root, preserve_comments)
+        if content:
+            self.children.update(content)
+
     @cached_property
     def children(self):
         return ordered_dict()
-
-    def items(self):
-        return self.children.items()
-
-    def keys(self):
-        return self.children.keys()
-
-    def values(self):
-        return self.children.values()
 
 
 class MixedNode(CompoundNode):
@@ -266,10 +266,8 @@ class Table(CompoundNode):
             if int(cell_row[0].attrs.get('colspan', 1)) >= len(headers):    # Some tables have an incorrect value...
                 processed.append(TableSeparator(node_fn(data_row[0])))
             else:
-                row = MappingNode(cell_row, self.root, self.preserve_comments)
-                row.children.update(zip(headers, map(node_fn, data_row)))
-                processed.append(row)
-                # processed.append(ordered_dict(zip(headers, map(node_fn, data_row))))
+                mapping = zip(headers, map(node_fn, data_row))
+                processed.append(MappingNode(cell_row, self.root, self.preserve_comments, mapping))
         return processed
 
 
