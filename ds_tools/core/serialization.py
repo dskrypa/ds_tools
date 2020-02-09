@@ -28,6 +28,8 @@ class PermissiveJSONEncoder(json.JSONEncoder):
             return o.strftime('%Y-%m-%d %H:%M:%S %Z')
         elif isinstance(o, type):
             return str(o)
+        elif hasattr(o, '__to_json__'):
+            return o.__to_json__()
         return super().default(o)
 
 
