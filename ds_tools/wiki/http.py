@@ -199,9 +199,14 @@ class MediaWikiClient(RequestsClient):
 
         try:
             results = response['query']
+        except KeyError:
+            log.debug(f'Response for {resp.url} contained no \'query\' key: {", ".join(response)}')
+            return {}, None
+        try:
             pages = results['pages']
         except KeyError:
-            return response, None
+            log.debug(f'Response for {resp.url} contained a \'query\' key but no \'pages\': {", ".join(results)}')
+            return {}, None
         else:
             redirects = results.get('redirects', [])
             redirects = {r['to']: r['from'] for r in (redirects.values() if isinstance(redirects, dict) else redirects)}
