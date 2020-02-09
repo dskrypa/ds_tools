@@ -197,8 +197,8 @@ class MediaWikiClient(RequestsClient):
         if 'query' not in response and 'error' in response:
             raise WikiResponseError(json.dumps(response['error']))
 
-        results = response['query']
         try:
+            results = response['query']
             pages = results['pages']
         except KeyError:
             return response, None
@@ -470,7 +470,7 @@ class MediaWikiClient(RequestsClient):
 
 
 def normalize(title):
-    return title.upper().replace(' ', '_')
+    return title.upper().replace('_', ' ').strip()
 
 
 if __name__ == '__main__':
