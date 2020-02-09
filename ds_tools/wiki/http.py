@@ -330,7 +330,7 @@ class MediaWikiClient(RequestsClient):
                     qlog.debug(f'Found empty content in page cache for title={norm_title!r}')
 
         if need:
-            # new_pages = {}    # Idea was to track redirects, but the proper redirect handling should be sufficient
+            uc_to_orig = {title.upper(): title for title in need}   # Return the exact titles that were requested
             kwargs = {'generator': 'search', 'gsrsearch': need, 'gsrwhat': 'nearmatch'} if search else {}
             resp = self.query(titles=need, rvprop='content', prop=['revisions', 'categories'], **kwargs)
             qlog.debug(f'Found {len(resp)} pages: [{", ".join(map(repr, sorted(resp)))}]')
@@ -339,8 +339,7 @@ class MediaWikiClient(RequestsClient):
                     self._page_cache[title] = None
                 else:
                     revisions = data.get('revisions')
-                    # self._page_cache[title] = new_pages[title] = entry = {
-                    self._page_cache[title] = pages[title] = entry = {
+                    self._page_cache[title] = entry = {
                         'title': title,
                         'categories': data.get('categories', []),
                         'wikitext': revisions[0] if revisions else None
@@ -349,19 +348,9 @@ class MediaWikiClient(RequestsClient):
                     if redirected_from:
                         qlog.debug(f'Storing title normalization for {redirected_from!r} => {title!r} [redirect]')
                         self._norm_title_cache[redirected_from] = title
-                        pages[redirected_from] = entry                  # caller may be expecting this key
-
-            # if len(new_pages) == 1 and len(need) == 1:
-            #     norm_title, page = next(iter(new_pages.items()))
-            #     req_title = need[0]
-            #     if norm_title != req_title:
-            #         pages[req_title] = page
-            #         uc_req_title = req_title.upper()
-            #         if uc_req_title not in self._norm_title_cache:  # May have just been added as a redirect
-            #             qlog.debug(f'Storing title normalization for {uc_req_title!r} => {norm_title!r} [only result]')
-            #             self._norm_title_cache[uc_req_title] = norm_title
-            #
-            # pages.update(new_pages)
+                        pages[uc_to_orig[redirected_from]] = entry
+                    else:
+                        pages[uc_to_orig[title.upper()]] = entry
 
         return pages
 
@@ -369,15 +358,9 @@ class MediaWikiClient(RequestsClient):
         results = self.query_pages(title, search=search)
         if not results:
             raise PageMissingError(title, self.host)
-        elif len(results) == 1:
-            return next(iter(results.values()))
         try:
             return results[title]
         except KeyError:
-            uc_title = title.upper()
-            for key, page in results.items():
-                if key.upper() == uc_title:
-                    return page
             raise PageMissingError(title, self.host, f'but results were found for: {", ".join(sorted(results))}')
 
     def parse_page(self, page):
