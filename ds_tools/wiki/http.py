@@ -136,6 +136,9 @@ class MediaWikiClient(RequestsClient):
                 params['iwurl'] = 1
         if 'categories' in properties:              # https://www.mediawiki.org/wiki/Special:MyLanguage/API:Categories
             params['cllimit'] = 500     # default: 10
+        if 'revisions' in properties:               # https://www.mediawiki.org/wiki/Special:MyLanguage/API:Revisions
+            if self.mw_version >= LooseVersion('1.32'):
+                params['rvslots'] = 'main'
 
         titles = params.pop('titles', None)
         if titles:
@@ -222,10 +225,14 @@ class MediaWikiClient(RequestsClient):
             parsed = {}
             for page in pages:
                 title = page['title']
+                qlog.debug(f'Processing page with title={title!r}, keys: {", ".join(sorted(page))}')
                 content = parsed[title] = {'redirected_from': redirects.get(title)}
                 for key, val in page.items():
                     if key == 'revisions':
-                        content[key] = [rev[rev_key] for rev in val]
+                        if self.mw_version >= LooseVersion('1.32'):
+                            content[key] = [rev['slots']['main']['content'] for rev in val]
+                        else:
+                            content[key] = [rev[rev_key] for rev in val]
                     elif key == 'categories':
                         content[key] = [cat['title'].split(':', maxsplit=1)[1] for cat in val]
                     elif key == 'iwlinks':
@@ -341,6 +348,7 @@ class MediaWikiClient(RequestsClient):
             resp = self.query(titles=need, rvprop='content', prop=['revisions', 'categories'], **kwargs)
             qlog.debug(f'Found {len(resp)} pages: [{", ".join(map(repr, sorted(resp)))}]')
             for title, data in resp.items():
+                qlog.debug(f'Processing page with title={title!r}, data: {", ".join(sorted(data))}')
                 if data.get('pageid') is None:      # The page does not exist
                     qlog.debug(f'No page was found for title={title!r} - caching null page')
                     self._page_cache[title] = None
@@ -365,6 +373,9 @@ class MediaWikiClient(RequestsClient):
                                 pages[norm_to_orig.pop(norm_title)] = entry
                             else:
                                 log.debug(f'Received page for title={title!r} that did not match any requested title')
+                        else:
+                            # Exact title match
+                            pages[norm_to_orig.pop(norm_title)] = entry
 
             for title in norm_to_orig.values():
                 qlog.debug(f'No content was returned for title={title!r} - caching null page')
