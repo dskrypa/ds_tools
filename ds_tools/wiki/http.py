@@ -307,7 +307,7 @@ class MediaWikiClient(RequestsClient):
         """
         if isinstance(titles, str):
             titles = [titles]
-        need = []
+        need = set()
         pages = {}
         for title in titles:
             try:
@@ -320,7 +320,7 @@ class MediaWikiClient(RequestsClient):
             try:
                 page = self._page_cache[norm_title]
             except KeyError:
-                need.append(title)
+                need.add(title)
                 qlog.debug(f'No content was found in page cache for title={norm_title!r}')
             else:
                 if page:
@@ -330,12 +330,12 @@ class MediaWikiClient(RequestsClient):
                     qlog.debug(f'Found empty content in page cache for title={norm_title!r}')
 
         if need:
-            uc_to_orig = {title.upper(): title for title in need}   # Return the exact titles that were requested
+            uc_to_orig = {title.upper(): title for title in need}       # Return the exact titles that were requested
             kwargs = {'generator': 'search', 'gsrsearch': need, 'gsrwhat': 'nearmatch'} if search else {}
             resp = self.query(titles=need, rvprop='content', prop=['revisions', 'categories'], **kwargs)
             qlog.debug(f'Found {len(resp)} pages: [{", ".join(map(repr, sorted(resp)))}]')
             for title, data in resp.items():
-                if data.get('pageid') is None:                      # The page does not exist
+                if data.get('pageid') is None:      # The page does not exist
                     self._page_cache[title] = None
                 else:
                     revisions = data.get('revisions')
@@ -350,7 +350,14 @@ class MediaWikiClient(RequestsClient):
                         self._norm_title_cache[redirected_from] = title
                         pages[uc_to_orig[redirected_from]] = entry
                     else:
-                        pages[uc_to_orig[title.upper()]] = entry
+                        uc_title = title.upper()
+                        if title not in need:           # Not all sites indicate when a redirect happened
+                            if uc_title in uc_to_orig:
+                                qlog.debug(f'Storing title normalization for {uc_title!r} => {title!r} [quiet redirect]')
+                                self._norm_title_cache[uc_title] = title
+                                pages[uc_to_orig[uc_title]] = entry
+                            else:
+                                log.debug(f'Received page for title={title!r} that did not match any requested title')
 
         return pages
 
