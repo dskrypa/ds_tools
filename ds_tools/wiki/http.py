@@ -200,6 +200,7 @@ class MediaWikiClient(RequestsClient):
         except KeyError:
             return response, None
         else:
+            redirects = {r['to']: r['from'] for r in results.get('redirects', [])}
             if isinstance(pages, dict):
                 pages = pages.values()
 
@@ -212,7 +213,7 @@ class MediaWikiClient(RequestsClient):
             parsed = {}
             for page in pages:
                 title = page['title']
-                content = parsed[title] = {}
+                content = parsed[title] = {'redirected_from': redirects.get(title)}
                 for key, val in page.items():
                     if key == 'revisions':
                         content[key] = [rev[rev_key] for rev in val]
@@ -323,11 +324,15 @@ class MediaWikiClient(RequestsClient):
                     self._page_cache[title] = None
                 else:
                     revisions = data.get('revisions')
-                    self._page_cache[title] = pages[title] = {
+                    self._page_cache[title] = pages[title] = entry = {
                         'title': title,
                         'categories': data.get('categories', []),
                         'wikitext': revisions[0] if revisions else None
                     }
+                    redirected_from = data['redirected_from']
+                    if redirected_from:
+                        self._norm_title_cache[redirected_from] = title
+                        pages[redirected_from] = entry
 
             if len(pages) == 1 and len(need) == 1:                  # TODO: Add normalized titles for multiple pages
                 norm_title, page = next(iter(pages.items()))
