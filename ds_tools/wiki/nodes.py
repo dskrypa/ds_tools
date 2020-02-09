@@ -224,7 +224,7 @@ class Table(CompoundNode):
     def headers(self):
         data_rows = iter(self.raw.data())
         cell_headers = next(iter(self.raw.cells()))
-        spans = [int(cell.attrs.get('rowspan', 1)) for cell in cell_headers]
+        spans = [int(cell.attrs.get('rowspan', 1)) if cell is not None else 1 for cell in cell_headers]
         self._header_rows = max(spans)
         self._raw_headers = []
         str_headers = []
@@ -241,6 +241,8 @@ class Table(CompoundNode):
                     cell_strs.append(cell.value)
                 elif isinstance(cell, Link):
                     cell_strs.append(cell.text)
+                elif cell is None:
+                    cell_strs.append('')
                 else:
                     log.debug(f'Unexpected cell type; using data instead: {cell}')
             str_headers.append(cell_strs)
