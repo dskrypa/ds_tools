@@ -345,7 +345,7 @@ class MediaWikiClient(RequestsClient):
                         'categories': data.get('categories', []),
                         'wikitext': revisions[0] if revisions else None
                     }
-                    redirected_from = data.get('redirected_from', '').upper()
+                    redirected_from = (data['redirected_from'] or '').upper()
                     if redirected_from:
                         qlog.debug(f'Storing title normalization for {redirected_from!r} => {title!r} [redirect]')
                         self._norm_title_cache[redirected_from] = title
