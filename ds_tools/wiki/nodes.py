@@ -44,6 +44,10 @@ class Node:
     def __repr__(self):
         return f'<{type(self).__name__}()>'
 
+    def __to_json__(self):
+        """Not possible to build from json, so just provide the repr for easy printing"""
+        return repr(self)
+
     def pprint(self):
         print(self.raw.pformat())
 
