@@ -282,7 +282,7 @@ class MediaWikiClient(RequestsClient):
         resp = self.query(titles=titles, prop='categories')
         return {title: data.get('categories', []) for title, data in resp.items()}
 
-    def query_pages(self, titles):
+    def query_pages(self, titles, search=False):
         """
         Get the full page content and the following additional data about each of the provided page titles:\n
           - categories
@@ -297,6 +297,8 @@ class MediaWikiClient(RequestsClient):
             - The case of the title may be different
 
         :param str|list|set|tuple titles: One or more page titles (as it appears in the URL for the page)
+        :param bool search: Whether the provided titles should also be searched for, in case there is not an exact
+          match.  This does not seem to work when multiple titles are provided as the search term.
         :return dict: Mapping of {title: dict(page data)}
         """
         if isinstance(titles, str):
@@ -318,7 +320,8 @@ class MediaWikiClient(RequestsClient):
                     pages[title] = page
 
         if need:
-            resp = self.query(titles=need, rvprop='content', prop=['revisions', 'categories'])
+            kwargs = {'generator': 'search', 'gsrsearch': need, 'gsrwhat': 'nearmatch'} if search else {}
+            resp = self.query(titles=need, rvprop='content', prop=['revisions', 'categories'], **kwargs)
             for title, data in resp.items():
                 if data.get('pageid') is None:                      # The page does not exist
                     self._page_cache[title] = None
@@ -340,8 +343,8 @@ class MediaWikiClient(RequestsClient):
                 self._page_cache[need[0]] = page
         return pages
 
-    def query_page(self, title):
-        results = self.query_pages(title)
+    def query_page(self, title, search=False):
+        results = self.query_pages(title, search=search)
         if not results:
             raise PageMissingError(title, self.host)
         elif len(results) == 1:
@@ -389,8 +392,8 @@ class MediaWikiClient(RequestsClient):
         }   # The result_title may have redirected to the actual title
         return pages
 
-    def get_page(self, title, preserve_comments=False):
-        page = self.query_page(title)
+    def get_page(self, title, preserve_comments=False, search=False):
+        page = self.query_page(title, search=search)
         return WikiPage(page['title'], self.host, page['wikitext'], page['categories'], preserve_comments)
 
     @classmethod
