@@ -95,6 +95,15 @@ class CompoundNode(Node):
             if recurse and isinstance(value, CompoundNode):
                 yield from value.find_all(node_cls, recurse, **kwargs)
 
+    def find_one(self, *args, **kwargs):
+        """
+        :param args: Positional args to pass to :meth:`.find_all`
+        :param kwargs: Keyword args to pass to :meth:`.find_all`
+        :return: The first :class:`Node` object that matches the given criteria, or None if no matching nodes could be
+          found.
+        """
+        return next(self.find_all(*args, **kwargs), None)
+
 
 class MappingNode(CompoundNode, MutableMapping):
     def __init__(self, raw, root=None, preserve_comments=False, content=None):
