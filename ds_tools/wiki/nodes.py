@@ -28,6 +28,7 @@ __all__ = [
 log = logging.getLogger(__name__)
 PY_LT_37 = sys.version_info.major == 3 and sys.version_info.minor < 7
 ordered_dict = OrderedDict if PY_LT_37 else dict            # 3.7+ dict retains insertion order; dict repr is cleaner
+_NotSet = object()
 
 
 class Node:
@@ -76,12 +77,23 @@ class CompoundNode(Node):
     def __len__(self):
         return len(self.children)
 
-    def find_all(self, node_cls, recurse=False):
+    def find_all(self, node_cls, recurse=False, **kwargs):
+        """
+        Find all descendent nodes of the given type, optionally with additional matching criteria.
+
+        :param type node_cls: The class of :class:`Node` to find
+        :param bool recurse: Whether descendent nodes should be searched recursively or just the direct children of this
+          node
+        :param kwargs: If specified, keys should be names of attributes of the discovered nodes, for which the value of
+          the node's attribute must equal the provided value
+        :return: Generator that yields :class:`Node` objects of the given type
+        """
         for value in self:
             if isinstance(value, node_cls):
-                yield value
+                if not kwargs or all(getattr(value, k, _NotSet) == v for k, v in kwargs.items()):
+                    yield value
             if recurse and isinstance(value, CompoundNode):
-                yield from value.find_all(node_cls, recurse)
+                yield from value.find_all(node_cls, recurse, **kwargs)
 
 
 class MappingNode(CompoundNode, MutableMapping):
