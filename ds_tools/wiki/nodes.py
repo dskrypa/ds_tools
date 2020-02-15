@@ -267,6 +267,8 @@ class Table(CompoundNode):
                     cell_strs.append(cell.value)
                 elif isinstance(cell, Link):
                     cell_strs.append(cell.text)
+                elif isinstance(cell, Template) and cell.lc_name == 'abbr':
+                    cell_strs.append(cell.value[-1])
                 elif cell is not None:
                     log.debug(f'Unexpected cell type; using data instead: {cell}')
             str_headers.append(cell_strs)
@@ -303,6 +305,7 @@ class Template(BasicNode):
     def __init__(self, raw, root=None, preserve_comments=False):
         super().__init__(raw, root, preserve_comments)
         self.name = self.raw.name.strip()
+        self.lc_name = self.name.lower()
 
     def __repr__(self):
         return f'<{type(self).__name__}({self.name!r}: {self.value!r})>'
@@ -312,13 +315,16 @@ class Template(BasicNode):
         args = self.raw.arguments
         if not args:
             return None
+
         arg = args[0]
-        if arg.name == '1' and arg.string.startswith('|'):
+        if self.lc_name == 'n/a':       # Null table cell
+            return arg.value or 'N/A'
+        elif self.lc_name == 'abbr':    # [short, long]
+            return [a.value for a in args]
+        elif arg.name == '1' and arg.string.startswith('|'):
             if len(args) == 1:
                 return as_node(arg.value, self.root, self.preserve_comments)
             return [as_node(a.value, self.root, self.preserve_comments) for a in args]
-        elif self.name.lower() == 'n/a':
-            return arg.value or 'N/A'
 
         mapping = MappingNode(self.raw, self.root, self.preserve_comments)
         for arg in args:
