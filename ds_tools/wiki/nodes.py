@@ -230,7 +230,10 @@ class List(CompoundNode):
 
 
 class Table(CompoundNode):
+    _rowspan_with_template = re.compile(r'(\|\s*rowspan="\d+")\s*{')
+
     def __init__(self, raw, root=None, preserve_comments=False):
+        raw = self._rowspan_with_template.sub(r'\1 | {', raw.string if isinstance(raw, WikiText) else raw)
         super().__init__(raw, root, preserve_comments)
         if type(self.raw) is WikiText:
             try:
@@ -243,19 +246,19 @@ class Table(CompoundNode):
 
     @cached_property
     def headers(self):
-        data_rows = iter(self.raw.data())
-        cell_headers = next(iter(self.raw.cells()))
-        row_spans = [int(cell.attrs.get('rowspan', 1)) if cell is not None else 1 for cell in cell_headers]
+        rows = self.raw.cells()
+        row_spans = [int(cell.attrs.get('rowspan', 1)) if cell is not None else 1 for cell in next(iter(rows))]
         self._header_rows = max(row_spans)
         self._raw_headers = []
         str_headers = []
 
-        for _ in range(self._header_rows):
-            data_headers = next(data_rows)
-            data_cells = [as_node(data, self.root, self.preserve_comments) for data in data_headers]
-            self._raw_headers.append(data_cells)
+        for i, row in enumerate(rows):
+            if i == self._header_rows:
+                break
+            row_data = [as_node(cell.value.strip(), self.root, self.preserve_comments) for cell in row]
+            self._raw_headers.append(row_data)
             cell_strs = []
-            for cell in data_cells:
+            for cell in row_data:
                 while isinstance(cell, CompoundNode):
                     cell = cell[0]
                 if isinstance(cell, String):
@@ -275,20 +278,14 @@ class Table(CompoundNode):
     @cached_property
     def children(self):
         headers = self.headers
-        data_rows = iter(self.raw.data())
-        cell_rows = iter(self.raw.cells())
-        for _ in range(self._header_rows):
-            next(data_rows)
-            next(cell_rows)
-
-        node_fn = lambda row: as_node(row, self.root, self.preserve_comments)
+        node_fn = lambda cell: as_node(cell.value.strip(), self.root, self.preserve_comments)
         processed = []
-        for data_row, cell_row in zip(data_rows, cell_rows):
-            if int(cell_row[0].attrs.get('colspan', 1)) >= len(headers):    # Some tables have an incorrect value...
-                processed.append(TableSeparator(node_fn(data_row[0])))
+        for row in self.raw.cells()[self._header_rows:]:
+            if int(row[0].attrs.get('colspan', 1)) >= len(headers):  # Some tables have an incorrect value...
+                processed.append(TableSeparator(node_fn(row[0])))
             else:
-                mapping = zip(headers, map(node_fn, data_row))
-                processed.append(MappingNode(cell_row, self.root, self.preserve_comments, mapping))
+                mapping = zip(headers, map(node_fn, row))
+                processed.append(MappingNode(row, self.root, self.preserve_comments, mapping))
         return processed
 
 
@@ -318,6 +315,8 @@ class Template(BasicNode):
             if len(args) == 1:
                 return as_node(arg.value, self.root, self.preserve_comments)
             return [as_node(a.value, self.root, self.preserve_comments) for a in args]
+        elif self.name.lower() == 'n/a':
+            return arg.value or 'N/A'
 
         mapping = MappingNode(self.raw, self.root, self.preserve_comments)
         for arg in args:
@@ -429,6 +428,7 @@ WTP_ATTR_TO_NODE_MAP = {'tags': BasicNode, 'templates': Template, 'tables': Tabl
 
 
 def short_repr(text):
+    text = str(text)
     if len(text) <= 50:
         return repr(text)
     else:
@@ -500,18 +500,18 @@ def as_node(wiki_text, root=None, preserve_comments=False, strict_tags=False):
         raw_objs = wiki_attr_values(wiki_text, first_attr, values)
         drop = first_attr == 'comments' and not preserve_comments
         # if first > 10:
-        #     obj_area = f'{wiki_text[first-10:first]}{colored(wiki_text[first], "red")}{wiki_text[first+1:first+10]}'
+        #     obj_area = f'{wiki_text(first-10, first)}{colored(wiki_text(first), "red")}{wiki_text(first+1, first+10)}'
         # else:
-        #     obj_area = f'{colored(wiki_text[0], "red")}{wiki_text[1:20]}'
+        #     obj_area = f'{colored(wiki_text(0), "red")}{wiki_text(1, 20)}'
         # log.debug(f'Found {first_attr:>9s} @ pos={first:>7,d} start={node_start:>7,d}  in [{short_repr(wiki_text)}]: [{obj_area}]')
         raw_obj = raw_objs[0]
         node = WTP_ATTR_TO_NODE_MAP[first_attr](raw_obj, root, preserve_comments)
-        if node.raw.string.strip() == wiki_text.string.strip():
-            # log.debug('  > It was the only thing in this node')
+        if raw_obj.string.strip() == wiki_text.string.strip():
+            # log.debug(f'  > It was the only thing in this node: {node}')
             return None if drop else node
 
         compound = CompoundNode(wiki_text, root, preserve_comments)
-        before, node_str, after = map(str.strip, wiki_text.string.partition(node.raw.string))
+        before, node_str, after = map(str.strip, wiki_text.string.partition(raw_obj.string))
 
         if before:
             # log.debug(f'  > It had something before it: [{short_repr(before)}]')
@@ -541,7 +541,7 @@ def as_node(wiki_text, root=None, preserve_comments=False, strict_tags=False):
 
         return compound
     else:
-        # log.debug(f'No complex objs found in [{wiki_text[:30]!r}]')
+        # log.debug(f'No complex objs found in [{wiki_text(0, 30)!r}]')
         links = wiki_text.wikilinks
         if not links:
             return String(wiki_text, root)
