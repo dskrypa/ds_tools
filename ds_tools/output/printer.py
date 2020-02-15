@@ -28,7 +28,7 @@ def print_tiered(obj):
 class Printer:
     formats = [
         'json', 'json-pretty', 'json-compact', 'text', 'yaml', 'pprint', 'csv', 'table', 'pseudo-yaml', 'json-lines',
-        'plain'
+        'plain', 'pseudo-json'
     ]
 
     def __init__(self, output_format):
@@ -54,6 +54,8 @@ class Printer:
             return '\n'.join(self.pformat(c, *args, **kwargs) for c in content)
         elif self.output_format == 'json':
             return json.dumps(content, cls=PermissiveJSONEncoder, ensure_ascii=False)
+        elif self.output_format == 'pseudo-json':
+            return json.dumps(content, sort_keys=True, indent=4, cls=PseudoJsonEncoder, ensure_ascii=False)
         elif self.output_format == 'json-pretty':
             return json.dumps(content, sort_keys=True, indent=4, cls=PermissiveJSONEncoder, ensure_ascii=False)
         elif self.output_format == 'json-compact':
@@ -111,3 +113,11 @@ class Printer:
                 raise ValueError('Invalid content format to be formatted as a {}'.format(self.output_format))
         else:
             uprint(self.pformat(content, *args, **kwargs))
+
+
+class PseudoJsonEncoder(PermissiveJSONEncoder):
+    def default(self, o):
+        try:
+            return super().default(o)
+        except TypeError:
+            return repr(o)
