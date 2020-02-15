@@ -508,12 +508,7 @@ def as_node(wiki_text, root=None, preserve_comments=False, strict_tags=False):
         if span and strict_tags and attr == 'tags':
             tag = wiki_attr_values(wiki_text, attr, values)[0]
             obj_str = tag.string
-            try:
-                contents = tag.contents.strip()
-            except AttributeError:              # Bug in lib - it doesn't check regex match before acting on it
-                contents = None
-
-            if contents:
+            if tag.contents.strip():
                 if not obj_str.endswith(f'</{tag.name}>'):
                     log.log(9, f'Treating {obj_str!r} as a string because strict_tags=True')
                     span = next(type_spans, None)
