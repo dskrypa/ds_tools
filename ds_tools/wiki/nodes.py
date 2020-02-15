@@ -255,7 +255,9 @@ class Table(CompoundNode):
         for i, row in enumerate(rows):
             if i == self._header_rows:
                 break
-            row_data = [as_node(cell.value.strip(), self.root, self.preserve_comments) for cell in row]
+            row_data = [
+                as_node(cell.value.strip(), self.root, self.preserve_comments) if cell else cell for cell in row
+            ]
             self._raw_headers.append(row_data)
             cell_strs = []
             for cell in row_data:
@@ -278,7 +280,7 @@ class Table(CompoundNode):
     @cached_property
     def children(self):
         headers = self.headers
-        node_fn = lambda cell: as_node(cell.value.strip(), self.root, self.preserve_comments)
+        node_fn = lambda cell: as_node(cell.value.strip(), self.root, self.preserve_comments) if cell else cell
         processed = []
         for row in self.raw.cells()[self._header_rows:]:
             if int(row[0].attrs.get('colspan', 1)) >= len(headers):  # Some tables have an incorrect value...
