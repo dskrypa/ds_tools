@@ -230,7 +230,7 @@ class List(CompoundNode):
 
 
 class Table(CompoundNode):
-    _rowspan_with_template = re.compile(r'(\|\s*rowspan="\d+")\s*{')
+    _rowspan_with_template = re.compile(r'(\|\s*rowspan="?\d+"?)\s*{')
 
     def __init__(self, raw, root=None, preserve_comments=False):
         raw = self._rowspan_with_template.sub(r'\1 | {', raw.string if isinstance(raw, WikiText) else raw)
