@@ -23,7 +23,7 @@ from .utils import strip_style
 
 __all__ = [
     'Node', 'BasicNode', 'CompoundNode', 'MappingNode', 'MixedNode', 'String', 'Link', 'List', 'Table', 'Template',
-    'Root', 'Section', 'as_node', 'extract_links', 'TableSeparator'
+    'Root', 'Section', 'as_node', 'extract_links', 'TableSeparator', 'Tag'
 ]
 log = logging.getLogger(__name__)
 PY_LT_37 = sys.version_info.major == 3 and sys.version_info.minor < 7
@@ -121,6 +121,29 @@ class MixedNode(CompoundNode):
     @cached_property
     def children(self):
         return extract_links(self.raw, self.root)
+
+
+class Tag(BasicNode):
+    def __init__(self, raw, root=None, preserve_comments=False):
+        super().__init__(raw, root, preserve_comments)
+        if type(self.raw) is WikiText:
+            try:
+                self.raw = self.raw.tags()[0]
+            except IndexError as e:
+                raise ValueError('Invalid wiki tag value') from e
+        self.name = self.raw.name
+        self.value = self.raw.contents.strip()
+        self.attrs = self.raw.attrs
+
+    def __repr__(self):
+        attrs = f':{self.attrs}' if self.attrs else ''
+        return f'<{type(self).__name__}[{self.name}{attrs}][{self.value}]>'
+
+    def __getitem__(self, item):
+        return self.attrs[item]
+
+    def get(self, item, default=None):
+        return self.attrs.get(item, default)
 
 
 class String(BasicNode):
@@ -330,6 +353,11 @@ class Template(BasicNode):
         for arg in args:
             key = strip_style(arg.name)
             mapping[key] = as_node(arg.value.strip(), self.root, self.preserve_comments, strict_tags=True)
+
+        if 'infobox' in self.lc_name and type(mapping.get('name')) is CompoundNode:
+            name = mapping['name']
+            if len(name) == 2 and isinstance(name[0], Tag) and isinstance(name[1], String) and name[0].name == 'nowiki':
+                mapping['name'] = String(f'{name[0].value}{name[1].value}')
         return mapping
 
     def __getitem__(self, item):
@@ -432,7 +460,7 @@ WTP_TYPE_METHOD_NODE_MAP = {
     'WikiList': 'lists',        # Requires .lists() to be called before being in ._type_to_spans
 }
 WTP_ACCESS_FIRST = {'Tag', 'Table', 'WikiList'}
-WTP_ATTR_TO_NODE_MAP = {'tags': BasicNode, 'templates': Template, 'tables': Table, 'lists': List, 'comments': BasicNode}
+WTP_ATTR_TO_NODE_MAP = {'tags': Tag, 'templates': Template, 'tables': Table, 'lists': List, 'comments': BasicNode}
 
 
 def short_repr(text):
@@ -478,11 +506,16 @@ def as_node(wiki_text, root=None, preserve_comments=False, strict_tags=False):
         type_spans = iter(wiki_text._subspans(wtp_type))
         span = next(type_spans, None)
         if span and strict_tags and attr == 'tags':
-            obj_str = wiki_attr_values(wiki_text, attr, values)[0].string
-            close_str = f'</{obj_str[1:-1]}>'
-            if not obj_str.endswith('/>') and close_str not in wiki_text:
-                log.log(9, f'Treating {obj_str!r} as a string because strict_tags=True')
-                span = next(type_spans, None)
+            tag = wiki_attr_values(wiki_text, attr, values)[0]
+            obj_str = tag.string
+            if tag.contents.strip():
+                if not obj_str.endswith(f'</{tag.name}>'):
+                    log.log(9, f'Treating {obj_str!r} as a string because strict_tags=True')
+                    span = next(type_spans, None)
+            else:
+                if obj_str != f'<{tag.name}/>':     # self-closing
+                    log.log(9, f'Treating {obj_str!r} as a string because strict_tags=True')
+                    span = next(type_spans, None)
 
         if span:
             # log.debug(f'Found {wtp_type:>8s} @ {span}')
@@ -500,6 +533,7 @@ def as_node(wiki_text, root=None, preserve_comments=False, strict_tags=False):
 
     try:
         if first_attr == 'tags' and len(values[first_attr]) == 1 and values[first_attr][0].name == 'small':
+            # log.debug(f'Treating tag {values[first_attr]!r} as a string')
             first_attr = None   # Treat it like a String
     except (TypeError, KeyError):
         pass
