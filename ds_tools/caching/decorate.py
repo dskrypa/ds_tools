@@ -25,10 +25,10 @@ from threading import RLock
 
 from wrapt import synchronized
 
+from db_cache import DBCache
 from ..core import (
     flatten_mapping, PermissiveJSONEncoder, validate_or_make_dir, split_arg_vals_with_defaults, insert_kwonly_arg
 )
-from .caches import DBCache
 from .exceptions import CacheLockWarning
 
 __all__ = ['cached', 'CacheKey', 'disk_cached']

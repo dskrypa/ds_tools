@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Manage DBCache cache files
 
@@ -11,9 +11,10 @@ from fnmatch import fnmatch
 from pathlib import Path
 from urllib.parse import quote as url_quote
 
+from db_cache import DBCache
+
 sys.path.append(Path(__file__).resolve().parents[1].as_posix())
 from ds_tools.argparsing import ArgParser
-from ds_tools.caching import DBCache
 from ds_tools.logging import init_logging
 from ds_tools.output import uprint
 

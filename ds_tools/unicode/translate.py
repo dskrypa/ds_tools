@@ -8,7 +8,8 @@ import logging
 
 from googletrans import Translator
 
-from ..caching import cached, DBCache
+from db_cache import DBCache
+from ..caching import cached
 from ..core import rate_limited
 from ..http.imitate import IMITATE_HEADERS
 
