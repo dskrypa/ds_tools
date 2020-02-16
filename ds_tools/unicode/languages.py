@@ -95,6 +95,10 @@ class LangCat(Enum):
                 return cat
 
     @classmethod
+    def categorize_all(cls, texts, detailed=False):
+        return tuple(cls.categorize(t, detailed) for t in texts)
+
+    @classmethod
     @cached(LRUCache(200), exc=True)
     def matches(cls, text, *cats, detailed=False):
         if detailed:
