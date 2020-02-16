@@ -22,8 +22,8 @@ from ..compat import cached_property
 from .utils import strip_style
 
 __all__ = [
-    'Node', 'BasicNode', 'CompoundNode', 'MappingNode', 'MixedNode', 'String', 'Link', 'List', 'Table', 'Template',
-    'Root', 'Section', 'as_node', 'extract_links', 'TableSeparator', 'Tag'
+    'Node', 'BasicNode', 'CompoundNode', 'MappingNode', 'String', 'Link', 'List', 'Table', 'Template', 'Root',
+    'Section', 'as_node', 'extract_links', 'TableSeparator', 'Tag'
 ]
 log = logging.getLogger(__name__)
 PY_LT_37 = sys.version_info.major == 3 and sys.version_info.minor < 7
@@ -53,6 +53,10 @@ class BasicNode(Node):
     def __repr__(self):
         return f'<{type(self).__name__}({self.raw!r})>'
 
+    @property
+    def is_basic(self):
+        return True
+
 
 class CompoundNode(Node):
     @cached_property
@@ -76,6 +80,11 @@ class CompoundNode(Node):
 
     def __len__(self):
         return len(self.children)
+
+    @property
+    def only_basic(self):
+        """True if all children are basic; not cached because children may change"""
+        return type(self) is CompoundNode and all(c.is_basic for c in self.children)
 
     def find_all(self, node_cls, recurse=False, **kwargs):
         """
@@ -116,13 +125,6 @@ class MappingNode(CompoundNode, MutableMapping):
         return ordered_dict()
 
 
-class MixedNode(CompoundNode):
-    """A node that contains text and links"""
-    @cached_property
-    def children(self):
-        return extract_links(self.raw, self.root)
-
-
 class Tag(BasicNode):
     def __init__(self, raw, root=None, preserve_comments=False):
         super().__init__(raw, root, preserve_comments)
@@ -132,7 +134,7 @@ class Tag(BasicNode):
             except IndexError as e:
                 raise ValueError('Invalid wiki tag value') from e
         self.name = self.raw.name
-        self.value = self.raw.contents.strip()
+        self.value = as_node(self.raw.contents.strip(), self.root, self.preserve_comments)
         self.attrs = self.raw.attrs
 
     def __repr__(self):
@@ -338,6 +340,9 @@ class TableSeparator:
 
 
 class Template(BasicNode):
+    _defaults = {'n/a': 'N/A'}
+    _basic_names = {'n/a', 'small'}
+
     def __init__(self, raw, root=None, preserve_comments=False):
         super().__init__(raw, root, preserve_comments)
         self.name = self.raw.name.strip()
@@ -347,19 +352,23 @@ class Template(BasicNode):
         return f'<{type(self).__name__}({self.name!r}: {self.value!r})>'
 
     @cached_property
+    def is_basic(self):
+        if self.lc_name in self._basic_names:
+            return True
+        return self.value is None or isinstance(self.value, (String, Link))
+
+    @cached_property
     def value(self):
         args = self.raw.arguments
         if not args:
             return None
 
-        arg = args[0]
-        if self.lc_name == 'n/a':       # Null table cell
-            return arg.value or 'N/A'
-        elif self.lc_name == 'abbr':    # [short, long]
+        if self.lc_name == 'abbr':          # [short, long]
             return [a.value for a in args]
-        elif arg.name == '1' and arg.string.startswith('|'):
+        elif all(arg.positional for arg in args):
             if len(args) == 1:
-                return as_node(arg.value, self.root, self.preserve_comments)
+                value = args[0].value or self._defaults.get(self.lc_name or '')
+                return as_node(value, self.root, self.preserve_comments)
             return [as_node(a.value, self.root, self.preserve_comments) for a in args]
 
         mapping = MappingNode(self.raw, self.root, self.preserve_comments)
@@ -443,7 +452,29 @@ class Section(Node):
     @cached_property
     def content(self):
         if self.level == 0:                                 # without .string here, .tags() returns the full page's tags
-            return as_node(self.raw.string.strip(), self.root, self.preserve_comments)
+            raw = self.raw.string.strip()
+            node = as_node(raw, self.root, self.preserve_comments)
+            if type(node) is CompoundNode:                          # Split infobox / templates from first paragraph
+                non_basic = []
+                remainder = []
+                children = iter(node)
+                for child in children:
+                    if isinstance(child, String):
+                        remainder.append(child)
+                        break
+                    elif isinstance(child, Link) and not child.title.lower().startswith('file:'):
+                        remainder.append(child)
+                        break
+                    else:
+                        non_basic.append(child)
+                remainder.extend(children)
+                if non_basic and remainder:
+                    node = CompoundNode('\n'.join(n.raw.string for n in non_basic), self.root, self.preserve_comments)
+                    node.children.extend(non_basic)
+                    node_2 = CompoundNode(' '.join(n.raw.string for n in remainder), self.root, self.preserve_comments)
+                    node_2.children.extend(remainder)
+                    node.children.append(node_2)
+            return node
         return as_node(self.raw.contents.strip(), self.root, self.preserve_comments)    # chop off the header
 
     def pprint(self, mode='reprs', indent='', recurse=True):
@@ -603,7 +634,9 @@ def as_node(wiki_text, root=None, preserve_comments=False, strict_tags=False):
         elif strip_style(links[0].string) == strip_style(wiki_text.string):
             return Link(wiki_text, root)
 
-        return MixedNode(wiki_text, root)
+        node = CompoundNode(wiki_text, root, preserve_comments)
+        node.children.extend(extract_links(node.raw, root))
+        return node
 
 
 def extract_links(raw, root=None):
@@ -631,7 +664,7 @@ def extract_links(raw, root=None):
                     raw_str = am.group(2).strip()
         if before:
             content.append(String(before, root))
-        content.append(Link(WikiText(link_text), root))
+        content.append(Link(link_text, root))
 
     if raw_str:
         content.append(String(raw_str, root))

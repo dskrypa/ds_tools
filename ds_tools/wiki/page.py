@@ -12,7 +12,7 @@ Notes:\n
 import logging
 
 from ..compat import cached_property
-from .nodes import Root, Template, MixedNode, String, CompoundNode
+from .nodes import Root, Template, String, CompoundNode, Link
 
 __all__ = ['WikiPage']
 log = logging.getLogger(__name__)
@@ -70,7 +70,9 @@ class WikiPage(Root):
         """
         try:
             for node in self.sections.content:
-                if isinstance(node, (MixedNode, String)):
+                if isinstance(node, String):
+                    return node
+                elif type(node) is CompoundNode and node.only_basic:
                     return node
         except Exception as e:
             log.log(9, f'Error iterating over first section content of {self}: {e}')
