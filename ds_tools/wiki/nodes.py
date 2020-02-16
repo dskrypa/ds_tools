@@ -151,6 +151,10 @@ class String(BasicNode):
         super().__init__(raw, root)
         self.value = strip_style(self.raw.string)
 
+    @cached_property
+    def lower(self):
+        return self.value.lower()
+
     def __repr__(self):
         return f'<{type(self).__name__}({self.raw.string.strip()!r})>'
 
