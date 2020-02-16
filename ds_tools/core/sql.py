@@ -6,7 +6,7 @@ ScopedSession for using SqlAlchemy in a multithreaded application
 
 import logging
 
-from sqlalchemy.orm import mapper, sessionmaker, scoped_session
+from sqlalchemy.orm import sessionmaker, scoped_session
 
 __all__ = ['ScopedSession']
 log = logging.getLogger(__name__)
