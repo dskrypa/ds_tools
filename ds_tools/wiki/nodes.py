@@ -178,8 +178,12 @@ class Link(BasicNode):
 
     def __repr__(self):
         if self.root and self.root.site:
-            return f'<{type(self).__name__}({self.link.string!r}) @ {self.root.site}>'
-        return f'<{type(self).__name__}({self.link.string!r})>'
+            parts = self.root.site.split('.')[:-1]      # omit domain
+            if parts[0] in ('www', 'wiki', 'en'):       # omit common prefixes
+                parts = parts[1:]
+            site = '.'.join(parts)
+            return f'<{type(self).__name__}:{self.link.string!r}@{site}>'
+        return f'<{type(self).__name__}:{self.link.string!r}>'
 
 
 class ListEntry(CompoundNode):
@@ -454,7 +458,7 @@ class Section(Node):
 WTP_TYPE_METHOD_NODE_MAP = {
     'Template': 'templates',
     'Comment': 'comments',
-    'ExtensionTag': 'tags',
+    'ExtensionTag': 'tags',     # TODO: version 0.30.0 changes this to .get_tags()
     'Tag': 'tags',              # Requires .tags() to be called before being in ._type_to_spans
     'Table': 'tables',          # Requires .tables to be accessed before being in ._type_to_spans
     'WikiList': 'lists',        # Requires .lists() to be called before being in ._type_to_spans

@@ -129,7 +129,10 @@ def init_logging(
         names = {None} if verbosity and (verbosity > 10) else {__name__.split('.')[0], '__main__'}
     elif names is None or isinstance(names, str):
         names = {names}
-    logging.getLogger().setLevel(logging.NOTSET)            # Default is 30 / WARNING
+    root_logger = logging.getLogger()
+    if None not in names:
+        root_logger.addHandler(logging.NullHandler())       # Hide logs written directly to the root logger
+    root_logger.setLevel(logging.NOTSET)                    # Default is 30 / WARNING
     loggers = [logging.getLogger(name) for name in names]
     for logger in loggers:
         logger.setLevel(logging.NOTSET)                     # Let handlers deal with log levels

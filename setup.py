@@ -9,13 +9,16 @@ project_root = Path(__file__).resolve().parent
 with project_root.joinpath('readme.rst').open('r', encoding='utf-8') as f:
     long_description = f.read()
 
+about = {}
+with project_root.joinpath('ds_tools', '__init__.py').open('r', encoding='utf-8') as f:
+    exec(f.read(), about)
+
 optional_dependencies = {
     'beautifulsoup': ['beautifulsoup4'],                # ds_tools.utils.soup
     'cffi': ['cffi'],                                   # bin/cffi_test.py
     'translate': ['googletrans'],                       # ds_tools.unicode.translate
     'J2R': ['pykakasi'],                                # ds_tools.unicode.languages
     'exif': ['exifread'],                               # bin/exif_sort.py
-    # 'wiki': ['mwparserfromhell', 'wikitextparser'],     # ds_tools.wiki - May not need mwparserfromhell anymore
     'wiki': ['wikitextparser'],                         # ds_tools.wiki
 }
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
@@ -36,7 +39,7 @@ requirements = [
 
 setup(
     name='ds_tools',
-    version='2020.02.15-9',
+    version=about['__version__'],
     author='Doug Skrypa',
     author_email='dskrypa@gmail.com',
     description='Misc Python 3 libraries and scripts',
@@ -49,7 +52,7 @@ setup(
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8'
     ],
-    python_requires='~=3.5',
+    python_requires='~=3.6',
     install_requires=requirements,
     extras_require=optional_dependencies
 )

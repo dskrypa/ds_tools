@@ -11,7 +11,7 @@ from itertools import cycle
 from pathlib import Path
 from threading import Event
 
-from ..core import format_duration
+from tz_aware_dt import format_duration
 from ..output import readable_bytes
 from .hash import sha512sum
 
