@@ -25,7 +25,7 @@ from .output.color import colored
 __all__ = [
     'init_logging', 'add_context_filter', 'logger_has_non_null_handlers', 'ENTRY_FMT_DETAILED',
     'ENTRY_FMT_DETAILED_PID', 'ENTRY_FMT_DETAILED_PID_UID', 'ENTRY_FMT_DETAILED_UID', 'DatetimeFormatter',
-    'ColorLogFormatter', 'ColorThreadFormatter'
+    'ColorLogFormatter', 'ColorThreadFormatter', 'get_logger_info'
 ]
 log = logging.getLogger(__name__)
 
@@ -418,7 +418,7 @@ def get_logger_info(only_with_handlers=False, non_null_handlers_only=False, test
         elif only_with_handlers:
             continue
 
-        loggers[lname] = entry
+        loggers[lname or '__root__'] = entry
 
     return loggers
 
