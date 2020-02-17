@@ -426,7 +426,7 @@ def hangul_romanized_permutations_pattern(text, include_space=False):
             else:
                 double_str = '(?:{})'.format('|'.join(doubles))
                 pat.append(double_str)
-    return re.compile(''.join(pat))
+    return re.compile(''.join(pat), re.IGNORECASE)
 
 
 def hangul_romanized_permutations(text, include_space=False):
