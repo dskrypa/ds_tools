@@ -52,9 +52,12 @@ VOWEL_PERMUTATIONS = [
     ('u', 'oo'), ('weo', 'wo'), 'we', 'wi', ('yu', 'yoo'), 'eu', ('eui', 'ui', 'ee'), ('i', 'ee', 'y')
 ]
 END_CONSONANT_PERMUTATIONS = [
-    '', ('k', 'g'), ('kk', 'gg'), ('ks', 'gs'), 'n', 'nj', 'nh', ('d', 't'), ('l', 'r'), 'rk', 'rm', 'rb', 'rs', 'rt',
-    'rp', 'rh', 'm', ('b', 'p'), ('bs', 'ps'), ('s', 't'), ('ss', 't'), 'ng', ('j', 't'), ('ch', 't'), 'k', 't', 'p',
-    ('h', 't')
+    # \u3130,ㄱ,ㄲ,ㄳ,ㄴ,ㄵ,ㄶ,ㄷ,ㄹ,ㄺ,ㄻ,
+    '', ('k', 'g'), ('kk', 'gg'), ('ks', 'gs'), 'n', 'nj', 'nh', ('d', 't'), ('l', 'r'), ('rk', 'lk'), ('rm', 'lm'),
+    # ㄼ,ㄽ,ㄾ,ㄿ,ㅀ,ㅁ,ㅂ,ㅄ,ㅅ,
+    ('rb', 'lb'), ('rs', 'ls'), ('rt', 'lt'), ('rp', 'lp'), ('rh', 'lh'), 'm', ('b', 'p'), ('bs', 'ps'), ('s', 't'),
+    # ㅆ,ㅇ,ㄿ,ㅀ,ㅁ,ㅂ,ㅄ,ㅅ,ㅆ,ㅇ,ㅈ,ㅊ,ㅋ,ㅌ,ㅍ,ㅎ
+    ('ss', 't'), 'ng', ('j', 't'), ('ch', 't'), 'k', 't', 'p', ('h', 't')
 ]
 
 REVISED_LEAD_CONSONANTS = [
