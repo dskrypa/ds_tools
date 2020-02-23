@@ -48,12 +48,12 @@ LEAD_CONSONANT_PERMUTATIONS = [
 ]
 VOWEL_PERMUTATIONS = [
     # ㅏ,ㅐ,ㅑ,ㅒ,ㅓ,ㅔ,ㅕ,ㅖ,ㅗ,ㅘ,ㅙ,ㅚ,ㅛ,ㅜ,ㅝ,ㅞ,ㅟ,ㅠ,ㅡ,ㅢ,ㅣ
-    'a', 'ae', 'ya', 'yae', ('eo', 'u'), 'e', ('yeo', 'you', 'yu'), 'ye', ('o', 'oh'), 'wa', 'wae', 'oe', 'yo', ('u', 'oo'),
-    ('weo', 'wo'), 'we', 'wi', ('yu', 'yoo'), 'eu', ('eui', 'ui', 'ee'), ('i', 'ee', 'y')
+    'a', 'ae', 'ya', 'yae', ('eo', 'u'), 'e', ('yeo', 'you', 'yu'), 'ye', ('o', 'oh'), 'wa', 'wae', 'oe', 'yo',
+    ('u', 'oo'), ('weo', 'wo'), 'we', 'wi', ('yu', 'yoo'), 'eu', ('eui', 'ui', 'ee'), ('i', 'ee', 'y')
 ]
 END_CONSONANT_PERMUTATIONS = [
-    '', ('k', 'g'), ('kk', 'gg'), ('ks', 'gs'), 'n', 'nj', 'nh', ('d', 't'), 'l', 'rk', 'rm', 'rb', 'rs', 'rt', 'rp',
-    'rh', 'm', ('b', 'p'), ('bs', 'ps'), ('s', 't'), ('ss', 't'), 'ng', ('j', 't'), ('ch', 't'), 'k', 't', 'p',
+    '', ('k', 'g'), ('kk', 'gg'), ('ks', 'gs'), 'n', 'nj', 'nh', ('d', 't'), ('l', 'r'), 'rk', 'rm', 'rb', 'rs', 'rt',
+    'rp', 'rh', 'm', ('b', 'p'), ('bs', 'ps'), ('s', 't'), ('ss', 't'), 'ng', ('j', 't'), ('ch', 't'), 'k', 't', 'p',
     ('h', 't')
 ]
 
