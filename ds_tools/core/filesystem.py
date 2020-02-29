@@ -33,21 +33,23 @@ def iter_paths(path_or_paths):
             raise TypeError(f'Unexpected type={p.__class__.__name__} for path={p!r}')
 
 
-def iter_files(path):
+def iter_files(path_or_paths):
     """
-    Recursively traverse the given directory to discover the paths of all files within it.
+    Iterate over all file paths represented by the given input.  If any directories are provided, they are traversed
+    recursively to discover all files within them.
 
-    :param Path path: A path object
+    :param str|Path|iterable path_or_paths: A path or iterable that yields paths
     :return: Generator that yields :class:`Path<pathlib.Path>` objects.
     """
-    if path.is_file():
-        yield path
-    else:
-        # noinspection PyTypeChecker
-        for root, dirs, files in os.walk(path):
-            root_path = Path(root)
-            for f in files:
-                yield root_path.joinpath(f)
+    for path in iter_paths(path_or_paths):
+        if path.is_file():
+            yield path
+        else:
+            # noinspection PyTypeChecker
+            for root, dirs, files in os.walk(path):
+                root_path = Path(root)
+                for f in files:
+                    yield root_path.joinpath(f)
 
 
 def validate_or_make_dir(dir_path, permissions=None, suppress_perm_change_exc=True):
