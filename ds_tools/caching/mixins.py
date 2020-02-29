@@ -5,32 +5,49 @@ Mixins
 """
 
 import logging
+from abc import ABC
 from contextlib import suppress
 
 from ..compat import cached_property
 
 __all__ = [
     'ClearableCachedPropertyMixin', 'DictAttrProperty', 'DictAttrPropertyMixin', 'DictAttrPropertyMeta',
-    'DictAttrFieldNotFoundError'
+    'DictAttrFieldNotFoundError', 'ClearableCachedProperty', 'ClearableCachedPropertyMeta'
 ]
 log = logging.getLogger(__name__)
+_NotSet = object()
 
 
-class _NotSet:
-    pass
+class ClearableCachedProperty(ABC):
+    _set_name = False
+
+# noinspection PyUnresolvedReferences
+ClearableCachedProperty.register(cached_property)
 
 
-class ClearableCachedPropertyMixin:
+class ClearableCachedPropertyMeta(type):
+    """Metaclass for objects with ClearableCachedProperties"""
+    def __init__(cls, name, bases, attr_dict):
+        for key, attr in attr_dict.items():
+            if isinstance(attr, ClearableCachedProperty) and getattr(attr, '_set_name', False):
+                attr.name = key
+
+        super().__init__(name, bases, attr_dict)
+
+
+class ClearableCachedPropertyMixin(metaclass=ClearableCachedPropertyMeta):
     @classmethod
     def _cached_properties(cls):
         cached_properties = {}
         for clz in cls.mro():
             if clz == cls:
                 for k, v in cls.__dict__.items():
-                    if isinstance(v, (DictAttrProperty, cached_property)):
+                    # if isinstance(v, (DictAttrProperty, cached_property)):
+                    if isinstance(v, ClearableCachedProperty):
                         cached_properties[k] = v
             else:
                 with suppress(AttributeError):
+                    # noinspection PyUnresolvedReferences
                     cached_properties.update(clz._cached_properties())
         return cached_properties
 
@@ -40,7 +57,7 @@ class ClearableCachedPropertyMixin:
                 del self.__dict__[prop]
 
 
-class DictAttrProperty:
+class DictAttrProperty(ClearableCachedProperty):
     def __init__(self, attr, path, type=_NotSet, default=_NotSet, default_factory=_NotSet, delim='.'):
         """
         Descriptor that acts as a cached property for retrieving values nested in a dict stored in an attribute of the
@@ -102,7 +119,7 @@ class DictAttrProperty:
         return value
 
 
-class DictAttrPropertyMeta(type):
+class DictAttrPropertyMeta(ClearableCachedPropertyMeta):
     """Metaclass for objects with DictAttrProperties"""
     def __init__(cls, name, bases, attr_dict):
         for key, attr in attr_dict.items():
