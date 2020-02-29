@@ -6,11 +6,48 @@ import os
 import logging
 import platform
 from getpass import getuser
+from pathlib import Path
 
-__all__ = ['validate_or_make_dir', 'get_user_cache_dir']
+__all__ = ['validate_or_make_dir', 'get_user_cache_dir', 'iter_paths', 'iter_files']
 log = logging.getLogger(__name__)
 
 ON_WINDOWS = platform.system().lower() == 'windows'
+
+
+def iter_paths(path_or_paths):
+    """
+    Convenience function to iterate over Path objects that may be provided as one or more str or Path objects.
+
+    :param str|Path|iterable path_or_paths: A path or iterable that yields paths
+    :return: Generator that yields :class:`Path<pathlib.Path>` objects.
+    """
+    if isinstance(path_or_paths, (str, Path)):
+        path_or_paths = (path_or_paths,)
+
+    for p in path_or_paths:
+        if isinstance(p, str):
+            p = Path(p)
+        if isinstance(p, Path):
+            yield p.expanduser().resolve()
+        else:
+            raise TypeError(f'Unexpected type={p.__class__.__name__} for path={p!r}')
+
+
+def iter_files(path):
+    """
+    Recursively traverse the given directory to discover the paths of all files within it.
+
+    :param Path path: A path object
+    :return: Generator that yields :class:`Path<pathlib.Path>` objects.
+    """
+    if path.is_file():
+        yield path
+    else:
+        # noinspection PyTypeChecker
+        for root, dirs, files in os.walk(path):
+            root_path = Path(root)
+            for f in files:
+                yield root_path.joinpath(f)
 
 
 def validate_or_make_dir(dir_path, permissions=None, suppress_perm_change_exc=True):
