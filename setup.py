@@ -19,6 +19,7 @@ optional_dependencies = {
     'translate': ['googletrans'],                       # ds_tools.unicode.translate
     'J2R': ['pykakasi'],                                # ds_tools.unicode.languages
     'exif': ['exifread'],                               # bin/exif_sort.py
+    'youtube': ['pytube'],                              # bin/youtube.py
 }
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
 

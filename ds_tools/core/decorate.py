@@ -17,7 +17,7 @@ from .itertools import partitioned
 
 __all__ = [
     'cached_property_or_err', 'classproperty', 'partitioned_exec', 'rate_limited', 'timed', 'trace_entry',
-    'trace_entry_and_dump_stack', 'wrap_main'
+    'trace_entry_and_dump_stack', 'wrap_main', 'primed_coroutine', 'basic_coroutine'
 ]
 log = logging.getLogger(__name__)
 
@@ -126,6 +126,26 @@ class classproperty:
     def __get__(self, obj, cls):
         # noinspection PyCallingNonCallable
         return self.func.__get__(obj, cls)()
+
+
+def primed_coroutine(func):
+    """Primes the wrapped coroutine so users do not need to manually send None or call next() on it."""
+    @wraps(func)
+    def _primed_coroutine(*args, **kwargs):
+        gen = func(*args, **kwargs)
+        next(gen)
+        return gen
+    return _primed_coroutine
+
+
+def basic_coroutine(func):
+    """Wraps a coroutine so the user does not need to prime it or handle a StopIteration on the last send"""
+    @primed_coroutine
+    @wraps(func)
+    def _basic_coroutine(*args, **kwargs):
+        while True:
+            result = yield from func(*args, **kwargs)
+    return _basic_coroutine
 
 
 def partitioned_exec(n, container_factory, merge_fn=None, pos=0):
