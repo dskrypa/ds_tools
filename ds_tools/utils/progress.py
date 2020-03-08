@@ -40,5 +40,3 @@ def progress_coroutine(total, name, unit='parts', interval=0.3):
                 bar = '{}{}{}'.format('=' * pct_chars, next(spinner), ' ' * (9 - pct_chars))
             print(fmt.format(format_duration(int(elapsed)), item_rate, byte_rate, pct, bar), end=end)
             last_time = monotonic()
-
-    # final = yield
