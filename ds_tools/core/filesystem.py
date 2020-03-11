@@ -30,12 +30,11 @@ def iter_paths(path_or_paths):
         if isinstance(p, str):
             p = Path(p)
         if isinstance(p, Path):
-            p = p.expanduser().resolve()
             if ON_WINDOWS and not p.exists():
                 m = WIN_BASH_PATH_MATCH(p.as_posix())
                 if m:
-                    p = Path(f'{m.group(1).upper()}:/{m.group(2)}').expanduser().resolve()
-            yield p
+                    p = Path(f'{m.group(1).upper()}:/{m.group(2)}')
+            yield p.expanduser().resolve()
         else:
             raise TypeError(f'Unexpected type={p.__class__.__name__} for path={p!r}')
 
