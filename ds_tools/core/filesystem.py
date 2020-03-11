@@ -2,9 +2,10 @@
 :author: Doug Skrypa
 """
 
-import os
 import logging
+import os
 import platform
+import re
 from getpass import getuser
 from pathlib import Path
 
@@ -12,6 +13,7 @@ __all__ = ['validate_or_make_dir', 'get_user_cache_dir', 'iter_paths', 'iter_fil
 log = logging.getLogger(__name__)
 
 ON_WINDOWS = platform.system().lower() == 'windows'
+WIN_BASH_PATH_MATCH = re.compile(r'^/([a-z])/(.*)', re.IGNORECASE).match
 
 
 def iter_paths(path_or_paths):
@@ -28,7 +30,12 @@ def iter_paths(path_or_paths):
         if isinstance(p, str):
             p = Path(p)
         if isinstance(p, Path):
-            yield p.expanduser().resolve()
+            p = p.expanduser().resolve()
+            if ON_WINDOWS and not p.exists():
+                m = WIN_BASH_PATH_MATCH(p.as_posix())
+                if m:
+                    p = Path(f'{m.group(1).upper()}:/{m.group(2)}').expanduser().resolve()
+            yield p
         else:
             raise TypeError(f'Unexpected type={p.__class__.__name__} for path={p!r}')
 

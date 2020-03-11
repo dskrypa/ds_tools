@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 
 
 def parser():
-    parser = ArgParser(description='Download KDrama videos')
+    parser = ArgParser(description='Download YouTube videos')
 
     dl_parser = parser.add_subparser('action', 'dl', 'Download a video from YouTube')
     dl_parser.add_argument('url', help='The name URL of the video to download')
