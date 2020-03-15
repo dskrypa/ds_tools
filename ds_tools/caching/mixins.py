@@ -10,10 +10,7 @@ from contextlib import suppress
 
 from ..compat import cached_property
 
-__all__ = [
-    'ClearableCachedPropertyMixin', 'DictAttrProperty', 'DictAttrPropertyMixin', 'DictAttrPropertyMeta',
-    'DictAttrFieldNotFoundError', 'ClearableCachedProperty', 'ClearableCachedPropertyMeta'
-]
+__all__ = ['ClearableCachedPropertyMixin', 'DictAttrProperty', 'DictAttrFieldNotFoundError', 'ClearableCachedProperty']
 log = logging.getLogger(__name__)
 _NotSet = object()
 
@@ -21,28 +18,21 @@ _NotSet = object()
 class ClearableCachedProperty(ABC):
     _set_name = False
 
+    def __set_name__(self, owner, name):
+        if self._set_name:
+            self.name = name
+
 # noinspection PyUnresolvedReferences
 ClearableCachedProperty.register(cached_property)
 
 
-class ClearableCachedPropertyMeta(type):
-    """Metaclass for objects with ClearableCachedProperties"""
-    def __init__(cls, name, bases, attr_dict):
-        for key, attr in attr_dict.items():
-            if isinstance(attr, ClearableCachedProperty) and getattr(attr, '_set_name', False):
-                attr.name = key
-
-        super().__init__(name, bases, attr_dict)
-
-
-class ClearableCachedPropertyMixin(metaclass=ClearableCachedPropertyMeta):
+class ClearableCachedPropertyMixin:
     @classmethod
     def _cached_properties(cls):
         cached_properties = {}
         for clz in cls.mro():
             if clz == cls:
                 for k, v in cls.__dict__.items():
-                    # if isinstance(v, (DictAttrProperty, cached_property)):
                     if isinstance(v, ClearableCachedProperty):
                         cached_properties[k] = v
             else:
@@ -94,6 +84,12 @@ class DictAttrProperty(ClearableCachedProperty):
         self.default = default
         self.default_factory = default_factory
 
+    def __set_name__(self, owner, name):
+        self.name = name
+        self.__doc__ = """
+        A :class:`DictAttrProperty<ds_tools.caching.mixins.DictAttrProperty>` that references this {}
+        instance's {}{}""".format(owner.__name__, self.attr, ''.join('[{!r}]'.format(p) for p in self.path))
+
     def __get__(self, obj, cls):
         if obj is None:
             return self
@@ -117,23 +113,6 @@ class DictAttrProperty(ClearableCachedProperty):
         if '#' not in self.name:
             obj.__dict__[self.name] = value
         return value
-
-
-class DictAttrPropertyMeta(ClearableCachedPropertyMeta):
-    """Metaclass for objects with DictAttrProperties"""
-    def __init__(cls, name, bases, attr_dict):
-        for key, attr in attr_dict.items():
-            if isinstance(attr, DictAttrProperty):
-                attr.name = key
-                attr.__doc__ = """
-                A :class:`DictAttrProperty<ds_tools.caching.mixins.DictAttrProperty>` that references this {}
-                instance's {}{}""".format(name, attr.attr, ''.join('[{!r}]'.format(p) for p in attr.path))
-
-        super().__init__(name, bases, attr_dict)
-
-
-class DictAttrPropertyMixin(metaclass=DictAttrPropertyMeta):
-    pass
 
 
 class DictAttrFieldNotFoundError(Exception):

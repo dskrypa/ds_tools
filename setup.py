@@ -49,7 +49,7 @@ setup(
     packages=find_packages(),
     classifiers=[
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.6',    # Minimum due to use of f-strings
+        'Programming Language :: Python :: 3.6',    # Minimum due to use of f-strings & __set_name__
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8'
     ],
