@@ -8,19 +8,22 @@ import platform
 import re
 from getpass import getuser
 from pathlib import Path
+from typing import Generator, Union, Iterable
 
-__all__ = ['validate_or_make_dir', 'get_user_cache_dir', 'iter_paths', 'iter_files']
+__all__ = ['validate_or_make_dir', 'get_user_cache_dir', 'iter_paths', 'iter_files', 'Paths']
 log = logging.getLogger(__name__)
 
 ON_WINDOWS = platform.system().lower() == 'windows'
 WIN_BASH_PATH_MATCH = re.compile(r'^/([a-z])/(.*)', re.IGNORECASE).match
 
+Paths = Union[str, Path, Iterable[Union[str, Path]]]
 
-def iter_paths(path_or_paths):
+
+def iter_paths(path_or_paths: Paths) -> Generator[Path, None, None]:
     """
     Convenience function to iterate over Path objects that may be provided as one or more str or Path objects.
 
-    :param str|Path|iterable path_or_paths: A path or iterable that yields paths
+    :param path_or_paths: A path or iterable that yields paths
     :return: Generator that yields :class:`Path<pathlib.Path>` objects.
     """
     if isinstance(path_or_paths, (str, Path)):
@@ -39,12 +42,12 @@ def iter_paths(path_or_paths):
             raise TypeError(f'Unexpected type={p.__class__.__name__} for path={p!r}')
 
 
-def iter_files(path_or_paths):
+def iter_files(path_or_paths: Paths) -> Generator[Path, None, None]:
     """
     Iterate over all file paths represented by the given input.  If any directories are provided, they are traversed
     recursively to discover all files within them.
 
-    :param str|Path|iterable path_or_paths: A path or iterable that yields paths
+    :param path_or_paths: A path or iterable that yields paths
     :return: Generator that yields :class:`Path<pathlib.Path>` objects.
     """
     for path in iter_paths(path_or_paths):
