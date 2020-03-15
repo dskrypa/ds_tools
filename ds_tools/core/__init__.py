@@ -10,6 +10,7 @@ from .filesystem import *
 from .input import *
 from .introspection import *
 from .itertools import *
+from .patterns import *
 from .serialization import *
 from .sql import *
 
