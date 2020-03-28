@@ -6,20 +6,18 @@ Input Handling
 
 import logging
 from numbers import Number
+from typing import Callable, Any
 
 import yaml
 
 from .exceptions import InputValidationException
 
-__all__ = ['get_input', 'parse_yes_no', 'parse_full_yes_no', 'parse_bool']
+__all__ = ['get_input', 'parse_yes_no', 'parse_full_yes_no', 'parse_bool', 'parse_with_func']
 log = logging.getLogger(__name__)
+_NotSet = object()
 
 
-class _NotSet:
-    pass
-
-
-def parse_bool(value):
+def parse_bool(value: Any) -> bool:
     original = value
     if isinstance(value, bool):
         return value
@@ -33,10 +31,10 @@ def parse_bool(value):
         elif value in ('f', 'n', 'no'):
             return False
     # ValueError works with argparse to provide a useful error message
-    raise ValueError('Unable to parse voolean value from input: {!r}'.format(original))
+    raise ValueError('Unable to parse boolean value from input: {!r}'.format(original))
 
 
-def parse_yes_no(user_input):
+def parse_yes_no(user_input: str) -> bool:
     """
     Case-insensitive Yes/No input parser
 
@@ -55,7 +53,7 @@ def parse_yes_no(user_input):
     raise InputValidationException('Expected "yes"/"y" or "no"/"n"')
 
 
-def parse_full_yes_no(user_input):
+def parse_full_yes_no(user_input: str) -> bool:
     """
     Case-insensitive full Yes/No input parser
 
@@ -74,7 +72,18 @@ def parse_full_yes_no(user_input):
     return False
 
 
-def get_input(prompt, skip=False, retry=0, parser=parse_yes_no, *, default=_NotSet):
+def parse_with_func(func: Callable, user_input: str):
+    user_input = user_input.strip()
+    if not user_input:
+        raise InputValidationException('No input was provided.')
+
+    try:
+        return func(user_input)
+    except Exception as e:
+        raise InputValidationException(f'Invalid input: {e}') from e
+
+
+def get_input(prompt: str, skip=False, retry: int = 0, parser: Callable = parse_yes_no, *, default=_NotSet):
     """
     Prompt the user for input, and parse the results.  May be skipped by providing a default value and setting ``skip``
     to True.
