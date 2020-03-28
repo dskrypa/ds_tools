@@ -419,6 +419,7 @@ def hangul_romanized_permutations_pattern(text, include_space=False):
                 else:
                     doubles.append(char)
 
+            doubles = (f'{d[0]}{{1,2}}' if d[0] == d[1] else d for d in doubles)
             if singles and doubles:
                 single_str = '[{}]'.format(''.join(singles))
                 double_str = '(?:{}|{})'.format('|'.join(doubles), single_str)
