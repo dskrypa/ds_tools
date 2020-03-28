@@ -9,6 +9,7 @@ import re
 import string
 import unicodedata
 from enum import Enum
+from typing import Union, Set, Optional, Tuple, Generator, List, Iterable, Container
 
 from cachetools import LRUCache
 try:
@@ -51,17 +52,17 @@ class LangCat(Enum):
         return self.value < other.value
 
     @classproperty
-    def non_eng_cats(self):
+    def non_eng_cats(self) -> Tuple['LangCat', ...]:
         return LangCat.UNK, LangCat.HAN, LangCat.JPN, LangCat.CJK, LangCat.THAI, LangCat.GRK, LangCat.CYR
 
     @classproperty
-    def asian_cats(self):
+    def asian_cats(self) -> Tuple['LangCat', ...]:
         return LangCat.HAN, LangCat.JPN, LangCat.CJK, LangCat.THAI
 
     asian = asian_cats
 
     @classmethod
-    def _ranges(cls):
+    def _ranges(cls) -> Generator[Tuple['LangCat', List[Tuple[int, int]]], None, None]:
         yield cls.ENG, LATIN_RANGES
         yield cls.HAN, HANGUL_RANGES
         yield cls.JPN, JAPANESE_RANGES
@@ -72,7 +73,7 @@ class LangCat(Enum):
 
     @classmethod
     @cached(LRUCache(200), exc=True)
-    def categorize(cls, text, detailed=False):
+    def categorize(cls, text: Optional[str], detailed=False) -> Union['LangCat', Set['LangCat']]:
         if detailed:
             return set(cls.categorize(c) for c in text)
         elif not text:
@@ -95,12 +96,12 @@ class LangCat(Enum):
                 return cat
 
     @classmethod
-    def categorize_all(cls, texts, detailed=False):
+    def categorize_all(cls, texts: Iterable[Optional[str]], detailed=False) -> Tuple['LangCat', ...]:
         return tuple(cls.categorize(t, detailed) for t in texts)
 
     @classmethod
     @cached(LRUCache(200), exc=True)
-    def matches(cls, text, *cats, detailed=False):
+    def matches(cls, text: Optional[str], *cats: 'LangCat', detailed=False) -> bool:
         if detailed:
             text_cats = cls.categorize(text, True)
             return len(text_cats.intersection(cats)) == len(text_cats) == len(cats)
@@ -110,7 +111,7 @@ class LangCat(Enum):
             return cls.categorize(text) == cats[0]
 
     @classmethod
-    def contains_any(cls, text, cat):
+    def contains_any(cls, text: str, cat: Union['LangCat', Container['LangCat']]) -> bool:
         """
         :param str text: Text to examine
         :param LangCat|list|tuple|set cat: One or more :class:`LangCat` language categories
@@ -130,7 +131,7 @@ class LangCat(Enum):
         return False
 
     @classmethod
-    def contains_any_not(cls, text, cat):
+    def contains_any_not(cls, text: str, cat: 'LangCat') -> bool:
         if cat == cls.MIX:
             raise ValueError('{!r} is not supported for {}.contains_any_not()'.format(cat, cls.__name__))
         elif len(text) > 1:
@@ -143,7 +144,7 @@ class LangCat(Enum):
         return False
 
     @classmethod
-    def for_name(cls, language):
+    def for_name(cls, language: str) -> 'LangCat':
         lang = language.lower().strip()
         if lang in ('english', 'eng', 'en', 'spanish'):     # A better enum value would have been latin, since this is
             return cls.ENG                                  # more about unicode than actual language
@@ -162,7 +163,7 @@ class LangCat(Enum):
         return cls.UNK
 
     @classmethod
-    def split(cls, text, strip=True):
+    def split(cls, text: str, strip=True) -> List[str]:
         if strip:
             text = text.strip()
         if not text:
@@ -214,22 +215,22 @@ class LangCat(Enum):
         return parts
 
     @classmethod
-    def sort(cls, texts):
+    def sort(cls, texts: Iterable[Optional[str]]):
         return [text for cat, text in sorted((cls.categorize(text), text) for text in texts)]
 
     @property
-    def full_name(self):
+    def full_name(self) -> str:
         return LANG_CAT_NAMES[self.value]
 
 
-def _strip_non_word_chars(text):
+def _strip_non_word_chars(text: str) -> str:
     # original = text
     text = re.sub(r'[\d\s]+', '', text).translate(PUNC_SYMBOL_STRIP_TBL)
     # log.debug('_strip_non_word_chars({!r}) => {!r}'.format(original, text))
     return text
 
 
-def is_hangul(a_str):
+def is_hangul(a_str: str) -> bool:
     """
     :param str a_str: A string
     :return bool: True if the given string contains only hangul characters, False otherwise.  Punctuation and spaces are
@@ -247,7 +248,7 @@ def is_hangul(a_str):
     return any(a <= as_dec <= b for a, b in HANGUL_RANGES)
 
 
-def is_japanese(a_str):
+def is_japanese(a_str: str) -> bool:
     if len(a_str) < 1:
         return False
     elif len(a_str) > 1:
@@ -260,7 +261,7 @@ def is_japanese(a_str):
     return any(a <= as_dec <= b for a, b in JAPANESE_RANGES)
 
 
-def is_cjk(a_str):
+def is_cjk(a_str: str) -> bool:
     if len(a_str) < 1:
         return False
     elif len(a_str) > 1:
@@ -273,7 +274,7 @@ def is_cjk(a_str):
     return any(a <= as_dec <= b for a, b in CJK_RANGES)
 
 
-def is_any_cjk(a_str, strip_punc=True, strip_nums=True):
+def is_any_cjk(a_str: str, strip_punc=True, strip_nums=True) -> bool:
     """
     :param str a_str: A string
     :param bool strip_punc: True (default) to strip punctuation before processing when len > 1
@@ -297,26 +298,26 @@ def is_any_cjk(a_str, strip_punc=True, strip_nums=True):
     return any(a <= as_dec <= b for a, b in NON_ENG_RANGES)
 
 
-def contains_hangul(a_str):
+def contains_hangul(a_str: Optional[str]) -> bool:
     try:
         return any(is_hangul(c) for c in a_str)
     except TypeError:   # likely NoneType is not iterable
         return False
 
 
-def contains_japanese(a_str):
+def contains_japanese(a_str: Union[str, Iterable[str]]) -> bool:
     return any(is_japanese(c) for c in a_str)
 
 
-def contains_cjk(a_str):
+def contains_cjk(a_str: Union[str, Iterable[str]]) -> bool:
     return any(is_cjk(c) for c in a_str)
 
 
-def contains_any_cjk(a_str):
+def contains_any_cjk(a_str: Union[str, Iterable[str]]) -> bool:
     return any(is_any_cjk(c) for c in a_str)
 
 
-def _print_unicode_names(a_str):
+def _print_unicode_names(a_str: str):
     for c in a_str:
         log.info('{!r}: {}'.format(c, unicodedata.name(c)))
 
@@ -357,13 +358,13 @@ class J2R:
             yield J2R(mode, include_space=include_space)
 
 
-def romanized_permutations(text, include_space=False):
+def romanized_permutations(text: str, include_space=False) -> List[str]:
     if contains_hangul(text):
         return hangul_romanized_permutations(text, include_space=include_space)
     return [j2r.romanize(text) for j2r in J2R.romanizers(include_space)]
 
 
-def matches_permutation(eng, cjk):
+def matches_permutation(eng: str, cjk: str) -> bool:
     if not LangCat.matches(eng, LangCat.ENG) and LangCat.matches(cjk, LangCat.ENG):
         eng, cjk = cjk, eng
     if contains_hangul(cjk):
