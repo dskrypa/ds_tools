@@ -7,7 +7,6 @@ Core utilities that are used by multiple other modules/packages in ds_tools.
 from .collections import *
 from .exceptions import *
 from .filesystem import *
-from .input import *
 from .introspection import *
 from .itertools import *
 from .patterns import *
