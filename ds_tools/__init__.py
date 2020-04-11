@@ -1,5 +1,5 @@
 
-__version__ = '2020.04.11-1'
+__version__ = '2020.04.11-2'
 
 import logging
 

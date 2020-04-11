@@ -52,7 +52,7 @@ def get_input(prompt: str, skip=False, retry: int = 0, parser: Callable = parse_
 
 
 def choose_item(
-        items: Sequence[Any], name: str = 'value', source: str = '', *, before: Optional[str] = None,
+        items: Sequence[Any], name: str = 'value', source: Any = '', *, before: Optional[str] = None,
         prompt_color: Color = 14, error_color: Color = 9, repr_func: Callable = repr, retry: int = 0
 ) -> Any:
     """
@@ -61,7 +61,7 @@ def choose_item(
 
     :param Sequence items: A list or other indexable sequence of items to choose from
     :param str name: The name of the item to use in messages/prompts
-    :param str source: Where the items came from
+    :param source: Where the items came from
     :param str before: A message to be printed before listing the items to choose from (default: automatically generated
       using the provided name and source)
     :param str|int|None prompt_color: The ANSI color to use for the user prompt
@@ -89,8 +89,10 @@ def choose_item(
             raise InputValidationException(error_msg) from e
 
 
-def _prepare_source(source: str) -> str:
+def _prepare_source(source: Any) -> str:
     if source:
+        if not isinstance(source, str):
+            source = str(source)
         if not source.startswith(' '):
             source = ' ' + source
         if not source.startswith((' for ', ' from ', ' in ')):
