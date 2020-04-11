@@ -76,7 +76,7 @@ def choose_item(
         return items[0]
     else:
         uprint(before or f'Found multiple {name}s{_prepare_source(source)}:')
-        fmt = f'{{:>{max(len(str(i)) for i in items)}d}}: {{}}'
+        fmt = f'{{:>{len(str(len(items)))}d}}: {{}}'
         for i, item in enumerate(items):
             uprint(fmt.format(i, repr_func(item)))
 
