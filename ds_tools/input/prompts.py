@@ -10,7 +10,7 @@ from ..output.color import colored
 from ..output.terminal import uprint
 from .parsers import parse_yes_no, parse_int
 
-__all__ = ['get_input']
+__all__ = ['get_input', 'choose_item']
 log = logging.getLogger(__name__)
 _NotSet = object()
 Color = Union[int, str, None]
