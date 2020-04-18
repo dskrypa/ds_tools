@@ -18,8 +18,8 @@ from .utils import COMMON_ARGS, update_subparser_constants
 
 __all__ = ['ArgParser']
 
-DEFAULT_EMAIL = 'example@fake.com'
-BUG_REPORT = 'Report {} bugs to {}'
+DEFAULT_EMAIL = '[unknown author email]'
+BUG_REPORT = 'Report {script}{ver} bugs to {email}'
 DOC_LINK = 'hxxp://documentation-example-site.com/base/path/to/docs/'
 
 
@@ -33,28 +33,35 @@ class ArgParser(ArgumentParser):
       argument should not be provided by users)
     :param kwargs: Keyword args to pass to :class:`argparse.ArgumentParser`
     """
-    def __init__(self, *args, doc_link=False, email=None, _caller_path=None, **kwargs):
+    def __init__(self, *args, doc_link=False, email=None, _caller_path=None, _version=None, **kwargs):
         if _caller_path:
             self._caller_path = _caller_path
             self._email = email
+            self._version = _version or ''
         else:
             try:
                 top_level_frame_info = inspect.stack()[-1]
-                _g = top_level_frame_info.frame.f_globals
-                _email = _g.get('__author_email__') or getattr(_g.get('__version__'), '__author_email__', None)
+                _globals = top_level_frame_info.frame.f_globals
+                _email = _globals.get('__author_email__')
+                version = _globals.get('__version__')
                 self._caller_path = Path(inspect.getsourcefile(top_level_frame_info[0]))
             except Exception:
                 self._caller_path = Path(__file__)
                 self._email = email or DEFAULT_EMAIL
+                self._version = _version or ''
             else:
                 self._email = email or _email or DEFAULT_EMAIL
+                self._version = _version or version or ''
+
+        if self._version and not self._version.startswith(' ['):
+            self._version = f' [ver. {self._version}]'
 
         sig = inspect.Signature.from_callable(ArgumentParser.__init__)
         ap_args = sig.bind(None, *args, **kwargs).arguments
         ap_args.pop('self')
 
         filename_noext = self._caller_path.stem
-        epilog = [BUG_REPORT.format(filename_noext, self._email)]
+        epilog = [BUG_REPORT.format(script=filename_noext, email=self._email, ver=self._version)]
         if doc_link is True:
             epilog.append('Online documentation: {}'.format(DOC_LINK + 'bin.{}.html'.format(filename_noext)))
         elif isinstance(doc_link, str):
