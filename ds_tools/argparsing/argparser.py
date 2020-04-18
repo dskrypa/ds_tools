@@ -40,8 +40,8 @@ class ArgParser(ArgumentParser):
         else:
             try:
                 top_level_frame_info = inspect.stack()[-1]
-                top_level_globals = top_level_frame_info.frame.f_globals
-                _email = top_level_globals.get('__author_email__')
+                _g = top_level_frame_info.frame.f_globals
+                _email = _g.get('__author_email__') or getattr(_g.get('__version__'), '__author_email__', None)
                 self._caller_path = Path(inspect.getsourcefile(top_level_frame_info[0]))
             except Exception:
                 self._caller_path = Path(__file__)
