@@ -5,7 +5,6 @@ Wrapper around argparse to provide some additional functionality / shortcuts
 """
 
 import inspect
-import os
 import re
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from copy import deepcopy
@@ -19,7 +18,8 @@ from .utils import COMMON_ARGS, update_subparser_constants
 
 __all__ = ['ArgParser']
 
-BUG_REPORT = 'Report {} bugs to example@fake.com'
+DEFAULT_EMAIL = 'example@fake.com'
+BUG_REPORT = 'Report {} bugs to {}'
 DOC_LINK = 'hxxp://documentation-example-site.com/base/path/to/docs/'
 
 
@@ -33,23 +33,30 @@ class ArgParser(ArgumentParser):
       argument should not be provided by users)
     :param kwargs: Keyword args to pass to :class:`argparse.ArgumentParser`
     """
-    def __init__(self, *args, doc_link=False, _caller_path=None, **kwargs):
+    def __init__(self, *args, doc_link=False, email=None, _caller_path=None, **kwargs):
         if _caller_path:
             self._caller_path = _caller_path
+            self._email = email
         else:
             try:
-                self._caller_path = Path(inspect.getsourcefile(inspect.stack()[-1][0]))
+                top_level_frame_info = inspect.stack()[-1]
+                top_level_globals = top_level_frame_info.frame.f_globals
+                _email = top_level_globals.get('__author_email__')
+                self._caller_path = Path(inspect.getsourcefile(top_level_frame_info[0]))
             except Exception:
                 self._caller_path = Path(__file__)
+                self._email = email or DEFAULT_EMAIL
+            else:
+                self._email = email or _email or DEFAULT_EMAIL
 
         sig = inspect.Signature.from_callable(ArgumentParser.__init__)
         ap_args = sig.bind(None, *args, **kwargs).arguments
         ap_args.pop('self')
 
         filename_noext = self._caller_path.stem
-        epilog = [BUG_REPORT.format(filename_noext)]
+        epilog = [BUG_REPORT.format(filename_noext, self._email)]
         if doc_link is True:
-            epilog.append('Online documentation: {}'.format(DOC_LINK + 'bin.scripts.{}.html'.format(filename_noext)))
+            epilog.append('Online documentation: {}'.format(DOC_LINK + 'bin.{}.html'.format(filename_noext)))
         elif isinstance(doc_link, str):
             if doc_link.startswith('http://'):
                 epilog.append('Online documentation: {}'.format(doc_link))
@@ -144,7 +151,12 @@ class ArgParser(ArgumentParser):
             sp_group = self.subparsers[dest]
         except KeyError:
             sp_group = self.add_subparsers(dest=dest, title='subcommands')
-        return sp_group.add_parser(name, help=help or help_desc, description=description or help_desc, _caller_path=self._caller_path, **kwargs)
+
+        sub_parser = sp_group.add_parser(
+            name, help=help or help_desc, description=description or help_desc, email=self._email,
+            _caller_path=self._caller_path, **kwargs
+        )
+        return sub_parser
 
     def add_constant(self, key, value):
         self.__constants[key] = value
