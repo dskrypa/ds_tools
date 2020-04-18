@@ -10,6 +10,7 @@ import re
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from copy import deepcopy
 from itertools import chain
+from pathlib import Path
 
 import yaml
 from yaml.parser import ParserError
@@ -28,28 +29,24 @@ class ArgParser(ArgumentParser):
 
     :param args: Positional args to pass to :class:`argparse.ArgumentParser`
     :param bool|str doc_link: True to provide the default URL, or a str starting with ``http://`` to include literally
-    :param str|None _caller_file: Filename of the file that created this ArgParser (automatically detected - this
+    :param Path|None _caller_path: Filename of the file that created this ArgParser (automatically detected - this
       argument should not be provided by users)
     :param kwargs: Keyword args to pass to :class:`argparse.ArgumentParser`
     """
-    def __init__(self, *args, doc_link=False, _caller_file=None, **kwargs):
-        this_file = os.path.splitext(os.path.basename(__file__))[0]
-        self._caller_file = _caller_file or this_file
-        i = 1
-        while _caller_file in (this_file, 'argparse'):
+    def __init__(self, *args, doc_link=False, _caller_path=None, **kwargs):
+        if _caller_path:
+            self._caller_path = _caller_path
+        else:
             try:
-                self._caller_file = os.path.basename(inspect.getsourcefile(inspect.stack()[i][0]))
-            except TypeError:
-                self._caller_file = '{}_interactive'.format(this_file)
-            except IndexError:
-                break
-            i += 1
+                self._caller_path = Path(inspect.getsourcefile(inspect.stack()[-1][0]))
+            except Exception:
+                self._caller_path = Path(__file__)
 
-        sig = inspect.Signature.from_function(ArgumentParser.__init__)
+        sig = inspect.Signature.from_callable(ArgumentParser.__init__)
         ap_args = sig.bind(None, *args, **kwargs).arguments
         ap_args.pop('self')
 
-        filename_noext = os.path.splitext(self._caller_file)[0]
+        filename_noext = self._caller_path.stem
         epilog = [BUG_REPORT.format(filename_noext)]
         if doc_link is True:
             epilog.append('Online documentation: {}'.format(DOC_LINK + 'bin.scripts.{}.html'.format(filename_noext)))
@@ -58,7 +55,7 @@ class ArgParser(ArgumentParser):
                 epilog.append('Online documentation: {}'.format(doc_link))
         ap_args.setdefault('epilog', '\n\n'.join(epilog))
         ap_args.setdefault('formatter_class', RawDescriptionHelpFormatter)
-        ap_args.setdefault('prog', self._caller_file)
+        ap_args.setdefault('prog', self._caller_path.name)
         super().__init__(**ap_args)
         self.__constants = {}
 
@@ -82,7 +79,7 @@ class ArgParser(ArgumentParser):
 
         if self.subparsers:
             desc_fmt = '{}\n\nUse `{} $cmd --help` for more info about each subcommand'
-            desc = desc_fmt.format(self.description, self._caller_file)
+            desc = desc_fmt.format(self.description, self._caller_path.name)
         else:
             desc = self.description
         formatter.add_text(desc)
@@ -147,7 +144,7 @@ class ArgParser(ArgumentParser):
             sp_group = self.subparsers[dest]
         except KeyError:
             sp_group = self.add_subparsers(dest=dest, title='subcommands')
-        return sp_group.add_parser(name, help=help or help_desc, description=description or help_desc, _caller_file=self._caller_file, **kwargs)
+        return sp_group.add_parser(name, help=help or help_desc, description=description or help_desc, _caller_path=self._caller_path, **kwargs)
 
     def add_constant(self, key, value):
         self.__constants[key] = value

@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 
 import sys
-from argparse import ArgumentParser
 from pathlib import Path
 
 sys.path.append(Path(__file__).resolve().parents[1].as_posix())
+from ds_tools.argparsing import ArgParser
 from ds_tools.output.color import colored, HEX_COLORS_REVERSE
 
 ATTRS = [
@@ -14,7 +14,7 @@ ATTRS = [
 
 
 def parser():
-    parser = ArgumentParser(description='Tool for testing ANSI colors')
+    parser = ArgParser(description='Tool for testing ANSI colors')
     parser.add_argument('--text', '-t', help='Text to be displayed (default: the number of the color being shown)')
     parser.add_argument('--color', '-c', help='Text color to use (default: cycle through 0-256)')
     parser.add_argument('--background', '-b', help='Background color to use (default: None)')
