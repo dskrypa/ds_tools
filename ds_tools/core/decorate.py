@@ -16,8 +16,8 @@ from threading import Lock
 from .itertools import partitioned
 
 __all__ = [
-    'cached_property_or_err', 'classproperty', 'partitioned_exec', 'rate_limited', 'timed', 'trace_entry',
-    'trace_entry_and_dump_stack', 'wrap_main', 'primed_coroutine', 'basic_coroutine'
+    'cached_property_or_err', 'classproperty', 'partitioned_exec', 'rate_limited', 'timed', 'trace_entry', 'trace_exit',
+    'trace_entry_and_dump_stack', 'wrap_main', 'primed_coroutine', 'basic_coroutine', 'trace_entry_and_exit'
 ]
 log = logging.getLogger(__name__)
 
@@ -214,18 +214,41 @@ def partitioned_exec(n, container_factory, merge_fn=None, pos=0):
 def trace_entry(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        arg_str = ', '.join('{!r}'.format(v) if isinstance(v, str) else str(v) for v in args)
-        kwarg_str = ', '.join('{}={}'.format(k, '{!r}'.format(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
+        arg_str = ', '.join(repr(v) if isinstance(v, str) else str(v) for v in args)
+        kwarg_str = ', '.join('{}={}'.format(k, repr(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
         print('{}({}, {})'.format(func.__name__, arg_str, kwarg_str))
         return func(*args, **kwargs)
+    return wrapper
+
+
+def trace_entry_and_exit(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        arg_str = ', '.join(repr(v) if isinstance(v, str) else str(v) for v in args)
+        kwarg_str = ', '.join('{}={}'.format(k, repr(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
+        print('{}({}, {})'.format(func.__name__, arg_str, kwarg_str))
+        val = func(*args, **kwargs)
+        print('finished {}({}, {})'.format(func.__name__, arg_str, kwarg_str))
+        return val
+    return wrapper
+
+
+def trace_exit(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        arg_str = ', '.join(repr(v) if isinstance(v, str) else str(v) for v in args)
+        kwarg_str = ', '.join('{}={}'.format(k, repr(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
+        val = func(*args, **kwargs)
+        print(f'{func.__name__}(\n    {arg_str}, {kwarg_str}\n) => {val!r}')
+        return val
     return wrapper
 
 
 def trace_entry_and_dump_stack(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        arg_str = ', '.join('{!r}'.format(v) if isinstance(v, str) else str(v) for v in args)
-        kwarg_str = ', '.join('{}={}'.format(k, '{!r}'.format(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
+        arg_str = ', '.join(repr(v) if isinstance(v, str) else str(v) for v in args)
+        kwarg_str = ', '.join('{}={}'.format(k, repr(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
         print('{}({}, {})\n{}'.format(func.__name__, arg_str, kwarg_str, ''.join(traceback.format_stack())))
         val = func(*args, **kwargs)
         print('finished {}({}, {})'.format(func.__name__, arg_str, kwarg_str))
