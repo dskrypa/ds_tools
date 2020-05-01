@@ -30,6 +30,8 @@ class PermissiveJSONEncoder(json.JSONEncoder):
             return str(o)
         elif hasattr(o, '__to_json__'):
             return o.__to_json__()
+        elif hasattr(o, '__serializable__'):
+            return o.__serializable__()
         return super().default(o)
 
 
