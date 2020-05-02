@@ -37,8 +37,12 @@ def uprint(msg):
             msg = msg.decode('utf-8')
         else:
             msg = str(msg)
-    _uout.write(msg + '\n')
-    _uout.flush()
+    try:
+        _uout.write(msg + '\n')
+        _uout.flush()
+    except OSError as e:
+        if e.errno != 22:   # occurs when writing to a closed pipe
+            raise
 
 
 def uerror(msg):
@@ -47,8 +51,12 @@ def uerror(msg):
             msg = msg.decode('utf-8')
         else:
             msg = str(msg)
-    _uerr.write(msg + '\n')
-    _uerr.flush()
+    try:
+        _uerr.write(msg + '\n')
+        _uerr.flush()
+    except OSError as e:
+        if e.errno != 22:   # occurs when writing to a closed pipe
+            raise
 
 
 class Terminal:
