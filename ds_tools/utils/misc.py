@@ -8,7 +8,9 @@ import functools
 import re
 import sys
 
-__all__ = ['num_suffix', 'PseudoJQ', 'bracket_dict_to_list', 'longest_repeating_subsequence', 'diamond']
+__all__ = [
+    'num_suffix', 'PseudoJQ', 'bracket_dict_to_list', 'longest_repeating_subsequence', 'diamond', 'IntervalCoverage'
+]
 
 
 def num_suffix(num):
@@ -173,3 +175,127 @@ def diamond():
             else:
                 with open(file, 'r') as f:
                     yield from map(nlstrip, f.readlines())
+
+
+class IntervalCoverage:
+    """
+    Originally written for the zombit problem for Google's FooBar test; updated / cleaned up / expanded for use here.
+    """
+    def __init__(self, bits=64, _is_sub=False):
+        self.buckets = {}
+        self.sub = None if _is_sub else IntervalCoverage(bits, True)
+        self.bits = bits
+        self.max_bucket_value = 2 ** bits - 1
+
+    def max_value(self):
+        last_bucket = max(self.buckets) if self.buckets else 0
+        bucket_max = last_bucket * self.bits
+        if (sub := self.sub) is not None:
+            return max(bucket_max, sub.max_value() * self.bits)
+        return bucket_max
+
+    @property
+    def min(self):
+        bits = self.bits
+        if buckets := self.buckets:
+            first = min(buckets)
+            bucket = bin(buckets[first])[2:]
+            bucket_min = (first * bits) + (len(bucket) - bucket.rindex('1') - 1)
+        else:
+            bucket_min = None
+        if (sub := self.sub) is not None and (sub_min := sub.min) is not None:
+            # noinspection PyUnboundLocalVariable
+            return sub_min * bits if bucket_min is None else min(bucket_min, sub_min * bits)
+        return bucket_min
+
+    @property
+    def max(self):
+        bits = self.bits
+        if buckets := self.buckets:
+            last = max(buckets)
+            bucket = bin(buckets[last])[2:]
+            bucket_max = (last * bits) + (len(bucket) - bucket.index('1') - 1)
+        else:
+            bucket_max = None
+        if (sub := self.sub) is not None and (sub_max := sub.max) is not None:
+            # noinspection PyUnboundLocalVariable
+            return sub_max * bits if bucket_max is None else max(bucket_max, sub_max * bits)
+        return bucket_max
+
+    def _get_pages(self):
+        mbv = bin(self.max_bucket_value)[2:]
+        bucket = self.buckets.get
+        has_sub = (sub := self.sub) is not None
+        return [mbv if has_sub and sub[b] else bin(bucket(b, 0))[2:] for b in range(self.max_value() // self.bits + 1)]
+
+    def pformat(self):
+        fmt = f'    {{:>{len(str(self.max_value() // self.bits))}d}}: {{:>0{self.bits}s}},'
+        _buckets = '\n'.join(fmt.format(i, page) for i, page in enumerate(self._get_pages()))
+        info = f'min={self.min}, max={self.max}, filled={self.filled()}, contents'
+        return f'\n<{self.__class__.__name__}({info}:\n{_buckets}\n)>'
+
+    def pprint(self):
+        print(self.pformat())
+
+    def filled(self) -> int:
+        total = 0
+        max_value = self.max_bucket_value
+        bits = self.bits
+        if (sub := self.sub) is not None:
+            total += sub.filled() * bits
+        for v in self.buckets.values():
+            # Note: ~80ns could be gained by using cffi to implement hamming weight in c
+            # The pure python implementation is an order of magnitude slower than bin(...).count('1')
+            total += bits if v == max_value else bin(v).count('1')
+        return total
+
+    def __getitem__(self, item):
+        index = item // self.bits
+        if (sub := self.sub) is not None and sub[index]:
+            return True
+        elif index not in self.buckets:
+            return False
+        return self.buckets[index] & (1 << (item % self.bits)) != 0
+
+    def __contains__(self, span):
+        try:
+            start, stop = map(int, span)
+        except (ValueError, TypeError):
+            raise ValueError(f'Expected a span of (start, stop) integers')
+        return all(self[i] for i in range(start, stop))
+
+    def add(self, start, stop):
+        bits = self.bits
+        max_value = self.max_bucket_value
+        start_i = start // bits
+        stop_i = stop // bits
+        smb = start % bits
+        if stop_i - start_i == 0:
+            delta = stop - start
+            self._insert(start_i, max_value >> (bits - delta) << smb)
+        else:
+            self._insert(start_i, max_value >> smb << smb)
+            emb = bits - (stop % bits)
+            self._insert(stop_i, max_value >> emb)
+            sub_first = start_i + 1
+            if (sub := self.sub) is not None:
+                sub_last = stop_i - 1
+                sub.add(sub_first, stop_i)
+                self.buckets = {k: v for k, v in self.buckets.items() if k < sub_first or k > sub_last and v}
+            else:
+                for i in range(sub_first, stop_i):
+                    self.buckets[i] = max_value
+
+    def _insert(self, index, mask):
+        masked = self.buckets.get(index, 0) | mask
+        if (sub := self.sub) is not None:
+            if sub[index]:
+                self.buckets.pop(index, None)
+                return
+            max_value = self.max_bucket_value
+            if masked == max_value:
+                sub._insert(index // max_value, 1 << (index % max_value))
+                self.buckets.pop(index, None)
+                return
+        if masked:
+            self.buckets[index] = masked
