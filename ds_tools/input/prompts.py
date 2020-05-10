@@ -3,7 +3,7 @@
 """
 
 import logging
-from typing import Callable, Sequence, Any, Optional, Union
+from typing import Callable, Sequence, Any, Optional, Union, Collection
 
 from ..core.exceptions import InputValidationException
 from ..output.color import colored
@@ -52,30 +52,34 @@ def get_input(prompt: str, skip=False, retry: int = 0, parser: Callable = parse_
 
 
 def choose_item(
-        items: Sequence[Any], name: str = 'value', source: Any = '', *, before: Optional[str] = None,
-        prompt_color: Color = 14, error_color: Color = 9, repr_func: Callable = repr, retry: int = 0
+        items: Collection[Any], name: str = 'value', source: Any = '', *, before: Optional[str] = None,
+        before_color: Color = None, prompt_color: Color = 14, error_color: Color = 9, repr_func: Callable = repr,
+        retry: int = 0
 ) -> Any:
     """
     Given a list of items from which only one value can be used, prompt the user to choose an item.  If only one item
     exists in the provided sequence, then that item is returned with no prompt.
 
-    :param Sequence items: A list or other indexable sequence of items to choose from
+    :param Collection items: A sequence or sortable collection of items to choose from
     :param str name: The name of the item to use in messages/prompts
     :param source: Where the items came from
     :param str before: A message to be printed before listing the items to choose from (default: automatically generated
       using the provided name and source)
+    :param str|int|None before_color: The ANSI color to use for the before text
     :param str|int|None prompt_color: The ANSI color to use for the user prompt
     :param str|int|None error_color: The ANSI color to use for the error if an invalid index is chosen
     :param Callable repr_func: The function to use to generate a string representation of each item
     :param int retry: Number of attempts to allow users to retry providing input when validation fails
     :return: The selected item
     """
+    if not isinstance(items, Sequence):
+        items = sorted(items)
     if not items:
         raise ValueError(f'No {name}s found{_prepare_source(source)}')
     elif len(items) == 1:
         return items[0]
     else:
-        uprint(before or f'Found multiple {name}s{_prepare_source(source)}:')
+        uprint(colored(before or f'Found multiple {name}s{_prepare_source(source)}:', before_color))
         fmt = f' - {{:>{len(str(len(items)))}d}}: {{}}'
         for i, item in enumerate(items):
             uprint(fmt.format(i, repr_func(item)))
