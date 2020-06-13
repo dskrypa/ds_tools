@@ -2,14 +2,15 @@
 :author: Doug Skrypa
 """
 
+import re
 from numbers import Number
-from typing import Callable, Any
+from typing import Callable, Any, Union
 
 from yaml import safe_load
 
 from ..core.exceptions import InputValidationException
 
-__all__ = ['parse_yes_no', 'parse_full_yes_no', 'parse_bool', 'parse_with_func', 'parse_int']
+__all__ = ['parse_yes_no', 'parse_full_yes_no', 'parse_bool', 'parse_with_func', 'parse_int', 'parse_bytes']
 
 
 def parse_bool(value: Any) -> bool:
@@ -67,7 +68,9 @@ def parse_with_func(func: Callable, user_input: str):
         raise InputValidationException(f'Invalid input: {e}') from e
 
 
-def parse_int(user_input: str) -> int:
+def parse_int(user_input: Union[str, int]) -> int:
+    if isinstance(user_input, int):
+        return user_input
     user_input = _prepare_input(user_input)
     try:
         return int(user_input)
@@ -75,6 +78,33 @@ def parse_int(user_input: str) -> int:
         raise InputValidationException(f'Invalid input={user_input!r} - an integer is required') from None
     except Exception as e:
         raise InputValidationException(f'Invalid input={user_input!r} - an integer is required') from e
+
+
+def parse_bytes(user_input: Union[str, int]) -> int:
+    """Parse a number of bytes from user input.  Uses base-2."""
+    if isinstance(user_input, int):
+        return user_input
+    user_input = _prepare_input(user_input)
+    try:
+        return int(user_input)
+    except Exception:
+        pass
+
+    try:
+        num_suffix_match = parse_bytes._num_suffix_match
+    except AttributeError:
+        num_suffix_match = parse_bytes._num_suffix_match = re.compile(r'^(-?\d+\.?\d*)\s*([A-Z]+)$').match
+
+    suffixes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
+    try:
+        num, suffix = num_suffix_match(user_input.upper()).groups()
+        index = suffixes.index(suffix)
+        num = float(num)
+    except Exception:
+        err_msg = f'Invalid input={user_input!r} - an integer with/without a valid byte suffix is required'
+        raise InputValidationException(err_msg) from None
+
+    return int(num * (1024 ** index))
 
 
 def _prepare_input(user_input: str):

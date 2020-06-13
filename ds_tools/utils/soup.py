@@ -105,7 +105,7 @@ log = logging.getLogger(__name__)
 _regex_pattern_type = type(re.compile(''))
 
 
-def soupify(html, mode='lxml', *args, **kwargs):
+def soupify(html, mode='lxml', *args, **kwargs) -> BeautifulSoup:
     if not isinstance(html, str):
         try:
             html = html.text
@@ -148,7 +148,7 @@ class HtmlSoup:
         if not isinstance(content, BeautifulSoup):
             raise TypeError('Unexpected HTML content type: {}'.format(type(content).__name__))
 
-        self.soup = content
+        self.soup = content                                                                     # type: BeautifulSoup
 
     def links(self, href=None, scheme=None, host=None, path=None, query=None, fragment=None, text=None):
         """

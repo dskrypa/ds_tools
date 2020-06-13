@@ -40,7 +40,7 @@ def short_repr(obj, when_gt=100, parts=45, sep='...', func=repr, containers_only
 
 
 def readable_bytes(file_size, dec_places=None, dec_by_unit=None):
-    units = list(zip(['B ', 'KB', 'MB', 'GB', 'TB', 'PB'], [0, 2, 2, 2, 2, 2]))
+    units = list(zip(['B ', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'], [0, 2, 2, 2, 2, 2, 2, 2, 2]))
     try:
         exp = min(int(math.log(file_size, 1024)), len(units) - 1) if file_size > 0 else 0
     except TypeError as e:
