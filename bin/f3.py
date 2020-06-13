@@ -40,6 +40,7 @@ def parser():
     write_parser.add_argument('--size', '-S', metavar='BYTES', type=parse_bytes, default=GB_BYTES, help='File size to use (this is for testing purposes only)')
     write_parser.add_argument('--chunk_size', '-c', metavar='BYTES', type=parse_bytes, default=DEFAULT_CHUNK_SIZE, help='Chunk size to use (default: %(default)s)')
     write_parser.add_argument('--mode', '-m', choices=[e.value for e in F3Mode], default='iter', help='Buffer population mode (default: %(default)s)')
+    write_parser.add_argument('--rewrite', '-r', action='store_true', help='If a file already exists for a given number, rewrite it (default: skip unless size is incorrect)')
 
     read_parser = parser.add_subparser('action', 'read', 'Simplified version of f3read')
     read_parser.add_argument('path', help='The directory from which files should be read')
@@ -59,7 +60,7 @@ def main():
     f3data = F3Data(args.mode, args.size, args.chunk_size)
     action = args.action
     if action == 'write':
-        if not f3data.write_files(args.path, args.start, args.end):
+        if not f3data.write_files(args.path, args.start, args.end, args.rewrite):
             sys.exit(1)
     elif action == 'read':
         if not f3data.verify_files(args.path, args.chunk_size):

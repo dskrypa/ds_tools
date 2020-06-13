@@ -108,8 +108,7 @@ class F3Data:
             offset = fill_buffer(from_buffer(chunk), chunk_size, offset)
         return self.buf
 
-    def _write_file(self, dir_path: Path, num: int):
-        path = dir_path.joinpath(f'{num}.h2w')
+    def _write_file(self, path: Path, num: int):
         print(f'Writing file {path.name} ... ', end='', flush=True)
         mode = self.mode
         if mode == F3Mode.FULL:
@@ -121,7 +120,7 @@ class F3Data:
                 for chunk in f3_iter:
                     f.write(chunk)
 
-    def write_files(self, path: Union[str, Path], start, end=None):
+    def write_files(self, path: Union[str, Path], start, end=None, rewrite=False):
         path = Path(path).resolve()
         if not path.exists():
             path.mkdir(parents=True)
@@ -131,12 +130,31 @@ class F3Data:
         if end < start:
             raise ValueError('end must be greater than start')
         size = self.size
+
+        if not rewrite:
+            for num in range(start, end + 1):
+                file_path = path.joinpath(f'{num}.h2w')
+                if file_path.exists():
+                    if file_path.stat().st_size != size:
+                        start = num
+                        log.info(f'Starting from incomplete {num=} (use --rewrite to overwrite all existing files)')
+                        break
+                else:
+                    if num != start:
+                        start = num
+                        log.info(f'Starting from {num=} (use --rewrite to overwrite all existing files)')
+                    break
+            else:
+                log.info(f'All expected files already exist (use --rewrite to overwrite all existing files)')
+                return
+
         total = end - start + 1
         log.info(f'Writing {total:,d} files to {path} [free space: {readable_bytes(free)}]\n')
         start_time = time.monotonic()
         for i, num in enumerate(range(start, end + 1), 1):
+            file_path = path.joinpath(f'{num}.h2w')
             try:
-                self._write_file(path, num)
+                self._write_file(file_path, num)
             except OSError as e:
                 if e.errno == ENOSPC:
                     log.info(f'OK (No space left in {path})')
