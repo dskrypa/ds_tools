@@ -74,25 +74,11 @@ class F3Data:
         self.chunk_size = chunk_size
         self.buf = bytearray(size if self.mode == F3Mode.FULL else chunk_size)
         self.view = memoryview(self.buf)
-        self._num = None
 
-    def file(self, num: int):
-        self._num = num
-        return self
-
-    def __enter__(self):
-        assert self._num is not None
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self._num = None
-
-    def __iter__(self):
-        assert self._num is not None
-        num = self._num - 1
+    def iter_data(self, num: int):
         size, chunk_size = self.size, self.chunk_size
         view, buf = self.view, self.buf
-        offset = num * self.size
+        offset = (num - 1) * size
         from_buffer = ffi.from_buffer
         for start in range(0, size, chunk_size):
             offset = fill_buffer(from_buffer(view), chunk_size, offset)
@@ -116,8 +102,8 @@ class F3Data:
             with path.open('wb') as f:
                 f.write(data)
         elif mode == F3Mode.ITER:
-            with self.file(num) as f3_iter, path.open('wb') as f:
-                for chunk in f3_iter:
+            with path.open('wb') as f:
+                for chunk in self.iter_data(num):
                     f.write(chunk)
 
     def write_files(self, path: Union[str, Path], start, end=None, rewrite=False):
@@ -179,12 +165,11 @@ class F3Data:
             return True
 
     def hash_for(self, num: int) -> str:
-        with self.file(num) as f3_iter:
-            _hash = sha512()
-            _update = _hash.update
-            for chunk in f3_iter:
-                _update(chunk)
-            return _hash.hexdigest()
+        _hash = sha512()
+        _update = _hash.update
+        for chunk in self.iter_data(num):
+            _update(chunk)
+        return _hash.hexdigest()
 
     def verify_file(self, path: Path, chunk_size: int = DEFAULT_CHUNK_SIZE):
         if path.suffix != '.h2w':
