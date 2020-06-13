@@ -8,6 +8,7 @@ import logging
 import time
 from enum import Enum
 from errno import ENOSPC
+from hashlib import sha512
 from pathlib import Path
 from shutil import disk_usage
 from typing import Union
@@ -15,7 +16,7 @@ from typing import Union
 import cffi
 
 from tz_aware_dt import format_duration
-from ..output import readable_bytes
+from ..output import readable_bytes, colored
 
 __all__ = ['DEFAULT_CHUNK_SIZE', 'GB_BYTES', 'F3Data', 'F3Mode']
 log = logging.getLogger(__name__)
@@ -158,3 +159,61 @@ class F3Data:
                 )
         else:
             return True
+
+    def hash_for(self, num: int) -> str:
+        with self.file(num) as f3_iter:
+            _hash = sha512()
+            _update = _hash.update
+            for chunk in f3_iter:
+                _update(chunk)
+            return _hash.hexdigest()
+
+    def verify_file(self, path: Path, chunk_size: int = DEFAULT_CHUNK_SIZE):
+        if path.suffix != '.h2w':
+            log.debug(f'Skipping file={path}')
+            return None
+        try:
+            num = int(path.stem)
+        except Exception:
+            log.debug(f'Skipping file={path}')
+            return None
+
+        expected = self.hash_for(num)
+
+        with path.open('rb') as f:
+            _hash = sha512()
+            _update = _hash.update
+            while chunk := f.read(chunk_size):
+                _update(chunk)
+            actual = _hash.hexdigest()
+
+        if expected == actual:
+            log.info(f'{path.name} ... {colored("OK", "green")}')
+            return True
+        else:
+            log.warning(f'{path.name} ... {colored("BAD", "red")} {expected=!r} {actual=!r}')
+            return False
+
+    def verify_files(self, path: Union[str, Path], chunk_size: int = DEFAULT_CHUNK_SIZE):
+        path = Path(path).resolve()
+        if not path.exists():
+            raise ValueError(f'Path does not exist: {path}')
+        elif not path.is_dir():
+            raise ValueError(f'Invalid {path=} - expected a directory')
+
+        ok, bad = 0, 0
+        for file in path.iterdir():
+            if file.is_file():
+                result = self.verify_file(file, chunk_size)
+                if result is not None:
+                    if result:
+                        ok += 1
+                    else:
+                        bad += 1
+
+        total = ok + bad
+        if ok:
+            log.info(f'\n{ok:,d} / {total:,d} files are {colored("OK", "green")}')
+        if bad:
+            log.info(f'{bad:,d} / {total:,d} files are {colored("BAD", "red")}')
+        return bad == 0

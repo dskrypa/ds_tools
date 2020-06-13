@@ -141,7 +141,7 @@ class ArgParser(ArgumentParser):
             formatter.add_text(self.epilog)
         return formatter.format_help()
 
-    def add_subparser(self, dest, name, help_desc=None, *, help=None, description=None, **kwargs):
+    def add_subparser(self, dest, name, help_desc=None, *, help=None, description=None, **kwargs) -> 'ArgParser':
         """
         Add a subparser for a subcommand to the subparser group with the given destination variable name.  Creates the
         group if it does not already exist.
@@ -163,6 +163,7 @@ class ArgParser(ArgumentParser):
             name, help=help or help_desc, description=description or help_desc, email=self._email,
             _caller_path=self._caller_path, **kwargs
         )
+        # noinspection PyTypeChecker
         return sub_parser
 
     def add_constant(self, key, value):
