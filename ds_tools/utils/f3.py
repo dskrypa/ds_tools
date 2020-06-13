@@ -30,13 +30,11 @@ fill_buffer = ffi.verify("""
 #define SECTOR_SIZE 512
 #define GIGABYTES 1073741824
 
-static inline uint64_t random_number(uint64_t prv_number)
-{
+static inline uint64_t random_number(uint64_t prv_number) {
 	return prv_number * 4294967311ULL + 17;
 }
 
-static uint64_t fill_buffer(void *buf, size_t size, uint64_t offset)
-{
+static uint64_t fill_buffer(void *buf, size_t size, uint64_t offset) {
 	const int num_int64 = SECTOR_SIZE >> 3;
 	uint8_t *p, *ptr_end;
 
@@ -54,7 +52,6 @@ static uint64_t fill_buffer(void *buf, size_t size, uint64_t offset)
 		p += SECTOR_SIZE;
 		offset += SECTOR_SIZE;
 	}
-
 	return offset;
 }
 """).fill_buffer
