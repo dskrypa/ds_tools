@@ -54,7 +54,7 @@ def parser():
 
 @wrap_main
 def main():
-    args = parser().parse_args()
+    args = parser().parse_args(req_subparser_value=True)
     init_logging(args.verbose, log_path=None)
 
     f3data = F3Data(args.mode, args.size, args.chunk_size)
