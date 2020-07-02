@@ -29,7 +29,7 @@ def main():
     parser.add_argument('--encoding', '-e', default='utf-8', help='The encoding used by the version file')
     parser.add_argument('--ignore_staged', '-i', action='store_true', help='Assume already staged version file contains updated version')
     parser.add_argument('--debug', '-d', action='store_true', help='Show debug logging')
-    parser.add_argument('--bypass_pipe', '-b', action='store_true', help='Bypass pre-commit\'s stdout pipe when printing the updated version number')
+    parser.add_argument('--no_pipe_bypass', '-B', action='store_true', help='Do not bypass pre-commit\'s stdout pipe when printing the updated version number')
     args = parser.parse_args()
     # fmt: on
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO, format='%(message)s')
@@ -38,7 +38,7 @@ def main():
     log.debug('Found file={}'.format(file))
 
     if file.should_update(args.ignore_staged):
-        file.update_version(args.bypass_pipe)
+        file.update_version(args.no_pipe_bypass)
         log.debug('Adding updated version file to the commit...')
         Git.add(file.path.as_posix())
 
@@ -108,7 +108,7 @@ class VersionFile:
     def contains_version(self):
         return bool(self.version)
 
-    def update_version(self, bypass_pipe):
+    def update_version(self, no_pipe_bypass=False):
         found = False
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir).joinpath('tmp.txt')
@@ -123,7 +123,7 @@ class VersionFile:
                         m = VERSION_PAT.match(line)
                         if m:
                             found = True
-                            new_line = updated_version_line(m.groups(), bypass_pipe)
+                            new_line = updated_version_line(m.groups(), no_pipe_bypass)
                             f_out.write(new_line)
                         else:
                             f_out.write(line)
@@ -154,16 +154,16 @@ class VersionFile:
         raise VersionIncrError('Unable to find __version__.py or setup.py - please specify a --file / -f to modify')
 
 
-def stdout_write(msg, bypass_pipe=False):
-    if bypass_pipe:  # Not intended to be called more than once per run.
-        with open('con:' if ON_WINDOWS else '/dev/tty', 'w', encoding='utf-8') as stdout:
-            stdout.write(msg)
-    else:
+def stdout_write(msg, no_pipe_bypass=False):
+    if no_pipe_bypass:
         sys.stdout.write(msg)
         sys.stdout.flush()
+    else:  # Not intended to be called more than once per run.
+        with open('con:' if ON_WINDOWS else '/dev/tty', 'w', encoding='utf-8') as stdout:
+            stdout.write(msg)
 
 
-def updated_version_line(groups, bypass_pipe):
+def updated_version_line(groups, no_pipe_bypass):
     old_date_str = groups[2]
     old_date = datetime.strptime(old_date_str, '%Y.%m.%d').date()
     old_suffix = groups[3]
@@ -173,8 +173,7 @@ def updated_version_line(groups, bypass_pipe):
     today_str = today.strftime('%Y.%m.%d')
     if old_date < today:
         # log.info('Replacing old version={} with new={}'.format(old_ver, today_str))
-        stdout_write('\nUpdating version from {} to {}\n'.format(old_ver, today_str), bypass_pipe)
-        # print('Updating version from {} to {}'.format(old_ver, today_str), file=sys.stderr)
+        stdout_write('\nUpdating version from {} to {}\n'.format(old_ver, today_str), no_pipe_bypass)
         return '{0}{1}{2}{1}\n'.format(groups[0], groups[1], today_str)
     else:
         if old_suffix:
@@ -182,8 +181,7 @@ def updated_version_line(groups, bypass_pipe):
         else:
             new_suffix = 1
         # log.info('Replacing old version={} with new={}-{}'.format(old_ver, today_str, new_suffix))
-        stdout_write('\nUpdating version from {} to {}-{}\n'.format(old_ver, today_str, new_suffix), bypass_pipe)
-        # print('Updating version from {} to {}-{}'.format(old_ver, today_str, new_suffix), file=sys.stderr)
+        stdout_write('\nUpdating version from {} to {}-{}\n'.format(old_ver, today_str, new_suffix), no_pipe_bypass)
         return '{0}{1}{2}-{3}{1}\n'.format(groups[0], groups[1], today_str, new_suffix)
 
 
