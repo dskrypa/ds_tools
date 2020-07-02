@@ -8,9 +8,9 @@ import platform
 import re
 from getpass import getuser
 from pathlib import Path
-from typing import Generator, Union, Iterable
+from typing import Iterator, Union, Iterable
 
-__all__ = ['validate_or_make_dir', 'get_user_cache_dir', 'iter_paths', 'iter_files', 'Paths']
+__all__ = ['validate_or_make_dir', 'get_user_cache_dir', 'iter_paths', 'iter_files', 'Paths', 'relative_path']
 log = logging.getLogger(__name__)
 
 ON_WINDOWS = platform.system().lower() == 'windows'
@@ -19,7 +19,7 @@ WIN_BASH_PATH_MATCH = re.compile(r'^/([a-z])/(.*)', re.IGNORECASE).match
 Paths = Union[str, Path, Iterable[Union[str, Path]]]
 
 
-def iter_paths(path_or_paths: Paths) -> Generator[Path, None, None]:
+def iter_paths(path_or_paths: Paths) -> Iterator[Path]:
     """
     Convenience function to iterate over Path objects that may be provided as one or more str or Path objects.
 
@@ -42,7 +42,7 @@ def iter_paths(path_or_paths: Paths) -> Generator[Path, None, None]:
             raise TypeError(f'Unexpected type={p.__class__.__name__} for path={p!r}')
 
 
-def iter_files(path_or_paths: Paths) -> Generator[Path, None, None]:
+def iter_files(path_or_paths: Paths) -> Iterator[Path]:
     """
     Iterate over all file paths represented by the given input.  If any directories are provided, they are traversed
     recursively to discover all files within them.
@@ -94,3 +94,12 @@ def get_user_cache_dir(subdir=None, permissions=None):
         cache_dir = os.path.join(cache_dir, subdir)
     validate_or_make_dir(cache_dir, permissions=permissions)
     return cache_dir
+
+
+def relative_path(path: Union[str, Path], to: Union[str, Path] = '.') -> str:
+    path = Path(path).resolve()
+    to = Path(to).resolve()
+    try:
+        return path.relative_to(to).as_posix()
+    except Exception:
+        return path.as_posix()

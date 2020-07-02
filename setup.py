@@ -14,12 +14,12 @@ with project_root.joinpath('ds_tools', '__version__.py').open('r', encoding='utf
     exec(f.read(), about)
 
 optional_dependencies = {
-    'beautifulsoup': ['beautifulsoup4'],                # ds_tools.utils.soup
-    'cffi': ['cffi'],                                   # bin/cffi_test.py
+    'cffi': ['cffi'],                                   # bin/cffi_test.py, bin/f3.py, examples/cffi/*
     'translate': ['googletrans'],                       # ds_tools.unicode.translate
     'J2R': ['pykakasi'],                                # ds_tools.unicode.languages
     'exif': ['exifread'],                               # bin/exif_sort.py
     'youtube': ['pytube'],                              # bin/youtube.py
+    'images': ['pillow'],                               # bin/resize_images.py
 }
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
 
