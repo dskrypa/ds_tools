@@ -40,14 +40,21 @@ def main():
         raise VersionIncrError(fmt.format(file.path))
     elif file.is_staged():
         if args.ignore_staged:
-            log.debug('File={} is already staged in git - assuming it has correct version already'.format(file))
+            log.info('File={} is already staged in git - assuming it has correct version already'.format(file))
             return
+
         log.debug('File={} is already staged in git - checking the staged version number'.format(file))
+        if file.staged_version_was_modified():
+            log.info('A version update was already staged for {} - exiting'.format(file))
+            return
+
+        log.debug('File={} was already staged with changes, but it does not contain a version update'.format(file))
     else:
         log.debug('File={} is not already staged in git'.format(file))
-        file.update_version()
-        log.debug('Adding updated version file to the commit...')
-        Git.add(file.path.as_posix())
+
+    file.update_version()
+    log.debug('Adding updated version file to the commit...')
+    Git.add(file.path.as_posix())
 
 
 class VersionFile:
@@ -66,6 +73,12 @@ class VersionFile:
 
     def is_staged(self):
         return self.path.as_posix() in Git.get_staged()
+
+    def staged_version_was_modified(self):
+        for line in Git.staged_changed_lines(self.path.as_posix()):
+            if VERSION_PAT.match(line):
+                return True
+        return False
 
     @property
     def version(self):
@@ -203,9 +216,14 @@ class Git:
 
     @classmethod
     def has_stashed(cls):
-        stashed = cls.run('stash', 'list').strip()
-        log.debug(f'Stashed: {stashed!r} ({bool(stashed)})')
-        return bool(stashed)
+        return bool(cls.run('stash', 'list').strip())
+
+    @classmethod
+    def staged_changed_lines(cls, path):
+        stdout = cls.run('diff', '--staged', '--no-color', '-U0', path)
+        for line in stdout.splitlines():
+            if line.startswith('+') and not line.startswith('+++ b/'):
+                yield line[1:]
 
     @classmethod
     def get_unstaged_modified(cls):
