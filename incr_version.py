@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import sys
+import time
 from argparse import ArgumentParser
 from contextlib import ExitStack
 from datetime import datetime
@@ -32,29 +33,10 @@ def main():
     file = VersionFile.find(args.file, args.encoding)
     log.debug('Found file={}'.format(file))
 
-    if file.is_modified_and_unstaged():
-        fmt = (
-            'File={} was modified, but has not been staged to be committed - please `git add` or `git checkout` this '
-            'file to proceed'
-        )
-        raise VersionIncrError(fmt.format(file.path))
-    elif file.is_staged():
-        if args.ignore_staged:
-            log.info('File={} is already staged in git - assuming it has correct version already'.format(file))
-            return
-
-        log.debug('File={} is already staged in git - checking the staged version number'.format(file))
-        if file.staged_version_was_modified():
-            log.info('A version update was already staged for {} - exiting'.format(file))
-            return
-
-        log.debug('File={} was already staged with changes, but it does not contain a version update'.format(file))
-    else:
-        log.debug('File={} is not already staged in git'.format(file))
-
-    file.update_version()
-    log.debug('Adding updated version file to the commit...')
-    Git.add(file.path.as_posix())
+    if file.should_update(args.ignore_staged):
+        file.update_version()
+        log.debug('Adding updated version file to the commit...')
+        Git.add(file.path.as_posix())
 
 
 class VersionFile:
@@ -65,6 +47,32 @@ class VersionFile:
 
     def __repr__(self):
         return '<{}[path={}, version={!r}]>'.format(self.__class__.__name__, self.path.as_posix(), self.version)
+
+    def should_update(self, ignore_staged=False):
+        if self.is_modified_and_unstaged():
+            fmt = (
+                'File={} was modified, but has not been staged to be committed - please `git add` or `git checkout` '
+                'this file to proceed'
+            )
+            raise VersionIncrError(fmt.format(self.path))
+        elif self.is_staged():
+            if ignore_staged:
+                log.info('File={} is already staged in git - assuming it has correct version already'.format(self))
+                return False
+
+            log.debug('File={} is already staged in git - checking the staged version number'.format(self))
+            if self.staged_version_was_modified():
+                log.info('A version update was already staged for {} - exiting'.format(self))
+                return False
+
+            log.debug('File={} was already staged with changes, but it does not contain a version update'.format(self))
+        else:
+            log.debug('File={} is not already staged in git'.format(self))
+
+        # TODO: If parent git process has --amend arg, determine whether the version was updated in the original commit
+        # ['C:\\Program Files\\Git\\mingw64\\bin\\git.exe', 'commit', '-m', '<message>', '--amend']
+        # ['/.../git', 'commit', '-m', '<message>', '--amend']
+        return True
 
     def is_modified_and_unstaged(self):
         if running_under_precommit():
@@ -143,6 +151,8 @@ class VersionFile:
 
 
 def updated_version_line(groups):
+    stderr = open(sys.stderr.fileno(), mode='w', encoding='utf-8', buffering=1)
+
     old_date_str = groups[2]
     old_date = datetime.strptime(old_date_str, '%Y.%m.%d').date()
     old_suffix = groups[3]
@@ -152,7 +162,9 @@ def updated_version_line(groups):
     today_str = today.strftime('%Y.%m.%d')
     if old_date < today:
         # log.info('Replacing old version={} with new={}'.format(old_ver, today_str))
-        print('Updating version from {} to {}'.format(old_ver, today_str), file=sys.stderr)
+        stderr.write('Updating version from {} to {}'.format(old_ver, today_str))
+        # print('Updating version from {} to {}'.format(old_ver, today_str), file=sys.stderr)
+        stderr.flush()
         return '{0}{1}{2}{1}\n'.format(groups[0], groups[1], today_str)
     else:
         if old_suffix:
@@ -160,7 +172,9 @@ def updated_version_line(groups):
         else:
             new_suffix = 1
         # log.info('Replacing old version={} with new={}-{}'.format(old_ver, today_str, new_suffix))
-        print('Updating version from {} to {}-{}'.format(old_ver, today_str, new_suffix), file=sys.stderr)
+        stderr.write('Updating version from {} to {}-{}'.format(old_ver, today_str, new_suffix))
+        # print('Updating version from {} to {}-{}'.format(old_ver, today_str, new_suffix), file=sys.stderr)
+        stderr.flush()
         return '{0}{1}{2}-{3}{1}\n'.format(groups[0], groups[1], today_str, new_suffix)
 
 
@@ -174,6 +188,12 @@ def get_precommit_cached():
     cache_dir = Path('~/.cache/pre-commit/').expanduser().resolve()
     patches = [p.name for p in cache_dir.iterdir() if p.name.startswith('patch')]
     latest = cache_dir.joinpath(max(patches))
+    age = time.time() - latest.stat().st_mtime
+    if age > 5:
+        log.debug('The pre-commit cache file is {:,.3f}s old - ignoring it')
+        # TODO: Check pre-commit proc for open files and if the file is open for it, in case another hook ran slowly
+        return set()
+
     diff_match = re.compile(r'diff --git a/(.*?) b/\1$').match
     files = set()
     with latest.open('r', encoding='utf-8') as f:
