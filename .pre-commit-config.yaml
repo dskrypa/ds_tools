@@ -1,0 +1,7 @@
+repos:
+  - repo: local
+    hooks:
+      - id: incr_version
+        name: incr_version
+        entry: incr_version.py
+        language: system
