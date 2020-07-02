@@ -23,20 +23,22 @@ _NotSet = object()
 
 
 def main():
+    # fmt: off
     parser = ArgumentParser(description='Python project version incrementer (to be run as a pre-commit hook)')
     parser.add_argument('--file', '-f', metavar='PATH', help='The file that contains the version to be incremented')
     parser.add_argument('--encoding', '-e', default='utf-8', help='The encoding used by the version file')
     parser.add_argument('--ignore_staged', '-i', action='store_true', help='Assume already staged version file contains updated version')
     parser.add_argument('--debug', '-d', action='store_true', help='Show debug logging')
+    parser.add_argument('--bypass_pipe', '-b', action='store_true', help='Bypass pre-commit\'s stdout pipe when printing the updated version number')
     args = parser.parse_args()
-
+    # fmt: on
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO, format='%(message)s')
 
     file = VersionFile.find(args.file, args.encoding)
     log.debug('Found file={}'.format(file))
 
     if file.should_update(args.ignore_staged):
-        file.update_version()
+        file.update_version(args.bypass_pipe)
         log.debug('Adding updated version file to the commit...')
         Git.add(file.path.as_posix())
 
@@ -106,7 +108,7 @@ class VersionFile:
     def contains_version(self):
         return bool(self.version)
 
-    def update_version(self):
+    def update_version(self, bypass_pipe):
         found = False
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir).joinpath('tmp.txt')
@@ -121,7 +123,7 @@ class VersionFile:
                         m = VERSION_PAT.match(line)
                         if m:
                             found = True
-                            new_line = updated_version_line(m.groups())
+                            new_line = updated_version_line(m.groups(), bypass_pipe)
                             f_out.write(new_line)
                         else:
                             f_out.write(line)
@@ -152,12 +154,16 @@ class VersionFile:
         raise VersionIncrError('Unable to find __version__.py or setup.py - please specify a --file / -f to modify')
 
 
-def stdout_write(msg):
-    with open('con:' if ON_WINDOWS else '/dev/tty', 'w', encoding='utf-8') as stdout:
-        stdout.write(msg)
+def stdout_write(msg, bypass_pipe=False):
+    if bypass_pipe:  # Not intended to be called more than once per run.
+        with open('con:' if ON_WINDOWS else '/dev/tty', 'w', encoding='utf-8') as stdout:
+            stdout.write(msg)
+    else:
+        sys.stdout.write(msg)
+        sys.stdout.flush()
 
 
-def updated_version_line(groups):
+def updated_version_line(groups, bypass_pipe):
     old_date_str = groups[2]
     old_date = datetime.strptime(old_date_str, '%Y.%m.%d').date()
     old_suffix = groups[3]
@@ -167,7 +173,7 @@ def updated_version_line(groups):
     today_str = today.strftime('%Y.%m.%d')
     if old_date < today:
         # log.info('Replacing old version={} with new={}'.format(old_ver, today_str))
-        stdout_write('\nUpdating version from {} to {}\n'.format(old_ver, today_str))
+        stdout_write('\nUpdating version from {} to {}\n'.format(old_ver, today_str), bypass_pipe)
         # print('Updating version from {} to {}'.format(old_ver, today_str), file=sys.stderr)
         return '{0}{1}{2}{1}\n'.format(groups[0], groups[1], today_str)
     else:
@@ -176,7 +182,7 @@ def updated_version_line(groups):
         else:
             new_suffix = 1
         # log.info('Replacing old version={} with new={}-{}'.format(old_ver, today_str, new_suffix))
-        stdout_write('\nUpdating version from {} to {}-{}\n'.format(old_ver, today_str, new_suffix))
+        stdout_write('\nUpdating version from {} to {}-{}\n'.format(old_ver, today_str, new_suffix), bypass_pipe)
         # print('Updating version from {} to {}-{}'.format(old_ver, today_str, new_suffix), file=sys.stderr)
         return '{0}{1}{2}-{3}{1}\n'.format(groups[0], groups[1], today_str, new_suffix)
 
