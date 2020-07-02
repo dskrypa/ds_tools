@@ -151,14 +151,16 @@ def updated_version_line(groups):
     today = datetime.now().date()
     today_str = today.strftime('%Y.%m.%d')
     if old_date < today:
-        log.info('Replacing old version={} with new={}'.format(old_ver, today_str))
+        # log.info('Replacing old version={} with new={}'.format(old_ver, today_str))
+        print('Updating version from {} to {}'.format(old_ver, today_str), file=sys.stderr)
         return '{0}{1}{2}{1}\n'.format(groups[0], groups[1], today_str)
     else:
         if old_suffix:
             new_suffix = int(old_suffix[1:]) + 1
         else:
             new_suffix = 1
-        log.info('Replacing old version={} with new={}-{}'.format(old_ver, today_str, new_suffix))
+        # log.info('Replacing old version={} with new={}-{}'.format(old_ver, today_str, new_suffix))
+        print('Updating version from {} to {}-{}'.format(old_ver, today_str, new_suffix), file=sys.stderr)
         return '{0}{1}{2}-{3}{1}\n'.format(groups[0], groups[1], today_str, new_suffix)
 
 
