@@ -2,6 +2,7 @@
 
 import logging
 import os
+import platform
 import re
 import sys
 import time
@@ -16,6 +17,7 @@ import psutil
 
 log = logging.getLogger(__name__)
 
+ON_WINDOWS = platform.system().lower() == 'windows'
 VERSION_PAT = re.compile(r'^(\s*__version__\s?=\s?)(["\'])(\d{4}\.\d{2}\.\d{2})((?:-\d+)?)\2$')
 _NotSet = object()
 
@@ -150,9 +152,12 @@ class VersionFile:
         raise VersionIncrError('Unable to find __version__.py or setup.py - please specify a --file / -f to modify')
 
 
-def updated_version_line(groups):
-    stderr = open(sys.stderr.fileno(), mode='w', encoding='utf-8', buffering=1)
+def stdout_write(msg):
+    with open('con:' if ON_WINDOWS else '/dev/tty', 'w', encoding='utf-8') as stdout:
+        stdout.write(msg)
 
+
+def updated_version_line(groups):
     old_date_str = groups[2]
     old_date = datetime.strptime(old_date_str, '%Y.%m.%d').date()
     old_suffix = groups[3]
@@ -162,9 +167,8 @@ def updated_version_line(groups):
     today_str = today.strftime('%Y.%m.%d')
     if old_date < today:
         # log.info('Replacing old version={} with new={}'.format(old_ver, today_str))
-        stderr.write('Updating version from {} to {}'.format(old_ver, today_str))
+        stdout_write('\nUpdating version from {} to {}\n'.format(old_ver, today_str))
         # print('Updating version from {} to {}'.format(old_ver, today_str), file=sys.stderr)
-        stderr.flush()
         return '{0}{1}{2}{1}\n'.format(groups[0], groups[1], today_str)
     else:
         if old_suffix:
@@ -172,9 +176,8 @@ def updated_version_line(groups):
         else:
             new_suffix = 1
         # log.info('Replacing old version={} with new={}-{}'.format(old_ver, today_str, new_suffix))
-        stderr.write('Updating version from {} to {}-{}'.format(old_ver, today_str, new_suffix))
+        stdout_write('\nUpdating version from {} to {}-{}\n'.format(old_ver, today_str, new_suffix))
         # print('Updating version from {} to {}-{}'.format(old_ver, today_str, new_suffix), file=sys.stderr)
-        stderr.flush()
         return '{0}{1}{2}-{3}{1}\n'.format(groups[0], groups[1], today_str, new_suffix)
 
 
