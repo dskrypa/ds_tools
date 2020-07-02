@@ -20,6 +20,7 @@ with project_root.joinpath('ds_tools', '__version__.py').open('r', encoding='utf
 optional_dependencies = {
     'dev': [                                            # Development env requirements
         'pre-commit',
+        'psutil',
         'ipython',
     ],
     'cffi': ['cffi'],                                   # bin/cffi_test.py, bin/f3.py, examples/cffi/*

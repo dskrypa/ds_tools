@@ -3,5 +3,9 @@ repos:
     hooks:
       - id: incr_version
         name: incr_version
-        entry: incr_version.py
+        entry: ./incr_version.py
         language: system
+        #language: python
+        #language_version: python3
+        pass_filenames: false
+        args: ['-f', 'ds_tools/__version__.py', '-d']
