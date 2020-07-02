@@ -9,7 +9,7 @@ import re
 import string
 import unicodedata
 from enum import Enum
-from typing import Union, Set, Optional, Tuple, Generator, List, Iterable, Container
+from typing import Union, Set, Optional, Tuple, Iterator, List, Iterable, Container
 
 from cachetools import LRUCache
 try:
@@ -62,7 +62,7 @@ class LangCat(Enum):
     asian = asian_cats
 
     @classmethod
-    def _ranges(cls) -> Generator[Tuple['LangCat', List[Tuple[int, int]]], None, None]:
+    def _ranges(cls) -> Iterator[Tuple['LangCat', List[Tuple[int, int]]]]:
         yield cls.ENG, LATIN_RANGES
         yield cls.HAN, HANGUL_RANGES
         yield cls.JPN, JAPANESE_RANGES

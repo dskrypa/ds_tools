@@ -109,7 +109,7 @@ class F3Data:
             path.mkdir(parents=True)
 
         free = disk_usage(path)[2]
-        end = end if end is not None else (free // GB_BYTES)
+        end = end if end is not None else (free // GB_BYTES)    # TODO: fill all available space, even partial files
         if end < start:
             raise ValueError('end must be greater than start')
         size = self.size
