@@ -1,5 +1,6 @@
 - id: incr_version
   name: incr_version
   description: "Python project version incrementer"
-  entry: ./incr_version.py
+  entry: incr_version.py
   language: system
+  pass_filenames: false
