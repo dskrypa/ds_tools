@@ -88,4 +88,5 @@ setup(
     install_requires=requirements,
     extras_require=optional_dependencies,
     cmdclass={'hooks': SetupHooksCmd},
+    scripts=['bin/{}'.format(p.name) for p in project_root.joinpath('bin').iterdir()],
 )
