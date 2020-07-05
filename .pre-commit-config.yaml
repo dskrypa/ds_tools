@@ -5,7 +5,8 @@ repos:
         name: incr_version
         entry: ./incr_version.py
         language: system
-        #language: python
-        #language_version: python3
+        # language: python
+        # language_version: python3
+        ## note: setting language=python results in python running in a new window on windows
         pass_filenames: false
         args: ['-f', 'ds_tools/__version__.py', '-d']
