@@ -6,9 +6,10 @@ import logging
 from typing import Callable, Sequence, Any, Optional, Union, Collection
 
 try:
-    from prompt_toolkit import prompt as input
+    from prompt_toolkit import ANSI, prompt as input
 except ImportError:
-    pass
+    def ANSI(text):
+        return text
 
 from ..core.exceptions import InputValidationException
 from ..output.color import colored
@@ -42,7 +43,7 @@ def get_input(prompt: str, skip=False, retry: int = 0, parser: Callable = parse_
 
     while retry >= 0:
         try:
-            user_input = input(prompt + suffix)
+            user_input = input(ANSI(prompt + suffix))
         except EOFError as e:
             raise InputValidationException('Unable to read stdin (this is often caused by piped input)') from e
 
