@@ -5,6 +5,11 @@
 import logging
 from typing import Callable, Sequence, Any, Optional, Union, Collection
 
+try:
+    from prompt_toolkit import prompt as input
+except ImportError:
+    pass
+
 from ..core.exceptions import InputValidationException
 from ..output.color import colored
 from ..output.terminal import uprint
@@ -35,7 +40,7 @@ def get_input(prompt: str, skip=False, retry: int = 0, parser: Callable = parse_
         return default
     suffix = ' ' if not prompt.endswith(' ') else ''
 
-    while retry >=0:
+    while retry >= 0:
         try:
             user_input = input(prompt + suffix)
         except EOFError as e:

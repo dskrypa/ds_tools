@@ -1,0 +1,22 @@
+[tool.black]
+skip-string-normalization = true
+line-length = 120
+include = '\.pyi?$'
+target-version = ['py38']
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | __pycache__
+  | .*\.ya?ml$
+  | .*\.toml$
+)/
+'''
+force-exclude = '''.*?(?:\.ya?ml|Makefile|\.toml)$'''

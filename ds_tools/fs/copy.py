@@ -101,16 +101,13 @@ def _copy_file(src_path, dst_path, cb, verify=False, block_size=10485760):
     """
     copied = 0
     start = time.monotonic()
-    with src_path.open('rb') as src:
-        with dst_path.open('wb') as dst:
-            buf = src.read(block_size)
-            while len(buf) > 0:
-                written = dst.write(buf)
-                copied += written
-                elapsed = time.monotonic() - start
-                if elapsed >= 0.3:
-                    cb(copied, elapsed)
-                buf = src.read(block_size)
-
+    with src_path.open('rb') as src, dst_path.open('wb') as dst:
+        # TODO: Use a bytearray/memoryview?
+        while buf := src.read(block_size):
+            copied += dst.write(buf)
             elapsed = time.monotonic() - start
-            cb(copied, elapsed)
+            if elapsed >= 0.3:
+                cb(copied, elapsed)
+
+        elapsed = time.monotonic() - start
+        cb(copied, elapsed)
