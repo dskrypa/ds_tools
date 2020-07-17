@@ -13,8 +13,7 @@ about = {}
 with project_root.joinpath('ds_tools', '__version__.py').open('r', encoding='utf-8') as f:
     exec(f.read(), about)
 
-scripts = ['bin/{}'.format(p.name) for p in project_root.joinpath('bin').iterdir()]
-scripts.append('incr_version.py')
+# scripts = ['bin/{}'.format(p.name) for p in project_root.joinpath('bin').iterdir()]
 
 optional_dependencies = {
     'dev': [                                            # Development env requirements
@@ -62,5 +61,5 @@ setup(
     python_requires='~=3.8',
     install_requires=requirements,
     extras_require=optional_dependencies,
-    scripts=scripts,
+    # scripts=scripts,
 )
