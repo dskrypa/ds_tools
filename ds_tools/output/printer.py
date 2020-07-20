@@ -121,3 +121,5 @@ class PseudoJsonEncoder(PermissiveJSONEncoder):
             return super().default(o)
         except TypeError:
             return repr(o)
+        except UnicodeDecodeError:
+            return o.decode('utf-8', 'replace')

@@ -12,9 +12,13 @@ import sqlite3
 import logging
 from operator import itemgetter
 from collections import OrderedDict
+from typing import Tuple, Iterator, Optional, Dict, List, Union
 
 from ..core import itemfinder
+from ..output import Table, Printer
 
+__all__ = ['Sqlite3Database']
+log = logging.getLogger(__name__)
 OperationalError = sqlite3.OperationalError
 
 
@@ -37,7 +41,7 @@ class Sqlite3Database:
         :return Cursor: Sqlite3 cursor
         """
         with self.db:
-            logging.debug('Executing SQL: {}'.format(', '.join(map('"{}"'.format, args))))
+            log.log(9, 'Executing SQL: {}'.format(', '.join(map('"{}"'.format, args))))
             return self.db.execute(*args, **kwargs)
 
     def create_table(self, name, *args, **kwargs):
@@ -68,7 +72,7 @@ class Sqlite3Database:
             return True
         return item in self.get_table_names()
 
-    def __getitem__(self, item):
+    def __getitem__(self, item) -> 'DBTable':
         if item not in self._tables:
             if item not in self:
                 raise KeyError('Table {!r} does not exist in this DB'.format(item))
@@ -82,9 +86,12 @@ class Sqlite3Database:
         else:
             raise KeyError(key)
 
-    def __iter__(self):
-        for table in self.get_table_names():
-            yield self[table]
+    def __iter__(self) -> Iterator['DBTable']:
+        for table in sorted(self.get_table_names()):
+            try:
+                yield self[table]
+            except OperationalError as e:
+                log.error(f'Error constructing DBTable wrapper for {table=!r}: {e}')
 
     def query(self, query, *args, **kwargs):
         """
@@ -105,12 +112,13 @@ class Sqlite3Database:
         for row in results:
             yield OrderedDict(zip(headers, row))
 
-    def select(self, columns, table, where_mode='AND', **where_args):
+    def select(self, columns, table, where_mode='AND', limit: Optional[int] = None, **where_args):
         """
         SELECT $columns FROM $table (WHERE $where);
         :param columns: Column name(s)
         :param table: Table name
         :param where_mode: Mode to apply subsequent WHERE arguments (AND or OR)
+        :param limit: A row limit to include in the query
         :param where_args: key=value pairs that need to be matched for data to be returned
         :return list: Result rows
         """
@@ -125,14 +133,28 @@ class Sqlite3Database:
         for k, v in where_args.items():
             where_list.append(k)
             where_list.append(v)
-        where_str = ' WHERE ' + where if where else ''
-        return self.query('SELECT {} FROM "{}"{};'.format(cols, table, where_str), tuple(where_list))
+        suffix = ' WHERE ' + where if where else ''
+        if limit and isinstance(limit, int):
+            suffix += f' LIMIT {limit}'
+        return self.query('SELECT {} FROM "{}"{};'.format(cols, table, suffix), tuple(where_list))
 
-    def get_table_names(self):
+    def get_table_names(self) -> List[str]:
         """
         :return list: Names of tables in this DB
         """
         return [row['name'] for row in self.query('SELECT name FROM sqlite_master WHERE type=\'table\';')]
+
+    def print_all_tables_info(self, only_with_rows=True):
+        bar = '=' * 20
+        tables = [(table, len(table)) for table in self]
+        if only_with_rows:
+            tables = [(t, s) for t, s in tables if s]
+
+        for i, (table, size) in enumerate(tables):
+            if i:
+                print('\n')
+            print(f'{bar}  {table.name} ({size:,d} rows) {bar}\n')
+            table.print_info()
 
     def test(self):
         tbl1 = self.create_table('test_1', [('id', 'INTEGER'), ('name', 'TEXT')])
@@ -189,7 +211,7 @@ class DBTable:
         :param list columns: Column names
         :param pk: Primary key (defaults to the table's PK or the first column if not defined for the table)
         """
-        self.db = parent_db
+        self.db = parent_db  # type: Sqlite3Database
         self.name = name
         self._rows = {}
         table_exists = self.name in self.db
@@ -258,13 +280,26 @@ class DBTable:
     def info(self):
         return self.db.query('pragma table_info(\"{}\")'.format(self.name))
 
-    def select(self, columns, where_mode='AND', **where_args):
-        return self.db.select(columns, self.name, where_mode, **where_args)
+    def print_info(self):
+        Table.auto_print_rows(self.info())
+
+    def select(self, columns, where_mode='AND', limit=None, **where_args):
+        return self.db.select(columns, self.name, where_mode, limit=limit, **where_args)
+
+    def print_rows(self, limit=3, out_fmt='table'):
+        rows = self.select('*', limit=limit)
+        if out_fmt == 'table':
+            Table.auto_print_rows(rows)
+        else:
+            Printer(out_fmt).pprint(rows)
 
     def insert(self, row):
         if isinstance(row, dict):
             row = [row[k] for k in self.col_names]
         self.db.execute('INSERT INTO "{}" VALUES ({});'.format(self.name, ('?,' * len(row))[:-1]), tuple(row))
+
+    def __len__(self):
+        return next(self.db.execute(f'SELECT COUNT(*) FROM "{self.name}"'))[0]
 
     def __contains__(self, item):
         if item in self._rows:

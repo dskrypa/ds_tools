@@ -6,7 +6,7 @@ import logging
 from typing import Callable, Sequence, Any, Optional, Union, Collection
 
 try:
-    from prompt_toolkit import ANSI, prompt as input
+    from prompt_toolkit import ANSI, prompt as input  # Having prompt_toolkit installed seems to break stdlib input
 except ImportError:
     def ANSI(text):
         return text
@@ -22,7 +22,15 @@ _NotSet = object()
 Color = Union[int, str, None]
 
 
-def get_input(prompt: str, skip=False, retry: int = 0, parser: Callable = parse_yes_no, *, default=_NotSet):
+def get_input(
+    prompt: str,
+    skip=False,
+    retry: int = 0,
+    parser: Callable = parse_yes_no,
+    *,
+    default=_NotSet,
+    input_func: Callable = input,
+):
     """
     Prompt the user for input, and parse the results.  May be skipped by providing a default value and setting ``skip``
     to True.
@@ -33,6 +41,8 @@ def get_input(prompt: str, skip=False, retry: int = 0, parser: Callable = parse_
     :param parser: A function that takes a single positional argument and returns the value that should be used, or
       raises a :class:`InputValidationException` when given incorrect input (default: :func:`parse_yes_no`)
     :param default: The default value to return when ``skip`` is True
+    :param input_func: The callable to use to receive user input.  Defaults to :func:`prompt<prompt_toolkit.prompt>`
+      when prompt_toolkit is installed, otherwise :func:`input`
     :return: The value from the given ``parser`` function
     """
     if skip:
@@ -43,7 +53,7 @@ def get_input(prompt: str, skip=False, retry: int = 0, parser: Callable = parse_
 
     while retry >= 0:
         try:
-            user_input = input(ANSI(prompt + suffix))
+            user_input = input_func(ANSI(prompt + suffix))
         except EOFError as e:
             raise InputValidationException('Unable to read stdin (this is often caused by piped input)') from e
 
