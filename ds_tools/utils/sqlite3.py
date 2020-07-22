@@ -10,9 +10,10 @@ creating anything new or writing to an SQLite3 DB.  I would recommend using SQLA
 import os
 import sqlite3
 import logging
-from operator import itemgetter
 from collections import OrderedDict
-from typing import Tuple, Iterator, Optional, Dict, List, Union
+from operator import itemgetter
+from pathlib import Path
+from typing import Iterator, Optional, List, Union
 
 from ..core import itemfinder
 from ..output import Table, Printer
@@ -144,6 +145,9 @@ class Sqlite3Database:
         """
         return [row['name'] for row in self.query('SELECT name FROM sqlite_master WHERE type=\'table\';')]
 
+    def get_table_info(self):
+        return {row['name']: row for row in self.query('SELECT * FROM sqlite_master WHERE type=\'table\';')}
+
     def print_all_tables_info(self, only_with_rows=True):
         bar = '=' * 20
         tables = [(table, len(table)) for table in self]
@@ -155,6 +159,20 @@ class Sqlite3Database:
                 print('\n')
             print(f'{bar}  {table.name} ({size:,d} rows) {bar}\n')
             table.print_info()
+
+    def dump_to_json(self, path: Union[str, Path]):
+        path = Path(path).expanduser().resolve() if isinstance(path, str) else path
+        if path.is_file():
+            raise ValueError(f'Invalid path - must be a directory: {path}')
+        elif not path.exists():
+            path.mkdir(parents=True)
+
+        printer = Printer('pseudo-json')
+        for table in self:
+            table_path = path.joinpath(f'{table.name}.json')
+            log.info(f'Dumping {table.name} to {table_path}')
+            with table_path.open('w', encoding='utf-8') as f:
+                f.write(printer.pformat(table.select('*')))
 
     def test(self):
         tbl1 = self.create_table('test_1', [('id', 'INTEGER'), ('name', 'TEXT')])
@@ -278,7 +296,7 @@ class DBTable:
             self.db.execute('CREATE TABLE "{}" ({});'.format(self.name, ', '.join(col_strs)))
 
     def info(self):
-        return self.db.query('pragma table_info(\"{}\")'.format(self.name))
+        return self.db.query('pragma table_info("{}")'.format(self.name))
 
     def print_info(self):
         Table.auto_print_rows(self.info())

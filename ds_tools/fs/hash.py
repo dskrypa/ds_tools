@@ -20,8 +20,6 @@ def sha512sum(file_path, block_size=10485760):
         file_path = Path(file_path)
     sha512 = hashlib.sha512()
     with file_path.open('rb') as f:
-        buf = f.read(block_size)
-        while len(buf) > 0:
+        while buf := f.read(block_size):
             sha512.update(buf)
-            buf = f.read(block_size)
     return sha512.hexdigest()
