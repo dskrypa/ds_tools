@@ -7,7 +7,6 @@ Utilities for running Flask servers
 import logging
 import os
 import time
-from functools import cached_property
 from uuid import uuid4
 from typing import TYPE_CHECKING, Optional, Iterable
 
@@ -62,13 +61,18 @@ class FlaskServer:
 
 def _patch_log_record():
     """
-    Adds a ``uid`` property to all :class:`LogRecord` objects as a :class:`cached_property`.  Uses cached_property
-    because of the way that LogRecord objects are formatted: ``return self._fmt % record.__dict__``.  In theory, this
-    could be accomplished with a regular property that also stores the value in the ``record.__dict__`` before returning
-    it.
+    Adds a ``uid`` attribute to all :class:`LogRecord` objects by patching :meth:`LogRecord.__init__`.  It does not work
+    as a property or cached_property because of the way that LogRecord objects are formatted - the formatter calls
+    ``return self._fmt % record.__dict__`` without first attempting to access the value as a property, so it doesn't
+    have a chance to be stored lazily.
     """
-    logging.LogRecord.uid = cached_property(lambda s: getattr(wz_local, 'uid', '-'))
-    logging.LogRecord.uid.attrname = 'uid'
+    original_init = logging.LogRecord.__init__
+
+    def init(self, *args, **kwargs):
+        self.uid = getattr(wz_local, 'uid', '-')
+        original_init(self, *args, **kwargs)
+
+    logging.LogRecord.__init__ = init
 
 
 def init_logging(
@@ -84,8 +88,8 @@ def init_logging(
     :param bool verbose: Verbosity
     :param bool pid: Include pid in the default log format, if no specific format is specified
     :param str log_fmt: The log format to use
-    :param bool patch_log_record: Patch :class:`LogRecord` to include a ``uid`` property for tracking unique requests
-      (see :func:`_patch_log_record`)
+    :param bool patch_log_record: Patch :class:`LogRecord` to include a ``uid`` attribute for tracking actions related
+      to specific requests (see :func:`_patch_log_record`)
     :param kwargs: Additional kwargs to pass to :func:`init_logging<ds_tools.logging.init_logging>`
     :return: See :func:`init_logging<ds_tools.logging.init_logging>`
     """
