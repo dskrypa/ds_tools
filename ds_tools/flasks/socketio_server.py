@@ -29,7 +29,7 @@ class SocketIOServer(FlaskServer):
         super().__init__(*args, blueprints=blueprints, **kwargs)
 
     def start_server(self):
-        log.info(f'Starting Flask app={self._app.name!r} on port={self._port}', extra={'color': 'cyan'})
+        log.info(f'Starting Flask app={self._app.name!r} on port={self._port}', extra={'color': 14})
         self._socketio = SocketIO(self._app, async_mode='eventlet')
         return self._socketio.run(self._app, host=self._host, port=self._port)
 

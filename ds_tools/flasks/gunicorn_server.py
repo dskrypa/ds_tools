@@ -82,7 +82,7 @@ class GunicornServer(FlaskServer, Application):
                 if pythonpath not in sys.path:
                     sys.path.insert(0, pythonpath)
 
-        log.info(f'Starting Flask app={self._app.name!r} on port={self._port}', extra={'color': 'cyan'})
+        log.info(f'Starting Flask app={self._app.name!r} on port={self._port}', extra={'color': 14})
         self._arbiter = Arbiter(self)
         try:
             self._arbiter.run()
