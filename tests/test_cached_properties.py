@@ -3,12 +3,12 @@
 import logging
 import sys
 import unittest
+from functools import cached_property
 from itertools import count
 from pathlib import Path
 
 sys.path.append(Path(__file__).parents[1].as_posix())
 from ds_tools.caching.mixins import ClearableCachedPropertyMixin, ClearableCachedProperty, DictAttrProperty
-from ds_tools.compat import cached_property
 
 log = logging.getLogger(__name__)
 

@@ -7,8 +7,7 @@ Mixins
 import logging
 from abc import ABC
 from contextlib import suppress
-
-from ..compat import cached_property
+from functools import cached_property
 
 __all__ = ['ClearableCachedPropertyMixin', 'DictAttrProperty', 'DictAttrFieldNotFoundError', 'ClearableCachedProperty']
 log = logging.getLogger(__name__)

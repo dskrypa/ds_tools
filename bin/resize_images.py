@@ -3,11 +3,9 @@
 :author: Doug Skrypa
 """
 
-import logging
 import sys
 from os import environ as env
 from pathlib import Path
-from typing import Optional, Union, Tuple
 
 venv_path = Path(__file__).resolve().parents[1].joinpath('venv')
 if not env.get('VIRTUAL_ENV') and venv_path.exists():
@@ -18,12 +16,15 @@ if not env.get('VIRTUAL_ENV') and venv_path.exists():
     env.update(PYTHONHOME='', VIRTUAL_ENV=venv_path.as_posix(), PATH='{}:{}'.format(bin_path.as_posix(), env['PATH']))
     sys.exit(Popen([bin_path.joinpath('python.exe' if ON_WINDOWS else 'python').as_posix()] + sys.argv, env=env).wait())
 
+import logging
+from functools import cached_property
+from typing import Optional, Union, Tuple
+
 from PIL import Image
 
 sys.path.append(Path(__file__).resolve().parents[1].as_posix())
 from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
-from ds_tools.compat import cached_property
 from ds_tools.core import wrap_main, iter_files, relative_path
 from ds_tools.logging import init_logging
 

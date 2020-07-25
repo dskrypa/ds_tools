@@ -7,12 +7,12 @@ Table and supporting classes for formatting / printing tabular data to stdout.
 import csv
 import logging
 import re
+from functools import cached_property
 from io import StringIO
 from unicodedata import normalize
 
 from wcwidth import wcswidth
 
-from ..compat import cached_property
 from .color import colored
 from .exceptions import TableFormatException
 from .terminal import uprint, _uout, Terminal

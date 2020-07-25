@@ -29,6 +29,7 @@ __all__ = [
 ]
 log = logging.getLogger(__name__)
 
+_NotSet = object()
 COLOR_CODED_THREADS = os.environ.get('DS_TOOLS_COLOR_CODED_THREAD_LOGS', '0') == '1'
 DEFAULT_LOG_DIR = '/var/tmp/{user}/script_logs'
 ENTRY_FMT_DETAILED = '%(asctime)s %(levelname)s %(threadName)s %(name)s %(lineno)d %(message)s'
@@ -37,15 +38,11 @@ ENTRY_FMT_DETAILED_UID = '%(asctime)s %(levelname)s %(threadName)s %(name)s %(li
 ENTRY_FMT_DETAILED_PID_UID = '%(asctime)s %(levelname)s %(process)d %(threadName)s %(name)s %(lineno)d [%(uid)s] %(message)s'
 
 
-class _NotSet:
-    pass
-
-
 def init_logging(
-        verbosity=0, *, log_path=_NotSet, names=_NotSet, date_fmt=None, millis=False, entry_fmt=None, file_fmt=None,
-        file_perm=0o666, file_lvl=logging.DEBUG, file_dir=None, filename_fmt='{prog}.{user}.{time}{uniq}.log',
-        file_handler_opts=None, fix_sigpipe=True, patch_emit='quiet', replace_handlers=True, lvl_names=_NotSet,
-        lvl_names_add=None, set_levels=None, streams=True, reopen_streams=True, color_threads=None
+    verbosity=0, *, log_path=_NotSet, names=_NotSet, date_fmt=None, millis=False, entry_fmt=None, file_fmt=None,
+    file_perm=0o666, file_lvl=logging.DEBUG, file_dir=None, filename_fmt='{prog}.{user}.{time}{uniq}.log',
+    file_handler_opts=None, fix_sigpipe=True, patch_emit='quiet', replace_handlers=True, lvl_names=_NotSet,
+    lvl_names_add=None, set_levels=None, streams=True, reopen_streams=True, color_threads=None
 ):
     """
     Configures stream handlers for stdout and stderr so that logs with level logging.INFO and below are sent to stdout
