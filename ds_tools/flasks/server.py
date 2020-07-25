@@ -52,7 +52,7 @@ class FlaskServer:
             log.debug(f'Registering blueprint={bp.name!r} pkg={bp.import_name!r} {bp.url_prefix=!r} {bp.subdomain=!r}')
             self._app.register_blueprint(bp)
 
-        add_context_filter(UniqueIdFilter(), self._app.logger.name)
+        # add_context_filter(UniqueIdFilter(), self._app.logger.name)
 
     def start_server(self):
         raise NotImplementedError
@@ -61,16 +61,21 @@ class FlaskServer:
         raise NotImplementedError
 
 
-class UniqueIdFilter(logging.Filter):
-    def filter(self, record):
-        if not getattr(record, 'uid', None):
-            record.uid = getattr(wz_local, 'uid', '-')
-        return True
+def _patch_log_record():
+    """Adds a uid property to all LogRecord objects"""
+    logging.LogRecord.uid = property(lambda s: getattr(wz_local, 'uid', '-'))
 
 
-def init_logging(log_path, verbose=0, pid=False, log_fmt=None, **kwargs):
-    logging.getLogger('py.warnings')  # Make sure this logger exists before adding the uid filter
-    add_context_filter(UniqueIdFilter())
+# class UniqueIdFilter(logging.Filter):
+#     def filter(self, record):
+#         if not getattr(record, 'uid', None):
+#             record.uid = getattr(wz_local, 'uid', '-')
+#         return True
+
+
+def init_logging(log_path, verbose=0, pid=False, log_fmt=None, patch_log_record=True, **kwargs):
+    # logging.getLogger('py.warnings')  # Make sure this logger exists before adding the uid filter
+    # add_context_filter(UniqueIdFilter())
     log_fmt = log_fmt or (ENTRY_FMT_DETAILED_PID_UID if pid else ENTRY_FMT_DETAILED_UID)
     init_args = {
         'names': None,
@@ -81,6 +86,8 @@ def init_logging(log_path, verbose=0, pid=False, log_fmt=None, **kwargs):
         'entry_fmt': log_fmt,
     }
     init_args.update(kwargs)
+    if patch_log_record:
+        _patch_log_record()
     return _init_logging(verbose, **init_args)
 
 

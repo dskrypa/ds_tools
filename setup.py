@@ -28,7 +28,7 @@ optional_dependencies = {
     'images': ['pillow'],                               # bin/resize_images.py
     'flask': ['flask', 'jinja2', 'werkzeug'],           # flasks package
     'gunicorn': ['gevent', 'gunicorn'],                 # flasks package with gunicorn
-    'socketio': ['flask_socketio'],                     # flasks package with socketio
+    'socketio': ['flask_socketio', 'eventlet'],         # flasks package with socketio
 }
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
 
