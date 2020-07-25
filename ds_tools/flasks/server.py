@@ -7,6 +7,7 @@ Utilities for running Flask servers
 import logging
 import os
 import time
+from functools import cached_property
 from uuid import uuid4
 from typing import TYPE_CHECKING, Optional, Iterable
 
@@ -17,11 +18,11 @@ from werkzeug.local import Local, release_local
 if TYPE_CHECKING:
     from flask import Flask
 
-from ..logging import add_context_filter, ENTRY_FMT_DETAILED_UID, ENTRY_FMT_DETAILED_PID_UID
+from ..logging import ENTRY_FMT_DETAILED_UID, ENTRY_FMT_DETAILED_PID_UID
 from ..logging import init_logging as _init_logging
 from .serialization import SerializableException
 
-__all__ = ['FlaskServer', 'init_logging', 'UniqueIdFilter']
+__all__ = ['FlaskServer', 'init_logging']
 log = logging.getLogger(__name__)
 
 _NotSet = object()
@@ -52,8 +53,6 @@ class FlaskServer:
             log.debug(f'Registering blueprint={bp.name!r} pkg={bp.import_name!r} {bp.url_prefix=!r} {bp.subdomain=!r}')
             self._app.register_blueprint(bp)
 
-        # add_context_filter(UniqueIdFilter(), self._app.logger.name)
-
     def start_server(self):
         raise NotImplementedError
 
@@ -63,19 +62,11 @@ class FlaskServer:
 
 def _patch_log_record():
     """Adds a uid property to all LogRecord objects"""
-    logging.LogRecord.uid = property(lambda s: getattr(wz_local, 'uid', '-'))
-
-
-# class UniqueIdFilter(logging.Filter):
-#     def filter(self, record):
-#         if not getattr(record, 'uid', None):
-#             record.uid = getattr(wz_local, 'uid', '-')
-#         return True
+    logging.LogRecord.uid = cached_property(lambda s: getattr(wz_local, 'uid', '-'))
+    logging.LogRecord.uid.attrname = 'uid'
 
 
 def init_logging(log_path, verbose=0, pid=False, log_fmt=None, patch_log_record=True, **kwargs):
-    # logging.getLogger('py.warnings')  # Make sure this logger exists before adding the uid filter
-    # add_context_filter(UniqueIdFilter())
     log_fmt = log_fmt or (ENTRY_FMT_DETAILED_PID_UID if pid else ENTRY_FMT_DETAILED_UID)
     init_args = {
         'names': None,
