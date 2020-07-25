@@ -61,12 +61,34 @@ class FlaskServer:
 
 
 def _patch_log_record():
-    """Adds a uid property to all LogRecord objects"""
+    """
+    Adds a ``uid`` property to all :class:`LogRecord` objects as a :class:`cached_property`.  Uses cached_property
+    because of the way that LogRecord objects are formatted: ``return self._fmt % record.__dict__``.  In theory, this
+    could be accomplished with a regular property that also stores the value in the ``record.__dict__`` before returning
+    it.
+    """
     logging.LogRecord.uid = cached_property(lambda s: getattr(wz_local, 'uid', '-'))
     logging.LogRecord.uid.attrname = 'uid'
 
 
-def init_logging(log_path, verbose=0, pid=False, log_fmt=None, patch_log_record=True, **kwargs):
+def init_logging(
+    log_path: Optional[str],
+    verbose: int = 0,
+    pid: bool = False,
+    log_fmt: Optional[str] = None,
+    patch_log_record: bool = True,
+    **kwargs
+):
+    """
+    :param str log_path: Location to store log file
+    :param bool verbose: Verbosity
+    :param bool pid: Include pid in the default log format, if no specific format is specified
+    :param str log_fmt: The log format to use
+    :param bool patch_log_record: Patch :class:`LogRecord` to include a ``uid`` property for tracking unique requests
+      (see :func:`_patch_log_record`)
+    :param kwargs: Additional kwargs to pass to :func:`init_logging<ds_tools.logging.init_logging>`
+    :return: See :func:`init_logging<ds_tools.logging.init_logging>`
+    """
     log_fmt = log_fmt or (ENTRY_FMT_DETAILED_PID_UID if pid else ENTRY_FMT_DETAILED_UID)
     init_args = {
         'names': None,
