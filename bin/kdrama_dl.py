@@ -204,6 +204,7 @@ class KdramaDownloader:
     @staticmethod
     def _download_multi_threaded(progress, part_uris_paths, parts_client, threads):
         part_count = len(part_uris_paths)
+        i = 0
 
         def _process_uri(part_uri):
             try:
