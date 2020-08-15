@@ -29,6 +29,7 @@ optional_dependencies = {
     'flask': ['flask', 'jinja2', 'werkzeug'],           # flasks package
     'gunicorn': ['gevent', 'gunicorn'],                 # flasks package with gunicorn
     'socketio': ['flask_socketio', 'gevent'],           # flasks package with socketio
+    'windows': ['pywin32'],                             # bin/windows_tasks.py
 }
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
 

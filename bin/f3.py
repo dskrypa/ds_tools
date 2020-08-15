@@ -5,21 +5,16 @@ Utility based on f3write: https://github.com/AltraMayor/f3
 :author: Doug Skrypa
 """
 
-import logging
 import sys
-from os import environ as env
 from pathlib import Path
 
-venv_path = Path(__file__).resolve().parents[1].joinpath('venv')
-if not env.get('VIRTUAL_ENV') and venv_path.exists():
-    import platform
-    from subprocess import Popen
-    ON_WINDOWS = platform.system().lower() == 'windows'
-    bin_path = venv_path.joinpath('Scripts' if ON_WINDOWS else 'bin')
-    env.update(PYTHONHOME='', VIRTUAL_ENV=venv_path.as_posix(), PATH='{}:{}'.format(bin_path.as_posix(), env['PATH']))
-    sys.exit(Popen([bin_path.joinpath('python.exe' if ON_WINDOWS else 'python').as_posix()] + sys.argv, env=env).wait())
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, PROJECT_ROOT.joinpath('bin').as_posix())
+import _venv  # This will activate the venv, if it exists and is not already active
 
-sys.path.append(Path(__file__).resolve().parents[1].as_posix())
+import logging
+
+sys.path.append(PROJECT_ROOT.as_posix())
 from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
 from ds_tools.core import wrap_main

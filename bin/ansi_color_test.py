@@ -3,7 +3,11 @@
 import sys
 from pathlib import Path
 
-sys.path.append(Path(__file__).resolve().parents[1].as_posix())
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, PROJECT_ROOT.joinpath('bin').as_posix())
+import _venv  # This will activate the venv, if it exists and is not already active
+
+sys.path.append(PROJECT_ROOT.as_posix())
 from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
 from ds_tools.output.color import colored, HEX_COLORS_REVERSE
