@@ -9,6 +9,7 @@ from functools import cached_property
 from typing import Optional, Literal, Union
 
 import pythoncom
+import pywintypes
 from win32com import client
 from win32com.client.makepy import GenerateFromTypeLibSpec
 from win32comext.taskscheduler import taskscheduler
@@ -49,6 +50,13 @@ class Scheduler:
         yield from walk_paths(root, hidden, recursive)
 
     def get_tasks(self, path: Optional[str] = '\\', hidden: Hidden = True, recursive=True):
+        # noinspection PyUnresolvedReferences
+        try:
+            return self._get_tasks(path, hidden, recursive)
+        except pywintypes.com_error:
+            return [self.get_task(path, hidden)]
+
+    def _get_tasks(self, path: Optional[str] = '\\', hidden: Hidden = True, recursive=True):
         hidden = int(hidden)
         tasks = []
         if recursive:
