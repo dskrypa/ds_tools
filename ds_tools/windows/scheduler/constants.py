@@ -1,4 +1,11 @@
 
+import calendar
+
+DAY_LIST = calendar.day_name[-1:] + calendar.day_name[:-1]
+DAY_NAME_NUM_MAP = {day: i for i, day in enumerate(DAY_LIST)}
+MONTH_LIST = list(calendar.month_name)
+MONTH_NAME_NUM_MAP = {month: i for i, month in enumerate(MONTH_LIST) if i}
+
 XML_ATTRS = {'Xml', 'XmlText'}
 
 TASK_STATES = {1: 'Disabled', 2: 'Queued', 3: 'Ready', 4: 'Running', 0: 'Unknown'}

@@ -105,7 +105,7 @@ class Scheduler:
 def _summarize(task_dict):
     definition = task_dict['Definition']
     reg_info = definition['RegistrationInfo']
-    actions = definition['Actions']['details']
+    actions = definition['Actions']['values']
     return {
         'Location': task_dict['Path'],
         'Status': task_dict['State'],
@@ -117,6 +117,7 @@ def _summarize(task_dict):
         'Description': reg_info['Description'],
         'RunAs': definition['Principal']['UserId'],
         'Actions': actions,
-        'Schedule': [f'{t["Type"]}: {t["cron"]}' for t in definition['Triggers']['values']],
+        'Triggers': definition['Triggers']
+        # 'Schedule': [f'{t["Type"]}: {t["cron"]}' for t in definition['Triggers']['values']],
         # 'Cron': list(filter(None, (t['cron'] for t in definition['Triggers']['values']))),
     }

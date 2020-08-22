@@ -214,13 +214,13 @@ class Table:
         return None
 
     @classmethod
-    def auto_print_rows(cls, rows, header=True, bar=True, sort=False, sort_by=None, mode='table'):
+    def auto_print_rows(cls, rows, header=True, bar=True, sort=False, sort_by=None, mode='table', sort_keys=True):
         if len(rows) < 1:
             return
         if isinstance(rows, dict):
             rows = [row for row in rows.values()]
 
-        keys = sorted(rows[0].keys()) if type(rows[0]) is dict else rows[0].keys()
+        keys = sorted(rows[0].keys()) if type(rows[0]) is dict and sort_keys else rows[0].keys()
         tbl = Table(*[Column(k, k, rows) for k in keys], mode=mode, auto_header=header, auto_bar=bar, sort=sort,
                     sort_by=sort_by)
         tbl.print_rows(rows)
