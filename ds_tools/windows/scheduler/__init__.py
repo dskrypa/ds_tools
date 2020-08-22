@@ -14,7 +14,7 @@ from win32com import client
 from win32com.client.makepy import GenerateFromTypeLibSpec
 from win32comext.taskscheduler import taskscheduler
 
-from .constants import XML_ATTRS, TASK_STATES, CLSID_ENUM_MAP, REPETITION_CODE_CRON_TUPLES
+from .constants import XML_ATTRS, TASK_STATES, CLSID_ENUM_MAP
 from .exceptions import UnknownTaskError
 from .utils import walk_paths, scheduler_obj_as_dict, task_as_dict
 
