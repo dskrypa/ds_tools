@@ -44,6 +44,13 @@ def parser():
     table_parser.add_argument('--recursive', '-r', action='store_true', help='Recursively iterate through sub-paths')
     table_parser.add_argument('--times', '-t', action='store_true', help='Show the last and next run times')
 
+    create_parser = parser.add_subparser('action', 'create', help='Create a new task')
+    create_parser.add_argument('path', help='The location + name for the new task')
+    create_parser.add_argument('--schedule', '-s', help='Cron schedule to use', required=True)
+    create_parser.add_argument('--command', '-c', help='The command to run', required=True)
+    create_parser.add_argument('--args', '-a', help='Arguments to pass to the command')
+    create_parser.add_argument('--update', '-u', action='store_true', help='Allow an existing scheduled task to be updated')
+
     parser.include_common_args('verbosity')
     return parser
 
@@ -60,6 +67,8 @@ def main():
         )
     elif action == 'table':
         table_tasks(args.path or '\\', args.recursive, args.times)
+    elif action == 'create':
+        Scheduler().create_exec_task(args.path, args.command, args.args, args.schedule, allow_update=args.update)
     else:
         raise ValueError(f'Unexpected {action=!r}')
 
@@ -94,7 +103,7 @@ def table_tasks(path: Optional[str] = '\\', recursive: bool = False, times: bool
                 row['Cron'] = str(trigger['cron'])
             if action:
                 if (a_type := action['Type']) == 'Exec':
-                    row['Action'] = f'{a_type}: {action["Command"]}'
+                    row['Action'] = f'{a_type}: {action["Command"]} {action["Arguments"]}'
                 else:
                     row['Action'] = f'{a_type}: {action}'
             rows.append(row)

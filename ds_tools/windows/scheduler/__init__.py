@@ -10,13 +10,14 @@ from typing import Optional, Literal, Union
 
 import pythoncom
 import pywintypes
-from win32com import client
-from win32com.client.makepy import GenerateFromTypeLibSpec
+from win32com.client import Dispatch
 from win32comext.taskscheduler import taskscheduler
 
 from .constants import XML_ATTRS, TASK_STATES, CLSID_ENUM_MAP
 from .exceptions import UnknownTaskError
-from .utils import walk_paths, scheduler_obj_as_dict, task_as_dict
+from .types import taskschd, create_action, create_trigger
+from .utils import walk_paths, scheduler_obj_as_dict, task_as_dict, com_repr
+from .win_cron import WinCronSchedule
 
 __all__ = ['Scheduler', 'Hidden']
 log = logging.getLogger(__name__)
@@ -34,13 +35,7 @@ class Scheduler:
 
     @cached_property
     def _scheduler(self):
-        service = client.Dispatch('Schedule.Service')
-        if not hasattr(service, 'CLSID'):
-            log.debug('Regenerating lib spec...')
-            GenerateFromTypeLibSpec('taskschd.dll', None, verboseLevel=0, bForDemand=0, bBuildHidden=1)
-            service = client.Dispatch('Schedule.Service')
-            if not hasattr(service, 'CLSID'):
-                raise RuntimeError('Unable to generate type lib spec for taskschd.dll')
+        service = Dispatch('Schedule.Service')
         service.Connect()
         return service
 
@@ -92,14 +87,43 @@ class Scheduler:
         task = task_as_dict(self.get_task(*args, **kwargs))
         return _summarize(task) if summarize else task
 
-    def create_exec_task(self, name: str, cmd: str, args: str, path: Optional[str] = None):
+    def create_exec_task(
+        self, name: str, cmd: str, args: str, cron: str, path: Optional[str] = None, allow_update=False
+    ):
         if path and '\\' in name:
             raise ValueError(f'Invalid {name=!r} given {path=!r} - name may not contain \\ when path is provided')
         elif '\\' in name:
             path, name = name.rsplit('\\', 1)
         elif not path:
             path = '\\'
-        raise NotImplementedError
+
+        sched_path = self._scheduler.GetFolder(path)
+        cron = WinCronSchedule.from_cron(cron)
+        task = self._scheduler.NewTask(0)
+
+        trigger = create_trigger(task, taskschd.constants.TASK_TRIGGER_TIME)
+        log.debug(f'Creating schedule with start={cron.start.isoformat()} interval={cron.interval}')
+        trigger.StartBoundary = cron.start.isoformat()
+        trigger.Repetition.Interval = cron.interval
+
+        action = create_action(task, taskschd.constants.TASK_ACTION_EXEC)
+        action.Path = cmd
+        if args:
+            action.Arguments = args
+        log.debug(f'Created action={com_repr(action)}')
+
+        task.Settings.Enabled = True
+
+        log.debug(f'Registering {name=} in {path=}')
+        sched_path.RegisterTaskDefinition(
+            name,
+            task,
+            taskschd.constants.TASK_CREATE_OR_UPDATE if allow_update else taskschd.constants.TASK_CREATE,
+            '',
+            '',
+            taskschd.constants.TASK_LOGON_NONE,
+        )
+        log.info(f'Successfully registered task={path}\\{name} with cron={cron!s} and {cmd=}')
 
 
 def _summarize(task_dict):

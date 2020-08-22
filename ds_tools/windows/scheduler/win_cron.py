@@ -2,7 +2,8 @@
 import logging
 import re
 from datetime import datetime
-from typing import Optional, Mapping, Any, Dict
+from functools import cached_property
+from typing import Optional, Mapping, Any, Dict, Tuple
 
 from .constants import DAY_NAME_NUM_MAP, MONTH_NAME_NUM_MAP
 
@@ -27,7 +28,7 @@ class WinCronSchedule:
         self._weeks = {i: True for i in range(1, 6)}
 
     @classmethod
-    def from_cron(cls, cron_str: str):
+    def from_cron(cls, cron_str: str) -> 'WinCronSchedule':
         # {second} {minute} {hour} {day_of_month} {month} {day_of_week}
         self = cls()
         attrs = (self._second, self._minute, self._hour, self._day, self._month, self._dow)
@@ -154,42 +155,99 @@ class WinCronSchedule:
         # {second} {minute} {hour} {day_of_month} {month} {day_of_week}
         return ' '.join((self.second, self.minute, self.hour, self.day, self.month, self.dow))
 
-    def _repr(self, freq: Mapping[int, bool], dow: bool = False):
+    def _cron_repr(self, freq: Mapping[int, bool], dow: bool = False):
         if all(freq.values()):
             return '*'
 
-        on_vals = {k for k, v in freq.items() if v}
+        enabled = {k for k, v in freq.items() if v}
         if dow and not all(v for k, v in self._weeks.items()):
             weeks = sorted([w for w, v in self._weeks.items() if v])
-            return ','.join(f'{v}#{w}' for v in sorted(on_vals) for w in weeks)
+            return ','.join(f'{v}#{w}' for v in sorted(enabled) for w in weeks)
 
         for divisor in range(2, len(freq) // 2 + 1):
             divisible = {k for k in freq if k % divisor == 0}
-            if divisible.intersection(on_vals) == divisible:
+            if divisible.intersection(enabled) == divisible:
                 return f'*/{divisor}'
 
         return ','.join(str(k) for k, v in sorted(freq.items()) if v)
 
-    @property
+    def _interval_repr(self, freq: Mapping[int, bool], attr: str, bigger: Tuple[str, ...]):
+        if all(freq.values()):
+            return ''
+
+        suffix = attr.upper()[0]
+        enabled = {k for k, v in freq.items() if v}
+        if len(enabled) == 1 and next(iter(enabled)) == getattr(self.start, attr):
+            if all(all(getattr(self, f'_{b}').values()) for b in bigger):
+                return f'1{bigger[0].upper()[0]}'
+            return ''
+
+        for divisor in range(2, len(freq) // 2 + 1):
+            divisible = {k for k in freq if k % divisor == 0}
+            if divisible.intersection(enabled) == divisible:
+                return f'{divisor}{suffix}'
+
+        diffs = set()
+        last = None
+        for value in sorted(enabled, reverse=True):
+            if last is not None:
+                # noinspection PyUnresolvedReferences
+                diffs.add(last - value)
+            last = value
+
+        if len(diffs) == 1:
+            return f'{next(iter(diffs))}{suffix}'
+        raise ValueError(f'{self!r} cannot be represented using a Windows scheduler interval')
+
+    @cached_property
+    def start(self) -> datetime:
+        if self._start:
+            return self._start
+        dt = datetime.now().replace(
+            second=min(k for k, v in self._second.items() if v),
+            minute=min(k for k, v in self._minute.items() if v),
+            hour=min(k for k, v in self._hour.items() if v),
+            microsecond=0,
+        )
+        return dt
+
+    @cached_property
     def second(self):
-        return self._repr(self._second)
+        return self._cron_repr(self._second)
 
-    @property
+    @cached_property
     def minute(self):
-        return self._repr(self._minute)
+        return self._cron_repr(self._minute)
 
-    @property
+    @cached_property
     def hour(self):
-        return self._repr(self._hour)
+        return self._cron_repr(self._hour)
 
-    @property
+    @cached_property
     def day(self):
-        return self._repr(self._day)
+        return self._cron_repr(self._day)
 
-    @property
+    @cached_property
     def month(self):
-        return self._repr(self._month)
+        return self._cron_repr(self._month)
 
-    @property
+    @cached_property
     def dow(self):
-        return self._repr(self._dow, True)
+        return self._cron_repr(self._dow, True)
+
+    @cached_property
+    def interval(self):
+        parts = ['P']
+        attrs = (
+            (self._day, 'day', ('month', 'dow')),
+            (self._hour, 'hour', ('day', 'month', 'dow')),
+            (self._minute, 'minute', ('hour', 'day', 'month', 'dow')),
+            (self._second, 'second', ('minute', 'hour', 'day', 'month', 'dow')),
+        )
+        for prop, attr, bigger in attrs:
+            rep = self._interval_repr(prop, attr, bigger)
+            if rep and attr != 'day' and len(parts) == 1:
+                parts.append('T')
+            parts.append(rep)
+
+        return ''.join(parts)

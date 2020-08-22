@@ -12,7 +12,7 @@ from win32com.client import DispatchBaseClass
 from .constants import XML_ATTRS, CLSID_ENUM_MAP
 from .win_cron import WinCronSchedule
 
-__all__ = ['walk_paths', 'scheduler_obj_as_dict', 'task_as_dict']
+__all__ = ['walk_paths', 'scheduler_obj_as_dict', 'task_as_dict', 'com_repr']
 log = logging.getLogger(__name__)
 
 XMLNS_PAT = re.compile(r'\s?xmlns="[^"]+"')
@@ -119,3 +119,8 @@ def walk_paths(path, hidden, recursive: bool = True):
             yield from walk_paths(sub_path, hidden)
         else:
             yield sub_path
+
+
+def com_repr(obj):
+    attr_names = obj._prop_map_get_
+    return '<{}[{}]>'.format(obj.__class__.__name__, ', '.join(f'{k}={getattr(obj, k)!r}' for k in attr_names))

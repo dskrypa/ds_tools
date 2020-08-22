@@ -36,12 +36,12 @@ def parser():
 @wrap_main
 def main():
     args = parser().parse_args()
-    init_logging(args.verbose, log_path=None)
+    init_logging(args.verbose)
 
-    source = Path(args.source)
+    source = Path(args.source).expanduser()
     if not source.is_file():
         raise ValueError(f'Invalid {source=} file - does not exist or is not a file')
-    dest_dir = Path(args.dest_dir)
+    dest_dir = Path(args.dest_dir).expanduser()
     if dest_dir.exists() and not dest_dir.is_dir():
         raise ValueError(f'Invalid {dest_dir=} directory - is not a directory')
     elif not dest_dir.exists():
