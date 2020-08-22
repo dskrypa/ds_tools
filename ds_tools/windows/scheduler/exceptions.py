@@ -1,0 +1,3 @@
+
+class UnknownTaskError(Exception):
+    pass
