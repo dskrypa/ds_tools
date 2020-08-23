@@ -1,15 +1,16 @@
 
 import logging
 from copy import deepcopy
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Iterator
 
 import xmltodict
 from win32com.client import DispatchBaseClass
 
+from ..libs.taskschd import taskschd
 from .constants import XML_ATTRS, CLSID_ENUM_MAP, RUN_RESULT_CODE_MAP
 from .win_cron import WinCronSchedule
 
-__all__ = ['walk_paths', 'scheduler_obj_as_dict', 'task_as_dict']
+__all__ = ['walk_folders', 'scheduler_obj_as_dict', 'task_as_dict', 'norm_path', 'path_and_name']
 log = logging.getLogger(__name__)
 
 
@@ -97,21 +98,21 @@ def scheduler_obj_as_dict(obj, xml, i=None):
     return as_dict
 
 
-def task_as_dict(task):
+def task_as_dict(task: taskschd.IRegisteredTask, summarize=False):
     log.debug(f'Processing task={task.Path}', extra={'color': 'cyan'})
     task_xml = xmltodict.parse(task.Xml)['Task']
     as_dict = scheduler_obj_as_dict(task, task_xml)
     for key in ('LastRunTime', 'NextRunTime'):
         as_dict[key] = as_dict[key].strftime('%Y-%m-%d %H:%M:%S')  # TZ is not set correctly
 
-    return as_dict
+    return _summarize(as_dict) if summarize else as_dict
 
 
-def walk_paths(path, hidden, recursive: bool = True):
-    yield path
-    for sub_path in path.GetFolders(hidden):
+def walk_folders(folder: taskschd.ITaskFolder, hidden, recursive: bool = True) -> Iterator[taskschd.ITaskFolder]:
+    yield folder
+    for sub_path in folder.GetFolders(int(hidden)):
         if recursive:
-            yield from walk_paths(sub_path, hidden)
+            yield from walk_folders(sub_path, hidden)
         else:
             yield sub_path
 
@@ -145,3 +146,14 @@ def _summarize(task_dict):
         # 'Schedule': [f'{t["Type"]}: {t["cron"]}' for t in definition['Triggers']['values']],
         # 'Cron': list(filter(None, (t['cron'] for t in definition['Triggers']['values']))),
     }
+
+
+def norm_path(path: Optional[str]):
+    if not path:
+        return '\\'
+    return '\\' + path if not path.startswith('\\') else path
+
+
+def path_and_name(path: Optional[str]):
+    path, name = norm_path(path).rsplit('\\', 1)
+    return norm_path(path), name

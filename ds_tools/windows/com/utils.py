@@ -4,7 +4,8 @@ Utilities for loading and working with Windows libraries using win32com.
 :author: Doug Skrypa
 """
 
-import pythoncom
+# noinspection PyUnresolvedReferences
+from pythoncom import LoadTypeLib, DISPATCH_METHOD, DISPATCH_PROPERTYGET, DISPID_NEWENUM, IID_IEnumVARIANT
 from win32com.client import Dispatch, DispatchBaseClass, _get_good_object_
 from win32com.client.gencache import GetModuleForTypelib
 from win32com.client.makepy import GenerateFromTypeLibSpec
@@ -20,8 +21,7 @@ def load_module(dll_name: str):
     :param str dll_name: A DLL file name (e.g., ``taskschd.dll``)
     :return: The loaded module
     """
-    # noinspection PyUnresolvedReferences
-    lib = pythoncom.LoadTypeLib(dll_name)
+    lib = LoadTypeLib(dll_name)
     iid = str(lib.GetLibAttr()[0])
     try:
         return GetModuleForTypelib(iid, 0, 1, 0)
@@ -51,22 +51,24 @@ def create_entry(collection: DispatchBaseClass, _type: int, lcid=0):
     return Dispatch(result, 'Create')
 
 
-def com_iter(obj: DispatchBaseClass):
+def com_iter(obj: DispatchBaseClass, lcid=0):
     """
     Iterate over the items that the given COM object contains.  Yields the proper classes rather than the base classes.
     """
-    # noinspection PyUnresolvedReferences
-    invkind = pythoncom.DISPATCH_METHOD | pythoncom.DISPATCH_PROPERTYGET
-    # noinspection PyUnresolvedReferences
-    enum = obj._oleobj_.InvokeTypes(pythoncom.DISPID_NEWENUM, taskschd.LCID, invkind, (13, 10), ())
-    # noinspection PyUnresolvedReferences
-    for value in enum.QueryInterface(pythoncom.IID_IEnumVARIANT):
+    invkind = DISPATCH_METHOD | DISPATCH_PROPERTYGET
+    enum = obj._oleobj_.InvokeTypes(DISPID_NEWENUM, lcid, invkind, (13, 10), ())
+    for value in enum.QueryInterface(IID_IEnumVARIANT):
         yield _get_good_object_(value)  # When no clsid is provided, it returns the correct subclass
 
 
 def com_repr(obj):
-    attr_names = obj._prop_map_get_
-    return '<{}[{}]>'.format(obj.__class__.__name__, ', '.join(f'{k}={getattr(obj, k)!r}' for k in attr_names))
+    if isinstance(obj, DispatchBaseClass):
+        attr_names = obj._prop_map_get_
+        return '<{}[{}]>'.format(
+            obj.__class__.__name__, ', '.join(f'{k}={com_repr(getattr(obj, k))}' for k in attr_names)
+        )
+    else:
+        return repr(obj)
 
 
 def _get_func_descs(type_info, type_attr):

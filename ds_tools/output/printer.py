@@ -11,6 +11,13 @@ import pprint
 import types
 from collections.abc import Mapping, Sized, Iterable, Container
 
+try:
+    from win32com.client import DispatchBaseClass
+    from ..windows.com.utils import com_repr
+except ImportError:
+    DispatchBaseClass = None
+    com_repr = None
+
 from ..core.serialization import PermissiveJSONEncoder, yaml_dump
 from .formatting import format_tiered, pseudo_yaml
 from .table import Table
@@ -117,6 +124,8 @@ class Printer:
 
 class PseudoJsonEncoder(PermissiveJSONEncoder):
     def default(self, o):
+        if DispatchBaseClass is not None and isinstance(o, DispatchBaseClass):
+            return com_repr(o)
         try:
             return super().default(o)
         except TypeError:
