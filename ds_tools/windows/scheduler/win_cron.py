@@ -124,61 +124,55 @@ class WinCronSchedule:
             for k in freq:
                 freq[k] = k % divisor == 0
         else:
-            add_l = False
-            try:
-                vals = set(map(int, part.split(',')))
-            except (ValueError, TypeError):
+            parts = set(part.split(','))
+            if 'L' in parts:
                 if pos == 3:  # day
-                    str_vals = set(part.split(','))
-                    try:
-                        str_vals.remove('L')
-                    except KeyError:
-                        raise ValueError(f'Invalid cron schedule {part=!r} in {pos=}')
-                    else:
-                        add_l = True
-                        try:
-                            vals = set(map(int, str_vals))
-                        except (ValueError, TypeError):
-                            raise ValueError(f'Invalid cron schedule {part=!r} in {pos=}')
-                elif pos == 5:  # dow#week
-                    vals = set()
-                    weeks = set()
-                    for p in part.split(','):
-                        if '#' in p:
-                            val, week = p.split('#')
-                            try:
-                                val = int(val)
-                            except (TypeError, ValueError):
-                                raise ValueError(f'Invalid cron schedule {part=!r} in {pos=}')
-
-                            if week == 'L':
-                                self._weeks['L'] = True
-                            else:
-                                try:
-                                    week = int(week)
-                                except (TypeError, ValueError):
-                                    raise ValueError(f'Invalid cron schedule {part=!r} in {pos=}')
-                                else:
-                                    if 1 <= week <= 4:
-                                        weeks.add(week)
-                                    else:
-                                        raise ValueError(f'Invalid cron schedule {part=!r} in {pos=}')
-                        else:
-                            try:
-                                val = int(p)
-                            except (TypeError, ValueError):
-                                raise ValueError(f'Invalid cron schedule {part=!r} in {pos=}')
-                        vals.add(val)
-
-                    for week in range(1, 5):
-                        self._weeks[week] = week in weeks
+                    freq['L'] = True
+                    parts.remove('L')
                 else:
                     raise ValueError(f'Invalid cron schedule {part=!r} in {pos=}')
+            elif pos == 5:  # dow#week
+                _parts = set()
+                weeks = set()
+                for p in parts:
+                    if '#' in p:
+                        val, week = p.split('#')
+                        _parts.add(val)
+                        if week == 'L':
+                            self._weeks['L'] = True
+                        else:
+                            try:
+                                week = int(week)
+                            except (TypeError, ValueError):
+                                raise ValueError(f'Invalid cron schedule {part=!r} in {pos=}')
+                            else:
+                                if 1 <= week <= 4:
+                                    weeks.add(week)
+                                else:
+                                    raise ValueError(f'Invalid cron schedule {part=!r} in {pos=}')
+
+                if weeks:
+                    for week in range(1, 5):
+                        self._weeks[week] = week in weeks
+                parts = _parts
+
+            vals = set()
+            for p in parts:
+                if '-' in p:
+                    try:
+                        a, b = map(int, p.split('-'))
+                    except (TypeError, ValueError):
+                        raise ValueError(f'Invalid cron schedule {part=!r} in {pos=}')
+                    vals.update(range(a, b + 1))
+                else:
+                    try:
+                        vals.add(int(p))
+                    except (TypeError, ValueError):
+                        raise ValueError(f'Invalid cron schedule {part=!r} in {pos=}')
 
             for k in freq:
-                freq[k] = k in vals
-            if add_l:
-                freq['L'] = True
+                if k != 'L':
+                    freq[k] = k in vals
 
     def __repr__(self):
         return f'<{self.__class__.__name__}[{self}]>'
