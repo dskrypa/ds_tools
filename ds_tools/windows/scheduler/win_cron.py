@@ -3,16 +3,16 @@ import logging
 import re
 from datetime import datetime
 from functools import cached_property
-from typing import Optional, Any, Dict, Tuple, Union, Iterable
+from typing import Optional, Dict, Tuple, Union, Iterable
 
 from ..com.utils import com_repr
-from .constants import DAY_NAME_NUM_MAP, MONTH_NAME_NUM_MAP
 
 __all__ = ['WinCronSchedule']
 log = logging.getLogger(__name__)
 CronDict = Dict[Union[int, str], bool]
 
 INTERVAL_PAT = re.compile(r'PT?(?:(?P<day>\d+)D)?(?:(?P<hour>\d+)H)?(?:(?P<minute>\d+)M)?(?:(?P<second>\d+)S)?')
+# TODO: Expand the types of Windows triggers that can be created from a given WinCronSchedule [only supports Time now]
 
 
 class WinCronSchedule:
@@ -83,62 +83,6 @@ class WinCronSchedule:
         #     pass
         else:
             raise ValueError(f'Unexpected trigger={com_repr(trigger)}')
-        return self
-
-    @classmethod
-    def _from_trigger(cls, trigger_type: str, schedule: Dict[str, Any], start: Optional[str]) -> 'WinCronSchedule':
-        if start:
-            try:
-                start = datetime.strptime(start, '%Y-%m-%dT%H:%M:%S')
-            except ValueError:
-                try:
-                    start = datetime.strptime(start, '%Y-%m-%dT%H:%M:%S%z')
-                except ValueError:
-                    raise RuntimeError(f'Unexpected time format for {start=}')
-
-        # TODO: Redo with proper com classes instead of from xml
-        self = cls(start)
-        if trigger_type == 'ScheduleByMonthDayOfWeek':
-            self._set_time(start)
-            for name, section in schedule.items():
-                if name == 'DaysOfWeek':
-                    enabled = {DAY_NAME_NUM_MAP[day] for day in section}
-                    self._dow = {i: i in enabled for i in range(7)}
-                elif name == 'Months':
-                    enabled = {MONTH_NAME_NUM_MAP[month] for month in section}
-                    self._month = {i: i in enabled for i in range(1, 13)}
-                elif name == 'Weeks':
-                    weeks = section['Week']
-                    enabled = {int(weeks)} if isinstance(weeks, str) else set(map(int, weeks))
-                    self._weeks = {i: i in enabled for i in range(1, 5)}
-                else:
-                    raise ValueError(f'Unexpected section={name!r} in type={trigger_type!r} {schedule=} {start=}')
-        elif trigger_type == 'ScheduleByDay':
-            self._set_time(start)
-            for name, section in schedule.items():
-                if name == 'DaysInterval':
-                    interval = int(section)
-                    self._day = {i: i % interval == 0 for i in range(1, 31)}
-                else:
-                    raise ValueError(f'Unexpected section={name!r} in type={trigger_type!r} {schedule=} {start=}')
-        elif trigger_type in ('TriggerDaily', 'CalendarTrigger'):
-            self._set_time(start)
-            for name, section in schedule.items():
-                if name == 'ScheduleByDay':
-                    interval = int(section['DaysInterval'])
-                    self._day = {i: i % interval == 0 for i in range(1, 31)}
-                else:
-                    raise ValueError(f'Unexpected section={name!r} in type={trigger_type!r} {schedule=} {start=}')
-        elif trigger_type in ('TriggerUserLoggon', 'TimeTrigger'):  # sic
-            self._set_time(start)
-            for name, section in schedule.items():
-                if name == 'Repetition':
-                    self._set_from_interval(section['Interval'])
-                else:
-                    raise ValueError(f'Unexpected section={name!r} in type={trigger_type!r} {schedule=} {start=}')
-        else:
-            raise ValueError(f'Unexpected trigger type={trigger_type!r} for {schedule=} {start=}')
-
         return self
 
     def _set_from_interval(self, interval: str):
@@ -368,4 +312,3 @@ def collapse(values: Iterable[int]):
         last = value
 
     return ','.join(str(a) if a == b else f'{a}-{b}' for a, b in ranges)
-
