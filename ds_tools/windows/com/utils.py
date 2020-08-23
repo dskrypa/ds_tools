@@ -1,11 +1,33 @@
+"""
+Utilities for loading and working with Windows libraries using win32com.
+
+:author: Doug Skrypa
+"""
 
 import pythoncom
 from win32com.client import Dispatch, DispatchBaseClass, _get_good_object_
+from win32com.client.gencache import GetModuleForTypelib
+from win32com.client.makepy import GenerateFromTypeLibSpec
 
 from ..com.enums import ComClassEnum
 from .exceptions import ComClassCreationException
 
-__all__ = ['com_iter', 'create_entry', 'com_repr']
+__all__ = ['com_iter', 'create_entry', 'com_repr', 'load_module']
+
+
+def load_module(dll_name: str):
+    """
+    :param str dll_name: A DLL file name (e.g., ``taskschd.dll``)
+    :return: The loaded module
+    """
+    # noinspection PyUnresolvedReferences
+    lib = pythoncom.LoadTypeLib(dll_name)
+    iid = str(lib.GetLibAttr()[0])
+    try:
+        return GetModuleForTypelib(iid, 0, 1, 0)
+    except ModuleNotFoundError:
+        GenerateFromTypeLibSpec(dll_name, None, verboseLevel=0, bForDemand=0, bBuildHidden=1)
+        return GetModuleForTypelib(iid, 0, 1, 0)
 
 
 def create_entry(collection: DispatchBaseClass, _type: int, lcid=0):

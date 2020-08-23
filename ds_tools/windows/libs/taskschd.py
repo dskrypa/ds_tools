@@ -1,16 +1,10 @@
 
-from win32com.client import gencache
-from win32com.client.makepy import GenerateFromTypeLibSpec
-
 from ..com.enums import ComClassEnum
+from ..com.utils import load_module
 
 __all__ = ['taskschd', 'Actions', 'Triggers']
 
-try:
-    taskschd = gencache.GetModuleForTypelib('{E34CB9F1-C7F7-424C-BE29-027DCC09363A}', 0, 1, 0)
-except ModuleNotFoundError:
-    GenerateFromTypeLibSpec('taskschd.dll', None, verboseLevel=0, bForDemand=0, bBuildHidden=1)
-    taskschd = gencache.GetModuleForTypelib('{E34CB9F1-C7F7-424C-BE29-027DCC09363A}', 0, 1, 0)
+taskschd = load_module('taskschd.dll')
 
 
 class Actions(ComClassEnum, container_cls=taskschd.IActionCollection):
