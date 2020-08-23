@@ -4,6 +4,7 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import MagicMock
 
 sys.path.append(Path(__file__).parents[1].as_posix())
 from ds_tools.logging import init_logging
@@ -41,6 +42,42 @@ class WinCronTest(TestCaseBase):
     def test_win_interval(self):
         cron = WinCronSchedule.from_cron('0 0 23 * * *')
         self.assertEqual(cron.interval, 'P1D')
+
+    def test_monthly_dow_last(self):
+        cron = WinCronSchedule.from_trigger(mock_monthly_dow_trigger(3, 4095, 3, True))
+        self.assertEqual('0 0 0 * * 0#1,0#2,0#L,1#1,1#2,1#L', str(cron))
+
+    def test_monthly_dow(self):
+        cron = WinCronSchedule.from_trigger(mock_monthly_dow_trigger(3, 4095, 15))
+        self.assertEqual('0 0 0 * * 0-1', str(cron))
+
+    def test_monthly_dow_all(self):
+        cron = WinCronSchedule.from_trigger(mock_monthly_dow_trigger(2147483647, 4095, 15))
+        self.assertEqual('0 0 0 * * *', str(cron))
+
+    def test_monthly_dow_feb_thru_dec(self):
+        cron = WinCronSchedule.from_trigger(mock_monthly_dow_trigger(2147483647, 4094, 15))
+        self.assertEqual('0 0 0 * 2-12 *', str(cron))
+
+    def test_monthly_dow_jan(self):
+        cron = WinCronSchedule.from_trigger(mock_monthly_dow_trigger(2147483647, 1, 15))
+        self.assertEqual('0 0 0 * 1 *', str(cron))
+
+    def test_first_last_dom(self):
+        cron = WinCronSchedule.from_cron('0 0 23 1,L * *')
+        self.assertEqual('0 0 23 1,L * *', str(cron))
+
+    def test_last_dom(self):
+        cron = WinCronSchedule.from_cron('0 0 23 L * *')
+        self.assertEqual('0 0 23 L * *', str(cron))
+
+
+def mock_monthly_dow_trigger(dow, moy, wom, lwom=False):
+    start = datetime.now().replace(second=0, minute=0, hour=0, microsecond=0).isoformat()
+    mock = MagicMock(
+        Type=5, StartBoundary=start, DaysOfWeek=dow, MonthsOfYear=moy, WeeksOfMonth=wom, RunOnLastWeekOfMonth=lwom
+    )
+    return mock
 
 
 if __name__ == '__main__':

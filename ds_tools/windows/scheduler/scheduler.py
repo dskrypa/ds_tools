@@ -115,6 +115,6 @@ class Scheduler:
 
     def _get_task_name_trigger_map(self, path: str = '\\', recursive: bool = False, hidden: Hidden = True):
         return {
-            task.Name: list(com_iter(task.Definition.Triggers, taskschd.LCID))
+            task.Path: list(com_iter(task.Definition.Triggers, taskschd.LCID))
             for task in self.get_tasks(path, recursive, hidden)
         }
