@@ -1,7 +1,8 @@
 
-class UnknownTaskError(Exception):
-    pass
+from ..com.exceptions import ComException
+
+__all__ = ['UnknownTaskError']
 
 
-class ComClassCreationException(Exception):
+class UnknownTaskError(ComException):
     pass

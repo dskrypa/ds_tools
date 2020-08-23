@@ -13,10 +13,11 @@ import pywintypes
 from win32com.client import Dispatch
 from win32comext.taskscheduler import taskscheduler
 
+from ..com.utils import com_repr, create_entry
+from ..libs.taskschd import taskschd
 from .constants import XML_ATTRS, TASK_STATES, CLSID_ENUM_MAP
 from .exceptions import UnknownTaskError
-from .types import taskschd, create_action, create_trigger
-from .utils import walk_paths, scheduler_obj_as_dict, task_as_dict, com_repr
+from .utils import walk_paths, scheduler_obj_as_dict, task_as_dict
 from .win_cron import WinCronSchedule
 
 __all__ = ['Scheduler', 'Hidden']
@@ -101,12 +102,12 @@ class Scheduler:
         cron = WinCronSchedule.from_cron(cron)
         task = self._scheduler.NewTask(0)
 
-        trigger = create_trigger(task, taskschd.constants.TASK_TRIGGER_TIME)
+        trigger = create_entry(task.Triggers, taskschd.constants.TASK_TRIGGER_TIME)
         log.debug(f'Creating schedule with start={cron.start.isoformat()} interval={cron.interval}')
         trigger.StartBoundary = cron.start.isoformat()
         trigger.Repetition.Interval = cron.interval
 
-        action = create_action(task, taskschd.constants.TASK_ACTION_EXEC)
+        action = create_entry(task.Actions, taskschd.constants.TASK_ACTION_EXEC)
         action.Path = cmd
         if args:
             action.Arguments = args

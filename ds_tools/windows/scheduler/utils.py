@@ -1,21 +1,16 @@
 
 import logging
-import re
 from copy import deepcopy
 from typing import Any, Dict
 
 import xmltodict
-# from win32com import client
 from win32com.client import DispatchBaseClass
-# from win32comext.taskscheduler import taskscheduler
 
 from .constants import XML_ATTRS, CLSID_ENUM_MAP
 from .win_cron import WinCronSchedule
 
-__all__ = ['walk_paths', 'scheduler_obj_as_dict', 'task_as_dict', 'com_repr']
+__all__ = ['walk_paths', 'scheduler_obj_as_dict', 'task_as_dict']
 log = logging.getLogger(__name__)
-
-XMLNS_PAT = re.compile(r'\s?xmlns="[^"]+"')
 
 
 def normalize_triggers(triggers: Dict[str, Any]):
@@ -91,7 +86,7 @@ def scheduler_obj_as_dict(obj, xml, i=None):
     # if clsid == '{09941815-EA89-4B5B-89E0-2A773801FAC3}':  # IEventTrigger
     #     pass
     if clsid == '{BAE54997-48B1-4CBE-9965-D6BE263EBEA4}' and i is not None:  # IAction
-        # I couldn't figure out how to get the lib to give me IExecAction objects...
+        # TODO: Replace with the proper objects?
         actions = xml['Actions']
         if i == 0:
             if action := next((v for k, v in actions.items() if not k.startswith('@')), None):
@@ -119,8 +114,3 @@ def walk_paths(path, hidden, recursive: bool = True):
             yield from walk_paths(sub_path, hidden)
         else:
             yield sub_path
-
-
-def com_repr(obj):
-    attr_names = obj._prop_map_get_
-    return '<{}[{}]>'.format(obj.__class__.__name__, ', '.join(f'{k}={getattr(obj, k)!r}' for k in attr_names))
