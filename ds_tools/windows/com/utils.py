@@ -44,7 +44,7 @@ def create_entry(collection: DispatchBaseClass, _type: int, lcid=0):
     memid = _get_create_memid(collection)
     result = collection._oleobj_.InvokeTypes(memid, lcid, 1, (9, 0), ((3, 1),), _type)
     if result is None:
-        if (enum := ComClassEnum._get_entry_enum(collection.__class__.CLSID)) and (cls := enum.for_num(_type, None)):
+        if (enum := ComClassEnum.get_child_class(collection.__class__.CLSID)) and (cls := enum.for_num(_type, None)):
             # noinspection PyUnboundLocalVariable
             raise ComClassCreationException(f'Unable to create {cls.cls.__name__} in {collection=}')
         raise ComClassCreationException(f'Unable to create entry in {collection=}')

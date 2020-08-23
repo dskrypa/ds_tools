@@ -72,7 +72,7 @@ class Scheduler:
         raise UnknownTaskError(f'Invalid task {path=!r} - {name=!r} does not exist in {parent=!r}')
 
     def get_tasks_dict(self, *args, summarize=False, **kwargs):
-        return {task.Name: task_as_dict(task, summarize) for task in self.get_tasks(*args, **kwargs)}
+        return {task.Path: task_as_dict(task, summarize) for task in self.get_tasks(*args, **kwargs)}
 
     def get_task_dict(self, *args, summarize=False, **kwargs):
         return task_as_dict(self.get_task(*args, **kwargs), summarize)

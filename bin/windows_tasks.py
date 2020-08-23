@@ -12,14 +12,12 @@ from collections import defaultdict
 from itertools import zip_longest
 from typing import Optional
 
-import xmltodict
-
 sys.path.append(PROJECT_ROOT.as_posix())
 from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
 from ds_tools.core import wrap_main
 from ds_tools.logging import init_logging
-from ds_tools.output import Printer, Table, TableBar, SimpleColumn
+from ds_tools.output import Printer, Table, TableBar
 from ds_tools.windows.scheduler import Scheduler
 
 log = logging.getLogger(__name__)
@@ -36,7 +34,6 @@ def parser():
     list_transform_opts = list_parser.add_argument_group('Transform Options').add_mutually_exclusive_group()
     list_transform_opts.add_argument('--summarize', '-s', action='store_true', help='Summarize task info')
     list_transform_opts.add_argument('--triggers', '-t', action='store_true', help='Only show tasks\' triggers')
-    list_transform_opts.add_argument('--xml', '-x', action='store_true', help='Show task\'s parsed XML data instead of processing COM properties')
     list_transform_opts.add_argument('--raw_xml', '-X', action='store_true', help='Show task\'s raw XML data instead of processing COM properties')
 
     table_parser = parser.add_subparser('action', 'table', help='Show a table of scheduled tasks and their actions')
@@ -63,7 +60,7 @@ def main():
     action = args.action
     if action == 'list':
         show_tasks(
-            args.path or '\\', args.recursive, args.format, args.summarize, args.triggers, args.xml, args.raw_xml
+            args.path or '\\', args.recursive, args.format, args.summarize, args.triggers, args.raw_xml
         )
     elif action == 'table':
         table_tasks(args.path or '\\', args.recursive, args.times)
@@ -87,7 +84,6 @@ def table_tasks(path: Optional[str] = '\\', recursive: bool = False, times: bool
             'Last': task['LastRun'],
             'Next': task['NextRun'],
             'Trigger': '',
-            'Cron': '',
             'Action': '',
         }
         if not times:
@@ -99,11 +95,14 @@ def table_tasks(path: Optional[str] = '\\', recursive: bool = False, times: bool
             if i:
                 row = defaultdict(str)
             if trigger:
-                row['Trigger'] = trigger['type']
-                row['Cron'] = str(trigger['cron'])
+                cron = str(trigger['cron'])
+                if cron.startswith('<'):
+                    row['Trigger'] = cron
+                else:
+                    row['Trigger'] = f'{trigger["Type"]}: {cron}'
             if action:
-                if (a_type := action['Type']) == 'Exec':
-                    row['Action'] = f'{a_type}: {action["Command"]} {action["Arguments"]}'
+                if (a_type := action['Type']) == 'IExecAction':
+                    row['Action'] = f'{a_type}: {action["Path"]} {action["Arguments"]}'
                 else:
                     row['Action'] = f'{a_type}: {action}'
             rows.append(row)
@@ -121,21 +120,16 @@ def show_tasks(
     out_fmt: str = 'pseudo-json',
     summarize=False,
     triggers=False,
-    xml=False,
     raw_xml=False,
 ):
-    if triggers or xml or raw_xml:
-        raw_tasks = Scheduler().get_tasks(path, recursive=recursive)
-        if raw_xml:
-            for task in raw_tasks:
-                print(task.Xml)
-            return
-        else:
-            tasks = {task.Name: xmltodict.parse(task.Xml)['Task'] for task in raw_tasks}
-            if triggers:
-                tasks = {name: xml['Triggers'] for name, xml in tasks.items()}
+    if raw_xml:
+        for task in Scheduler().get_tasks(path, recursive=recursive):
+            print(task.Xml)
+        return
     else:
         tasks = Scheduler().get_tasks_dict(path, recursive=recursive, summarize=summarize)
+        if triggers:
+            tasks = {_path: task['Definition']['Triggers'] for _path, task in tasks.items()}
 
     Printer(out_fmt).pprint(tasks)
 

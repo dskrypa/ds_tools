@@ -8,27 +8,7 @@ MONTH_NAME_NUM_MAP = {month: i for i, month in enumerate(MONTH_LIST) if i}
 
 XML_ATTRS = {'Xml', 'XmlText'}
 TASK_STATES = {1: 'Disabled', 2: 'Queued', 3: 'Ready', 4: 'Running', 0: 'Unknown'}
-ACTION_TYPES = {0: 'Exec', 5: 'COM Handler', 6: 'Send Email', 7: 'Show Message'}
-TRIGGER_TYPES = {
-    0: 'Event',             # TASK_TRIGGER_EVENT
-    1: 'Time',              # TASK_TRIGGER_TIME
-    2: 'Daily',             # TASK_TRIGGER_DAILY
-    3: 'Weekly',            # TASK_TRIGGER_WEEKLY
-    4: 'Monthly',           # TASK_TRIGGER_MONTHLY
-    5: 'MonthlyDayOfWeek',  # TASK_TRIGGER_MONTHLYDOW
-    6: 'OnIdle',            # TASK_TRIGGER_IDLE
-    7: 'OnTaskCreation',    # TASK_TRIGGER_REGISTRATION
-    8: 'OnBoot',            # TASK_TRIGGER_BOOT
-    9: 'OnLogon',           # TASK_TRIGGER_LOGON
-    11: 'OnSessionChange',  # TASK_TRIGGER_SESSION_STATE_CHANGE
-    12: 'Custom',           # TASK_TRIGGER_CUSTOM_TRIGGER_01
-}
-
-CLSID_ENUM_MAP = {
-    '{09941815-EA89-4B5B-89E0-2A773801FAC3}': {'Type': TRIGGER_TYPES},
-    '{BAE54997-48B1-4CBE-9965-D6BE263EBEA4}': {'Type': ACTION_TYPES},
-    '{9C86F320-DEE3-4DD1-B972-A303F26B061E}': {'State': TASK_STATES},
-}
+CLSID_ENUM_MAP = {'{9C86F320-DEE3-4DD1-B972-A303F26B061E}': {'State': TASK_STATES}}
 
 # instances = {
 #     'Parallel': TASK_INSTANCES_PARALLEL,

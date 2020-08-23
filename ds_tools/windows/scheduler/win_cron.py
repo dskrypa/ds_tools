@@ -262,7 +262,7 @@ class WinCronSchedule:
             for divisor in range(2, len(freq) // 2 + 1):
                 divisible = {k for k in freq if isinstance(k, int) and k % divisor == 0}
                 if divisible == enabled:
-                    log.warning(f'{divisible=}.intersection({enabled=}) == divisible ({divisor=})')
+                    # log.warning(f'{divisible=}.intersection({enabled=}) == divisible ({divisor=})')
                     return f'*/{divisor}'
 
         collapsed = collapse(sorted(enabled))

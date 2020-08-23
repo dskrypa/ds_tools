@@ -8,14 +8,14 @@ taskschd = load_module('taskschd.dll')
 constants = taskschd.constants
 
 
-class Actions(ComClassEnum, container_cls=taskschd.IActionCollection):
+class Actions(ComClassEnum, parent=taskschd.IActionCollection, attr='Type'):
     EXEC = constants.TASK_ACTION_EXEC, taskschd.IExecAction  # 0
     COM_HANDLER = constants.TASK_ACTION_COM_HANDLER, taskschd.IComHandlerAction  # 5
     SEND_EMAIL = constants.TASK_ACTION_SEND_EMAIL, taskschd.IEmailAction  # 6; deprecated
     SHOW_MESSAGE = constants.TASK_ACTION_SHOW_MESSAGE, taskschd.IShowMessageAction  # 7; deprecated
 
 
-class Triggers(ComClassEnum, container_cls=taskschd.ITriggerCollection):
+class Triggers(ComClassEnum, parent=taskschd.ITriggerCollection, attr='Type'):
     EVENT = constants.TASK_TRIGGER_EVENT, taskschd.IEventTrigger  # 0
     TIME = constants.TASK_TRIGGER_TIME, taskschd.ITimeTrigger  # 1
     DAILY = constants.TASK_TRIGGER_DAILY, taskschd.IDailyTrigger  # 2

@@ -12,15 +12,18 @@ class ExtendedEnumMeta(EnumMeta):
 
     # noinspection PyMethodOverriding
     @classmethod
-    def __prepare__(mcs, cls, bases, container_cls=None):
+    def __prepare__(mcs, cls, bases, parent=None, attr=None):
         return super().__prepare__(cls, bases)
 
-    def __new__(mcs, cls, bases, classdict, container_cls=None):
+    def __new__(mcs, cls, bases, classdict, parent=None, attr=None):
         _class = super().__new__(mcs, cls, bases, classdict)
         if cls != 'ComClassEnum':
-            if container_cls is None:
-                raise TypeError('__new__() missing 1 required argument: \'container_cls\'')
-            ExtendedEnumMeta._clsids[str(container_cls.CLSID)] = _class
+            if parent is None:
+                raise TypeError('__new__() missing 1 required argument: \'parent\'')
+            elif attr is None:
+                raise TypeError('__new__() missing 1 required argument: \'attr\'')
+            ExtendedEnumMeta._clsids[str(parent.CLSID)] = _class
+            _class._attr = attr
         return _class
 
 
@@ -34,7 +37,7 @@ class ComClassEnum(Enum, metaclass=ExtendedEnumMeta):
         return self._value_[1]
 
     @classmethod
-    def _get_entry_enum(cls, clsid):
+    def get_child_class(cls, clsid):
         return cls._clsids.get(str(clsid))
 
     @classmethod
