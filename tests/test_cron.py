@@ -78,6 +78,12 @@ class WinCronTest(TestCaseBase):
         cron = WinCronSchedule.from_cron('0 0 1-3,5,7-12,20 * * *')
         self.assertEqual('0 0 1-3,5,7-12,20 * * *', str(cron))
 
+        with self.assertRaises(ValueError):
+            cron = WinCronSchedule.from_cron('0 0 3-1,5,7-12,20 * * *')
+
+        with self.assertRaises(ValueError):
+            cron = WinCronSchedule.from_cron('0 0 3-3,5,7-12,20 * * *')
+
 
 def mock_monthly_dow_trigger(dow, moy, wom, lwom=False):
     start = datetime.now().replace(second=0, minute=0, hour=0, microsecond=0).isoformat()

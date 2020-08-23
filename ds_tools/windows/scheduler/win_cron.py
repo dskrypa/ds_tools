@@ -163,6 +163,8 @@ class WinCronSchedule:
                         a, b = map(int, p.split('-'))
                     except (TypeError, ValueError):
                         raise ValueError(f'Invalid cron schedule {part=!r} in {pos=}')
+                    if a >= b:
+                        raise ValueError(f'Invalid cron schedule {part=!r} in {pos=}')
                     vals.update(range(a, b + 1))
                 else:
                     try:
