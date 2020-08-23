@@ -5,3 +5,7 @@ class ComException(Exception):
 
 class ComClassCreationException(ComException):
     pass
+
+
+class IterationNotSupported(ComException):
+    pass

@@ -7,6 +7,7 @@ from pywintypes import com_error
 from win32com.client import DispatchBaseClass
 
 from ..com.enums import ComClassEnum
+from ..com.exceptions import IterationNotSupported
 from ..com.utils import com_repr, com_iter
 from ..libs.taskschd import taskschd
 from .constants import XML_ATTRS, CLSID_ENUM_MAP, RUN_RESULT_CODE_MAP, DAY_LIST, MONTH_LIST
@@ -33,15 +34,8 @@ def scheduler_obj_as_dict(obj, i=None, parent=None):
                 try:
                     # noinspection PyTypeChecker
                     _value['values'] = [scheduler_obj_as_dict(v, i, value) for i, v in enumerate(com_iter(value))]
-                except com_error as e:
-                    if e.hresult == -2147352573:  # Object does not support iteration
-                        pass
-                    else:
-                        try:
-                            log.error(f'Error iterating over {com_repr(obj)}: {e}')
-                        except com_error:
-                            log.error(f'Error iterating over {obj}: {e}')
-                        raise
+                except IterationNotSupported:
+                    pass
                 value = _value
             elif attr_enum := cls_enums.get(attr):
                 value = attr_enum.get(value, value)

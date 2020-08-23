@@ -6,12 +6,14 @@ Utilities for loading and working with Windows libraries using win32com.
 
 # noinspection PyUnresolvedReferences
 from pythoncom import LoadTypeLib, DISPATCH_METHOD, DISPATCH_PROPERTYGET, DISPID_NEWENUM, IID_IEnumVARIANT
+# noinspection PyUnresolvedReferences
+from pywintypes import com_error
 from win32com.client import Dispatch, DispatchBaseClass, _get_good_object_
 from win32com.client.gencache import GetModuleForTypelib
 from win32com.client.makepy import GenerateFromTypeLibSpec
 
 from ..com.enums import ComClassEnum
-from .exceptions import ComClassCreationException
+from .exceptions import ComClassCreationException, IterationNotSupported
 
 __all__ = ['com_iter', 'create_entry', 'com_repr', 'load_module']
 
@@ -56,9 +58,13 @@ def com_iter(obj: DispatchBaseClass, lcid=0):
     Iterate over the items that the given COM object contains.  Yields the proper classes rather than the base classes.
     """
     invkind = DISPATCH_METHOD | DISPATCH_PROPERTYGET
-    enum = obj._oleobj_.InvokeTypes(DISPID_NEWENUM, lcid, invkind, (13, 10), ())
-    for value in enum.QueryInterface(IID_IEnumVARIANT):
-        yield _get_good_object_(value)  # When no clsid is provided, it returns the correct subclass
+    try:
+        enum = obj._oleobj_.InvokeTypes(DISPID_NEWENUM, lcid, invkind, (13, 10), ())
+    except com_error:  # It is not possible to iterate over the given object
+        raise IterationNotSupported
+    else:
+        for value in enum.QueryInterface(IID_IEnumVARIANT):
+            yield _get_good_object_(value)  # When no clsid is provided, it returns the correct subclass
 
 
 def com_repr(obj):
