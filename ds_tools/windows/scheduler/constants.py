@@ -37,7 +37,7 @@ CLSID_ENUM_MAP = {
 #     'Stop Existing': TASK_INSTANCES_STOP_EXISTING,
 # }
 
-RESULT_CODE_MAP = {
+RUN_RESULT_CODE_MAP = {
     0x0: 'The operation completed successfully',
     0x1: 'Incorrect or unknown function called',
     0x2: 'File not found',
@@ -56,10 +56,29 @@ RESULT_CODE_MAP = {
     0xC06D007E: 'Unknown software exception',
 }
 
-REGISTER_TASK_DEFINITION_ERROR_CODES = {
-    -2147024773: 'The filename, directory name, or volume label syntax is incorrect',
-    -2147024894: 'The system cannot find the file specified',
-    -2147216615: 'Required element or attribute missing',
-    -2147216616: 'Value incorrectly formatted or out of range',
-    -2147352571: 'Access denied',
+REGISTER_TASK_ERROR_CODES = {
+    0x80020005: 'Access denied',
+    0x80041309: 'A task\'s trigger is not found',
+    0x8004130A: 'One or more of the properties required to run this task have not been set',
+    0x8004130C: 'The Task Scheduler service is not installed on this computer',
+    0x8004130D: 'The task object could not be opened',
+    0x8004130E: 'The object is either an invalid task object or is not a task object',
+    0x8004130F: 'No account information could be found in the Task Scheduler security database for the task indicated',
+    0x80041310: 'Unable to establish existence of the account specified',
+    0x80041311: 'Corruption was detected in the Task Scheduler security database; the database has been reset',
+    0x80041313: 'The task object version is either unsupported or invalid',
+    0x80041314: 'The task has been configured with an unsupported combination of account settings and run time options',
+    0x80041315: 'The Task Scheduler Service is not running',
+    0x80041316: 'The task XML contains an unexpected node',
+    0x80041317: 'The task XML contains an element or attribute from an unexpected namespace',
+    0x80041318: 'Value incorrectly formatted or out of range',
+    0x80041319: 'Required element or attribute missing',
+    0x8004131A: 'The task XML is malformed',
+    0x0004131C: (
+        'The task is registered, but may fail to start. Batch logon privilege needs to be enabled for the task'
+        'principal'
+    ),
+    0x8004131D: 'The task XML contains too many nodes of the same type',
+    0x80070002: 'The system cannot find the file specified',
+    0x8007007b: 'The filename, directory name, or volume label syntax is incorrect',
 }

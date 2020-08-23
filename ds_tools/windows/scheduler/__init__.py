@@ -16,8 +16,8 @@ from win32comext.taskscheduler import taskscheduler
 from ..com.utils import com_repr, create_entry
 from ..libs.taskschd import taskschd
 from .constants import XML_ATTRS, TASK_STATES, CLSID_ENUM_MAP
-from .exceptions import UnknownTaskError
-from .utils import walk_paths, scheduler_obj_as_dict, task_as_dict
+from .exceptions import UnknownTaskError, TaskCreationException
+from .utils import walk_paths, scheduler_obj_as_dict, task_as_dict, _summarize
 from .win_cron import WinCronSchedule
 
 __all__ = ['Scheduler', 'Hidden']
@@ -116,33 +116,18 @@ class Scheduler:
         task.Settings.Enabled = True
 
         log.debug(f'Registering {name=} in {path=}')
-        sched_path.RegisterTaskDefinition(
-            name,
-            task,
-            taskschd.constants.TASK_CREATE_OR_UPDATE if allow_update else taskschd.constants.TASK_CREATE,
-            '',
-            '',
-            taskschd.constants.TASK_LOGON_NONE,
-        )
+        # noinspection PyUnresolvedReferences
+        try:
+            sched_path.RegisterTaskDefinition(
+                name,
+                task,
+                taskschd.constants.TASK_CREATE_OR_UPDATE if allow_update else taskschd.constants.TASK_CREATE,
+                '',
+                '',
+                taskschd.constants.TASK_LOGON_NONE,
+            )
+        except pythoncom.com_error as error:
+            # noinspection PyTypeChecker
+            raise TaskCreationException(error, path, name, cron, cmd, args)
+
         log.info(f'Successfully registered task={path}\\{name} with cron={cron!s} and {cmd=}')
-
-
-def _summarize(task_dict):
-    definition = task_dict['Definition']
-    reg_info = definition['RegistrationInfo']
-    actions = definition['Actions']['values']
-    return {
-        'Location': task_dict['Path'],
-        'Status': task_dict['State'],
-        'LastRun': task_dict['LastRunTime'],
-        'NextRun': task_dict['NextRunTime'],
-        'LastResult': task_dict['LastTaskResult'],
-        'Enabled': task_dict['Enabled'],
-        'Author': reg_info['Author'],
-        'Description': reg_info['Description'],
-        'RunAs': definition['Principal']['UserId'],
-        'Actions': actions,
-        'Triggers': definition['Triggers']
-        # 'Schedule': [f'{t["Type"]}: {t["cron"]}' for t in definition['Triggers']['values']],
-        # 'Cron': list(filter(None, (t['cron'] for t in definition['Triggers']['values']))),
-    }

@@ -6,7 +6,7 @@ from typing import Any, Dict
 import xmltodict
 from win32com.client import DispatchBaseClass
 
-from .constants import XML_ATTRS, CLSID_ENUM_MAP
+from .constants import XML_ATTRS, CLSID_ENUM_MAP, RUN_RESULT_CODE_MAP
 from .win_cron import WinCronSchedule
 
 __all__ = ['walk_paths', 'scheduler_obj_as_dict', 'task_as_dict']
@@ -114,3 +114,34 @@ def walk_paths(path, hidden, recursive: bool = True):
             yield from walk_paths(sub_path, hidden)
         else:
             yield sub_path
+
+
+def _run_result_str(result: int):
+    if result < 0:
+        result += 2 ** 32
+    code_str = hex(result)
+    try:
+        return f'{RUN_RESULT_CODE_MAP[result]} ({code_str})'
+    except KeyError:
+        return f'({code_str})'
+
+
+def _summarize(task_dict):
+    definition = task_dict['Definition']
+    reg_info = definition['RegistrationInfo']
+    actions = definition['Actions']['values']
+    return {
+        'Location': task_dict['Path'],
+        'Status': task_dict['State'],
+        'LastRun': task_dict['LastRunTime'],
+        'NextRun': task_dict['NextRunTime'],
+        'LastResult': _run_result_str(task_dict['LastTaskResult']),
+        'Enabled': task_dict['Enabled'],
+        'Author': reg_info['Author'],
+        'Description': reg_info['Description'],
+        'RunAs': definition['Principal']['UserId'],
+        'Actions': actions,
+        'Triggers': definition['Triggers']
+        # 'Schedule': [f'{t["Type"]}: {t["cron"]}' for t in definition['Triggers']['values']],
+        # 'Cron': list(filter(None, (t['cron'] for t in definition['Triggers']['values']))),
+    }

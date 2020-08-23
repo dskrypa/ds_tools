@@ -47,6 +47,7 @@ class WinCronSchedule:
                 except ValueError:
                     raise RuntimeError(f'Unexpected time format for {start=}')
 
+        # TODO: Redo with proper com classes instead of from xml
         self = cls(start)
         if trigger_type == 'ScheduleByMonthDayOfWeek':
             self._set_time(start)
@@ -61,6 +62,14 @@ class WinCronSchedule:
                     weeks = section['Week']
                     enabled = {int(weeks)} if isinstance(weeks, str) else set(map(int, weeks))
                     self._weeks = {i: i in enabled for i in range(1, 6)}
+                else:
+                    raise ValueError(f'Unexpected section={name!r} in type={trigger_type!r} {schedule=} {start=}')
+        elif trigger_type == 'ScheduleByDay':
+            self._set_time(start)
+            for name, section in schedule.items():
+                if name == 'DaysInterval':
+                    interval = int(section)
+                    self._day = {i: i % interval == 0 for i in range(1, 31)}
                 else:
                     raise ValueError(f'Unexpected section={name!r} in type={trigger_type!r} {schedule=} {start=}')
         elif trigger_type in ('TriggerDaily', 'CalendarTrigger'):
