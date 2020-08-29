@@ -7,6 +7,7 @@ Facilitates preparation of log directories and configuring loggers with custom s
 import inspect
 import logging
 import os
+import re
 import signal
 import sys
 import time
@@ -17,6 +18,8 @@ from getpass import getuser
 from itertools import count
 from logging import handlers
 from pathlib import Path
+from threading import RLock
+from typing import Set, Optional, List, Union, Collection, Iterable, Callable
 
 from tzlocal import get_localzone
 
@@ -25,24 +28,28 @@ from .output.color import colored
 __all__ = [
     'init_logging', 'add_context_filter', 'logger_has_non_null_handlers', 'ENTRY_FMT_DETAILED',
     'ENTRY_FMT_DETAILED_PID', 'ENTRY_FMT_DETAILED_PID_UID', 'ENTRY_FMT_DETAILED_UID', 'DatetimeFormatter',
-    'ColorLogFormatter', 'ColorThreadFormatter', 'get_logger_info'
+    'ColorLogFormatter', 'ColorThreadFormatter', 'get_logger_info', 'stream_config_dict'
 ]
 log = logging.getLogger(__name__)
 
 _NotSet = object()
+_lock = RLock()
+_stream_refs = set()
 COLOR_CODED_THREADS = os.environ.get('DS_TOOLS_COLOR_CODED_THREAD_LOGS', '0') == '1'
 DEFAULT_LOG_DIR = '/var/tmp/{user}/script_logs'
 ENTRY_FMT_DETAILED = '%(asctime)s %(levelname)s %(threadName)s %(name)s %(lineno)d %(message)s'
 ENTRY_FMT_DETAILED_PID = '%(asctime)s %(levelname)s %(process)d %(threadName)s %(name)s %(lineno)d %(message)s'
 ENTRY_FMT_DETAILED_UID = '%(asctime)s %(levelname)s %(threadName)s %(name)s %(lineno)d [%(uid)s] %(message)s'
 ENTRY_FMT_DETAILED_PID_UID = '%(asctime)s %(levelname)s %(process)d %(threadName)s %(name)s %(lineno)d [%(uid)s] %(message)s'
+SUPPRESS_WARNINGS = ('InsecureRequestWarning',)
 
 
 def init_logging(
-    verbosity=0, *, log_path=_NotSet, names=_NotSet, date_fmt=None, millis=False, entry_fmt=None, file_fmt=None,
-    file_perm=0o666, file_lvl=logging.DEBUG, file_dir=None, filename_fmt='{prog}.{user}.{time}{uniq}.log',
-    file_handler_opts=None, fix_sigpipe=True, patch_emit='quiet', replace_handlers=True, lvl_names=_NotSet,
-    lvl_names_add=None, set_levels=None, streams=True, reopen_streams=True, color_threads=None
+    verbosity=0, *, log_path=_NotSet, names=_NotSet, names_add=_NotSet, date_fmt=None, millis=False, entry_fmt=None,
+    file_fmt=None, file_perm=0o666, file_lvl=logging.DEBUG, file_dir=None,
+    filename_fmt='{prog}.{user}.{time}{uniq}.log', file_handler_opts=None, fix_sigpipe=True, patch_emit='quiet',
+    replace_handlers=True, lvl_names=_NotSet, lvl_names_add=None, set_levels=None, streams=True, reopen_streams=True,
+    color_threads=None, capture_warnings=True, suppress_warnings=_NotSet, suppress_additional_warnings=None,
 ):
     """
     Configures stream handlers for stdout and stderr so that logs with level logging.INFO and below are sent to stdout
@@ -122,20 +129,207 @@ def init_logging(
     if patch_emit:
         logging.StreamHandler.emit = _stream_handler_emit_quiet if patch_emit == 'quiet' else _stream_handler_emit
 
-    if names is _NotSet:
-        names = {None} if verbosity and (verbosity > 10) else {__name__.split('.')[0], '__main__'}
-    elif names is None or isinstance(names, str):
-        names = {names}
+    _configure_level_names(lvl_names, lvl_names_add)
+    loggers = _get_loggers(names, verbosity, names_add, replace_handlers)
     root_logger = logging.getLogger()
-    if None not in names:
+    if root_logger in loggers:
         root_logger.addHandler(logging.NullHandler())       # Hide logs written directly to the root logger
     root_logger.setLevel(logging.NOTSET)                    # Default is 30 / WARNING
-    loggers = [logging.getLogger(name) for name in names]
+
+    date_fmt = date_fmt or ('%Y-%m-%d %H:%M:%S.%f %Z' if millis else '%Y-%m-%d %H:%M:%S %Z')    # used by all handlers
+    if streams:
+        _add_stream_handlers(
+            loggers, verbosity, date_fmt, entry_fmt, reopen_streams=reopen_streams, color_threads=color_threads
+        )
+
+    if set_levels:
+        if not isinstance(set_levels, dict):
+            raise TypeError('levels must be a dict of logger_name=level pairs')
+        for name, lvl in set_levels.items():
+            logging.getLogger(name).setLevel(lvl)
+
+    if log_path is not None:
+        log_path = _choose_log_path(file_dir, filename_fmt) if log_path is _NotSet else Path(log_path).expanduser()
+        _add_file_handler(loggers, log_path, date_fmt, file_fmt, file_lvl, file_handler_opts, file_perm)
+
+    if capture_warnings:
+        _capture_warnings(suppress_warnings, suppress_additional_warnings)
+
+    return log_path
+
+
+def stream_config_dict(verbosity=0, *, names=_NotSet, names_add=_NotSet, entry_fmt=None, date_fmt=None, millis=False):
+    date_fmt = date_fmt or ('%Y-%m-%d %H:%M:%S.%f %Z' if millis else '%Y-%m-%d %H:%M:%S %Z')  # used by all handlers
+    entry_fmt = entry_fmt or (ENTRY_FMT_DETAILED if verbosity and verbosity > 2 else '%(message)s')
+    names = _get_logger_names(names, verbosity, names_add)
+    # fmt: off
+    config = {
+        'filters': {
+            'stdout': {'()': create_filter(lambda r: r.levelno < logging.WARNING)},
+            'stderr': {'()': create_filter(lambda r: r.levelno >= logging.WARNING)},
+        },
+        'formatters': {
+            'stream': {'()': ColorLogFormatter(entry_fmt, date_fmt)},
+        },
+        'handlers': {
+            'stdout': {
+                'class': 'logging.StreamHandler',
+                'formatter': 'stream',
+                'level': logging.DEBUG + 2 - verbosity if verbosity else logging.INFO,
+                'filters': ['stdout'],
+                'stream': 'ext://sys.stdout',
+            },
+            'stderr': {
+                'class': 'logging.StreamHandler',
+                'formatter': 'stream',
+                'level': logging.INFO,
+                'filters': ['stderr'],
+                'stream': 'ext://sys.stderr',
+            },
+        },
+        'loggers': {
+            name: {'level': logging.NOTSET, 'handlers': ['stdout', 'stderr']} for name in names if name
+        },
+    }
+    if None in names:
+        config['root'] = {'level': logging.NOTSET, 'handlers': ['stdout', 'stderr']}
+    # fmt: on
+    return config
+
+
+def _add_stream_handlers(
+    loggers: Iterable[logging.Logger],
+    verbosity: Union[int, bool],
+    date_fmt: str,
+    entry_fmt: Optional[str] = None,
+    stdout_lvl_filter: Optional[Callable] = None,
+    stderr_lvl_filter: Optional[Callable] = None,
+    reopen_streams=True,
+    color_threads=False,
+):
+    entry_fmt = entry_fmt or (ENTRY_FMT_DETAILED if verbosity and verbosity > 2 else '%(message)s')
+
+    stdout = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1) if reopen_streams else sys.stdout
+    stdout_handler = logging.StreamHandler(stdout)
+    stdout_handler.setLevel(logging.DEBUG + 2 - verbosity if verbosity else logging.INFO)
+    stdout_handler.addFilter(stdout_lvl_filter or create_filter(lambda r: r.levelno < logging.WARNING))
+    stdout_handler.name = 'stdout'
+
+    stderr = open(sys.stderr.fileno(), mode='w', encoding='utf-8', buffering=1) if reopen_streams else sys.stderr
+    stderr_handler = logging.StreamHandler(stderr)
+    stderr_handler.setLevel(logging.INFO)
+    stderr_handler.addFilter(stderr_lvl_filter or create_filter(lambda r: r.levelno >= logging.WARNING))
+    stderr_handler.name = 'stderr'
+
+    if color_threads or (COLOR_CODED_THREADS and color_threads is not False):
+        stream_formatter = ColorThreadFormatter(entry_fmt, date_fmt)
+    else:
+        stream_formatter = ColorLogFormatter(entry_fmt, date_fmt)
+    stream_handlers = (stdout_handler, stderr_handler)
+    for handler in stream_handlers:
+        handler.setFormatter(stream_formatter)
     for logger in loggers:
-        logger.setLevel(logging.NOTSET)                     # Let handlers deal with log levels
+        for handler in stream_handlers:
+            logger.addHandler(handler)
+
+
+def _choose_log_path(file_dir, filename_fmt, cleanup_old=True) -> Path:
+    log_dir = Path(file_dir if file_dir else DEFAULT_LOG_DIR.format(user=getuser()))
+    try:
+        prog = Path(inspect.getsourcefile(inspect.stack()[-1][0])).stem
+    except (TypeError, AttributeError):
+        prog = '{}_interactive'.format(Path(__file__).stem)
+    name_parts = {'prog': prog, 'user': getuser(), 'time': int(time.time()), 'uniq': '', 'pid': os.getpid()}
+    log_path = log_dir.joinpath(filename_fmt.format(**name_parts))
+    if log_path.exists() and '{uniq}' in filename_fmt:
+        suffix = count()
+        while log_path.exists():
+            name_parts['uniq'] = '-{}'.format(next(suffix))
+            log_path = log_dir.joinpath(filename_fmt.format(**name_parts))
+
+    if cleanup_old and '{time}' in filename_fmt and log_dir.exists():
+        cleanup_old = 14 if cleanup_old is True else cleanup_old
+        name_parts['time'] = '(\d+)'
+        name_parts['uniq'] = '\-?\d*'
+        escaped_fmt = re.escape(filename_fmt).replace('\\{', '{').replace('\\}', '}')
+        old_match = re.compile(escaped_fmt.format(**name_parts)).match
+        _now = int(time.time())
+        cleanup_old *= 60 * 60 * 24
+        for old_path in log_dir.iterdir():
+            # noinspection PyUnboundLocalVariable
+            if old_path.is_file() and (m := old_match(old_path.name)) and (_now - int(m.group(1))) > cleanup_old:
+                try:
+                    old_path.unlink()
+                except OSError as e:
+                    log.error(f'Error deleting old log file: {old_path} - {e}')
+
+    return log_path
+
+
+def _add_file_handler(loggers, log_path, date_fmt, file_fmt, file_lvl, file_handler_opts, file_perm):
+    log_path = log_path.as_posix()
+    prep_log_dir(log_path)
+    file_handler_opts = file_handler_opts or {'when': 'midnight', 'backupCount': 7, 'encoding': 'utf-8'}
+    file_handler = handlers.TimedRotatingFileHandler(log_path, **file_handler_opts)
+    with suppress(OSError):
+        os.chmod(log_path, file_perm)
+    file_handler.setLevel(file_lvl)
+    file_handler.setFormatter(DatetimeFormatter(file_fmt or ENTRY_FMT_DETAILED, date_fmt))
+    file_handler.name = log_path
+    for logger in loggers:
+        logger.addHandler(file_handler)
+    log.log(19, 'Logging to {}'.format(log_path))
+
+
+def _get_logger_names(names=_NotSet, verbosity=0, names_add=_NotSet) -> Set[Optional[str]]:
+    if names is _NotSet:
+        if verbosity and verbosity > 10:
+            names = {None}
+        else:
+            names = {__name__.split('.')[0], '__main__', '__mp_main__', 'py.warnings'}
+    elif names is None or isinstance(names, str):
+        names = {names}
+
+    if names_add is not _NotSet:
+        names.update({names_add} if names_add is None or isinstance(names_add, str) else names_add)
+
+    if None in names:
+        names = {None}
+
+    return names
+
+
+def _get_loggers(names, verbosity, names_add, replace_handlers) -> List[logging.Logger]:
+    loggers = list(map(logging.getLogger, _get_logger_names(names, verbosity, names_add)))
+    for logger in loggers:
+        logger.setLevel(logging.NOTSET)  # Let handlers deal with log levels
         if replace_handlers:
+            with _lock:  # Prevent stdout/stderr from being closed
+                _stream_refs.update(h.stream for h in logger.handlers if isinstance(h, logging.StreamHandler))
             logger.handlers = []
 
+    return loggers
+
+
+def _capture_warnings(
+    warnings: Union[Collection[str], _NotSet] = _NotSet, additional: Optional[Collection[str]] = None
+):
+    logging.captureWarnings(True)
+    warnings = set(SUPPRESS_WARNINGS) if warnings is _NotSet else set(warnings) if warnings else set()
+    if additional:
+        warnings.update(additional)
+
+    class WarningFilter(logging.Filter):
+        def filter(self, record):
+            try:
+                return not any(w in record.args[0] for w in warnings)
+            except Exception:
+                return True
+
+    logging.getLogger('py.warnings').addFilter(WarningFilter())
+
+
+def _configure_level_names(lvl_names=_NotSet, lvl_names_add=None):
     if lvl_names is _NotSet:
         lvl_names = {lvl: 'DBG_{}'.format(lvl) for lvl in range(1, 10)}
         lvl_names.update({lvl: 'Lv_{}'.format(lvl) for lvl in range(11, 19)})
@@ -148,70 +342,6 @@ def init_logging(
             if (name not in logging._nameToLevel) and (lvl not in logging._levelToName):
                 logging.addLevelName(lvl, name)
 
-    date_fmt = date_fmt or ('%Y-%m-%d %H:%M:%S.%f %Z' if millis else '%Y-%m-%d %H:%M:%S %Z')    # used by all handlers
-    if streams:
-        entry_fmt = entry_fmt or (ENTRY_FMT_DETAILED if verbosity and verbosity > 2 else '%(message)s')
-
-        stdout = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1) if reopen_streams else sys.stdout
-        stdout_handler = logging.StreamHandler(stdout)
-        stdout_handler.setLevel(logging.DEBUG + 2 - verbosity if verbosity else logging.INFO)
-        stdout_handler.addFilter(create_filter(lambda lvl: lvl < logging.WARNING))
-        stdout_handler.name = 'stdout'
-
-        stderr = open(sys.stderr.fileno(), mode='w', encoding='utf-8', buffering=1) if reopen_streams else sys.stderr
-        stderr_handler = logging.StreamHandler(stderr)
-        stderr_handler.setLevel(logging.INFO)
-        stderr_handler.addFilter(create_filter(lambda lvl: lvl >= logging.WARNING))
-        stderr_handler.name = 'stderr'
-
-        if color_threads or (COLOR_CODED_THREADS and color_threads is not False):
-            stream_formatter = ColorThreadFormatter(entry_fmt, date_fmt)
-        else:
-            stream_formatter = ColorLogFormatter(entry_fmt, date_fmt)
-        stream_handlers = (stdout_handler, stderr_handler)
-        for handler in stream_handlers:
-            handler.setFormatter(stream_formatter)
-        for logger in loggers:
-            for handler in stream_handlers:
-                logger.addHandler(handler)
-
-    if set_levels:
-        if not isinstance(set_levels, dict):
-            raise TypeError('levels must be a dict of logger_name=level pairs')
-        for name, lvl in set_levels.items():
-            logging.getLogger(name).setLevel(lvl)
-
-    if log_path is not None:
-        if log_path is _NotSet:
-            log_dir = Path(file_dir if file_dir else DEFAULT_LOG_DIR.format(user=getuser()))
-            try:
-                prog = Path(inspect.getsourcefile(inspect.stack()[-1][0])).stem
-            except (TypeError, AttributeError):
-                prog = '{}_interactive'.format(Path(__file__).stem)
-            name_parts = {'prog': prog, 'user': getuser(), 'time': int(time.time()), 'uniq': '', 'pid': os.getpid()}
-            log_path = log_dir.joinpath(filename_fmt.format(**name_parts))
-            if log_path.exists() and '{uniq}' in filename_fmt:
-                suffix = count()
-                while log_path.exists():
-                    name_parts['uniq'] = '-{}'.format(next(suffix))
-                    log_path = log_dir.joinpath(filename_fmt.format(**name_parts))
-        else:
-            log_path = Path(log_path).expanduser()
-
-        log_path = log_path.as_posix()
-        prep_log_dir(log_path)
-        file_handler_opts = file_handler_opts or {'when': 'midnight', 'backupCount': 7, 'encoding': 'utf-8'}
-        file_handler = handlers.TimedRotatingFileHandler(log_path, **file_handler_opts)
-        with suppress(OSError):
-            os.chmod(log_path, file_perm)
-        file_handler.setLevel(file_lvl)
-        file_handler.setFormatter(DatetimeFormatter(file_fmt or ENTRY_FMT_DETAILED, date_fmt))
-        file_handler.name = log_path
-        for logger in loggers:
-            logger.addHandler(file_handler)
-        log.log(19, 'Logging to {}'.format(log_path))
-    return log_path
-
 
 def create_filter(filter_fn):
     """
@@ -221,12 +351,12 @@ def create_filter(filter_fn):
     The decompilation was mostly an exercise to see what was possible; it's obviously not necessary for the
     functionality of this class/method
 
-    :param filter_fn: A function that takes 1 parameter (level number) and returns a boolean
+    :param filter_fn: A function that takes 1 parameter (record) and returns a boolean
     :return: A custom, initialized subclass of logging.Filter using the given filter function
     """
     class CustomLogFilter(logging.Filter):
         def filter(self, record):
-            return filter_fn(record.levelno)
+            return filter_fn(record)
 
     return CustomLogFilter()
 

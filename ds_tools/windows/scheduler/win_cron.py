@@ -21,6 +21,7 @@ class WinCronSchedule:
         self._init()
 
     def _init(self):
+        # TODO: These may be easier to handle as slightly more complex descriptors
         self._second = {i: True for i in range(60)}
         self._minute = {i: True for i in range(60)}
         self._hour = {i: True for i in range(24)}
