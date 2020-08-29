@@ -7,7 +7,7 @@ Helpers for serializing Python data structures to JSON or YAML
 import json
 from collections import UserDict
 from collections.abc import Mapping, KeysView, ValuesView
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import yaml
 
@@ -26,7 +26,7 @@ class PermissiveJSONEncoder(json.JSONEncoder):
             return o.decode('utf-8')
         elif isinstance(o, datetime):
             return o.strftime('%Y-%m-%d %H:%M:%S %Z')
-        elif isinstance(o, type):
+        elif isinstance(o, (type, timedelta)):
             return str(o)
         elif hasattr(o, '__to_json__'):
             return o.__to_json__()
@@ -45,10 +45,18 @@ def prep_for_yaml(obj):
     if isinstance(obj, UserDict):
         obj = obj.data
     # noinspection PyTypeChecker
-    if isinstance(obj, dict):
+    if isinstance(obj, Mapping):
         return {prep_for_yaml(k): prep_for_yaml(v) for k, v in obj.items()}
-    elif isinstance(obj, (list, set, tuple, map)):
+    elif isinstance(obj, (set, KeysView)):
+        return [prep_for_yaml(v) for v in sorted(obj)]
+    elif isinstance(obj, (list, tuple, map, ValuesView)):
         return [prep_for_yaml(v) for v in obj]
+    elif isinstance(obj, bytes):
+        return obj.decode('utf-8')
+    elif isinstance(obj, datetime):
+        return obj.strftime('%Y-%m-%d %H:%M:%S %Z')
+    elif isinstance(obj, (type, timedelta)):
+        return str(obj)
     else:
         return obj
 
