@@ -91,7 +91,12 @@ class Printer:
         elif self.output_format == 'pseudo-yaml':
             return '\n'.join(pseudo_yaml(content))
         elif self.output_format == 'yaml':
-            return yaml_dump(content, kwargs.pop('force_single_yaml', False), kwargs.pop('indent_nested_lists', True))
+            return yaml_dump(
+                content,
+                kwargs.pop('force_single_yaml', False),
+                kwargs.pop('indent_nested_lists', True),
+                sort_keys=kwargs.pop('sort_keys', True),
+            )
         elif self.output_format == 'pprint':
             return pprint.pformat(content)
         elif self.output_format in ('csv', 'table'):
