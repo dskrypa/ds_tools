@@ -19,7 +19,7 @@ from itertools import count
 from logging import handlers
 from pathlib import Path
 from threading import RLock
-from typing import Set, Optional, List, Union, Collection, Iterable, Callable
+from typing import Set, Optional, List, Union, Collection, Iterable, Callable, Type
 
 from tzlocal import get_localzone
 
@@ -312,7 +312,7 @@ def _get_loggers(names, verbosity, names_add, replace_handlers) -> List[logging.
 
 
 def _capture_warnings(
-    warnings: Union[Collection[str], _NotSet] = _NotSet, additional: Optional[Collection[str]] = None
+    warnings: Union[Collection[str], Type[_NotSet]] = _NotSet, additional: Optional[Collection[str]] = None
 ):
     logging.captureWarnings(True)
     warnings = set(SUPPRESS_WARNINGS) if warnings is _NotSet else set(warnings) if warnings else set()
