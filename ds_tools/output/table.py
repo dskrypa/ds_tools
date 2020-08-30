@@ -348,7 +348,8 @@ class Table:
         rows = self.sorted(rows)
         if self.update_width:
             for col in self.columns:
-                col.width = [row[col.key] for row in rows]
+                col.width = list(filter(None, (row.get(col.key) for row in rows))) or 0
+                # col.width = [row[col.key] for row in rows]
 
         if self.auto_header:
             self.print_header(file=file)
