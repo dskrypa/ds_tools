@@ -333,8 +333,8 @@ class Table:
         return rows
 
     def format_rows(self, rows, full=False):
-        rows = self.sorted(rows)
         if self.mode == 'csv':
+            rows = self.sorted(rows)
             return list(self._csv_str(rows).splitlines())
         elif self.mode == 'table':
             if full:
@@ -342,7 +342,7 @@ class Table:
                 self.print_rows(rows, sio)
                 return sio.getvalue()
             else:
-                return [self.format_row(row) for row in rows]
+                return [self.format_row(row) for row in self.sorted(rows)]
 
     def print_rows(self, rows, file=None):
         rows = self.sorted(rows)
