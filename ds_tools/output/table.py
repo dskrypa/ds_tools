@@ -286,7 +286,7 @@ class Table:
             return self._csv_str(row_dict)
         elif self.mode == 'table':
             # Don't str() the row_dict[k] value! That will break type-specific format strings (e.g., int/float)
-            row = {k: row_dict[k] if row_dict[k] is not None else '' for k in self.keys}
+            row = {k: v if (v := row_dict.get(k)) is not None else '' for k in self.keys}
 
             if self.has_custom_formatter:
                 row_str = '  '.join(c.format(row[c.key]) for c in self.columns)
