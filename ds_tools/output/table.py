@@ -7,6 +7,7 @@ Table and supporting classes for formatting / printing tabular data to stdout.
 import csv
 import logging
 import re
+from contextlib import contextmanager
 from functools import cached_property
 from io import StringIO
 from unicodedata import normalize
@@ -63,43 +64,58 @@ class Column:
         return '{{:{}{}}}'.format(self.align, self.ftype)
 
     @property
+    def _row_fmt(self):
+        return '{{:{}{}{}}}'.format(self.align, self.width, self.ftype)
+
+    @property
     def row_fmt(self):
         return '{{0[{}]:{}{}{}}}'.format(self.key, self.align, self.width, self.ftype)
+
+    @property
+    def _header_fmt(self):
+        return '{{:{}{}}}'.format(self.align, self.width)
 
     @property
     def header_fmt(self):
         return '{{0[{}]:{}{}}}'.format(self.key, self.align, self.width)
 
-    def format(self, value):
+    @contextmanager
+    def _temp_width(self, value):
         orig_width = self._width
-        test_val = self._test_fmt.format(value)
-        char_count = len(test_val)
-        str_width = mono_width(test_val)
-        if char_count != str_width and str_width > 0:
-            diff = str_width - char_count
-            self._width -= diff
-
         try:
-            if self.formatter:
-                try:
-                    col = self.row_fmt.format({self.key: value})
-                except ValueError:
-                    col = self.header_fmt.format({self.key: value})
-                return self.formatter(value, col)
-            else:
-                prefix, suffix = '', ''
-                if isinstance(value, str):
-                    m = ANSI_COLOR_RX.match(value)
-                    if m:
-                        prefix, value, suffix = m.groups()
-                try:
-                    return prefix + self.row_fmt.format({self.key: value}) + suffix
-                except ValueError:
-                    return prefix + self.header_fmt.format({self.key: value}) + suffix
-        except TypeError as e:
-            raise TableFormatException('column', self.row_fmt, value, e) from e
+            test_val = self._test_fmt.format(value)
+        except ValueError:
+            pass
+        else:
+            char_count = len(test_val)
+            str_width = mono_width(test_val)
+            if char_count != str_width and str_width > 0:
+                diff = str_width - char_count
+                self._width -= diff
+        try:
+            yield
         finally:
             self._width = orig_width
+
+    def _format(self, value):
+        try:
+            return self._row_fmt.format(value)
+        except ValueError:
+            return self._header_fmt.format(value)
+
+    def format(self, value):
+        with self._temp_width(value):
+            try:
+                if self.formatter:
+                    return self.formatter(value, self._format(value))
+                else:
+                    if isinstance(value, str) and (m := ANSI_COLOR_RX.match(value)):
+                        prefix, value, suffix = m.groups()
+                        return prefix + self._format(value) + suffix
+                    else:
+                        return self._format(value)
+            except TypeError as e:
+                raise TableFormatException('column', self.row_fmt, value, e) from e
 
     @property
     def width(self):
@@ -241,23 +257,25 @@ class Table:
             output_rows.insert(0, tbl.header_row)
         return output_rows
 
+    def _print(self, content, file=None):
+        if file:
+            file.write(content + '\n')
+        else:
+            uprint(content)
+
     def print_header(self, add_bar=True, file=None):
         self.auto_header = False
         if self.mode == 'csv':
             self.print_row(self.headers)
         elif self.mode == 'table':
-            uprint(self.header_row.rstrip())
+            self._print(self.header_row.rstrip(), file)
             if add_bar or self.auto_bar:
                 self.print_bar(file)
 
     def print_bar(self, file=None):
         self.auto_bar = False
         if self.mode == 'table':
-            formatted = self.header_bar[:TERM.width]
-            if file:
-                file.write(formatted + '\n')
-            else:
-                uprint(formatted)
+            self._print(self.header_bar[:TERM.width], file)
 
     def _csv_str(self, content):
         si = StringIO()
@@ -298,9 +316,8 @@ class Table:
                 except TypeError as e:
                     raise TableFormatException('row', self.row_fmt, row, e) from e
                 except ValueError:
-                    row_str = self.header_fmt.format(row)
-                    if self.fix_ansi_width and ANSI_COLOR_RX.search(row_str):
-                        row_str = '  '.join(c.format(row[c.key]) for c in self.columns)
+                    row_str = '  '.join(c.format(row[c.key]) for c in self.columns)
+
             return colored(row_str.rstrip(), color) if color is not None else row_str.rstrip()
 
     def print_row(self, row_dict, color=None, file=None):
@@ -309,11 +326,7 @@ class Table:
         if self.mode == 'csv':
             self.csv_writer.writerow({k: row_dict[k] for k in self.keys})
         elif self.mode == 'table':
-            formatted = self.format_row(row_dict, color)
-            if file:
-                file.write(formatted + '\n')
-            else:
-                uprint(formatted)
+            self._print(self.format_row(row_dict, color), file)
 
     def sorted(self, rows):
         if isinstance(rows, dict):
@@ -349,7 +362,6 @@ class Table:
         if self.update_width:
             for col in self.columns:
                 col.width = list(filter(None, (row.get(col.key) for row in rows))) or 0
-                # col.width = [row[col.key] for row in rows]
 
         if self.auto_header:
             self.print_header(file=file)
@@ -361,11 +373,7 @@ class Table:
                     if isinstance(row, TableBar) or row is TableBar:
                         self.print_bar(file)
                     else:
-                        formatted = self.format_row(row)
-                        if file:
-                            file.write(formatted + '\n')
-                        else:
-                            uprint(formatted)
+                        self._print(self.format_row(row), file)
         except IOError as e:
             if e.errno == 32:  #broken pipe
                 return
