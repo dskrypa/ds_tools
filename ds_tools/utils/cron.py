@@ -45,6 +45,7 @@ class CronSchedule:
             self._hour = {i: i == dt_obj.hour for i in range(24)}
 
     def _set(self, freq: CronDict, part: str, pos: int):
+        # log.debug(f'Processing {pos=} {part=!r}')
         if part == '*':
             for k in freq:
                 freq[k] = True
@@ -82,6 +83,8 @@ class CronSchedule:
                                     weeks.add(week)
                                 else:
                                     raise ValueError(f'Invalid cron schedule {part=!r} in {pos=}')
+                    else:
+                        _parts.add(p)
 
                 if weeks:
                     for week in range(1, 5):

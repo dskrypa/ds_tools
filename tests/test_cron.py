@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 sys.path.append(Path(__file__).parents[1].as_posix())
 from ds_tools.logging import init_logging
 from ds_tools.test_common import TestCaseBase, main
+from ds_tools.utils.cron import CronSchedule
 from ds_tools.windows.scheduler.win_cron import WinCronSchedule
 
 log = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ log = logging.getLogger(__name__)
 
 class WinCronTest(TestCaseBase):
     def test_from_cron_str(self):
-        cron = WinCronSchedule.from_cron('0 0 23 * * *')
+        cron = CronSchedule.from_cron('0 0 23 * * *')
         for attr in (cron._second, cron._minute):
             self.assertTrue(attr[0])
             for i in range(1, 60):
@@ -31,11 +32,11 @@ class WinCronTest(TestCaseBase):
 
     def test_in_equals_out(self):
         cron_str = '0 0 23 * * *'
-        cron = WinCronSchedule.from_cron(cron_str)
+        cron = CronSchedule.from_cron(cron_str)
         self.assertEqual(cron_str, str(cron))
 
     def test_start(self):
-        cron = WinCronSchedule.from_cron('0 0 23 * * *')
+        cron = CronSchedule.from_cron('0 0 23 * * *')
         expected = datetime.now().replace(second=0, minute=0, hour=23, microsecond=0)
         self.assertEqual(expected, cron.start)
 
@@ -64,25 +65,29 @@ class WinCronTest(TestCaseBase):
         self.assertEqual('0 0 0 * 1 *', str(cron))
 
     def test_first_last_dom(self):
-        cron = WinCronSchedule.from_cron('0 0 23 1,L * *')
+        cron = CronSchedule.from_cron('0 0 23 1,L * *')
         self.assertEqual('0 0 23 1,L * *', str(cron))
 
     def test_last_dom(self):
-        cron = WinCronSchedule.from_cron('0 0 23 L * *')
+        cron = CronSchedule.from_cron('0 0 23 L * *')
         self.assertEqual('0 0 23 L * *', str(cron))
 
     def test_ranges(self):
-        cron = WinCronSchedule.from_cron('0 0 1-3,5,7-12 * * *')
+        cron = CronSchedule.from_cron('0 0 1-3,5,7-12 * * *')
         self.assertEqual('0 0 1-3,5,7-12 * * *', str(cron))
 
-        cron = WinCronSchedule.from_cron('0 0 1-3,5,7-12,20 * * *')
+        cron = CronSchedule.from_cron('0 0 1-3,5,7-12,20 * * *')
         self.assertEqual('0 0 1-3,5,7-12,20 * * *', str(cron))
 
         with self.assertRaises(ValueError):
-            cron = WinCronSchedule.from_cron('0 0 3-1,5,7-12,20 * * *')
+            cron = CronSchedule.from_cron('0 0 3-1,5,7-12,20 * * *')
 
         with self.assertRaises(ValueError):
-            cron = WinCronSchedule.from_cron('0 0 3-3,5,7-12,20 * * *')
+            cron = CronSchedule.from_cron('0 0 3-3,5,7-12,20 * * *')
+
+    def test_daily_dows(self):
+        cron = CronSchedule.from_cron('0 15 6 * * 0,5,6')
+        self.assertEqual('0 15 6 * * 0,5-6', str(cron))
 
 
 def mock_monthly_dow_trigger(dow, moy, wom, lwom=False):
