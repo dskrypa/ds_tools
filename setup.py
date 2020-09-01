@@ -24,7 +24,7 @@ optional_dependencies = {
     'translate': ['googletrans'],                       # ds_tools.unicode.translate
     'J2R': ['pykakasi'],                                # ds_tools.unicode.languages
     'exif': ['exifread'],                               # bin/exif_sort.py
-    'youtube': ['pytube'],                              # bin/youtube.py
+    'youtube': ['pytube3'],                             # bin/youtube.py
     'images': ['pillow'],                               # bin/resize_images.py
     'flask': ['flask', 'jinja2', 'werkzeug'],           # flasks package
     'gunicorn': ['gevent', 'gunicorn'],                 # flasks package with gunicorn

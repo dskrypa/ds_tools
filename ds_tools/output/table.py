@@ -85,13 +85,14 @@ class Column:
         try:
             test_val = self._test_fmt.format(value)
         except ValueError:
-            pass
-        else:
-            char_count = len(test_val)
-            str_width = mono_width(test_val)
-            if char_count != str_width and str_width > 0:
-                diff = str_width - char_count
-                self._width -= diff
+            test_val = str(value)
+
+        char_count = len(test_val)
+        str_width = mono_width(test_val)
+        if char_count != str_width and str_width > 0:
+            diff = str_width - char_count
+            self._width -= diff
+
         try:
             yield
         finally:
@@ -149,7 +150,17 @@ class Column:
                 try:
                     return max(self._len(fmt.format(e[self.key])) for e in width)
                 except (KeyError, TypeError, AttributeError):
-                    return max(self._len(fmt.format(obj)) for obj in width)
+                    try:
+                        return max(self._len(fmt.format(obj)) for obj in width)
+                    except ValueError as e:
+                        if 'Unknown format code' in str(e):
+                            values = []
+                            for obj in width:
+                                try:
+                                    values.append(fmt.format(obj))
+                                except ValueError:
+                                    values.append(str(obj))
+                            return max(self._len(val) for val in values)
 
 
 class SimpleColumn(Column):
@@ -258,6 +269,7 @@ class Table:
         return output_rows
 
     def _print(self, content, file=None):
+        # TODO: Set file in init; handle color here
         if file:
             file.write(content + '\n')
         else:
