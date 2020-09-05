@@ -10,19 +10,23 @@ import re
 from contextlib import contextmanager
 from functools import cached_property
 from io import StringIO
+from types import GeneratorType
+from typing import Union, Collection, TextIO, Optional, List, Dict, Mapping, Any, Type, Iterable
 from unicodedata import normalize
 
 from wcwidth import wcswidth
 
+from ..caching.mixins import ClearableCachedPropertyMixin
 from .color import colored
 from .exceptions import TableFormatException
-from .terminal import uprint, _uout, Terminal
+from .terminal import _uout, Terminal
 
-__all__ = ['Column', 'SimpleColumn', 'Table', 'TableBar']
+__all__ = ['Column', 'SimpleColumn', 'Table', 'TableBar', 'HeaderRow']
 log = logging.getLogger(__name__)
 
-ANSI_COLOR_RX = re.compile('(\033\[\d+;?\d*;?\d*m)(.*)(\033\[\d+;?\d*;?\d*m)')
+ANSI_COLOR_RX = re.compile(r'(\033\[\d+;?\d*;?\d*m)(.*)(\033\[\d+;?\d*;?\d*m)')
 TERM = Terminal()
+Row = Union[Mapping[str, Any], 'TableBar', 'HeaderRow', Type['TableBar'], Type['HeaderRow']]
 
 
 class Column:
@@ -179,23 +183,50 @@ class SimpleColumn(Column):
 
 
 class TableBar:
+    char = '-'
+
+    def __init__(self, char: str = '-'):
+        self.char = char
+
     def __getitem__(self, item):
         return None
 
 
-class Table:
-    def __init__(self, *columns, mode='table', auto_header=True, auto_bar=True, sort=False, sort_by=None,
-                 update_width=False, fix_ansi_width=False):
+class HeaderRow:
+    bar = False
+
+    def __init__(self, bar: bool = False):
+        self.bar = bar
+
+    def __getitem__(self, item):
+        return None
+
+
+class Table(ClearableCachedPropertyMixin):
+    def __init__(
+        self,
+        *columns: Union[Column, SimpleColumn],
+        mode: str = 'table',
+        auto_header: bool = True,
+        auto_bar: bool = True,
+        sort: bool = False,
+        sort_by: Union[Collection, str, None] = None,
+        update_width: bool = False,
+        fix_ansi_width: bool = False,
+        file: Optional[TextIO] = None,
+    ):
         if mode not in ('table', 'csv'):
-            raise ValueError('Invalid output mode: {}'.format(mode))
+            raise ValueError(f'Invalid output mode: {mode}')
         self.mode = mode
-        self.columns = [c for c in columns if c.display]
+        self._columns = list(columns[0] if len(columns) == 1 and isinstance(columns[0], GeneratorType) else columns)
         self.auto_header = auto_header
         self.auto_bar = auto_bar
         self.sort = sort
         self.sort_by = sort_by
         self.update_width = update_width
         self.fix_ansi_width = fix_ansi_width
+        self._flush = file is None
+        self._file = _uout if file is None else file
 
     def __getitem__(self, item):
         for c in self.columns:
@@ -203,41 +234,57 @@ class Table:
                 return c
         raise KeyError(item)
 
+    def append(self, column: Union[Column, SimpleColumn]):
+        self._columns.append(column)
+        if column.display:
+            self.clear_cached_properties()
+
+    def toggle_display(self, key: str, display: bool = None):
+        column = self[key]
+        column.display = (not column.display) if display is None else display
+        self.clear_cached_properties()
+
     @cached_property
-    def keys(self):
+    def columns(self) -> List[Union[Column, SimpleColumn]]:
+        return [c for c in self._columns if c.display]
+
+    @cached_property
+    def keys(self) -> List[str]:
         return [c.key for c in self.columns]
 
     @cached_property
-    def csv_writer(self):
-        return csv.DictWriter(_uout, self.keys)
+    def csv_writer(self) -> csv.DictWriter:
+        return csv.DictWriter(self._file, self.keys)
 
     @cached_property
-    def header_fmt(self):
+    def header_fmt(self) -> str:
         return '  '.join(c.header_fmt for c in self.columns)
 
     @cached_property
-    def headers(self):
+    def headers(self) -> Dict[str, str]:
         return {c.key: c.title for c in self.columns if c.display}
 
     @cached_property
-    def row_fmt(self):
+    def row_fmt(self) -> str:
         return '  '.join(c.row_fmt for c in self.columns)
 
     @cached_property
-    def has_custom_formatter(self):
+    def has_custom_formatter(self) -> bool:
         return any(c.formatter is not None for c in self.columns)
 
     @cached_property
-    def header_row(self):
+    def header_row(self) -> str:
         if self.mode == 'csv':
             return self.format_row(self.headers)
         elif self.mode == 'table':
             return self.header_fmt.format(self.headers)
+        else:
+            raise ValueError(f'Invalid table mode={self.mode!r}')
 
-    @cached_property
-    def header_bar(self):
+    def header_bar(self, char: str = '-') -> Optional[str]:
         if self.mode == 'table':
-            return '-' * len(self.header_row)
+            bar = char * len(self.header_row)
+            return bar[:TERM.width] if self._file is _uout else bar
         return None
 
     @classmethod
@@ -264,30 +311,30 @@ class Table:
         output_rows = tbl.format_rows(rows)
         if header:
             if bar and mode == 'table':
-                output_rows.insert(0, tbl.header_bar)
-            output_rows.insert(0, tbl.header_row)
+                output_rows.insert(0, tbl.header_bar())
+            output_rows.insert(0, tbl.header_row.rstrip())
         return output_rows
 
-    def _print(self, content, file=None):
-        # TODO: Set file in init; handle color here
-        if file:
-            file.write(content + '\n')
-        else:
-            uprint(content)
+    def _print(self, content: str, color: Union[str, int, None] = None):
+        if color is not None:
+            content = colored(content, color)
+        self._file.write(content + '\n')
+        if self._flush:
+            self._file.flush()
 
-    def print_header(self, add_bar=True, file=None):
+    def print_header(self, add_bar: bool = True, color: Union[str, int, None] = None):
         self.auto_header = False
         if self.mode == 'csv':
-            self.print_row(self.headers)
+            self.print_row(self.headers, color)
         elif self.mode == 'table':
-            self._print(self.header_row.rstrip(), file)
+            self._print(self.header_row.rstrip(), color)
             if add_bar or self.auto_bar:
-                self.print_bar(file)
+                self.print_bar(color=color)
 
-    def print_bar(self, file=None):
+    def print_bar(self, char: str = '-', color: Union[str, int, None] = None):
         self.auto_bar = False
         if self.mode == 'table':
-            self._print(self.header_bar[:TERM.width], file)
+            self._print(self.header_bar(char), color)
 
     def _csv_str(self, content):
         si = StringIO()
@@ -298,25 +345,29 @@ class Table:
             writer.writerows(content)
         return si.getvalue()
 
-    def format_row(self, row_dict, color=None):
+    def format_row(self, row: Row) -> str:
         """
         Format the given row using the `row_fmt` that was generated based on the columns defined for this table.
 
-        The following error meands that one of the values needs to be converted to an appropriate type, or the format
+        The following error means that one of the values needs to be converted to an appropriate type, or the format
         specification needs to be fixed (e.g., formatting a list as the value when a column width was specified):
         ::
             TypeError: non-empty format string passed to object.__format__
 
-        :param dict row_dict: Mapping of {column key: row value} pairs
-        :param color: An ANSI color code
+        :param row: Mapping of {column key: row value} pairs
         :return str: The formatted row
         :raises TypeError: if one of the values has a type that is incompatible with the format string
         """
         if self.mode == 'csv':
-            return self._csv_str(row_dict)
+            return self._csv_str(row)
         elif self.mode == 'table':
-            # Don't str() the row_dict[k] value! That will break type-specific format strings (e.g., int/float)
-            row = {k: v if (v := row_dict.get(k)) is not None else '' for k in self.keys}
+            if isinstance(row, TableBar) or row is TableBar:
+                return self.header_bar(row.char)
+            elif isinstance(row, HeaderRow) or row is HeaderRow:
+                return self.header_row
+
+            # Don't str() the row[k] value! That will break type-specific format strings (e.g., int/float)
+            row = {k: v if (v := row.get(k)) is not None else '' for k in self.keys}
 
             if self.has_custom_formatter:
                 row_str = '  '.join(c.format(row[c.key]) for c in self.columns)
@@ -330,17 +381,23 @@ class Table:
                 except ValueError:
                     row_str = '  '.join(c.format(row[c.key]) for c in self.columns)
 
-            return colored(row_str.rstrip(), color) if color is not None else row_str.rstrip()
+            return row_str.rstrip()
+        else:
+            raise ValueError(f'Invalid table mode={self.mode!r}')
 
-    def print_row(self, row_dict, color=None, file=None):
+    def print_row(self, row: Row, color: Union[str, int, None] = None):
         if self.auto_header:
-            self.print_header(file=file)
+            self.print_header(color=color)
         if self.mode == 'csv':
-            self.csv_writer.writerow({k: row_dict[k] for k in self.keys})
+            self.csv_writer.writerow({k: row[k] for k in self.keys})
         elif self.mode == 'table':
-            self._print(self.format_row(row_dict, color), file)
+            # Use print_header for headers, but bars can be handled by format_row
+            if isinstance(row, HeaderRow) or row is HeaderRow:
+                self.print_header(row.bar, color)
+            else:
+                self._print(self.format_row(row), color)
 
-    def sorted(self, rows):
+    def sorted(self, rows: Iterable[Row]):
         if isinstance(rows, dict):
             rows = rows.values()
 
@@ -357,41 +414,55 @@ class Table:
             rows = [{k: row[k] for k in self.keys} for row in rows]
         return rows
 
-    def format_rows(self, rows, full=False):
+    def format_rows(self, rows: Iterable[Row], full: bool = False) -> Union[List[str], str]:
         if self.mode == 'csv':
             rows = self.sorted(rows)
             return list(self._csv_str(rows).splitlines())
         elif self.mode == 'table':
             if full:
-                sio = StringIO()
-                self.print_rows(rows, sio)
-                return sio.getvalue()
+                orig_file, orig_flush = self._file, self._flush
+                self._flush = False
+                self._file = sio = StringIO()
+                try:
+                    self.print_rows(rows)
+                    return sio.getvalue()
+                finally:
+                    self._file, self._flush = orig_file, orig_flush
             else:
                 return [self.format_row(row) for row in self.sorted(rows)]
 
-    def print_rows(self, rows, file=None):
-        rows = self.sorted(rows)
-        if self.update_width:
-            for col in self.columns:
-                col.width = list(filter(None, (row.get(col.key) for row in rows))) or 0
+    def set_width(self, rows: Iterable[Row]):
+        ignore = (TableBar, HeaderRow)
+        for col in self.columns:
+            values = (row.get(col.key) for row in rows if not isinstance(row, ignore) and row not in ignore)
+            col.width = list(filter(None, values)) or 0
 
-        if self.auto_header:
-            self.print_header(file=file)
+    def print_rows(
+        self, rows: Iterable[Row], header: bool = False, update_width: bool = False, color: Union[str, int, None] = None
+    ):
+        rows = self.sorted(rows)
+        if update_width or self.update_width:
+            self.set_width(rows)
+
+        if header or self.auto_header:
+            self.print_header(color=color)
         try:
             if self.mode == 'csv':
                 self.csv_writer.writerows(rows)
             elif self.mode == 'table':
                 for row in rows:
-                    if isinstance(row, TableBar) or row is TableBar:
-                        self.print_bar(file)
+                    # Use print_header for headers, but bars can be handled by format_row
+                    if isinstance(row, HeaderRow) or row is HeaderRow:
+                        self.print_header(row.bar, color)
                     else:
-                        self._print(self.format_row(row), file)
+                        self._print(self.format_row(row), color)
         except IOError as e:
-            if e.errno == 32:  #broken pipe
+            if e.errno == 32:  # broken pipe
                 return
+            raise
 
 
-def mono_width(text):
+def mono_width(text: str):
     return wcswidth(normalize('NFC', text))
 
 
