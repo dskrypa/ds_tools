@@ -307,3 +307,7 @@ class ArgParser(ArgumentParser):
         # print('re-parsed: {}\nnewly parsed: {}'.format(re_parsed.__dict__, newly_parsed))
         # print('Final parsed args: {}'.format(parsed.__dict__))
         return parsed, newly_parsed
+
+    def __enter__(self):
+        """Allow using ArgParsers as context managers to help organize large subparser sections when defining parsers"""
+        return self
