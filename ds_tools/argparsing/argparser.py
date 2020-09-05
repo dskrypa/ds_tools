@@ -311,3 +311,6 @@ class ArgParser(ArgumentParser):
     def __enter__(self):
         """Allow using ArgParsers as context managers to help organize large subparser sections when defining parsers"""
         return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return
