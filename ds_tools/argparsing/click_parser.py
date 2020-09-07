@@ -167,14 +167,14 @@ class CrossGroupMutuallyExclusiveOptionsGroup(OptionGroup):
     def handle_parse_result(self, option: GroupedOption, ctx: Context, opts) -> None:
         options = self.get_options(ctx)
         this_group_opts = set(options).intersection(opts)
+        other_group_opts = self._conflicts.intersection(opts)
 
-        if this_group_opts and (other_group_opts := self._conflicts.intersection(opts)):
+        if this_group_opts and other_group_opts:
             # noinspection PyUnboundLocalVariable
             raise UsageError(
                 f'Arguments {this_group_opts} are not allowed to be combined with {other_group_opts}', ctx
             )
-
-        if this_group_opts:
+        elif this_group_opts or (not this_group_opts and not other_group_opts):
             missing = {
                 name
                 for name, opt in options.items()
