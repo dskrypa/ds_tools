@@ -40,7 +40,7 @@ class CommonArgs:
                     help='Print the actions that would be taken instead of taking them',
                 ),
                 'extra_cols': CommonOption(
-                    ('--extra', '-e'), action='count', default=0, enabled=False,
+                    ('--extra', '-e'), count=True, default=0, enabled=False,
                     help='Increase the number of columns displayed (can specify multiple times)',
                 ),
                 'select': CommonOption(
