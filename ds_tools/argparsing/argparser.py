@@ -6,19 +6,16 @@ Wrapper around argparse to provide some additional functionality / shortcuts
 
 import inspect
 import re
-from argparse import ArgumentParser, RawDescriptionHelpFormatter
+# noinspection PyUnresolvedReferences
+from argparse import ArgumentParser, RawDescriptionHelpFormatter, _ArgumentGroup
 from copy import deepcopy
 from itertools import chain
 from pathlib import Path
-from typing import TYPE_CHECKING, Container, Union
 
 import yaml
 from yaml.parser import ParserError
 
 from .utils import COMMON_ARGS, update_subparser_constants, get_default_value
-
-if TYPE_CHECKING:
-    import argparse
 
 __all__ = ['ArgParser']
 
@@ -202,10 +199,13 @@ class ArgParser(ArgumentParser):
             kvargs['default'] = default
             getattr(self, fn_name)(*a.args, **kvargs)
 
-    def add_mutually_exclusive_arg_sets(self, *groups: Union[Container, 'argparse._ArgumentGroup']):
+    def add_mutually_exclusive_arg_sets(self, *groups: _ArgumentGroup):
         """
         Creates a mutually exclusive set of arguments such that if any non-default values are provided for arguments
         in more than 1 of the groups, then the parser will exit.
+
+        Note that the arguments in one of the groups cannot be required if that group is not used in a pair of exclusive
+        groups.
 
         :param groups: Sets of args or argparse group objects that should be mutually exclusive across groups
         """

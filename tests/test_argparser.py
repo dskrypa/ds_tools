@@ -113,7 +113,12 @@ def get_exclusive_set_parser(subparser=False):
     group_2.add_argument('--three', '-T', type=int, default=3)
     group_2.add_argument('--four', '-f', action='store_true')
 
+    # group_3 = _parser.add_argument_group('Group 3')
+    # group_3.add_argument('--five', '-F', required=True)  # If another group is chosen, then this will cause an issue
+    # group_3.add_argument('--six', '-s', action='store_true')
+
     parser.add_mutually_exclusive_arg_sets(group_1, group_2)
+    # parser.add_mutually_exclusive_arg_sets(group_1, group_2, group_3)
 
     parser.include_common_args('verbosity')
     return parser

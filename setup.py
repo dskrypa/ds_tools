@@ -21,6 +21,7 @@ optional_dependencies = {
         'ipython',
     ],
     'cffi': ['cffi'],                                   # bin/cffi_test.py, bin/f3.py, examples/cffi/*
+    'click': ['click'],                                 # ds_tools.argparsing.click_parsing
     'translate': ['googletrans'],                       # ds_tools.unicode.translate
     'J2R': ['pykakasi'],                                # ds_tools.unicode.languages
     'exif': ['exifread'],                               # bin/exif_sort.py
