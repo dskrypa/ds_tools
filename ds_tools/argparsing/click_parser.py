@@ -177,7 +177,7 @@ class CrossGroupMutuallyExclusiveOptionsGroup(OptionGroup):
         if this_group_opts:
             missing = {
                 name
-                for name, opt in self._options.items()
+                for name, opt in options.items()
                 if name not in this_group_opts and isinstance(opt, MaybeRequiredOption) and opt._required
             }
             if missing:
