@@ -202,9 +202,15 @@ class ArgParser(ArgumentParser):
             kvargs['default'] = default
             getattr(self, fn_name)(*a.args, **kvargs)
 
-    def add_mutually_exclusive_arg_sets(self, *sets: Union[Container, 'argparse._ArgumentGroup']):
+    def add_mutually_exclusive_arg_sets(self, *groups: Union[Container, 'argparse._ArgumentGroup']):
+        """
+        Creates a mutually exclusive set of arguments such that if any non-default values are provided for arguments
+        in more than 1 of the groups, then the parser will exit.
+
+        :param groups: Sets of args or argparse group objects that should be mutually exclusive across groups
+        """
         group_set = []
-        for group in sets:
+        for group in groups:
             try:
                 group_set.append({action.dest for action in group._group_actions})
             except AttributeError:

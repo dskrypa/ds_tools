@@ -58,13 +58,21 @@ class ArgParserTest(TestCaseBase):
     def test_exclusive_sets_accept(self):
         parser = get_exclusive_set_parser(False)
         parsed = parser.parse_args(['-o1', '-t', '2'])
-        self.assertDictEqual({'one': '1', 'two': '2', 'three': None, 'four': False, 'verbose': 0}, parsed.__dict__)
+        self.assertDictEqual({'one': '1', 'two': '2', 'three': 3, 'four': False, 'verbose': 0}, parsed.__dict__)
 
         parser = get_exclusive_set_parser(True)
         parsed = parser.parse_args(['test', '-o1', '-t', '2'])
         self.assertDictEqual(
-            {'action': 'test', 'one': '1', 'two': '2', 'three': None, 'four': False, 'verbose': 0}, parsed.__dict__
+            {'action': 'test', 'one': '1', 'two': '2', 'three': 3, 'four': False, 'verbose': 0}, parsed.__dict__
         )
+
+        parser = get_exclusive_set_parser()
+        parsed = parser.parse_args(['-T', '1', '-f'])
+        self.assertDictEqual({'one': None, 'two': None, 'three': 1, 'four': True, 'verbose': 0}, parsed.__dict__)
+
+        parser = get_exclusive_set_parser()
+        parsed = parser.parse_args(['-T', '3', '-o', '1'])
+        self.assertDictEqual({'one': '1', 'two': None, 'three': 3, 'four': False, 'verbose': 0}, parsed.__dict__)
 
     def test_exclusive_sets_reject(self):
         parser = get_exclusive_set_parser(False)
@@ -74,6 +82,14 @@ class ArgParserTest(TestCaseBase):
         parser = get_exclusive_set_parser(True)
         with self.assertRaises(TestException):
             parsed = parser.parse_args(['test', '-o1', '-T', '2', '--four'])
+
+        parser = get_exclusive_set_parser()
+        with self.assertRaises(TestException):
+            parsed = parser.parse_args(['-T', '1', '-f', '-t', '1'])
+
+        parser = get_exclusive_set_parser()
+        with self.assertRaises(TestException):
+            parsed = parser.parse_args(['-T', '3', '-o', '1', '--four'])
 
 
 def get_dynamic_parser():
@@ -94,7 +110,7 @@ def get_exclusive_set_parser(subparser=False):
     group_1.add_argument('--one', '-o')
     group_1.add_argument('--two', '-t')
     group_2 = _parser.add_argument_group('Group 2')
-    group_2.add_argument('--three', '-T')
+    group_2.add_argument('--three', '-T', type=int, default=3)
     group_2.add_argument('--four', '-f', action='store_true')
 
     parser.add_mutually_exclusive_arg_sets(group_1, group_2)
