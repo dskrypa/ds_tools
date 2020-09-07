@@ -50,7 +50,7 @@ class CommonArgs:
                     ('--parallel', '-P'), type=int, default=1, enabled=False,
                     help='Maximum number of workers to use in parallel (default: %(default)s)',
                 ),
-                'yes': CommonOption('--yes', '-y', is_flag=True, enabled=False, help='Confirm all Yes/No prompts'),
+                # 'yes': CommonOption('--yes', '-y', is_flag=True, enabled=False, help='Confirm all Yes/No prompts'),
             }
             # fmt: on
 
