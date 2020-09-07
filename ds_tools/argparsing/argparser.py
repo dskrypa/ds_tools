@@ -10,11 +10,15 @@ from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from copy import deepcopy
 from itertools import chain
 from pathlib import Path
+from typing import TYPE_CHECKING, Container, Union
 
 import yaml
 from yaml.parser import ParserError
 
-from .utils import COMMON_ARGS, update_subparser_constants
+from .utils import COMMON_ARGS, update_subparser_constants, get_default_value
+
+if TYPE_CHECKING:
+    import argparse
 
 __all__ = ['ArgParser']
 
@@ -72,6 +76,7 @@ class ArgParser(ArgumentParser):
         ap_args.setdefault('prog', self._caller_path.name)
         super().__init__(**ap_args)
         self.__constants = {}
+        self.__mutually_exclusive_sets = []
 
     @property
     def subparsers(self):
@@ -197,6 +202,16 @@ class ArgParser(ArgumentParser):
             kvargs['default'] = default
             getattr(self, fn_name)(*a.args, **kvargs)
 
+    def add_mutually_exclusive_arg_sets(self, *sets: Union[Container, 'argparse._ArgumentGroup']):
+        group_set = []
+        for group in sets:
+            try:
+                group_set.append({action.dest for action in group._group_actions})
+            except AttributeError:
+                group_set.append(group)
+
+        self.__mutually_exclusive_sets.append(group_set)
+
     def parse_args(self, args=None, namespace=None, req_subparser_value=False):
         """
         Performs the same function as :func:`argparse.ArgumentParser.parse_args`, but handles unrecognized arguments
@@ -212,17 +227,30 @@ class ArgParser(ArgumentParser):
         if argv:
             msg = 'unrecognized arguments: {}'.format(' '.join(argv))
             if self.subparsers:
-                self.error('{}\nnote: subcommand args must be provided after the subcommand (use --help for more details)'.format(msg))
+                self.error(
+                    f'{msg}\nnote: subcommand args must be provided after the subcommand (use --help for more details)'
+                )
             self.error(msg + ' (use --help for more details)')
 
         if req_subparser_value:
             for sp in self.subparsers:
                 if getattr(parsed, sp) is None:
-                    self.error('missing required positional argument: {} (use --help for more details)'.format(sp))
+                    self.error(f'missing required positional argument: {sp} (use --help for more details)')
 
         parsed.__dict__.update(self.__constants)
         update_subparser_constants(self, parsed)
+        self._resolve_mutually_exclusive_sets(parsed)
         return parsed
+
+    def _resolve_mutually_exclusive_sets(self, parsed):
+        for exclusive_sets in self.__mutually_exclusive_sets:
+            arg_sets = []
+            for group in exclusive_sets:
+                group_values = {k: parsed.__dict__.get(k) for k in group}
+                if non_defaults := {k for k, v in group_values.items() if v != get_default_value(self, parsed, k)}:
+                    arg_sets.append(non_defaults)
+                    if len(arg_sets) > 1:
+                        self.error('Argument(s) {} cannot be combined with {}'.format(*arg_sets))
 
     def _get_subparser(self, kwargs):
         parser = self
@@ -299,8 +327,8 @@ class ArgParser(ArgumentParser):
             else:
                 if v != orig:
                     default = _get_default(k)
-                    # print('Different value found for key={!r}: orig={!r} new={!r} default={!r}'.format(k, orig, v, default))
-                    if default == orig:
+                    # print(f'Different value found for key={k!r}: {orig=!r} new={v!r} {default=!r}')
+                    if orig == default or v != default:
                         # print('Updating parsed[{!r}] => {!r}'.format(k, v))
                         parsed.__dict__[k] = v
 

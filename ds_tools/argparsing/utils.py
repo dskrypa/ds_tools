@@ -5,6 +5,11 @@ Utilities for argparse
 """
 
 from itertools import chain
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from argparse import Namespace
+    from .argparser import ArgParser
 
 __all__ = ['add_subparser_default_if_missing']
 
@@ -33,13 +38,24 @@ COMMON_ARGS = {
 }   #: Common argparse arguments; defining them this way increases consistency between scripts
 
 
-def update_subparser_constants(parser, parsed):
+def update_subparser_constants(parser: 'ArgParser', parsed: 'Namespace'):
     for dest, subparsers in parser.subparsers.items():
         chosen_sp = parsed.__dict__[dest]
         for sp_name, subparser in subparsers.choices.items():
             if sp_name == chosen_sp:
                 parsed.__dict__.update(subparser._ArgParser__constants)
                 update_subparser_constants(subparser, parsed)
+
+
+def get_default_value(parser: 'ArgParser', parsed: 'Namespace', key: str, found=None):
+    if found is None:
+        found = parser.get_default(key)
+    for dest, subparsers in parser.subparsers.items():
+        chosen_sp = parsed.__dict__[dest]
+        for sp_name, subparser in subparsers.choices.items():
+            if sp_name == chosen_sp:
+                return get_default_value(subparser, parsed, key, found)
+    return found
 
 
 def add_subparser_default_if_missing(args, subparsers, default_value, start_index=1):
