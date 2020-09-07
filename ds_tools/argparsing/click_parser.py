@@ -9,12 +9,13 @@ from functools import wraps
 from pathlib import Path
 from typing import Iterable
 
-from click.core import augment_usage_errors, Group, Option
+from click.core import augment_usage_errors, Group, Option, Context
 from click.decorators import _param_memo
 from click.exceptions import UsageError
 from click.globals import get_current_context
+from click_option_group import GroupedOption, OptionGroup
 
-__all__ = ['CommonArgs', 'CommonOption', 'MutuallyExclusiveOption']
+__all__ = ['CommonArgs', 'CommonOption', 'CrossGroupMutuallyExclusiveOptionsGroup', 'MaybeRequiredOption']
 
 
 class CommonArgs:
@@ -114,7 +115,7 @@ class CommonArgs:
         cmd = ctx.command
         while isinstance(cmd, Group):
             name, cmd, args = cmd.resolve_command(ctx, args)
-            ctx = cmd.make_context(prog, args, ctx)
+            ctx = cmd.make_context(name, args, ctx)
             # Not done for the full top-level args because it will have already been done by the point this is called:
             cmd.parse_args(ctx, args)
 
@@ -141,13 +142,49 @@ class CommonOption(Option):
         return value, args
 
 
-class MutuallyExclusiveOption(Option):
+class CrossGroupMutuallyExclusiveOptionsGroup(OptionGroup):
+    """Option group with mutually exclusive behavior for grouped options
+
+    `CrossGroupMutuallyExclusiveOptionsGroup` defines the behavior:
+        - The specified options cannot be provided if any options in this group have been provided
+    """
+
     def __init__(self, *args, conflicts: Iterable[str], **kwargs):
         super().__init__(*args, **kwargs)
-        self.conflicts = set(conflicts)
+        self._conflicts = set(conflicts)
 
-    def handle_parse_result(self, ctx, opts, args):
-        if self.name in opts and (conflicts := self.conflicts.intersection(opts)):
+    def option(self, *param_decls, **attrs):
+        if attrs.get('required'):
+            cls = attrs.setdefault('cls', MaybeRequiredOption)
+            if not issubclass(cls, MaybeRequiredOption):
+                raise TypeError(f'{self.__class__.__name__} required options must extend MaybeRequiredOption')
+        return super().option(*param_decls, **attrs)
+
+    @property
+    def name_extra(self):
+        return super().name_extra + ['cross_group_mutually_exclusive']
+
+    def handle_parse_result(self, option: GroupedOption, ctx: Context, opts) -> None:
+        options = self.get_options(ctx)
+        this_group_opts = set(options).intersection(opts)
+
+        if this_group_opts and (other_group_opts := self._conflicts.intersection(opts)):
             # noinspection PyUnboundLocalVariable
-            raise UsageError(f'Argument {self.name} is not allowed with arguments {conflicts}', ctx)
-        return super().handle_parse_result(ctx, opts, args)
+            raise UsageError(
+                f'Arguments {this_group_opts} are not allowed to be combined with {other_group_opts}', ctx
+            )
+
+        if this_group_opts:
+            missing = {
+                name
+                for name, opt in self._options.items()
+                if name not in this_group_opts and isinstance(opt, MaybeRequiredOption) and opt._required
+            }
+            if missing:
+                raise UsageError('The following arguments are required: {}'.format(', '.join(sorted(missing))))
+
+
+class MaybeRequiredOption(GroupedOption):
+    def __init__(self, *args, required: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._required = required
