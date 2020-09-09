@@ -217,6 +217,10 @@ class ArgParser(ArgumentParser):
                 group_set.append(group)
 
         self.__mutually_exclusive_sets.append(group_set)
+        # TODO: add handling for "maybe required" args that are not allowed because of something in the other group
+        #  having been specified.   ... Maybe figure out way to generate a unique list of all args for the chain of
+        #  subparsers that were used, to get the unique Argument objects and check the ones in that subparser chain
+        #  that are in the exclusive groups.... or something like that?
 
     def parse_args(self, args=None, namespace=None, req_subparser_value=False):
         """
