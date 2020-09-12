@@ -7,8 +7,11 @@ import os
 import platform
 import re
 from getpass import getuser
+from itertools import chain
 from pathlib import Path
 from typing import Iterator, Union, Iterable
+
+from .patterns import FnMatcher
 
 __all__ = ['validate_or_make_dir', 'get_user_cache_dir', 'iter_paths', 'iter_files', 'Paths', 'relative_path']
 log = logging.getLogger(__name__)
@@ -33,11 +36,21 @@ def iter_paths(path_or_paths: Paths) -> Iterator[Path]:
         if isinstance(p, str):
             p = Path(p)
         if isinstance(p, Path):
-            if ON_WINDOWS and not p.exists():
-                m = WIN_BASH_PATH_MATCH(p.as_posix())
-                if m:
-                    p = Path(f'{m.group(1).upper()}:/{m.group(2)}')
-            yield p.expanduser().resolve()
+            try:
+                if ON_WINDOWS and not p.exists():
+                    if m := WIN_BASH_PATH_MATCH(p.as_posix()):
+                        p = Path(f'{m.group(1).upper()}:/{m.group(2)}')
+            except OSError:
+                if any(c in p.name for c in '*?['):
+                    matcher = FnMatcher(p.name)
+                    for root, dirs, files in os.walk(os.getcwd()):
+                        root_path = Path(root)
+                        for f in matcher.matching_values(chain(dirs, files)):
+                            yield root_path.joinpath(f)
+                else:
+                    raise
+            else:
+                yield p.expanduser().resolve()
         else:
             raise TypeError(f'Unexpected type={p.__class__.__name__} for path={p!r}')
 

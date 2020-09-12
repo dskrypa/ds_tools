@@ -7,6 +7,7 @@ from fnmatch import translate
 from functools import lru_cache
 from os.path import normcase
 from posixpath import normcase as posix_normcase
+from typing import Iterable, Iterator
 
 __all__ = ['fnmatches', 'any_fnmatches', 'FnMatcher']
 
@@ -43,7 +44,7 @@ class FnMatcher:
             patterns = (patterns,)
         self.patterns = tuple(_compile_pattern(normcase(pat), ignore_case=ignore_case) for pat in patterns)
 
-    def match(self, value):
+    def match(self, value: str) -> bool:
         """
         :param str value: A string
         :return bool: True if the value matches any of this matcher's patterns
@@ -52,7 +53,7 @@ class FnMatcher:
             value = normcase(value)
         return any(pat(value) for pat in self.patterns)
 
-    def matches(self, values):
+    def matches(self, values: Iterable[str]) -> bool:
         """
         :param iterable values: An iterable that yields strings
         :return bool: True if any of the values match any of this matcher's patterns
@@ -61,6 +62,14 @@ class FnMatcher:
             values = (normcase(val) for val in values)
         # The below order consumes values once
         return any(pat(val) for val in values for pat in self.patterns)
+
+    def matching_values(self, values: Iterable[str]) -> Iterator[str]:
+        if self._use_normcase:
+            values = map(normcase, values)
+        patterns = self.patterns
+        for value in values:
+            if any(pat(value) for pat in patterns):
+                yield value
 
 
 @lru_cache(maxsize=256, typed=True)
