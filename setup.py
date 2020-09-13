@@ -16,21 +16,27 @@ with project_root.joinpath('ds_tools', '__version__.py').open('r', encoding='utf
 # scripts = ['bin/{}'.format(p.name) for p in project_root.joinpath('bin').iterdir()]
 
 optional_dependencies = {
+    'cffi': ['cffi'],                                   # bin/cffi_test.py, bin/f3.py, examples/cffi/*
+    'click': ['click', 'click_option_group'],           # ds_tools.argparsing.click_parsing
     'dev': [                                            # Development env requirements
         'pre-commit',                                   # run `pre-commit install` to install hooks
         'ipython',
     ],
-    'cffi': ['cffi'],                                   # bin/cffi_test.py, bin/f3.py, examples/cffi/*
-    'click': ['click', 'click_option_group'],           # ds_tools.argparsing.click_parsing
-    'translate': ['googletrans'],                       # ds_tools.unicode.translate
-    'J2R': ['pykakasi'],                                # ds_tools.unicode.languages
     'exif': ['exifread'],                               # bin/exif_sort.py
-    'youtube': ['pytube3'],                             # bin/youtube.py
-    'images': ['pillow'],                               # bin/resize_images.py
     'flask': ['flask', 'jinja2', 'werkzeug'],           # flasks package
     'gunicorn': ['gevent', 'gunicorn'],                 # flasks package with gunicorn
+    'images': [                                         # bin/resize_images.py, ds_tools.images.*
+        'imageio',
+        'numpy',
+        'pillow',
+        'scikit-image',
+        'scipy',
+    ],
+    'J2R': ['pykakasi'],                                # ds_tools.unicode.languages
     'socketio': ['flask_socketio', 'gevent'],           # flasks package with socketio
+    'translate': ['googletrans'],                       # ds_tools.unicode.translate
     'windows': ['pywin32'],                             # bin/windows_tasks.py
+    'youtube': ['pytube3'],                             # bin/youtube.py
 }
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
 

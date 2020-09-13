@@ -1,5 +1,5 @@
 """
-Used by scripts in this directory to activate the
+Used by scripts in this directory to ensure the venv is active
 
 :author: Doug Skrypa
 """
