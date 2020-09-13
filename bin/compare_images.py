@@ -72,10 +72,6 @@ def main():
             else:
                 log.info(f'{method:>26s}: {result:17,.3f}{" " * 26}  ({description})')
 
-    # m_norm, z_norm, m_pix, z_pix = calc_distance(img_a, img_b)
-    # log.info(f'Manhattan norm: {m_norm:14,.3f}  -  per pixel: {m_pix:,.6f}')
-    # log.info(f'     Zero norm: {z_norm:14,.3f}  -  per pixel: {z_pix:,.6f}')
-
 
 if __name__ == '__main__':
     main()

@@ -7,9 +7,9 @@ from fnmatch import translate
 from functools import lru_cache
 from os.path import normcase
 from posixpath import normcase as posix_normcase
-from typing import Iterable, Iterator
+from typing import Iterable, Iterator, Union
 
-__all__ = ['fnmatches', 'any_fnmatches', 'FnMatcher']
+__all__ = ['fnmatches', 'any_fnmatches', 'FnMatcher', 'ReMatcher']
 
 
 def fnmatches(iterable, pat, ignore_case=False):
@@ -39,7 +39,7 @@ def any_fnmatches(iterable, pat, ignore_case=False):
 class FnMatcher:
     _use_normcase = normcase is not posix_normcase
 
-    def __init__(self, patterns, ignore_case=False):
+    def __init__(self, patterns: Union[str, Iterable[str]], ignore_case=False):
         if isinstance(patterns, str):
             patterns = (patterns,)
         self.patterns = tuple(_compile_pattern(normcase(pat), ignore_case=ignore_case) for pat in patterns)
@@ -66,6 +66,36 @@ class FnMatcher:
     def matching_values(self, values: Iterable[str]) -> Iterator[str]:
         if self._use_normcase:
             values = map(normcase, values)
+        patterns = self.patterns
+        for value in values:
+            if any(pat(value) for pat in patterns):
+                yield value
+
+
+class ReMatcher:
+    def __init__(self, patterns: Union[str, Iterable[str]], ignore_case=False):
+        if isinstance(patterns, str):
+            patterns = (patterns,)
+        self.patterns = tuple(
+            re.compile(pat, re.IGNORECASE).match if ignore_case else re.compile(pat).match for pat in patterns
+        )
+
+    def match(self, value: str) -> bool:
+        """
+        :param str value: A string
+        :return bool: True if the value matches any of this matcher's patterns
+        """
+        return any(pat(value) for pat in self.patterns)
+
+    def matches(self, values: Iterable[str]) -> bool:
+        """
+        :param iterable values: An iterable that yields strings
+        :return bool: True if any of the values match any of this matcher's patterns
+        """
+        # The below order consumes values once
+        return any(pat(val) for val in values for pat in self.patterns)
+
+    def matching_values(self, values: Iterable[str]) -> Iterator[str]:
         patterns = self.patterns
         for value in values:
             if any(pat(value) for pat in patterns):
