@@ -42,6 +42,7 @@ class ComparableImage:
         normalize: bool = True,
         max_width: Optional[int] = None,
         max_height: Optional[int] = None,
+        compare_as: Optional[str] = None,
         _sizes=None,
     ):
         self.image = image if isinstance(image, Image.Image) else Image.open(image)
@@ -49,12 +50,16 @@ class ComparableImage:
         self._normalize = normalize
         self._max_width = max_width
         self._max_height = max_height
+        self._compare_as = compare_as  # If one image is jpeg, both should use jpeg. Only use png if both are webp/png
         self._as_size = _sizes or {}  # type: Dict[Tuple[int, int], ComparableImage]
         self._as_size[self.image.size] = self
         self._computed = defaultdict(WeakKeyDictionary)
 
     def __repr__(self):
-        return f'<{self.__class__.__name__}({self.image!r}, gray={self._gray}, normalize={self._normalize})>'
+        return (
+            f'<{self.__class__.__name__}({self.image!r}, gray={self._gray}, normalize={self._normalize}, '
+            f'max_width={self._max_width}, max_height={self._max_height}, compare_as={self._compare_as!r})>'
+        )
 
     def is_same_as(self, other: 'ComparableImage', taxi: float = 2, mse: float = 20, mssim: float = 0.975) -> bool:
         """
@@ -206,7 +211,7 @@ class ComparableImage:
     def imread_array(self):
         image = ImageOps.grayscale(self.image) if self._gray else self.image
         bio = BytesIO()
-        image.save(bio, 'jpeg')
+        image.save(bio, self._compare_as or 'jpeg')
         return imread(bio.getvalue())
 
     @cached_property
@@ -228,7 +233,9 @@ class ComparableImage:
         if min_size not in self._as_size:  # self would already be there; returned value adds itself
             image = _resize(self.image, min_width)
             image = _crop(image, min_width, min_height)
-            return ComparableImage(image, self._gray, self._normalize, self._max_width, self._max_height, self._as_size)
+            return ComparableImage(
+                image, self._gray, self._normalize, self._max_width, self._max_height, self._compare_as, self._as_size
+            )
         return self._as_size[min_size]
 
     def compatible_sizes(self, other: 'ComparableImage') -> Tuple['ComparableImage', 'ComparableImage']:

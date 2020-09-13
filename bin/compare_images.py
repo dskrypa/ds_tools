@@ -28,6 +28,7 @@ def parser():
     parser.add_argument('--no_normalize', '-N', dest='normalize', action='store_false', help='Do not normalize images for exposure differences before comparisons')
     parser.add_argument('--max_width', '-W', type=int, help='Resize images that have a width greater than this value')
     parser.add_argument('--max_height', '-H', type=int, help='Resize images that have a height greater than this value')
+    parser.add_argument('--compare_as', '-c', choices=('jpeg', 'png'), default='jpeg', help='The image format to use for the comparison')
     parser.add_argument('--same', '-s', action='store_true', help='Include comparisons intended for images that are the same')
     parser.include_common_args('verbosity')
     # fmt: on
@@ -39,10 +40,10 @@ def main():
     args = parser().parse_args(req_subparser_value=True)
     init_logging(args.verbose, log_path=None)
 
-    image_args = (args.gray, args.normalize, args.max_width, args.max_height)
+    image_args = (args.gray, args.normalize, args.max_width, args.max_height, args.compare_as)
     img_a = ComparableImage(Path(args.path_a).expanduser().resolve(), *image_args)
     img_b = ComparableImage(Path(args.path_b).expanduser().resolve(), *image_args)
-    log.debug(f'Comparing {img_a} to {img_b}')
+    log.log(19, f'Comparing:\n{img_a}\nto\n{img_b}')
 
     methods = {
         'taxicab_distance': 'lower values = more similar',
