@@ -1,6 +1,8 @@
 """
 Library for reading rows from an SQLite3 DB in a generic dict-like fashion.
 
+All input is assumed to be trusted.  There is nothing here that would prevent SQL injection attacks.
+
 This can be somewhat useful for viewing the contents of an unfamiliar SQLite3 DB, but I do not recommend using it for
 creating anything new or writing to an SQLite3 DB.  I would recommend using SQLAlchemy for that.
 
@@ -10,7 +12,6 @@ creating anything new or writing to an SQLite3 DB.  I would recommend using SQLA
 import os
 import sqlite3
 import logging
-from collections import OrderedDict
 from operator import itemgetter
 from pathlib import Path
 from typing import Iterator, Optional, List, Union
@@ -97,13 +98,13 @@ class Sqlite3Database:
     def query(self, query, *args, **kwargs):
         """
         :param query: Query string
-        :return list: Result rows as OrderedDicts
+        :return list: Result rows as dicts (key order is guaranteed in Python 3.7+)
         """
         results = self.execute(query, *args, **kwargs)
         if results.description is None:
             raise OperationalError('No Results.')
         headers = [fields[0] for fields in results.description]
-        return [OrderedDict(zip(headers, row)) for row in results]
+        return [dict(zip(headers, row)) for row in results]
 
     def iterquery(self, query, *args, **kwargs):
         results = self.execute(query, *args, **kwargs)
@@ -111,7 +112,7 @@ class Sqlite3Database:
             raise OperationalError('No Results.')
         headers = [fields[0] for fields in results.description]
         for row in results:
-            yield OrderedDict(zip(headers, row))
+            yield dict(zip(headers, row))
 
     def select(self, columns, table, where_mode='AND', limit: Optional[int] = None, **where_args):
         """
@@ -182,7 +183,7 @@ class Sqlite3Database:
         self['test_1'].insert([1, 'line2'])
 
 
-class DBRow(OrderedDict):
+class DBRow(dict):
     def __init__(self, db_table, *args, **kwargs):
         """
         :param DBTable db_table: DBTable in which this row resides
@@ -273,7 +274,7 @@ class DBTable:
             self.col_names = current_names
             self.col_types = current_types
 
-        self.columns = OrderedDict(zip(self.col_names, self.col_types))
+        self.columns = dict(zip(self.col_names, self.col_types))
 
         if pk is not None:
             if pk not in self.col_names:
