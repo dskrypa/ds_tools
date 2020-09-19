@@ -10,26 +10,28 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlencode, quote as url_quote
 
-from wrapt import synchronized
-
-from ..core import validate_or_make_dir, get_user_cache_dir
-
 __all__ = ['FSCache']
 log = logging.getLogger(__name__)
 
 
 class FSCache:
-    def __init__(self, cache_dir=None, cache_subdir=None, prefix=None, ext='txt', dumper=None, loader=None, binary=False):
+    def __init__(
+        self, cache_dir=None, cache_subdir=None, prefix=None, ext='txt', dumper=None, loader=None, binary=False
+    ):
+        from threading import RLock
         if cache_dir:
+            from ..fs.paths import validate_or_make_dir
             self.cache_dir = os.path.join(cache_dir, cache_subdir) if cache_subdir else cache_dir
             validate_or_make_dir(self.cache_dir)
         else:
+            from ..fs.paths import get_user_cache_dir
             self.cache_dir = get_user_cache_dir(cache_subdir)
         self.prefix = prefix or ''
         self._ext = ext
         self.dumper = dumper
         self.loader = loader
         self.binary = binary
+        self._lock = RLock()
 
     @property
     def ext(self):
@@ -86,22 +88,24 @@ class FSCache:
     def dated_html_key_nohost(cls, self, endpoint, *args, **kwargs):
         return '{}__{}'.format(datetime.now().strftime('%Y-%m-%d'), url_quote(endpoint, ''))
 
-    @synchronized
     def keys(self):
-        p_len = len(self.prefix)
-        e_len = len(self.ext)
-        keys = [
-            f[p_len:-e_len] for f in os.listdir(self.cache_dir) if f.startswith(self.prefix) and f.endswith(self.ext)
-        ]
-        return keys
+        with self._lock:
+            p_len = len(self.prefix)
+            e_len = len(self.ext)
+            keys = [
+                f[p_len:-e_len]
+                for f in os.listdir(self.cache_dir)
+                if f.startswith(self.prefix) and f.endswith(self.ext)
+            ]
+            return keys
 
-    @synchronized
     def values(self):
-        return [self[key] for key in self.keys()]
+        with self._lock:
+            return [self[key] for key in self.keys()]
 
-    @synchronized
     def items(self):
-        return zip(self.keys(), self.values())
+        with self._lock:
+            return zip(self.keys(), self.values())
 
     def __getitem__(self, item):
         file_path = self.path_for_key(item)

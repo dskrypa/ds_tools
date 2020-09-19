@@ -11,9 +11,9 @@ except ImportError:
     def ANSI(text):
         return text
 
-from ..core.exceptions import InputValidationException
 from ..output.color import colored
 from ..output.terminal import uprint
+from .exceptions import InputValidationException
 from .parsers import parse_yes_no, parse_int
 
 __all__ = ['get_input', 'choose_item']
@@ -68,9 +68,8 @@ def get_input(
 
 
 def choose_item(
-        items: Collection[Any], name: str = 'value', source: Any = '', *, before: Optional[str] = None,
-        before_color: Color = None, prompt_color: Color = 14, error_color: Color = 9, repr_func: Callable = repr,
-        retry: int = 0
+    items: Collection[Any], name: str = 'value', source: Any = '', *, before: Optional[str] = None, retry: int = 0,
+    before_color: Color = None, prompt_color: Color = 14, error_color: Color = 9, repr_func: Callable = repr,
 ) -> Any:
     """
     Given a list of items from which only one value can be used, prompt the user to choose an item.  If only one item

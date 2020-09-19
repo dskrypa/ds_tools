@@ -8,7 +8,7 @@ from typing import Callable, Any, Union
 
 from yaml import safe_load
 
-from ..core.exceptions import InputValidationException
+from .exceptions import InputValidationException
 
 __all__ = ['parse_yes_no', 'parse_full_yes_no', 'parse_bool', 'parse_with_func', 'parse_int', 'parse_bytes']
 

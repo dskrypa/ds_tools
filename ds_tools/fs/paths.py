@@ -11,7 +11,7 @@ from itertools import chain
 from pathlib import Path
 from typing import Iterator, Union, Iterable
 
-from .patterns import FnMatcher
+from ..core.patterns import FnMatcher
 
 __all__ = ['validate_or_make_dir', 'get_user_cache_dir', 'iter_paths', 'iter_files', 'Paths', 'relative_path']
 log = logging.getLogger(__name__)

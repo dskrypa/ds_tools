@@ -9,8 +9,6 @@ This module is only compatible with Python 3 due to the dependency on the `inspe
 :author: Doug Skrypa
 """
 
-import fnmatch
-import gzip
 import json
 import logging
 import os
@@ -18,7 +16,6 @@ import warnings
 from contextlib import suppress
 from datetime import datetime
 from functools import update_wrapper, wraps
-from getpass import getuser
 from inspect import Signature, Parameter
 from operator import attrgetter
 from threading import RLock
@@ -26,9 +23,8 @@ from threading import RLock
 from wrapt import synchronized
 
 from db_cache import DBCache
-from ..core import flatten_mapping, validate_or_make_dir
+from ..core.itertools import flatten_mapping
 from .._core.introspection import split_arg_vals_with_defaults, insert_kwonly_arg
-from .._core.serialization import PermissiveJSONEncoder
 from .exceptions import CacheLockWarning
 
 __all__ = ['cached', 'CacheKey', 'disk_cached']
@@ -146,7 +142,9 @@ def cached(cache=True, *, key=None, lock=None, optional=None, default=True, meth
                 return val
         else:
             key_locks = {}
-            single_lock = all((method, lock is not True, not callable(lock), is_lock(lock)))
+            single_lock = all(
+                (method, lock is not True, not callable(lock), hasattr(lock, 'acquire'), hasattr(lock, 'release'))
+            )
             if single_lock:
                 warnings.warn(CacheLockWarning(func, lock))
 
@@ -246,6 +244,11 @@ def cached(cache=True, *, key=None, lock=None, optional=None, default=True, meth
 
 
 def disk_cached(prefix='/var/tmp/script_cache/', ext=None, date_fmt='%Y-%m-%d', compress=True):
+    import fnmatch
+    import gzip
+    from getpass import getuser
+    from .._core.serialization import PermissiveJSONEncoder
+    from ..fs.paths import validate_or_make_dir
     open_func = gzip.open if compress else open
     ext = ext or ('json.gz' if compress else 'json')
 
@@ -342,11 +345,3 @@ class CacheKey:
         key += tuple(type(v) for v in args)
         key += tuple(type(v) for _, v in sorted(kwargs.items()))
         return cls(key)
-
-
-def is_lock(obj):
-    """
-    :param obj: An object
-    :return bool: True if the object appears to be a lock instance, False otherwise
-    """
-    return hasattr(obj, 'acquire') and hasattr(obj, 'release')

@@ -4,8 +4,6 @@ Exceptions and warnings for the caching package.
 :author: Doug Skrypa
 """
 
-__all__ = ['CacheLockWarning']
-
 
 class CacheLockWarning(Warning):
     def __init__(self, func, lock):
