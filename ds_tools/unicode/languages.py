@@ -19,7 +19,7 @@ except ImportError:
 
 from ..caching import cached
 from ..core import classproperty
-from ..utils import ALL_PUNCTUATION, ALL_SYMBOLS
+from ..utils.text_processing import ALL_PUNCTUATION, ALL_SYMBOLS
 from .hangul import hangul_romanized_permutations, matches_hangul_permutation
 from .ranges import *
 
