@@ -5,6 +5,4 @@ from them.
 :author: Doug Skrypa
 """
 
-from .documentation import *
-from .utils import *
-from .argparser import *
+from .argparser import ArgParser

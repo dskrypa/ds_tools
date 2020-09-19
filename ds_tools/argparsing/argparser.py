@@ -5,15 +5,10 @@ Wrapper around argparse to provide some additional functionality / shortcuts
 """
 
 import inspect
-import re
 # noinspection PyUnresolvedReferences
 from argparse import ArgumentParser, RawDescriptionHelpFormatter, _ArgumentGroup
-from copy import deepcopy
 from itertools import chain
 from pathlib import Path
-
-import yaml
-from yaml.parser import ParserError
 
 from .utils import COMMON_ARGS, update_subparser_constants, get_default_value
 
@@ -195,7 +190,7 @@ class ArgParser(ArgumentParser):
 
         for arg, default in kwargs.items():
             fn_name, a = COMMON_ARGS[arg]
-            kvargs = deepcopy(a.kwargs)
+            kvargs = a.kwargs.copy()
             kvargs['default'] = default
             getattr(self, fn_name)(*a.args, **kvargs)
 
@@ -281,6 +276,9 @@ class ArgParser(ArgumentParser):
         return parser
 
     def parse_with_dynamic_args(self, from_field, args=None, namespace=None, req_subparser_value=False):
+        import re
+        from yaml import safe_load
+        from yaml.parser import ParserError
         parsed = self.parse_args(args, namespace, req_subparser_value)
         try:
             dynamic = getattr(parsed, from_field)
@@ -331,7 +329,7 @@ class ArgParser(ArgumentParser):
             except KeyError:
                 try:
                     # Note: using yaml.safe_load to handle str/int/float/bool automatically
-                    newly_parsed[k] = yaml.safe_load(' '.join(v))
+                    newly_parsed[k] = safe_load(' '.join(v))
                 except ParserError:
                     newly_parsed[k] = ' '.join(v)
             else:

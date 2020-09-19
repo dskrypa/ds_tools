@@ -10,6 +10,7 @@ import _venv  # This will activate the venv, if it exists and is not already act
 sys.path.append(PROJECT_ROOT.as_posix())
 from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
+from ds_tools.core import wrap_main
 from ds_tools.output.color import colored, HEX_COLORS_REVERSE
 
 ATTRS = [
@@ -31,6 +32,7 @@ def parser():
     return parser
 
 
+@wrap_main
 def main():
     args = parser().parse_args()
     if (args.color or args.background) and args.all:
@@ -102,7 +104,4 @@ def main():
 
 
 if __name__ == '__main__':
-    try:
-        main()
-    except KeyboardInterrupt:
-        print()
+    main()

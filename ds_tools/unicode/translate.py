@@ -10,7 +10,7 @@ from googletrans import Translator
 
 from db_cache import DBCache
 from ..caching import cached
-from ..core import rate_limited
+from ..core.decorate import rate_limited
 from ..http.imitate import IMITATE_HEADERS
 
 __all__ = ['GoogleTranslator']

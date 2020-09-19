@@ -4,7 +4,6 @@ Utilities for argparse
 :author: Doug Skrypa
 """
 
-from itertools import chain
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -21,6 +20,7 @@ class Arg:
         self.kwargs = kwargs
 
     def __repr__(self):
+        from itertools import chain
         args = (repr(val) for val in self.args)
         kwargs = ('{}={}'.format(k, v.__name__ if k == 'type' else repr(v)) for k, v in self.kwargs.items())
         return '<{}({})>'.format(type(self).__name__, ','.join(chain(args, kwargs)))
