@@ -8,7 +8,7 @@ import json
 from subprocess import Popen
 from tempfile import NamedTemporaryFile
 
-from ..core import PermissiveJSONEncoder, yaml_dump
+from .._core.serialization import PermissiveJSONEncoder, yaml_dump
 
 __all__ = ['cdiff', 'cdiff_objs']
 

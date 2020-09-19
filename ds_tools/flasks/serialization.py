@@ -7,7 +7,7 @@ import json
 from flask import current_app, request, Response
 
 from ..input import parse_bool
-from ..core.serialization import PermissiveJSONEncoder, yaml_dump
+from .._core.serialization import PermissiveJSONEncoder, yaml_dump
 
 __all__ = ['serialize']
 

@@ -16,7 +16,7 @@ from operator import itemgetter
 from pathlib import Path
 from typing import Iterator, Optional, List, Union
 
-from ..core import itemfinder
+from ..core.itertools import itemfinder
 from ..output import Table, Printer
 
 __all__ = ['Sqlite3Database']

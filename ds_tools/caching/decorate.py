@@ -26,9 +26,9 @@ from threading import RLock
 from wrapt import synchronized
 
 from db_cache import DBCache
-from ..core import (
-    flatten_mapping, PermissiveJSONEncoder, validate_or_make_dir, split_arg_vals_with_defaults, insert_kwonly_arg
-)
+from ..core import flatten_mapping, validate_or_make_dir
+from .._core.introspection import split_arg_vals_with_defaults, insert_kwonly_arg
+from .._core.serialization import PermissiveJSONEncoder
 from .exceptions import CacheLockWarning
 
 __all__ = ['cached', 'CacheKey', 'disk_cached']
