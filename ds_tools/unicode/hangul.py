@@ -4,21 +4,19 @@ Tools for working with hangul
 :author: Doug Skrypa
 """
 
-import logging
 import re
 from itertools import chain, product
 
 from cachetools import LRUCache
 
 from ..caching import cached
-from .ranges import *
+from .ranges import HANGUL_RANGES
 
 __all__ = [
     'compose_syllable', 'decompose_syllable', 'decompose_syllables', 'is_final_jamo', 'is_hangul_syllable', 'is_jamo',
     'is_lead_jamo', 'is_vowel_jamo', 'revised_romanize', 'romanize', 'romanize_plus', 'hangul_romanized_permutations',
     'matches_hangul_permutation'
 ]
-log = logging.getLogger(__name__)
 
 # https://en.wikipedia.org/wiki/Hangul_Compatibility_Jamo
 JAMO_CONSONANTS_START = 0x3130

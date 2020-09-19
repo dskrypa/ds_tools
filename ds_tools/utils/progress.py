@@ -2,7 +2,6 @@
 :author: Doug Skrypa
 """
 
-import logging
 from itertools import cycle
 from time import monotonic
 
@@ -11,7 +10,6 @@ from ..core.decorate import basic_coroutine
 from ..output import readable_bytes
 
 __all__ = ['progress_coroutine']
-log = logging.getLogger(__name__)
 
 
 @basic_coroutine

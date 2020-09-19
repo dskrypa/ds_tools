@@ -12,8 +12,8 @@ from subprocess import Popen, PIPE, STDOUT
 from threading import Thread
 from io import StringIO
 
-from .core import kwmerge
-from .output import to_str
+from .core.itertools import kwmerge
+from .output.formatting import to_str
 
 __all__ = ['exec_local', 'exec_via_ssh', 'tee', 'psg', 'ExternalProcessException']
 log = logging.getLogger(__name__)

@@ -24,7 +24,7 @@ from wrapt import synchronized
 
 from db_cache import DBCache
 from ..core.itertools import flatten_mapping
-from .._core.introspection import split_arg_vals_with_defaults, insert_kwonly_arg
+from ..core.introspection import split_arg_vals_with_defaults, insert_kwonly_arg
 from .exceptions import CacheLockWarning
 
 __all__ = ['cached', 'CacheKey', 'disk_cached']
@@ -247,7 +247,7 @@ def disk_cached(prefix='/var/tmp/script_cache/', ext=None, date_fmt='%Y-%m-%d', 
     import fnmatch
     import gzip
     from getpass import getuser
-    from .._core.serialization import PermissiveJSONEncoder
+    from ..core.serialization import PermissiveJSONEncoder
     from ..fs.paths import validate_or_make_dir
     open_func = gzip.open if compress else open
     ext = ext or ('json.gz' if compress else 'json')

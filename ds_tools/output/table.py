@@ -5,7 +5,6 @@ Table and supporting classes for formatting / printing tabular data to stdout.
 """
 
 import csv
-import logging
 import re
 from contextlib import contextmanager
 from functools import cached_property
@@ -18,14 +17,11 @@ from wcwidth import wcswidth
 
 from ..caching.mixins import ClearableCachedPropertyMixin
 from .color import colored
-from .exceptions import TableFormatException
 from .terminal import _uout, Terminal
 
-__all__ = ['Column', 'SimpleColumn', 'Table', 'TableBar', 'HeaderRow']
-log = logging.getLogger(__name__)
+__all__ = ['Column', 'SimpleColumn', 'Table', 'TableBar', 'HeaderRow', 'TableFormatException']
 
 ANSI_COLOR_RX = re.compile(r'(\033\[\d+;?\d*;?\d*m)(.*)(\033\[\d+;?\d*;?\d*m)')
-TERM = Terminal()
 Row = Union[Mapping[str, Any], 'TableBar', 'HeaderRow', Type['TableBar'], Type['HeaderRow']]
 
 
@@ -227,6 +223,7 @@ class Table(ClearableCachedPropertyMixin):
         self.fix_ansi_width = fix_ansi_width
         self._flush = file is None
         self._file = _uout if file is None else file
+        self._term = Terminal()
 
     def __getitem__(self, item):
         for c in self.columns:
@@ -284,7 +281,7 @@ class Table(ClearableCachedPropertyMixin):
     def header_bar(self, char: str = '-') -> Optional[str]:
         if self.mode == 'table':
             bar = char * len(self.header_row)
-            return bar[:TERM.width] if self._file is _uout else bar
+            return bar[:self._term.width] if self._file is _uout else bar
         return None
 
     @classmethod
@@ -499,3 +496,16 @@ class replacement_itemgetter:
 
     def __call__(self, obj):
         return self._call(obj)
+
+
+class TableFormatException(Exception):
+    def __init__(self, scope, fmt_str, value, exc, *args):
+        self.scope = scope
+        self.fmt_str = fmt_str
+        self.value = value
+        self.exc = exc
+        super().__init__(*args)
+
+    def __str__(self):
+        msg_fmt = 'Error formatting {}: {} {}\nFormat string: {!r}\nContent: {}'
+        return msg_fmt.format(self.scope, type(self.exc).__name__, self.exc, self.fmt_str, self.value)

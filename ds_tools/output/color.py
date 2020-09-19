@@ -4,9 +4,7 @@ ANSI Color Handling (based on the 'colored' module)
 :author: Doug Skrypa
 """
 
-from .exceptions import InvalidAnsiCode
-
-__all__ = ['colored']
+__all__ = ['colored', 'InvalidAnsiCode']
 
 ESC = '\x1b['
 END = 'm'
@@ -611,3 +609,7 @@ def ansi_color_code(color, base):
             return code + ANSI_COLORS[color] + END
         except KeyError as e:
             raise InvalidAnsiCode(color) from e
+
+
+class InvalidAnsiCode(ValueError):
+    """Exception to be raised when an invalid ANSI color/attribute code is selected"""

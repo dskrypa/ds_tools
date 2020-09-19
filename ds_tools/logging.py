@@ -4,19 +4,10 @@ Facilitates preparation of log directories and configuring loggers with custom s
 :author: Doug Skrypa
 """
 
-import inspect
 import logging
 import os
-import re
-import signal
 import sys
-import time
-from collections import ChainMap
-from contextlib import suppress
 from datetime import datetime
-from getpass import getuser
-from itertools import count
-from logging import handlers
 from pathlib import Path
 from threading import RLock
 from typing import Set, Optional, List, Union, Collection, Iterable, Callable
@@ -122,6 +113,7 @@ def init_logging(
     :return str|None: The path to which logs are being written, or None if no file handler was configured.
     """
     if fix_sigpipe:
+        import signal
         try:
             signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # Prevent error when piping output
         except AttributeError as e:
@@ -153,6 +145,7 @@ def init_logging(
         _add_file_handler(loggers, log_path, date_fmt, file_fmt, file_lvl, file_handler_opts, file_perm)
 
     if capture_warnings:
+        # noinspection PyTypeChecker
         _capture_warnings(suppress_warnings, suppress_additional_warnings)
 
     return log_path
@@ -234,6 +227,11 @@ def _add_stream_handlers(
 
 
 def _choose_log_path(file_dir, filename_fmt, cleanup_old=True) -> Path:
+    import inspect
+    import re
+    import time
+    from getpass import getuser
+    from itertools import count
     log_dir = Path(file_dir if file_dir else DEFAULT_LOG_DIR.format(user=getuser()))
     try:
         prog = Path(inspect.getsourcefile(inspect.stack()[-1][0])).stem
@@ -270,9 +268,11 @@ def _add_file_handler(loggers, log_path, date_fmt, file_fmt, file_lvl, file_hand
     log_path = log_path.as_posix()
     prep_log_dir(log_path)
     file_handler_opts = file_handler_opts or {'when': 'midnight', 'backupCount': 7, 'encoding': 'utf-8'}
-    file_handler = handlers.TimedRotatingFileHandler(log_path, **file_handler_opts)
-    with suppress(OSError):
+    file_handler = logging.handlers.TimedRotatingFileHandler(log_path, **file_handler_opts)
+    try:
         os.chmod(log_path, file_perm)
+    except OSError:
+        pass
     file_handler.setLevel(file_lvl)
     file_handler.setFormatter(DatetimeFormatter(file_fmt or ENTRY_FMT_DETAILED, date_fmt))
     file_handler.name = log_path
@@ -339,6 +339,7 @@ def _configure_level_names(lvl_names=_NotSet, lvl_names_add=None):
         lvl_names.update(lvl_names_add)
     if lvl_names:
         for lvl, name in lvl_names.items():
+            # noinspection PyUnresolvedReferences
             if (name not in logging._nameToLevel) and (lvl not in logging._levelToName):
                 logging.addLevelName(lvl, name)
 
@@ -366,6 +367,7 @@ class DatetimeFormatter(logging.Formatter):
     _local_tz = get_localzone()
 
     def formatTime(self, record, datefmt=None):
+        # noinspection PyUnresolvedReferences
         dt = self._local_tz.localize(datetime.fromtimestamp(record.created))
         if datefmt:
             s = dt.strftime(datefmt)
@@ -440,6 +442,7 @@ def add_context_filter(filter_instance, name=None):
     :param str|None name: None to add to all loggers, or a string that is the prefix of all loggers that should use the
       given filter
     """
+    # noinspection PyUnresolvedReferences
     for lname, logger in logging.Logger.manager.loggerDict.items():
         if (name is None) or (isinstance(lname, str) and lname.startswith(name)):
             try:
@@ -484,7 +487,9 @@ def update_level(name, level, verbosity='set', handlers=True, handlers_only=Fals
 
 
 def get_logger_info(only_with_handlers=False, non_null_handlers_only=False, test_filters=False):
+    from collections import ChainMap
     loggers = {}
+    # noinspection PyUnresolvedReferences
     for lname, logger in ChainMap(logging.Logger.manager.loggerDict, {None: logging.getLogger()}).items():
         entry = {'type': type(logger).__qualname__}
         try:
@@ -517,6 +522,7 @@ def get_logger_info(only_with_handlers=False, non_null_handlers_only=False, test
                     }
                 if handler.filters:
                     if test_filters:
+                        # noinspection PyTypeChecker
                         record = logging.LogRecord(lname, 0, 'test', 1, 'test', None, None)
                         filter_info = []
                         for f in handler.filters:

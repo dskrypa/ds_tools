@@ -7,7 +7,6 @@ Tools for identifying the languages used in text.
 import logging
 import re
 import string
-import unicodedata
 from enum import Enum
 from typing import Union, Set, Optional, Tuple, Iterator, List, Iterable, Container
 
@@ -19,9 +18,10 @@ except ImportError:
 
 from ..caching import cached
 from ..core import classproperty
-from ..utils.text_processing import ALL_PUNCTUATION, ALL_SYMBOLS
+from ..utils.text_processing import chars_by_category, strip_punctuation
 from .hangul import hangul_romanized_permutations, matches_hangul_permutation
-from .ranges import *
+from .ranges import LATIN_RANGES, GREEK_COPTIC_RANGES, CYRILLIC_RANGES, HANGUL_RANGES, CJK_RANGES
+from .ranges import THAI_RANGES, JAPANESE_RANGES, NON_ENG_RANGES
 
 __all__ = [
     'is_hangul', 'contains_hangul', 'is_japanese', 'contains_japanese', 'is_cjk', 'contains_cjk',
@@ -29,11 +29,7 @@ __all__ = [
 ]
 log = logging.getLogger(__name__)
 
-ALL_PUNC_SYMBOLS_WS = ALL_PUNCTUATION + ALL_SYMBOLS + string.whitespace
 LANG_CAT_NAMES = ['NULL', 'MIX', 'English', 'Korean', 'Japanese', 'Chinese', 'Thai', 'Greek', 'Cyrillic', 'UNKNOWN']
-NUM_STRIP_TBL = str.maketrans({c: '' for c in '0123456789'})
-PUNC_STRIP_TBL = str.maketrans({c: '' for c in string.punctuation})
-PUNC_SYMBOL_STRIP_TBL = str.maketrans({c: '' for c in ALL_PUNCTUATION + ALL_SYMBOLS})
 
 
 class LangCat(Enum):
@@ -174,7 +170,7 @@ class LangCat(Enum):
         last_char = None
         i = 0
         for c in text:
-            if c in ALL_PUNC_SYMBOLS_WS:
+            if _is_punc_or_symbol(c):
                 pass
             elif last is None:
                 last = cls.categorize(c)
@@ -223,9 +219,23 @@ class LangCat(Enum):
         return LANG_CAT_NAMES[self.value]
 
 
+def _is_punc_or_symbol(char: str) -> bool:
+    try:
+        all_punc_sym_ws = _is_punc_or_symbol._all_punc_sym_ws
+    except AttributeError:
+        all_punc_sym_ws = _is_punc_or_symbol._all_punc_sym_ws = chars_by_category(prefix=('P', 'S')) + string.whitespace
+    return char in all_punc_sym_ws
+
+
 def _strip_non_word_chars(text: str) -> str:
+    try:
+        sub = _strip_non_word_chars._sub
+        table = _strip_non_word_chars._table
+    except AttributeError:
+        sub = _strip_non_word_chars._sub = re.compile(r'[\d\s]+').sub
+        table = _strip_non_word_chars._table = str.maketrans({c: '' for c in chars_by_category(prefix=('P', 'S'))})
     # original = text
-    text = re.sub(r'[\d\s]+', '', text).translate(PUNC_SYMBOL_STRIP_TBL)
+    text = sub('', text).translate(table)
     # log.debug('_strip_non_word_chars({!r}) => {!r}'.format(original, text))
     return text
 
@@ -239,7 +249,7 @@ def is_hangul(a_str: str) -> bool:
     if len(a_str) < 1:
         return False
     elif len(a_str) > 1:
-        a_str = re.sub('\s+', '', a_str).translate(PUNC_STRIP_TBL)
+        a_str = strip_punctuation(a_str)
         if len(a_str) < 1:
             return False
         return all(is_hangul(c) for c in a_str)
@@ -252,7 +262,7 @@ def is_japanese(a_str: str) -> bool:
     if len(a_str) < 1:
         return False
     elif len(a_str) > 1:
-        a_str = re.sub('\s+', '', a_str).translate(PUNC_STRIP_TBL)
+        a_str = strip_punctuation(a_str)
         if len(a_str) < 1:
             return False
         return all(is_japanese(c) for c in a_str)
@@ -265,7 +275,7 @@ def is_cjk(a_str: str) -> bool:
     if len(a_str) < 1:
         return False
     elif len(a_str) > 1:
-        a_str = re.sub('\s+', '', a_str).translate(PUNC_STRIP_TBL)
+        a_str = strip_punctuation(a_str)
         if len(a_str) < 1:
             return False
         return all(is_cjk(c) for c in a_str)
@@ -282,14 +292,20 @@ def is_any_cjk(a_str: str, strip_punc=True, strip_nums=True) -> bool:
     :return bool: True if the given string contains only CJK/Katakana/Hiragana/Hangul characters (ignoring spaces,
       and optionally ignoring punctuation and numbers)
     """
+    try:
+        table = is_any_cjk._table
+    except AttributeError:
+        table = is_any_cjk._table = str.maketrans({c: '' for c in '0123456789'})
+
     if len(a_str) < 1:
         return False
     elif len(a_str) > 1:
-        a_str = re.sub('\s+', '', a_str)
         if strip_punc:
-            a_str = a_str.translate(PUNC_STRIP_TBL)
+            a_str = strip_punctuation(a_str)
+        else:
+            a_str = re.sub(r'\s+', '', a_str)  # strip_punctuation also strips spaces
         if strip_nums:
-            a_str = a_str.translate(NUM_STRIP_TBL)
+            a_str = a_str.translate(table)
         if len(a_str) < 1:
             return False
         return all(is_any_cjk(c) for c in a_str)
@@ -315,11 +331,6 @@ def contains_cjk(a_str: Union[str, Iterable[str]]) -> bool:
 
 def contains_any_cjk(a_str: Union[str, Iterable[str]]) -> bool:
     return any(is_any_cjk(c) for c in a_str)
-
-
-def _print_unicode_names(a_str: str):
-    for c in a_str:
-        log.info('{!r}: {}'.format(c, unicodedata.name(c)))
 
 
 class J2R:
@@ -373,3 +384,9 @@ def matches_permutation(eng: str, cjk: str) -> bool:
     lc_letters = set('abcdefghijklmnopqrstuvwxyz')
     lc_eng = ''.join(c for c in eng.lower() if c in lc_letters)
     return lc_eng in romanized_permutations(cjk, False)
+
+
+def _print_unicode_names(a_str: str):
+    import unicodedata
+    for c in a_str:
+        log.info('{!r}: {}'.format(c, unicodedata.name(c)))
