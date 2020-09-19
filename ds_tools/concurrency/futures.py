@@ -4,14 +4,12 @@ Utilities for working with Future objects from the stdlib concurrent.futures pac
 :author: Doug Skrypa
 """
 
-import logging
 from collections import defaultdict
 from concurrent.futures import Future
 from itertools import count
-from threading import  Thread
+from threading import Thread
 
 __all__ = ['as_future']
-log = logging.getLogger(__name__)
 _names = defaultdict(count)
 
 

@@ -4,21 +4,15 @@
 
 import logging
 import os
-import platform
-import re
-from getpass import getuser
 from itertools import chain
 from pathlib import Path
+from platform import system
 from typing import Iterator, Union, Iterable
 
 from ..core.patterns import FnMatcher
 
 __all__ = ['validate_or_make_dir', 'get_user_cache_dir', 'iter_paths', 'iter_files', 'Paths', 'relative_path']
 log = logging.getLogger(__name__)
-
-ON_WINDOWS = platform.system().lower() == 'windows'
-WIN_BASH_PATH_MATCH = re.compile(r'^/([a-z])/(.*)', re.IGNORECASE).match
-
 Paths = Union[str, Path, Iterable[Union[str, Path]]]
 
 
@@ -29,16 +23,23 @@ def iter_paths(path_or_paths: Paths) -> Iterator[Path]:
     :param path_or_paths: A path or iterable that yields paths
     :return: Generator that yields :class:`Path<pathlib.Path>` objects.
     """
+    try:
+        win_bash_path_match = iter_paths._win_bash_path_match
+    except AttributeError:
+        import re
+        win_bash_path_match = iter_paths._win_bash_path_match = re.compile(r'^/([a-z])/(.*)', re.IGNORECASE).match
+
     if isinstance(path_or_paths, (str, Path)):
         path_or_paths = (path_or_paths,)
 
+    on_windows = system().lower() == 'windows'
     for p in path_or_paths:
         if isinstance(p, str):
             p = Path(p)
         if isinstance(p, Path):
             try:
-                if ON_WINDOWS and not p.exists():
-                    if m := WIN_BASH_PATH_MATCH(p.as_posix()):
+                if on_windows and not p.exists():
+                    if m := win_bash_path_match(p.as_posix()):
                         p = Path(f'{m.group(1).upper()}:/{m.group(2)}')
             except OSError:
                 if any(c in p.name for c in '*?['):
@@ -102,7 +103,8 @@ def validate_or_make_dir(dir_path, permissions=None, suppress_perm_change_exc=Tr
 
 
 def get_user_cache_dir(subdir=None, permissions=None):
-    cache_dir = os.path.join('C:/var/tmp' if ON_WINDOWS else '/var/tmp', getuser(), 'ds_tools_cache')
+    from getpass import getuser
+    cache_dir = os.path.join('C:/var/tmp' if system().lower() == 'windows' else '/var/tmp', getuser(), 'ds_tools_cache')
     if subdir:
         cache_dir = os.path.join(cache_dir, subdir)
     validate_or_make_dir(cache_dir, permissions=permissions)

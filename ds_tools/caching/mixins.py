@@ -4,13 +4,10 @@ Mixins
 :author: Doug Skrypa
 """
 
-import logging
 from abc import ABC
-from contextlib import suppress
 from functools import cached_property
 
 __all__ = ['ClearableCachedPropertyMixin', 'DictAttrProperty', 'DictAttrFieldNotFoundError', 'ClearableCachedProperty']
-log = logging.getLogger(__name__)
 _NotSet = object()
 
 
@@ -20,6 +17,7 @@ class ClearableCachedProperty(ABC):
     def __set_name__(self, owner, name):
         if self._set_name:
             self.name = name
+
 
 # noinspection PyUnresolvedReferences
 ClearableCachedProperty.register(cached_property)
@@ -35,15 +33,19 @@ class ClearableCachedPropertyMixin:
                     if isinstance(v, ClearableCachedProperty):
                         cached_properties[k] = v
             else:
-                with suppress(AttributeError):
+                try:
                     # noinspection PyUnresolvedReferences
                     cached_properties.update(clz._cached_properties())
+                except AttributeError:
+                    pass
         return cached_properties
 
     def clear_cached_properties(self):
         for prop in self._cached_properties():
-            with suppress(KeyError):
+            try:
                 del self.__dict__[prop]
+            except KeyError:
+                pass
 
 
 class DictAttrProperty(ClearableCachedProperty):

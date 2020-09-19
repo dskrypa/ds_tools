@@ -5,11 +5,11 @@ Utilities for copying files with a progress indicator
 """
 
 import logging
-import time
 from concurrent import futures
 from itertools import cycle
 from pathlib import Path
 from threading import Event
+from time import monotonic
 
 from tz_aware_dt import format_duration
 from ..output import readable_bytes
@@ -78,17 +78,7 @@ def copy_file(src_path, dst_path, verify=False, block_size=10485760):
                 raise
 
     if verify:
-        log.info('Verifying copied file: {}'.format(dst_path))
-        src_sha = sha512sum(src_path)
-        log.debug('sha512 of {} = {}'.format(src_path, src_sha))
-        dst_sha = sha512sum(dst_path)
-        log.debug('sha512 of {} = {}'.format(dst_path, dst_sha))
-        if src_sha != dst_sha:
-            log.warning('Copy failed - sha512({}) != sha512({})'.format(src_path, dst_path))
-            log.warning('Deleting due to failed verification: {}'.format(dst_path))
-            dst_path.unlink()
-        else:
-            log.info('Copy succeeded - sha512({}) == sha512({})'.format(src_path, dst_path))
+        _verify(src_path, dst_path)
 
 
 def _copy_file(src_path, dst_path, cb, verify=False, block_size=10485760):
@@ -100,14 +90,28 @@ def _copy_file(src_path, dst_path, cb, verify=False, block_size=10485760):
     :param int block_size: Number of bytes to read at a time (default: 10MB)
     """
     copied = 0
-    start = time.monotonic()
+    start = monotonic()
     with src_path.open('rb') as src, dst_path.open('wb') as dst:
         # TODO: Use a bytearray/memoryview?
         while buf := src.read(block_size):
             copied += dst.write(buf)
-            elapsed = time.monotonic() - start
+            elapsed = monotonic() - start
             if elapsed >= 0.3:
                 cb(copied, elapsed)
 
-        elapsed = time.monotonic() - start
+        elapsed = monotonic() - start
         cb(copied, elapsed)
+
+
+def _verify(src_path, dst_path):
+    log.info('Verifying copied file: {}'.format(dst_path))
+    src_sha = sha512sum(src_path)
+    log.debug('sha512 of {} = {}'.format(src_path, src_sha))
+    dst_sha = sha512sum(dst_path)
+    log.debug('sha512 of {} = {}'.format(dst_path, dst_sha))
+    if src_sha != dst_sha:
+        log.warning('Copy failed - sha512({}) != sha512({})'.format(src_path, dst_path))
+        log.warning('Deleting due to failed verification: {}'.format(dst_path))
+        dst_path.unlink()
+    else:
+        log.info('Copy succeeded - sha512({}) == sha512({})'.format(src_path, dst_path))

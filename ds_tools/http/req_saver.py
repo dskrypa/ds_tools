@@ -12,7 +12,7 @@ from urllib import parse as urllib_parse
 
 from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, PickleType
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import mapper, sessionmaker, scoped_session
+from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.orm.exc import NoResultFound, MultipleResultsFound
 from sqlalchemy.exc import NoSuchTableError, OperationalError
 

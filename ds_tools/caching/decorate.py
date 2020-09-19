@@ -22,7 +22,6 @@ from threading import RLock
 
 from wrapt import synchronized
 
-from db_cache import DBCache
 from ..core.itertools import flatten_mapping
 from ..core.introspection import split_arg_vals_with_defaults, insert_kwonly_arg
 from .exceptions import CacheLockWarning
@@ -98,7 +97,10 @@ def cached(cache=True, *, key=None, lock=None, optional=None, default=True, meth
         lock = lock_type() if lock is True else lock
 
     if key is None:
-        key = CacheKey.simple_noself if isinstance(cache, DBCache) else CacheKey.simple
+        try:
+            key = cache._get_default_key_func()
+        except AttributeError:
+            key = CacheKey.simple
 
     def decorator(func):
         sig = Signature.from_callable(func)
@@ -304,7 +306,6 @@ class CacheKey:
     classmethods as key functions.
     """
     __slots__ = ('_hash', '_vals')
-    _kwmark = (object(),)
 
     def __init__(self, tup):
         self._vals = tup
@@ -321,7 +322,7 @@ class CacheKey:
 
     @classmethod
     def _to_tuple(cls, *args, **kwargs):
-        return args if not kwargs else args + sum(sorted(kwargs.items()), cls._kwmark)
+        return args if not kwargs else args + sum(sorted(kwargs.items()), (cls,))
 
     @classmethod
     def simple(cls, *args, **kwargs):

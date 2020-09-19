@@ -4,17 +4,10 @@ HTTP / REST Exceptions
 :author: Doug Skrypa
 """
 
-from abc import ABCMeta
-from contextlib import suppress
-
-from requests.status_codes import codes
-
 __all__ = [
-    'CodeBasedRestException', 'CodeBasedRestExceptionMeta', 'http_code_and_reason', 'SimpleRestException',
-    'UnauthorizedRestException', 'UnavailableRestException'
+    'CodeBasedRestException', 'SimpleRestException', 'UnauthorizedRestException', 'UnavailableRestException',
+    'http_code_and_reason',
 ]
-
-lc_codes = {'{} {}'.format(c, reason.lower().replace('_', ' ')): c for reason, c in codes.__dict__.items()}
 
 
 def http_code_and_reason(cause):
@@ -24,6 +17,14 @@ def http_code_and_reason(cause):
     :param cause: An Exception of :class:`requests.Response` object
     :return tuple: (int(code), str(reason)) if possible, otherwise (None, None)
     """
+    try:
+        lc_codes = http_code_and_reason._lc_codes
+    except AttributeError:
+        from requests.status_codes import codes
+        lc_codes = http_code_and_reason._lc_codes = {
+            '{} {}'.format(c, reason.lower().replace('_', ' ')): c for reason, c in codes.__dict__.items()
+        }
+
     if isinstance(cause, Exception):
         lc_err = str(cause).lower()
         for r, c in lc_codes.items():
@@ -76,14 +77,7 @@ class SimpleRestException(Exception):
     __repr__ = __str__
 
 
-class CodeBasedRestExceptionMeta(ABCMeta):
-    def __init__(cls, name, bases, attr_dict):
-        with suppress(AttributeError):
-            cls._types[cls._code] = cls
-        super(CodeBasedRestExceptionMeta, cls).__init__(name, bases, attr_dict)
-
-
-class CodeBasedRestException(Exception, metaclass=CodeBasedRestExceptionMeta):
+class CodeBasedRestException(Exception):
     """
     A REST Exception that extracts the HTTP code & reason from the reason for being raised.
 
@@ -100,6 +94,13 @@ class CodeBasedRestException(Exception, metaclass=CodeBasedRestExceptionMeta):
     :param args: Additional args to pass to the Exception constructor, including an optional message first parameter
     """
     _types = {}
+
+    def __init_subclass__(cls):
+        try:
+            # noinspection PyUnresolvedReferences
+            cls._types[cls._code] = cls
+        except AttributeError:
+            pass
 
     def __new__(cls, cause, endpoint, *args):
         code, reason = http_code_and_reason(cause)

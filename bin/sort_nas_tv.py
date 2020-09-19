@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.append(Path(__file__).resolve().parents[1].as_posix())
 from ds_tools.argparsing import ArgParser
-from ds_tools.fs import copy_file
+from ds_tools.fs.copy import copy_file
 from ds_tools.logging import init_logging
 
 log = logging.getLogger('ds_tools.{}'.format(__name__))

@@ -4,4 +4,4 @@ A ``cached`` memoizing decorator and utilities that go with it, as well as some 
 :author: Doug Skrypa
 """
 
-from .decorate import *
+from .decorate import cached, CacheKey, disk_cached
