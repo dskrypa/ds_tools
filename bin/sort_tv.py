@@ -10,7 +10,7 @@ from ds_tools.argparsing import ArgParser
 from ds_tools.logging import init_logging
 from ds_tools.shell import exec_local, ExternalProcessException
 
-log = logging.getLogger('ds_tools.{}'.format(__name__))
+log = logging.getLogger(__name__)
 
 
 def parser():
@@ -32,7 +32,7 @@ def main():
             m = ep_pat.match(p.name)
             if m:
                 show, season, episode = m.groups()
-                season= int(season)
+                season = int(season)
                 episode = int(episode)
                 show_dir = src_dir.joinpath(show)
                 ep_dir = show_dir.joinpath('S{:02d}E{:02d}'.format(season, episode))
