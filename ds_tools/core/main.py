@@ -3,9 +3,7 @@
 """
 
 import logging
-import platform
 import sys
-import traceback
 from functools import wraps
 
 __all__ = ['wrap_main']
@@ -26,6 +24,7 @@ def wrap_main(main):
             try:
                 main(*args, **kwargs)
             except OSError as e:
+                import platform
                 if platform.system().lower() == 'windows' and e.errno == 22:
                     # When using |head, the pipe will be closed when head is done, but Python will still think that it
                     # is open - checking whether sys.stdout is writable or closed doesn't work, so triggering the
@@ -44,6 +43,7 @@ def wrap_main(main):
         except BrokenPipeError:
             pass
         except Exception as e:
+            import traceback
             if _logger_has_non_null_handlers(log):
                 log.log(19, traceback.format_exc())     # hide tb since exc may be expected unless output is --verbose
                 log.error(e)

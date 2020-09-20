@@ -61,8 +61,8 @@ class ArgParser(ArgumentParser):
         if doc_link is True:
             epilog.append('Online documentation: {}'.format(DOC_LINK + 'bin.{}.html'.format(filename_noext)))
         elif isinstance(doc_link, str):
-            if doc_link.startswith('http://'):
-                epilog.append('Online documentation: {}'.format(doc_link))
+            if doc_link.startswith(('http://', 'https://')):
+                epilog.append(f'Online documentation: {doc_link}')
         ap_args.setdefault('epilog', '\n\n'.join(epilog))
         ap_args.setdefault('formatter_class', RawDescriptionHelpFormatter)
         ap_args.setdefault('prog', self._caller_path.name)
