@@ -45,6 +45,7 @@ requirements = [
     'tz_aware_dt@ git+git://github.com/dskrypa/tz_aware_dt',
     'db_cache@ git+git://github.com/dskrypa/db_cache',
     'beautifulsoup4',
+    'bitarray',
     'SQLAlchemy',
     'wrapt',
     'cachetools',

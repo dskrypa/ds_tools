@@ -18,17 +18,17 @@ log = logging.getLogger(__name__)
 class WinCronTest(TestCaseBase):
     def test_from_cron_str(self):
         cron = CronSchedule.from_cron('0 0 23 * * *')
-        for attr in (cron._second, cron._minute):
+        for attr in (cron.second, cron.minute):
             self.assertTrue(attr[0])
             for i in range(1, 60):
                 self.assertFalse(attr[i])
 
-        self.assertTrue(cron._hour[23])
+        self.assertTrue(cron.hour[23])
         for i in range(23):
-            self.assertFalse(cron._hour[i])
+            self.assertFalse(cron.hour[i])
 
-        for attr in (cron._day, cron._month, cron._dow):
-            self.assertTrue(all(attr.values()))
+        for attr in (cron.day, cron.month, cron.dow):
+            self.assertTrue(attr.arr.all())
 
     def test_in_equals_out(self):
         cron_str = '0 0 23 * * *'

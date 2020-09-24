@@ -5,7 +5,9 @@ from datetime import datetime
 from functools import cached_property
 from typing import Dict, Tuple, Union
 
-from ...utils.cron import CronSchedule, _unpack
+from bitarray import bitarray
+
+from ...utils.cron import CronSchedule, TimePart
 from ..com.utils import com_repr
 
 __all__ = ['WinCronSchedule']
@@ -14,6 +16,10 @@ CronDict = Dict[Union[int, str], bool]
 
 INTERVAL_PAT = re.compile(r'PT?(?:(?P<day>\d+)D)?(?:(?P<hour>\d+)H)?(?:(?P<minute>\d+)M)?(?:(?P<second>\d+)S)?')
 # TODO: Expand the types of Windows triggers that can be created from a given WinCronSchedule [only supports Time now]
+
+
+def _unpack(packed: int, n: int, offset: int = 0) -> CronDict:
+    return {i + offset: bool(packed & (1 << i)) for i in range(n)}
 
 
 class WinCronSchedule(CronSchedule):
@@ -36,20 +42,20 @@ class WinCronSchedule(CronSchedule):
             self._set_from_interval(trigger.Repetition.Interval)
         elif trigger.Type == 2:  # IDailyTrigger
             interval = trigger.DaysInterval
-            self._day = {i: i % interval == 0 for i in range(1, 32)}
+            self.day.set_intervals({i: i % interval == 0 for i in range(1, 32)})
         elif trigger.Type == 3:  # IWeeklyTrigger
-            self._dow = _unpack(trigger.DaysOfWeek, 7)
+            self.dow.set_intervals(_unpack(trigger.DaysOfWeek, 7))
             interval = trigger.WeeksInterval
-            self._weeks = {i: i == interval for i in range(1, 6)}
+            self.week.set_intervals({i: i == interval for i in range(1, 6)})
         elif trigger.Type == 4:  # IMonthlyTrigger
-            self._day = _unpack(trigger.DaysOfMonth, 31, 1)
-            self._day['L'] = trigger.RunOnLastDayOfMonth
-            self._month = _unpack(trigger.MonthsOfYear, 12, 1)
+            self.day.set_intervals(_unpack(trigger.DaysOfMonth, 31, 1))
+            self.day['L'] = trigger.RunOnLastDayOfMonth
+            self.month.set_intervals(_unpack(trigger.MonthsOfYear, 12, 1))
         elif trigger.Type == 5:  # IMonthlyDOWTrigger
-            self._dow = _unpack(trigger.DaysOfWeek, 7)
-            self._month = _unpack(trigger.MonthsOfYear, 12, 1)
-            self._weeks = _unpack(trigger.WeeksOfMonth, 4, 1)
-            self._weeks['L'] = trigger.RunOnLastWeekOfMonth
+            self.dow.set_intervals(_unpack(trigger.DaysOfWeek, 7))
+            self.month.set_intervals(_unpack(trigger.MonthsOfYear, 12, 1))
+            self.week.set_intervals(_unpack(trigger.WeeksOfMonth, 4, 1))
+            self.week['L'] = trigger.RunOnLastWeekOfMonth
         elif trigger.Type == 6:  # IIdleTrigger
             self._set_from_interval(trigger.Repetition.Interval)  # interval = at most this frequently on idle?
         # elif trigger.Type == 7:  # IRegistrationTrigger  # Does not seem convertible
@@ -66,7 +72,7 @@ class WinCronSchedule(CronSchedule):
 
     def _set_from_interval(self, interval: str):
         if interval == 'PT0M':  # every second
-            self._init()
+            self.reset()
             return
         elif not (m := INTERVAL_PAT.match(interval)):
             raise ValueError(f'Unexpected {interval=!r}')
@@ -80,25 +86,29 @@ class WinCronSchedule(CronSchedule):
         # keys = ('day', 'hour', 'minute', 'second')
         key, value = parts.popitem()
         value = int(value)
-        freq = getattr(self, f'_{key}')
+        freq = getattr(self, key)
         start_val = getattr(self._start, key, 0)
         for i in freq:
             freq[i] = (i - start_val) % value == 0
 
-    def _interval_repr(self, freq: CronDict, attr: str, bigger: Tuple[str, ...]):
-        if all(freq.values()):
+    def _interval_repr(self, freq: TimePart, attr: str, bigger: Tuple[str, ...]):
+        arr = freq.arr
+        if arr.all():
             return ''
 
         suffix = attr.upper()[0]
-        enabled = {k for k, v in freq.items() if v}
+        enabled = set(freq)
         if len(enabled) == 1 and next(iter(enabled)) == getattr(self.start, attr):
-            if all(all(getattr(self, f'_{b}').values()) for b in bigger):
+            if all(getattr(self, b).arr.all() for b in bigger):
+                # if all(all(getattr(self, f'_{b}').values()) for b in bigger):
                 return f'1{bigger[0].upper()[0]}'
             return ''
 
-        for divisor in range(2, len(freq) // 2 + 1):
-            divisible = {k for k in freq if k % divisor == 0}
-            if divisible.intersection(enabled) == divisible:
+        for divisor in range(2, len(arr) // 2 + 1):
+            divisible = bitarray(len(arr))
+            divisible.setall(False)
+            divisible[::divisor] = True
+            if divisible == arr:
                 return f'{divisor}{suffix}'
 
         diffs = set()
@@ -117,10 +127,10 @@ class WinCronSchedule(CronSchedule):
     def interval(self):
         parts = ['P']
         attrs = (
-            (self._day, 'day', ('month', 'dow')),
-            (self._hour, 'hour', ('day', 'month', 'dow')),
-            (self._minute, 'minute', ('hour', 'day', 'month', 'dow')),
-            (self._second, 'second', ('minute', 'hour', 'day', 'month', 'dow')),
+            (self.day, 'day', ('month', 'dow')),
+            (self.hour, 'hour', ('day', 'month', 'dow')),
+            (self.minute, 'minute', ('hour', 'day', 'month', 'dow')),
+            (self.second, 'second', ('minute', 'hour', 'day', 'month', 'dow')),
         )
         for prop, attr, bigger in attrs:
             rep = self._interval_repr(prop, attr, bigger)
