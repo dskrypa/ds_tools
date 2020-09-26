@@ -19,6 +19,7 @@ except ImportError:
     com_repr = None
 
 from ..core.serialization import PermissiveJSONEncoder, yaml_dump
+from .constants import PRINTER_FORMATS
 from .formatting import format_tiered, pseudo_yaml
 from .table import Table
 from .terminal import uprint
@@ -33,10 +34,7 @@ def print_tiered(obj):
 
 
 class Printer:
-    formats = [
-        'json', 'json-pretty', 'json-compact', 'text', 'yaml', 'pprint', 'csv', 'table', 'pseudo-yaml', 'json-lines',
-        'plain', 'pseudo-json'
-    ]
+    formats = PRINTER_FORMATS
 
     def __init__(self, output_format):
         if output_format is None or output_format in Printer.formats:

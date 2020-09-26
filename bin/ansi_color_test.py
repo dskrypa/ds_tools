@@ -12,6 +12,7 @@ sys.path.append(PROJECT_ROOT.as_posix())
 from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
 from ds_tools.core.main import wrap_main
+from ds_tools.output.color import colored
 
 ATTRS = [
     'bold', 'dim', 'underlined', 'blink', 'reverse', 'hidden', 'reset',
@@ -38,8 +39,6 @@ def main():
     if (args.color or args.background) and args.all:
         raise ValueError('--all / -A can only be specified without --color / -c and --background / -b')
 
-    from ds_tools.output.color import colored, HEX_COLORS_REVERSE
-
     if args.basic:
         nums = []
         for i in range(256):
@@ -48,6 +47,7 @@ def main():
                 print(' '.join(nums))
                 nums = []
     elif args.hex:
+        from ds_tools.output._colors import HEX_COLORS_REVERSE
         hexs, nums = [], []
         for i, (hex, num) in enumerate(sorted(HEX_COLORS_REVERSE.items())):
             hexs.append(colored(hex, hex))

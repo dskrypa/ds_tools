@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .color import colored
+    from .constants import PRINTER_FORMATS
     from .formatting import readable_bytes, short_repr, bullet_list
     from .printer import Printer
     from .table import Column, SimpleColumn, Table, TableBar, HeaderRow
@@ -17,6 +18,8 @@ if TYPE_CHECKING:
 __attr_module_map = {
     # color
     'colored': 'color',
+    # constants
+    'PRINTER_FORMATS': 'constants',
     # formatting
     'readable_bytes': 'formatting',
     'short_repr': 'formatting',
