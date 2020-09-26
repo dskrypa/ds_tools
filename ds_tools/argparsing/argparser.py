@@ -14,39 +14,37 @@ from .utils import COMMON_ARGS, update_subparser_constants, get_default_value
 
 __all__ = ['ArgParser']
 
-DEFAULT_EMAIL = '[unknown author email]'
-BUG_REPORT = 'Report {script}{ver} bugs to {email}'
-DOC_LINK = 'hxxp://documentation-example-site.com/base/path/to/docs/'
-
 
 class ArgParser(ArgumentParser):
     """
     Wrapper around the argparse ArgumentParser to provide some additional functionality / shortcuts
 
     :param args: Positional args to pass to :class:`argparse.ArgumentParser`
-    :param bool|str doc_link: True to provide the default URL, or a str starting with ``http://`` to include literally
+    :param str docs_url: A url to provide as a link to documentation
     :param Path|None _caller_path: Filename of the file that created this ArgParser (automatically detected - this
       argument should not be provided by users)
     :param kwargs: Keyword args to pass to :class:`argparse.ArgumentParser`
     """
-    def __init__(self, *args, doc_link=False, email=None, _caller_path=None, _version=None, **kwargs):
+    def __init__(self, *args, docs_url=None, email=None, _caller_path=None, _version=None, **kwargs):
         if _caller_path:
             self._caller_path = _caller_path
+            self._docs_url = docs_url
             self._email = email
             self._version = _version or ''
         else:
             try:
                 top_level_frame_info = inspect.stack()[-1]
-                _globals = top_level_frame_info.frame.f_globals
-                _email = _globals.get('__author_email__')
-                version = _globals.get('__version__')
+                g = top_level_frame_info.frame.f_globals
+                _email, version, repo_url = g.get('__author_email__'), g.get('__version__'), g.get('__url__')
                 self._caller_path = Path(inspect.getsourcefile(top_level_frame_info[0]))
             except Exception:
                 self._caller_path = Path(__file__)
-                self._email = email or DEFAULT_EMAIL
+                self._docs_url = docs_url
+                self._email = email or '[unknown author email]'
                 self._version = _version or ''
             else:
-                self._email = email or _email or DEFAULT_EMAIL
+                self._docs_url = docs_url or docs_url_from_repo_url(repo_url)
+                self._email = email or _email or '[unknown author email]'
                 self._version = _version or version or ''
 
         if self._version and not self._version.startswith(' ['):
@@ -56,13 +54,9 @@ class ArgParser(ArgumentParser):
         ap_args = sig.bind(None, *args, **kwargs).arguments
         ap_args.pop('self')
 
-        filename_noext = self._caller_path.stem
-        epilog = [BUG_REPORT.format(script=filename_noext, email=self._email, ver=self._version)]
-        if doc_link is True:
-            epilog.append('Online documentation: {}'.format(DOC_LINK + 'bin.{}.html'.format(filename_noext)))
-        elif isinstance(doc_link, str):
-            if doc_link.startswith(('http://', 'https://')):
-                epilog.append(f'Online documentation: {doc_link}')
+        epilog = [f'Report {self._caller_path.stem}{self._version} bugs to {self._email}']
+        if self._docs_url:
+            epilog.append(f'Online documentation: {self._docs_url}')
         ap_args.setdefault('epilog', '\n\n'.join(epilog))
         ap_args.setdefault('formatter_class', RawDescriptionHelpFormatter)
         ap_args.setdefault('prog', self._caller_path.name)
@@ -76,6 +70,13 @@ class ArgParser(ArgumentParser):
             return {sp.dest: sp for sp in self._subparsers._group_actions}
         except AttributeError:
             return {}
+
+    @property
+    def has_subparsers(self) -> bool:
+        try:
+            return bool(self._subparsers._group_actions)
+        except AttributeError:
+            return False
 
     @property
     def groups(self):
@@ -157,8 +158,14 @@ class ArgParser(ArgumentParser):
             sp_group = self.add_subparsers(dest=dest, title='subcommands')
 
         sub_parser = sp_group.add_parser(
-            name, help=help or help_desc, description=description or help_desc, email=self._email,
-            _caller_path=self._caller_path, **kwargs
+            name,
+            help=help or help_desc,
+            description=description or help_desc,
+            docs_url=self._docs_url,
+            email=self._email,
+            _caller_path=self._caller_path,
+            _version=self._version,
+            **kwargs,
         )
         # noinspection PyTypeChecker
         return sub_parser
@@ -217,7 +224,7 @@ class ArgParser(ArgumentParser):
         #  subparsers that were used, to get the unique Argument objects and check the ones in that subparser chain
         #  that are in the exclusive groups.... or something like that?
 
-    def parse_args(self, args=None, namespace=None, req_subparser_value=False):
+    def parse_args(self, args=None, namespace=None, req_subparser_value=None):
         """
         Performs the same function as :func:`argparse.ArgumentParser.parse_args`, but handles unrecognized arguments
         differently.  Injects common args that were included in the constructor (done here because all subparsers will
@@ -231,16 +238,14 @@ class ArgParser(ArgumentParser):
         parsed, argv = self.parse_known_args(args, namespace)
         if argv:
             msg = 'unrecognized arguments: {}'.format(' '.join(argv))
+            suffix = ' (use --help for more details)'
             if self.subparsers:
-                self.error(
-                    f'{msg}\nnote: subcommand args must be provided after the subcommand (use --help for more details)'
-                )
-            self.error(msg + ' (use --help for more details)')
+                self.error(f'{msg}\nnote: subcommand args must be provided after the subcommand{suffix}')
+            self.error(msg + suffix)
 
-        if req_subparser_value:
-            for sp in self.subparsers:
-                if getattr(parsed, sp) is None:
-                    self.error(f'missing required positional argument: {sp} (use --help for more details)')
+        req_sp_val = self.has_subparsers if req_subparser_value is None else req_subparser_value
+        if req_sp_val and (sp := next((sp for sp in self.subparsers if getattr(parsed, sp) is None), None)):
+            self.error(f'missing required positional argument: {sp} (use --help for more details)')  # noqa
 
         parsed.__dict__.update(self.__constants)
         update_subparser_constants(self, parsed)
@@ -279,38 +284,30 @@ class ArgParser(ArgumentParser):
         import re
         from yaml import safe_load
         from yaml.parser import ParserError
+
         parsed = self.parse_args(args, namespace, req_subparser_value)
         try:
             dynamic = getattr(parsed, from_field)
         except AttributeError:
             return parsed, None
 
+        # Remove the action that contains the dynamic arguments from this parser or the active subparser
         dynamic_str = ' '.join(dynamic) if not isinstance(dynamic, str) else dynamic
-        # print('Base args: {}\nProcessing args: {!r}'.format(parsed.__dict__, dynamic_str))
+        # print(f'Base args: {parsed.__dict__}\nProcessing args: {dynamic_str!r}')
         parser = self._get_subparser(dict(parsed._get_kwargs()))
-        rm_action = next((act for act in self._actions if act.dest == from_field), None)
-        if rm_action is not None:
-            # print('Removing action: {}'.format(rm_action))
-            self._remove_action(rm_action)
-        else:
-            rm_action = next((act for act in parser._actions if act.dest == from_field), None)
-            if rm_action is not None:
-                # print('Removing action: {}'.format(rm_action))
-                parser._remove_action(rm_action)
+        if rm_action := next((act for act in parser._actions if act.dest == from_field), None):
+            # print(f'Removing action: {rm_action}'
+            parser._remove_action(rm_action)
 
-        known_options = set()
-        for act in chain(self._actions, parser._actions):
-            # print('Adding known options: {}'.format(act.option_strings))
-            known_options.update(act.option_strings)
-
-        pat = re.compile(r'(?:^|\s)(--?\S+?)[=\s]')
-        for m in pat.finditer(dynamic_str):
+        # Add discovered arguments to the active parser
+        known_options = set(chain.from_iterable(act.option_strings for act in chain(self._actions, parser._actions)))
+        for m in re.finditer(r'(?:^|\s)(--?\S+?)[=\s]', dynamic_str):
             key = m.group(1)
-            # print('Found key: {!r}'.format(key))
+            # print(f'Found key: {key!r}')
             if key not in known_options:
                 parser.add_argument(key, nargs='+')
             # else:
-            #     print('Skipping known key: {!r}'.format(key))
+            #     print(f'Skipping known key: {key!r}')
 
         def _get_default(key):
             base_default = self.get_default(key)
@@ -337,11 +334,11 @@ class ArgParser(ArgumentParser):
                     default = _get_default(k)
                     # print(f'Different value found for key={k!r}: {orig=!r} new={v!r} {default=!r}')
                     if orig == default or v != default:
-                        # print('Updating parsed[{!r}] => {!r}'.format(k, v))
+                        # print(f'Updating parsed[{k!r}] => {v!r}')
                         parsed.__dict__[k] = v
 
-        # print('re-parsed: {}\nnewly parsed: {}'.format(re_parsed.__dict__, newly_parsed))
-        # print('Final parsed args: {}'.format(parsed.__dict__))
+        # print(f're-parsed: {re_parsed.__dict__}\nnewly parsed: newly_parsed{}')
+        # print(f'Final parsed args: {parsed.__dict__}')
         return parsed, newly_parsed
 
     def __enter__(self):
@@ -350,3 +347,16 @@ class ArgParser(ArgumentParser):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         return
+
+
+def docs_url_from_repo_url(repo_url):
+    if repo_url and repo_url.startswith('https://github.com'):
+        from urllib.parse import urlparse
+
+        try:
+            user, repo = urlparse(repo_url).path[1:].split('/')
+        except Exception:
+            return None
+        else:
+            return f'https://{user}.github.io/{repo}/'
+    return None
