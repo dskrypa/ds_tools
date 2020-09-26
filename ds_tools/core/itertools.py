@@ -7,9 +7,9 @@ Functions that expand upon those in the built-in itertools module.
 from collections.abc import Mapping, MutableMapping
 from copy import deepcopy
 from itertools import chain, zip_longest
-from typing import Iterable, Sequence, Iterator, List, Tuple
+from typing import Iterable, Iterator, Tuple
 
-__all__ = ['chunked', 'flatten_mapping', 'itemfinder', 'kwmerge', 'merge', 'partitioned', 'ipartitioned']
+__all__ = ['chunked', 'flatten_mapping', 'itemfinder', 'kwmerge', 'merge', 'partitioned']
 
 
 def itemfinder(iterable, func):
@@ -34,17 +34,14 @@ def chunked(seq, n):
         i = j
 
 
-def partitioned(seq: Sequence, n: int):
+def partitioned(iterable: Iterable, n: int) -> Iterator[Tuple]:
     """
-    :param seq: A :class:`collections.abc.Sequence` (i.e., list, tuple, set, etc.)
-    :param int n: Max number of values in a given partition
-    :return: Generator that yields sub-sequences of the given sequence with len being at most n
+    :param iterable: An iterable object
+    :param n: The maximum number of elements in a given partition
+    :return: Generator that yields tuples containing ``n`` elements from the given iterable.  The last tuple yielded
+      will contain fewer than ``n`` elements if the total number of elements yielded by the iterable was not evenly
+      divisible by ``n``.
     """
-    for i in range(0, len(seq), n):
-        yield seq[i: i + n]
-
-
-def ipartitioned(iterable: Iterable, n: int) -> Iterator[Tuple]:
     _NotSet = object()
     args = [iter(iterable)] * n
     zipper = iter(zip_longest(*args, fillvalue=_NotSet))

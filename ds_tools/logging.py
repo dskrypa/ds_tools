@@ -265,10 +265,11 @@ def _choose_log_path(file_dir, filename_fmt, cleanup_old=True) -> Path:
 
 
 def _add_file_handler(loggers, log_path, date_fmt, file_fmt, file_lvl, file_handler_opts, file_perm):
+    from logging.handlers import TimedRotatingFileHandler
     log_path = log_path.as_posix()
     prep_log_dir(log_path)
     file_handler_opts = file_handler_opts or {'when': 'midnight', 'backupCount': 7, 'encoding': 'utf-8'}
-    file_handler = logging.handlers.TimedRotatingFileHandler(log_path, **file_handler_opts)
+    file_handler = TimedRotatingFileHandler(log_path, **file_handler_opts)
     try:
         os.chmod(log_path, file_perm)
     except OSError:
