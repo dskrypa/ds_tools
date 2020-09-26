@@ -43,7 +43,7 @@ def partitioned(iterable: Iterable, n: int) -> Iterator[Tuple]:
       divisible by ``n``.
     """
     _NotSet = object()
-    args = [iter(iterable)] * n
+    args = [iter(iterable)] * n  # Each element is a ref to the same iterator, so zip will group up to n values
     zipper = iter(zip_longest(*args, fillvalue=_NotSet))
     try:
         last = next(zipper)
