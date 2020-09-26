@@ -7,8 +7,9 @@ Functions that expand upon those in the built-in itertools module.
 from collections.abc import Mapping, MutableMapping
 from copy import deepcopy
 from itertools import chain
+from typing import Iterable, Sequence, Iterator, List
 
-__all__ = ['chunked', 'flatten_mapping', 'itemfinder', 'kwmerge', 'merge', 'partitioned']
+__all__ = ['chunked', 'flatten_mapping', 'itemfinder', 'kwmerge', 'merge', 'partitioned', 'ipartitioned']
 
 
 def itemfinder(iterable, func):
@@ -33,7 +34,7 @@ def chunked(seq, n):
         i = j
 
 
-def partitioned(seq, n):
+def partitioned(seq: Sequence, n: int):
     """
     :param seq: A :class:`collections.abc.Sequence` (i.e., list, tuple, set, etc.)
     :param int n: Max number of values in a given partition
@@ -41,6 +42,21 @@ def partitioned(seq, n):
     """
     for i in range(0, len(seq), n):
         yield seq[i: i + n]
+
+
+def ipartitioned(iterable: Iterable, n: int) -> Iterator[List]:
+    if n < 1:
+        raise ValueError(f'Invalid partition size {n=}')
+
+    part = []
+    for i, ele in enumerate(iterable):
+        if part and i % n == 0:
+            yield part
+            part = []
+        part.append(ele)
+
+    if part:
+        yield part
 
 
 def kwmerge(*params, **kwargs):

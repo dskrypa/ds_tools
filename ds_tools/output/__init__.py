@@ -5,6 +5,14 @@ Output formatting package.
 """
 
 from importlib import import_module
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .color import colored
+    from .formatting import readable_bytes, short_repr, bullet_list
+    from .printer import Printer
+    from .table import Column, SimpleColumn, Table, TableBar, HeaderRow
+    from .terminal import uprint, uerror
 
 __attr_module_map = {
     # color
