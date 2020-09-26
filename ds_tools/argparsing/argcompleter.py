@@ -5,6 +5,7 @@ subparser.
 :author: Doug Skrypa
 """
 
+import argparse
 import os
 import sys
 from argparse import ArgumentError, Namespace
@@ -12,6 +13,8 @@ from pathlib import Path
 
 import argcomplete
 from argcomplete import CompletionFinder, debug, sys_encoding, split_line
+from argcomplete import completers, action_is_greedy, action_is_open, action_is_satisfied
+from argcomplete.completers import SuppressCompleter
 
 
 class ArgCompletionFinder(CompletionFinder):
@@ -82,6 +85,90 @@ class ArgCompletionFinder(CompletionFinder):
         output_stream.flush()
         argcomplete.debug_stream.flush()
         exit_method(0)
+
+    def _complete_active_option(self, parser, next_positional, cword_prefix, parsed_args, completions):
+        # Patched to make active actions readable for debugging
+        active_actions = parser.active_actions
+        debug(f'\nActive actions (L={len(active_actions)}):\n', '\n'.join(f'  - {a}' for a in active_actions))
+
+        isoptional = cword_prefix and cword_prefix[0] in parser.prefix_chars
+        optional_prefix = ''
+        greedy_actions = [x for x in active_actions if action_is_greedy(x, isoptional)]
+        if greedy_actions:
+            assert len(greedy_actions) == 1, 'expect at most 1 greedy action'
+            # This means the action will fail to parse if the word under the cursor is not given
+            # to it, so give it exclusive control over completions (flush previous completions)
+            debug('Resetting completions because', greedy_actions[0], 'must consume the next argument')
+            self._display_completions = {}
+            completions = []
+        elif isoptional:
+            if '=' in cword_prefix:
+                # Special case for when the current word is '--optional=PARTIAL_VALUE'.
+                # The completer runs on PARTIAL_VALUE. The prefix is added back to the completions
+                # (and chopped back off later in quote_completions() by the COMP_WORDBREAKS logic).
+                optional_prefix, _, cword_prefix = cword_prefix.partition('=')
+            else:
+                # Only run completers if current word does not start with - (is not an optional)
+                return completions
+
+        complete_remaining_positionals = False
+        # Use the single greedy action (if there is one) or all active actions.
+        for active_action in greedy_actions or parser.active_actions:
+            if not active_action.option_strings:  # action is a positional
+                if action_is_open(active_action):
+                    # Any positional arguments after this may slide down into this action if more arguments are added
+                    # (since the user may not be done yet), so it is extremely difficult to tell which completers to
+                    # run. Running all remaining completers will probably show more than the user wants but it also
+                    # guarantees we won't miss anything.
+                    complete_remaining_positionals = True
+                if not complete_remaining_positionals:
+                    if action_is_satisfied(active_action) and not action_is_open(active_action):
+                        debug('Skipping', active_action)
+                        continue
+
+            debug('Activating completion for', active_action, active_action._orig_class)
+            completer = getattr(active_action, 'completer', None)
+
+            if completer is None:
+                # noinspection PyUnresolvedReferences
+                if active_action.choices is not None and not isinstance(active_action, argparse._SubParsersAction):
+                    completer = completers.ChoicesCompleter(active_action.choices)
+                elif not isinstance(active_action, argparse._SubParsersAction):  # noqa
+                    completer = self.default_completer
+
+            if completer:
+                if isinstance(completer, SuppressCompleter) and completer.suppress():
+                    continue
+                elif callable(completer):
+                    completions_from_callable = [
+                        c for c in completer(
+                            prefix=cword_prefix, action=active_action, parser=parser, parsed_args=parsed_args
+                        )
+                        if self.validator(c, cword_prefix)
+                    ]
+
+                    if completions_from_callable:
+                        completions += completions_from_callable
+                        if isinstance(completer, completers.ChoicesCompleter):
+                            self._display_completions.update(
+                                [[(x,), active_action.help] for x in completions_from_callable]  # noqa
+                            )
+                        else:
+                            self._display_completions.update([[(x,), ''] for x in completions_from_callable])  # noqa
+                else:
+                    debug('Completer is not callable, trying the readline completer protocol instead')
+                    for i in range(9999):
+                        next_completion = completer.complete(cword_prefix, i)  # noqa
+                        if next_completion is None:
+                            break
+                        if self.validator(next_completion, cword_prefix):
+                            self._display_completions.update({(next_completion,): ''})
+                            completions.append(next_completion)
+                if optional_prefix:
+                    completions = [optional_prefix + '=' + completion for completion in completions]
+                debug('Completions:', completions)
+
+        return completions
 
 
 def ensure_argcomplete_is_available(ensure_comp_possible=True):
