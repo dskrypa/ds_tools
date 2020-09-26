@@ -6,8 +6,8 @@ Functions that expand upon those in the built-in itertools module.
 
 from collections.abc import Mapping, MutableMapping
 from copy import deepcopy
-from itertools import chain
-from typing import Iterable, Sequence, Iterator, List
+from itertools import chain, zip_longest
+from typing import Iterable, Sequence, Iterator, List, Tuple
 
 __all__ = ['chunked', 'flatten_mapping', 'itemfinder', 'kwmerge', 'merge', 'partitioned', 'ipartitioned']
 
@@ -44,19 +44,20 @@ def partitioned(seq: Sequence, n: int):
         yield seq[i: i + n]
 
 
-def ipartitioned(iterable: Iterable, n: int) -> Iterator[List]:
-    if n < 1:
-        raise ValueError(f'Invalid partition size {n=}')
+def ipartitioned(iterable: Iterable, n: int) -> Iterator[Tuple]:
+    _NotSet = object()
+    args = [iter(iterable)] * n
+    zipper = iter(zip_longest(*args, fillvalue=_NotSet))
+    try:
+        last = next(zipper)
+    except StopIteration:
+        return
 
-    part = []
-    for i, ele in enumerate(iterable):
-        if part and i % n == 0:
-            yield part
-            part = []
-        part.append(ele)
+    for part in zipper:
+        yield last
+        last = part
 
-    if part:
-        yield part
+    yield tuple(ele for ele in last if ele is not _NotSet)
 
 
 def kwmerge(*params, **kwargs):
