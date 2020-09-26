@@ -8,16 +8,17 @@ subparser.
 import os
 import sys
 from argparse import ArgumentError, Namespace
+from pathlib import Path
 
 import argcomplete
 from argcomplete import CompletionFinder, debug, sys_encoding, split_line
 
 
 class ArgCompletionFinder(CompletionFinder):
-    def __call__(self, arg_parser, *args, exit_method=None, output_stream=None, **kwargs):
+    def __call__(self, arg_parser, *args, exit_method=None, output_stream=None, ensure_comp_possible=True, **kwargs):
         environ = os.environ
         if '_ARGCOMPLETE' not in environ:  # not an argument completion invocation
-            return
+            return ensure_argcomplete_is_available(ensure_comp_possible)
         exit_method = exit_method or os._exit  # noqa
         try:
             argcomplete.debug_stream = os.fdopen(9, 'w')
@@ -81,3 +82,52 @@ class ArgCompletionFinder(CompletionFinder):
         output_stream.flush()
         argcomplete.debug_stream.flush()
         exit_method(0)
+
+
+def ensure_argcomplete_is_available(ensure_comp_possible=True):
+    if not ensure_comp_possible:
+        return
+
+    for path in ('~/.config/bash_completion.d/python-argcomplete', '~/.bash_completion.d/python-argcomplete'):
+        if Path(path).expanduser().exists():
+            return
+
+    comp_dir = None
+    for path in ('~/.config/bash_completion.d', '~/.bash_completion.d'):
+        path = Path(path).expanduser()
+        if path.is_dir():
+            comp_dir = path
+            break
+
+    comp_dir = comp_dir or Path('~/.config/bash_completion.d').expanduser()
+    if not comp_dir.exists():
+        comp_dir.mkdir(parents=True)
+
+    copy_bash_completion_script(comp_dir)
+
+
+def copy_bash_completion_script(comp_dir: Path):
+    comp_src = Path(argcomplete.__file__).resolve().parent.joinpath('bash_completion.d', 'python-argcomplete')
+    if not comp_src.exists():
+        return
+
+    comp_path = comp_dir.joinpath('python-argcomplete')
+    print('=' * 100, file=sys.stderr)
+    print(f'Creating bash completion script: {comp_path.as_posix()}', file=sys.stderr)
+    with comp_src.open('r') as in_file, comp_path.open('w') as out_file:
+        out_file.write(in_file.read())
+
+    import platform
+    if platform.system().lower() == 'windows':
+        print('To enable tab completion, add the following lines to your ~/.bashrc or ~/.bash_profile:')
+        print('export ARGCOMPLETE_USE_TEMPFILES=1', file=sys.stderr)
+    else:
+        print('To enable tab completion, add the following line to your ~/.bashrc or ~/.bash_profile:')
+
+    try:
+        rel_path = '~/' + comp_path.relative_to(Path.home()).as_posix()
+    except Exception:
+        rel_path = comp_path.as_posix()
+
+    print(f'source {rel_path}')
+    print('=' * 100, file=sys.stderr)

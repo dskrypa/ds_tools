@@ -233,7 +233,9 @@ class ArgParser(ArgumentParser):
         #  subparsers that were used, to get the unique Argument objects and check the ones in that subparser chain
         #  that are in the exclusive groups.... or something like that?
 
-    def parse_args(self, args=None, namespace=None, req_subparser_value=None) -> Namespace:
+    def parse_args(
+        self, args=None, namespace=None, req_subparser_value=None, completion=True, ensure_comp_possible=True, **kwargs
+    ) -> Namespace:
         """
         Performs the same function as :func:`argparse.ArgumentParser.parse_args`, but handles unrecognized arguments
         differently.  Injects common args that were included in the constructor (done here because all subparsers will
@@ -242,14 +244,18 @@ class ArgParser(ArgumentParser):
         :param args: The list of arguments to parse (default: sys.argv)
         :param namespace: A namespace to use (default: it will be created)
         :param bool req_subparser_value: Require a value to be provided for subparsers
+        :param bool completion: Whether arg completion should be attempted
+        :param bool ensure_comp_possible: Whether arg completion installation should be verified
+        :param kwargs: Keyword args to pass to :class:`ArgCompletionFinder`
         :return: Namespace containing the parsed arguments
         """
-        try:
-            from .argcompleter import ArgCompletionFinder  # noqa
-        except ImportError:
-            pass
-        else:
-            ArgCompletionFinder()(self)
+        if completion:
+            try:
+                from .argcompleter import ArgCompletionFinder  # noqa
+            except ImportError:
+                pass
+            else:
+                ArgCompletionFinder()(self, ensure_comp_possible=ensure_comp_possible, **kwargs)
         from .utils import update_subparser_constants
         parsed, argv = self.parse_known_args(args, namespace)
         if argv:
