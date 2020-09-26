@@ -303,13 +303,13 @@ class ArgParser(ArgumentParser):
                 pass
         return parser
 
-    def parse_with_dynamic_args(self, from_field, args=None, namespace=None, req_subparser_value=False):
+    def parse_with_dynamic_args(self, from_field, args=None, namespace=None, **kwargs):
         import re
         from itertools import chain
         from yaml import safe_load
         from yaml.parser import ParserError
 
-        parsed = self.parse_args(args, namespace, req_subparser_value)
+        parsed = self.parse_args(args, namespace, **kwargs)
         try:
             dynamic = getattr(parsed, from_field)
         except AttributeError:
@@ -342,7 +342,7 @@ class ArgParser(ArgumentParser):
                 return base_default
             return sp_default
 
-        re_parsed = self.parse_args(args, namespace, req_subparser_value)
+        re_parsed = self.parse_args(args, namespace, **kwargs)
         newly_parsed = {}
         for k, v in re_parsed._get_kwargs():
             try:
