@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# PYTHON_ARGCOMPLETE_OK
 
 import sys
 from pathlib import Path
@@ -15,10 +16,8 @@ from typing import Optional
 sys.path.append(PROJECT_ROOT.as_posix())
 from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
-from ds_tools.core import wrap_main
-from ds_tools.logging import init_logging
+from ds_tools.core.main import wrap_main
 from ds_tools.output import Printer, Table, TableBar
-from ds_tools.windows.scheduler import Scheduler
 
 log = logging.getLogger(__name__)
 
@@ -26,27 +25,27 @@ log = logging.getLogger(__name__)
 def parser():
     parser = ArgParser(description='Tool for managing Windows scheduled tasks')
 
-    list_parser = parser.add_subparser('action', 'list', help='List all scheduled tasks')
-    list_parser.add_argument('path', nargs='?', help='The location of the tasks to list')
-    list_parser.add_argument('--format', '-f', choices=Printer.formats, default='pseudo-json', help='')
-    list_parser.add_argument('--recursive', '-r', action='store_true', help='Recursively iterate through sub-paths')
+    with parser.add_subparser('action', 'list', help='List all scheduled tasks') as list_parser:
+        list_parser.add_argument('path', nargs='?', help='The location of the tasks to list')
+        list_parser.add_argument('--format', '-f', choices=Printer.formats, default='pseudo-json', help='')
+        list_parser.add_argument('--recursive', '-r', action='store_true', help='Recursively iterate through sub-paths')
 
-    list_transform_opts = list_parser.add_argument_group('Transform Options').add_mutually_exclusive_group()
-    list_transform_opts.add_argument('--summarize', '-s', action='store_true', help='Summarize task info')
-    list_transform_opts.add_argument('--triggers', '-t', action='store_true', help='Only show tasks\' triggers')
-    list_transform_opts.add_argument('--raw_xml', '-X', action='store_true', help='Show task\'s raw XML data instead of processing COM properties')
+        list_transform_opts = list_parser.add_argument_group('Transform Options').add_mutually_exclusive_group()
+        list_transform_opts.add_argument('--summarize', '-s', action='store_true', help='Summarize task info')
+        list_transform_opts.add_argument('--triggers', '-t', action='store_true', help='Only show tasks\' triggers')
+        list_transform_opts.add_argument('--raw_xml', '-X', action='store_true', help='Show task\'s raw XML data instead of processing COM properties')
 
-    table_parser = parser.add_subparser('action', 'table', help='Show a table of scheduled tasks and their actions')
-    table_parser.add_argument('path', nargs='?', help='The location of the tasks to list')
-    table_parser.add_argument('--recursive', '-r', action='store_true', help='Recursively iterate through sub-paths')
-    table_parser.add_argument('--times', '-t', action='store_true', help='Show the last and next run times')
+    with parser.add_subparser('action', 'table', help='Show a table of scheduled tasks and their actions') as table_parser:
+        table_parser.add_argument('path', nargs='?', help='The location of the tasks to list')
+        table_parser.add_argument('--recursive', '-r', action='store_true', help='Recursively iterate through sub-paths')
+        table_parser.add_argument('--times', '-t', action='store_true', help='Show the last and next run times')
 
-    create_parser = parser.add_subparser('action', 'create', help='Create a new task')
-    create_parser.add_argument('path', help='The location + name for the new task')
-    create_parser.add_argument('--schedule', '-s', help='Cron schedule to use', required=True)
-    create_parser.add_argument('--command', '-c', help='The command to run', required=True)
-    create_parser.add_argument('--args', '-a', help='Arguments to pass to the command')
-    create_parser.add_argument('--update', '-u', action='store_true', help='Allow an existing scheduled task to be updated')
+    with parser.add_subparser('action', 'create', help='Create a new task') as create_parser:
+        create_parser.add_argument('path', help='The location + name for the new task')
+        create_parser.add_argument('--schedule', '-s', help='Cron schedule to use', required=True)
+        create_parser.add_argument('--command', '-c', help='The command to run', required=True)
+        create_parser.add_argument('--args', '-a', help='Arguments to pass to the command')
+        create_parser.add_argument('--update', '-u', action='store_true', help='Allow an existing scheduled task to be updated')
 
     parser.include_common_args('verbosity')
     return parser
@@ -55,6 +54,8 @@ def parser():
 @wrap_main
 def main():
     args = parser().parse_args()
+
+    from ds_tools.logging import init_logging
     init_logging(args.verbose, log_path=None)
 
     action = args.action
@@ -65,12 +66,14 @@ def main():
     elif action == 'table':
         table_tasks(args.path or '\\', args.recursive, args.times)
     elif action == 'create':
+        from ds_tools.windows.scheduler import Scheduler
         Scheduler().create_exec_task(args.path, args.command, args.args, args.schedule, allow_update=args.update)
     else:
         raise ValueError(f'Unexpected {action=!r}')
 
 
 def table_tasks(path: Optional[str] = '\\', recursive: bool = False, times: bool = False):
+    from ds_tools.windows.scheduler import Scheduler
     tasks = Scheduler().get_tasks_dict(path, recursive=recursive, summarize=True)
     rows = []
     for task in tasks.values():
@@ -122,6 +125,7 @@ def show_tasks(
     triggers=False,
     raw_xml=False,
 ):
+    from ds_tools.windows.scheduler import Scheduler
     if raw_xml:
         for task in Scheduler().get_tasks(path, recursive=recursive):
             print(task.Xml)

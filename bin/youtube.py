@@ -1,14 +1,15 @@
 #!/usr/bin/env python
+# PYTHON_ARGCOMPLETE_OK
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, Path(__file__).resolve().parents[1].joinpath('bin').as_posix())
+import _venv  # This will activate the venv, if it exists and is not already active
 
 import logging
-from pathlib import Path
-from tempfile import TemporaryDirectory
-
-from pytube import YouTube
 
 from ds_tools.argparsing import ArgParser
-from ds_tools.logging import init_logging
-from ds_tools.shell import exec_local
 
 log = logging.getLogger(__name__)
 
@@ -17,8 +18,8 @@ def parser():
     parser = ArgParser(description='Download YouTube videos')
 
     dl_parser = parser.add_subparser('action', 'dl', 'Download a video from YouTube')
-    dl_parser.add_argument('url', help='The name URL of the video to download')
-    dl_parser.add_argument('--save_dir', '-d', default='~/Downloads/youtube/', help='Directory to store downloads')
+    dl_parser.add_argument('url', metavar='URL', help='The name URL of the video to download')
+    dl_parser.add_argument('--save_dir', '-d', metavar='PATH', default='~/Downloads/youtube/', help='Directory to store downloads')
     dl_parser.add_argument('--resolution', '-r', default='1080p', help='Video resolution (default: %(default)s)')
     dl_parser.add_argument('--extension', '-e', default='mp4', help='Video extension')
 
@@ -36,10 +37,17 @@ def parser():
 
 def main():
     args = parser().parse_args(req_subparser_value=True)
+
+    from ds_tools.logging import init_logging
     init_logging(args.verbose, log_path=None)
+
+    from pathlib import Path
+    from pytube import YouTube
 
     yt = YouTube(args.url)
     if args.action == 'dl':
+        from tempfile import TemporaryDirectory
+
         dest_dir = Path(args.save_dir).expanduser()
         if not dest_dir.exists():
             dest_dir.mkdir(parents=True)
@@ -81,6 +89,8 @@ def main():
 
 
 def combine_via_ffmpeg(audio_path, video_path, dest_path):
+    from ds_tools.shell import exec_local
+
     cmd = [
         'ffmpeg',
         '-loglevel', 'warning',

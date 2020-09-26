@@ -18,6 +18,7 @@ with project_root.joinpath('ds_tools', '__version__.py').open('r', encoding='utf
 optional_dependencies = {
     'cffi': ['cffi'],                                   # bin/cffi_test.py, bin/f3.py, examples/cffi/*
     'click': ['click', 'click_option_group'],           # ds_tools.argparsing.click_parsing
+    'completion': ['argcomplete'],                      # bash autocompletion
     'dev': [                                            # Development env requirements
         'pre-commit',                                   # run `pre-commit install` to install hooks
         'ipython',

@@ -9,6 +9,7 @@ from os import environ
 
 def maybe_activate_venv():
     if not environ.get('VIRTUAL_ENV'):
+        # print('Loading VENV')
         from pathlib import Path
 
         proj_root = Path(__file__).resolve().parents[1]
@@ -32,6 +33,8 @@ def maybe_activate_venv():
         )
         cmd = [bin_path.joinpath('python.exe' if on_windows else 'python').as_posix()] + sys.argv
         sys.exit(call(cmd, env=environ))
+
+    # print('VENV is already active')
 
 
 maybe_activate_venv()

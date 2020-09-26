@@ -5,12 +5,10 @@ Wrapper around argparse to provide some additional functionality / shortcuts
 """
 
 import inspect
+import os
 # noinspection PyUnresolvedReferences
-from argparse import ArgumentParser, RawDescriptionHelpFormatter, _ArgumentGroup
-from itertools import chain
+from argparse import ArgumentParser, RawDescriptionHelpFormatter, _ArgumentGroup, Namespace
 from pathlib import Path
-
-from .utils import COMMON_ARGS, update_subparser_constants, get_default_value
 
 __all__ = ['ArgParser']
 
@@ -25,42 +23,52 @@ class ArgParser(ArgumentParser):
       argument should not be provided by users)
     :param kwargs: Keyword args to pass to :class:`argparse.ArgumentParser`
     """
+    _caller_path = None
+    _docs_url = None
+    _email = None
+    _version = ''
+
     def __init__(self, *args, docs_url=None, email=None, _caller_path=None, _version=None, **kwargs):
-        if _caller_path:
-            self._caller_path = _caller_path
-            self._docs_url = docs_url
-            self._email = email
-            self._version = _version or ''
+        if '_ARGCOMPLETE' in os.environ:
+            super().__init__(*args, **kwargs)
         else:
-            try:
-                top_level_frame_info = inspect.stack()[-1]
-                g = top_level_frame_info.frame.f_globals
-                _email, version, repo_url = g.get('__author_email__'), g.get('__version__'), g.get('__url__')
-                self._caller_path = Path(inspect.getsourcefile(top_level_frame_info[0]))
-            except Exception:
-                self._caller_path = Path(__file__)
+            if _caller_path:
+                self._caller_path = _caller_path
                 self._docs_url = docs_url
-                self._email = email or '[unknown author email]'
+                self._email = email
                 self._version = _version or ''
             else:
-                self._docs_url = docs_url or docs_url_from_repo_url(repo_url)
-                self._email = email or _email or '[unknown author email]'
-                self._version = _version or version or ''
+                try:
+                    top_level_frame_info = inspect.stack()[-1]
+                    g = top_level_frame_info.frame.f_globals
+                    _email, version, repo_url = g.get('__author_email__'), g.get('__version__'), g.get('__url__')
+                    self._caller_path = Path(inspect.getsourcefile(top_level_frame_info[0]))
+                except Exception:
+                    self._caller_path = Path(__file__)
+                    self._docs_url = docs_url
+                    self._email = email
+                    self._version = _version or ''
+                else:
+                    self._docs_url = docs_url or docs_url_from_repo_url(repo_url)
+                    self._email = email or _email
+                    self._version = _version or version or ''
 
-        if self._version and not self._version.startswith(' ['):
-            self._version = f' [ver. {self._version}]'
+            if self._version and not self._version.startswith(' ['):
+                self._version = f' [ver. {self._version}]'
 
-        sig = inspect.Signature.from_callable(ArgumentParser.__init__)
-        ap_args = sig.bind(None, *args, **kwargs).arguments
-        ap_args.pop('self')
+            sig = inspect.Signature.from_callable(ArgumentParser.__init__)
+            ap_args = sig.bind(None, *args, **kwargs).arguments
+            ap_args.pop('self')
 
-        epilog = [f'Report {self._caller_path.stem}{self._version} bugs to {self._email}']
-        if self._docs_url:
-            epilog.append(f'Online documentation: {self._docs_url}')
-        ap_args.setdefault('epilog', '\n\n'.join(epilog))
-        ap_args.setdefault('formatter_class', RawDescriptionHelpFormatter)
-        ap_args.setdefault('prog', self._caller_path.name)
-        super().__init__(**ap_args)
+            epilog = []
+            if self._email:
+                epilog .append(f'Report {self._caller_path.name}{self._version} bugs to {self._email}')
+            if self._docs_url:
+                epilog.append(f'Online documentation: {self._docs_url}')
+            ap_args.setdefault('epilog', '\n\n'.join(epilog))
+            ap_args.setdefault('formatter_class', RawDescriptionHelpFormatter)
+            ap_args.setdefault('prog', self._caller_path.name)
+            super().__init__(**ap_args)
         self.__constants = {}
         self.__mutually_exclusive_sets = []
 
@@ -176,7 +184,7 @@ class ArgParser(ArgumentParser):
     def add_common_sp_arg(self, *args, **kwargs):
         """Add an argument with the given parameters to every subparser in this ArgParser, or itself if it has none"""
         if self.subparsers:
-            for subparser in set(chain.from_iterable(sp.choices.values() for sp in self.subparsers.values())):
+            for subparser in {val for sp in self.subparsers.values() for val in sp.choices.values()}:
                 subparser.add_common_arg(*args, **kwargs)
         else:
             self.add_argument(*args, **kwargs)
@@ -191,6 +199,7 @@ class ArgParser(ArgumentParser):
         """
         :param str args: One or more strs that are keys in :data:`COMMON_ARGS`
         """
+        from .utils import COMMON_ARGS
         for arg in args:
             fn_name, a = COMMON_ARGS[arg]
             getattr(self, fn_name)(*a.args, **a.kwargs)
@@ -224,7 +233,7 @@ class ArgParser(ArgumentParser):
         #  subparsers that were used, to get the unique Argument objects and check the ones in that subparser chain
         #  that are in the exclusive groups.... or something like that?
 
-    def parse_args(self, args=None, namespace=None, req_subparser_value=None):
+    def parse_args(self, args=None, namespace=None, req_subparser_value=None) -> Namespace:
         """
         Performs the same function as :func:`argparse.ArgumentParser.parse_args`, but handles unrecognized arguments
         differently.  Injects common args that were included in the constructor (done here because all subparsers will
@@ -235,6 +244,13 @@ class ArgParser(ArgumentParser):
         :param bool req_subparser_value: Require a value to be provided for subparsers
         :return: Namespace containing the parsed arguments
         """
+        try:
+            from .argcompleter import ArgCompletionFinder  # noqa
+        except ImportError:
+            pass
+        else:
+            ArgCompletionFinder()(self)
+        from .utils import update_subparser_constants
         parsed, argv = self.parse_known_args(args, namespace)
         if argv:
             msg = 'unrecognized arguments: {}'.format(' '.join(argv))
@@ -253,6 +269,7 @@ class ArgParser(ArgumentParser):
         return parsed
 
     def _resolve_mutually_exclusive_sets(self, parsed):
+        from .utils import get_default_value
         for exclusive_sets in self.__mutually_exclusive_sets:
             arg_sets = []
             for group in exclusive_sets:
@@ -282,6 +299,7 @@ class ArgParser(ArgumentParser):
 
     def parse_with_dynamic_args(self, from_field, args=None, namespace=None, req_subparser_value=False):
         import re
+        from itertools import chain
         from yaml import safe_load
         from yaml.parser import ParserError
 
@@ -294,7 +312,7 @@ class ArgParser(ArgumentParser):
         # Remove the action that contains the dynamic arguments from this parser or the active subparser
         dynamic_str = ' '.join(dynamic) if not isinstance(dynamic, str) else dynamic
         # print(f'Base args: {parsed.__dict__}\nProcessing args: {dynamic_str!r}')
-        parser = self._get_subparser(dict(parsed._get_kwargs()))
+        parser = self._get_subparser(parsed.__dict__)
         if rm_action := next((act for act in parser._actions if act.dest == from_field), None):
             # print(f'Removing action: {rm_action}'
             parser._remove_action(rm_action)

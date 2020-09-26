@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# PYTHON_ARGCOMPLETE_OK
 
 import sys
 from pathlib import Path
@@ -10,8 +11,7 @@ import _venv  # This will activate the venv, if it exists and is not already act
 sys.path.append(PROJECT_ROOT.as_posix())
 from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
-from ds_tools.core import wrap_main
-from ds_tools.output.color import colored, HEX_COLORS_REVERSE
+from ds_tools.core.main import wrap_main
 
 ATTRS = [
     'bold', 'dim', 'underlined', 'blink', 'reverse', 'hidden', 'reset',
@@ -37,6 +37,8 @@ def main():
     args = parser().parse_args()
     if (args.color or args.background) and args.all:
         raise ValueError('--all / -A can only be specified without --color / -c and --background / -b')
+
+    from ds_tools.output.color import colored, HEX_COLORS_REVERSE
 
     if args.basic:
         nums = []
