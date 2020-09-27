@@ -62,3 +62,15 @@ def add_subparser_default_if_missing(args, subparsers, default_value, start_inde
     if not found_sp_key:
         args.insert(i, default_value)
     return args
+
+
+def iter_actions(parser, recurse=True):
+    for action in parser._actions:
+        yield action
+
+    if recurse:
+        subparsers = parser._subparsers
+        if subparsers:
+            for sp_action in subparsers._group_actions:
+                for subparser in sp_action._name_parser_map.values():
+                    yield from iter_actions(subparser)

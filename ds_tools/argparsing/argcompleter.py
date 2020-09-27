@@ -5,51 +5,39 @@ subparser.
 :author: Doug Skrypa
 """
 
-import argparse
 import os
 import sys
-from itertools import zip_longest
+from argparse import REMAINDER
 from pathlib import Path
 
 import argcomplete
-from argcomplete import CompletionFinder, debug, mute_stderr
+from argcomplete import CompletionFinder
+
+from .utils import iter_actions
 
 
 class ArgCompletionFinder(CompletionFinder):
     def __call__(self, arg_parser, *args, ensure_comp_possible=True, **kwargs):
         if '_ARGCOMPLETE' not in os.environ:  # not an argument completion invocation
             return ensure_argcomplete_is_available(ensure_comp_possible)
+
+        # argcomplete has the same behavior as argparse for REMAINDER args - it is very greedy and will supersede other
+        # optional args
+        for action in iter_actions(arg_parser):
+            if action.nargs == REMAINDER:
+                action.nargs = '*'
+
         return super().__call__(arg_parser, *args, **kwargs)
 
-    def _get_completions(self, comp_words, cword_prefix, cword_prequote, last_wordbreak_pos):
-        active_parsers = self._patch_argument_parser()
-        parsed_args = argparse.Namespace()
-        self.completing = True
-
-        # Patch: Filter out comp_words for already-processed positional args used to enter a subparser
-        new_comp_words = []
-        for word, pos in zip_longest(comp_words[1:], self.visited_positionals):
-            if word and (not pos or word != pos.prog.split()[-1]):
-                new_comp_words.append(word)
-
-        debug(f'{comp_words=} => {new_comp_words=}')
-        try:
-            debug('invoking parser with', new_comp_words)
-            with mute_stderr():
-                a = self._parser.parse_known_args(new_comp_words, namespace=parsed_args)
-            debug('parsed args:', a)
-        except BaseException as e:
-            debug('\nexception', type(e), str(e), 'while parsing args')
-
-        self.completing = False
-
-        if '--' in comp_words:
-            self.always_complete_options = False
-
-        completions = self.collect_completions(active_parsers, parsed_args, cword_prefix, debug)
-        completions = self.filter_completions(completions)
-        completions = self.quote_completions(completions, cword_prequote, last_wordbreak_pos)
-        return completions
+    # def _get_completions(self, comp_words, cword_prefix, cword_prequote, last_wordbreak_pos):
+    #     ...
+    #     # Patch: Filter out comp_words for already-processed positional args used to enter a subparser
+    #     new_comp_words = []
+    #     for word, pos in zip_longest(comp_words[1:], self.visited_positionals):
+    #         if word and (not pos or word != pos.prog.split()[-1]):
+    #             new_comp_words.append(word)
+    #
+    #     debug(f'{comp_words=} => {new_comp_words=}')
 
 
 def ensure_argcomplete_is_available(ensure_comp_possible=True):

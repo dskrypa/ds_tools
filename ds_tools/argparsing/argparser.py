@@ -249,7 +249,7 @@ class ArgParser(ArgumentParser):
         :param kwargs: Keyword args to pass to :class:`ArgCompletionFinder`
         :return: Namespace containing the parsed arguments
         """
-        if completion:
+        if completion and '_ARGCOMPLETE' in os.environ:
             try:
                 from .argcompleter import ArgCompletionFinder  # noqa
             except ImportError:
