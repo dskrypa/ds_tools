@@ -27,6 +27,7 @@ JAMO_LEAD_OFFSETS = [1, 2, 4, 7, 8, 9, 17, 18, 19, 21, 22, 23, 24, 25, 26, 27, 2
 # There are 3 chars that may not be used as a final consonant:
 JAMO_END_OFFSETS = [i for i in range(31) if i not in (8, 19, 25)]
 SYLLABLES_START, SYLLABLES_END = HANGUL_RANGES[0]
+HANGUL_REGEX_CHAR_CLASS = '[{}]'.format(''.join(f'\\u{a:x}-\\u{b:x}' for a, b in HANGUL_RANGES))
 
 ROMANIZED_LEAD_CONSONANTS = [
     'g', 'gg', 'n', 'd', 'dd', 'r', 'm', 'b', 'bb', 's', 'ss', '', 'j', 'jj', 'ch', 'k', 't', 'p', 'h'
