@@ -70,7 +70,7 @@ class LangCat(Enum):
     @classmethod
     @cached(LRUCache(200), exc=True)
     def categorize(cls, text: Optional[str], detailed=False, strip=True) -> Union['LangCat', Set['LangCat']]:
-        if strip:
+        if strip and text:
             text = _strip_non_word_chars(text)
         if not text:
             return {cls.NUL} if detailed else cls.NUL
