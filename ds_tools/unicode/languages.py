@@ -69,13 +69,12 @@ class LangCat(Enum):
 
     @classmethod
     @cached(LRUCache(200), exc=True)
-    def categorize(cls, text: Optional[str], detailed=False, strip=True) -> Union['LangCat', Set['LangCat']]:
-        if strip and text:
-            text = _strip_non_word_chars(text)
+    def categorize(cls, text: Optional[str], detailed=False) -> Union['LangCat', Set['LangCat']]:
         if not text:
             return {cls.NUL} if detailed else cls.NUL
         elif detailed:
-            return set(cls.categorize(c, strip=False) for c in text)
+            text = _strip_non_word_chars(text)
+            return set(cls.categorize(c) for c in text) if text else {cls.NUL}
         elif len(text) == 1:
             dec = ord(text)
             for cat, ranges in cls._ranges():
@@ -83,11 +82,13 @@ class LangCat(Enum):
                     return cat
             return cls.UNK
         else:
-            cat = cls.categorize(text[0])
-            for c in text[1:]:
-                if cls.categorize(c) != cat:
-                    return cls.MIX
-            return cat
+            if text := _strip_non_word_chars(text):
+                cat = cls.categorize(text[0])
+                for c in text[1:]:
+                    if cls.categorize(c) != cat:
+                        return cls.MIX
+                return cat
+            return cls.NUL
 
     @classmethod
     def categorize_all(cls, texts: Iterable[Optional[str]], detailed=False) -> Tuple['LangCat', ...]:

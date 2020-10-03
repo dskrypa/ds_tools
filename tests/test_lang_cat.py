@@ -25,6 +25,12 @@ class LangCatTest(TestCaseBase):
         with self.subTest('detail'):
             self.assertEqual({LangCat.HAN}, LangCat.categorize('일=1\n이=2', True))
 
+    def test_mix_detected(self):
+        with self.subTest('summary'):
+            self.assertEqual(LangCat.MIX, LangCat.categorize('일=one\n이=two', False))
+        with self.subTest('detail'):
+            self.assertEqual({LangCat.HAN, LangCat.ENG}, LangCat.categorize('일=two\n이=two', True))
+
 
 if __name__ == '__main__':
     main()
