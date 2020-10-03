@@ -226,6 +226,8 @@ def _is_punc_or_symbol(char: str) -> bool:
 
 
 def _strip_non_word_chars(text: str) -> str:
+    if not text:
+        return text
     try:
         sub = _strip_non_word_chars._sub
         table = _strip_non_word_chars._table
