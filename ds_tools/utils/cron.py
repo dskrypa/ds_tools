@@ -101,6 +101,9 @@ class TimePart:
     def __repr__(self):
         return f'<{self.__class__.__name__}[{self.name}: {self}]>'
 
+    def all(self) -> bool:
+        return all(val for i, val in enumerate(self.arr, self.min))
+
     def _collapse_ranges(self) -> str:
         ranges = []
         last = None
