@@ -285,26 +285,35 @@ class Table(ClearableCachedPropertyMixin):
         return None
 
     @classmethod
-    def auto_print_rows(cls, rows, header=True, bar=True, sort=False, sort_by=None, mode='table', sort_keys=True):
+    def auto_print_rows(
+        cls, rows, header=True, bar=True, sort=False, sort_by=None, mode='table', sort_keys=True, **kwargs
+    ):
         if len(rows) < 1:
             return
         if isinstance(rows, dict):
             rows = [row for row in rows.values()]
 
         keys = sorted(rows[0].keys()) if type(rows[0]) is dict and sort_keys else rows[0].keys()
-        tbl = Table(*[Column(k, k, rows) for k in keys], mode=mode, auto_header=header, auto_bar=bar, sort=sort,
-                    sort_by=sort_by)
+        tbl = Table(
+            *[Column(k, k, rows) for k in keys],
+            mode=mode,
+            auto_header=header,
+            auto_bar=bar,
+            sort=sort,
+            sort_by=sort_by,
+            **kwargs
+        )
         tbl.print_rows(rows)
 
     @classmethod
-    def auto_format_rows(cls, rows, header=True, bar=True, sort=False, sort_by=None, mode='table'):
+    def auto_format_rows(cls, rows, header=True, bar=True, sort=False, sort_by=None, mode='table', **kwargs):
         if len(rows) < 1:
             return
         if isinstance(rows, dict):
             rows = [row for row in rows.values()]
 
         keys = sorted(rows[0].keys()) if type(rows[0]) is dict else rows[0].keys()
-        tbl = Table(*[Column(k, k, rows) for k in keys], mode=mode, sort=sort, sort_by=sort_by)
+        tbl = Table(*[Column(k, k, rows) for k in keys], mode=mode, sort=sort, sort_by=sort_by, **kwargs)
         output_rows = tbl.format_rows(rows)
         if header:
             if bar and mode == 'table':
