@@ -11,6 +11,7 @@ from ..com.exceptions import IterationNotSupported
 from ..com.utils import com_repr, com_iter
 from ..libs.taskschd import taskschd
 from .constants import XML_ATTRS, CLSID_ENUM_MAP, RUN_RESULT_CODE_MAP, DAY_LIST, MONTH_LIST
+from .exceptions import UnsupportedTriggerInterval
 from .win_cron import WinCronSchedule
 
 __all__ = ['walk_folders', 'scheduler_obj_as_dict', 'task_as_dict', 'norm_path', 'path_and_name']
@@ -40,7 +41,10 @@ def scheduler_obj_as_dict(obj, i=None, parent=None):
             elif attr_enum := cls_enums.get(attr):
                 value = attr_enum.get(value, value)
             elif enum_attr == attr == 'Type':
-                value = child_enum.for_num(value).cls.__name__
+                try:
+                    value = child_enum.for_num(value).cls.__name__
+                except ValueError as e:  # TASK_TRIGGER_CUSTOM_TRIGGER_01 has no custom class
+                    log.debug(e)
 
             as_dict[attr] = value
 
@@ -49,8 +53,11 @@ def scheduler_obj_as_dict(obj, i=None, parent=None):
         try:
             as_dict['cron'] = WinCronSchedule.from_trigger(obj)
         except Exception as e:
-            log.debug(f'Error processing cron schedule for {com_repr(obj)}: {e}', extra={'color': 'red'})
-            as_dict['cron'] = com_repr(obj)
+            trace = not isinstance(e, UnsupportedTriggerInterval)
+            log.debug(
+                f'Error processing cron schedule for {com_repr(obj)}: {e}', extra={'color': 'red'}, exc_info=trace
+            )
+            as_dict['cron'] = com_repr(obj, True)
 
     return as_dict
 

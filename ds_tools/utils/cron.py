@@ -20,7 +20,7 @@ class TimePart:
     def __init__(self, cron: 'CronSchedule', name: str, intervals: int, min: int = 0, special: Optional[str] = None):
         self.cron = cron
         self.name = name
-        self.arr = bitarray(intervals - min)
+        self.arr = bitarray(intervals)
         self.min = min
         if special:
             self.special_keys = special
@@ -35,6 +35,12 @@ class TimePart:
         if self.special_keys:
             self.special_vals.setall(False)
 
+    def _offset(self, key: int) -> int:
+        offset_key = key - self.min
+        if offset_key < 0:
+            raise IndexError(f'Invalid time={key} for part={self.name!r}')
+        return offset_key
+
     def __getitem__(self, key: Union[str, int]) -> bool:
         if isinstance(key, str):
             if keys := self.special_keys:
@@ -46,7 +52,7 @@ class TimePart:
                     return self.special_vals[index]
             return False
         elif isinstance(key, int):
-            return self.arr[key]
+            return self.arr[self._offset(key)]
         raise TypeError(f'Unexpected type={key.__class__.__name__} for {key=}')
 
     def __setitem__(self, key: Union[str, int], value: bool):
@@ -61,7 +67,7 @@ class TimePart:
             else:
                 raise KeyError(f'Invalid cron schedule {key=!r} in part={self.name!r}')
         elif isinstance(key, int):
-            self.arr[key] = value
+            self.arr[self._offset(key)] = value
         else:
             raise TypeError(f'Unexpected type={key.__class__.__name__} for {key=}')
 
@@ -79,7 +85,8 @@ class TimePart:
         if not arr.any():
             if last:
                 return 'L'
-            raise ValueError('Unexpected state')
+            # raise ValueError('Unexpected state')
+            return 'X'
 
         if self.name == 'dow' and not self.cron.week.arr.all():
             week = self.cron.week
@@ -178,16 +185,20 @@ class TimePart:
             self.set_intervals(vals)
 
     def set_intervals(self, intervals: Union[Mapping[int, bool], Iterable[int]]):
+        # log.debug(f'{self!r}: Setting {intervals=}')
         arr = self.arr
         arr.setall(False)
         if isinstance(intervals, Mapping):
             if _min := self.min:
                 intervals = {k - _min: v for k, v in intervals.items()}
+
+            # log.debug(f'{self!r}: Setting offset {intervals=}')
             for key, val in intervals.items():
                 arr[key] = val
         else:
             if _min := self.min:
                 intervals = [v - _min for v in intervals]
+            # log.debug(f'{self!r}: Setting offset {intervals=}')
             for key in intervals:
                 arr[key] = True
 
@@ -225,10 +236,10 @@ class CronSchedule:
     second = CronPart(60)
     minute = CronPart(60)
     hour = CronPart(24)
-    day = CronPart(32, min=1, special='L')
-    month = CronPart(13, min=1)
+    day = CronPart(31, min=1, special='L')
+    month = CronPart(12, min=1)
     dow = CronPart(7)
-    week = CronPart(5, min=1, special='L')
+    week = CronPart(6, min=1, special='L')
 
     def __init__(self, start: Optional[datetime] = None):
         self._start = start

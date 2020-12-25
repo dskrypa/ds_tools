@@ -27,3 +27,4 @@ class Triggers(ComClassEnum, parent=taskschd.ITriggerCollection, attr='Type'):
     BOOT = constants.TASK_TRIGGER_BOOT, taskschd.IBootTrigger  # 8
     LOGON = constants.TASK_TRIGGER_LOGON, taskschd.ILogonTrigger  # 9
     SESSION_STATE_CHANGE = constants.TASK_TRIGGER_SESSION_STATE_CHANGE, taskschd.ISessionStateChangeTrigger  # 11
+    # CUSTOM_TRIGGER_01 = constants.TASK_TRIGGER_CUSTOM_TRIGGER_01, taskschd.{no custom class exists for this}

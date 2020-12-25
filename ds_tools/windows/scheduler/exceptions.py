@@ -2,7 +2,7 @@
 from ..com.exceptions import ComException, ComClassCreationException
 from .constants import REGISTER_TASK_ERROR_CODES
 
-__all__ = ['UnknownTaskError', 'TaskCreationException']
+__all__ = ['UnknownTaskError', 'TaskCreationException', 'UnsupportedTriggerInterval']
 
 
 class UnknownTaskError(ComException):
@@ -24,3 +24,7 @@ class TaskCreationException(ComClassCreationException):
 
     def __str__(self):
         return f'{self.__class__.__name__}: {self._message()} [{self._error}]'
+
+
+class UnsupportedTriggerInterval(ValueError):
+    pass

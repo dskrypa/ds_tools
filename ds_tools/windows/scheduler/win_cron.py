@@ -9,6 +9,7 @@ from bitarray import bitarray
 
 from ...utils.cron import CronSchedule, TimePart
 from ..com.utils import com_repr
+from .exceptions import UnsupportedTriggerInterval
 
 __all__ = ['WinCronSchedule']
 log = logging.getLogger(__name__)
@@ -25,7 +26,8 @@ def _unpack(packed: int, n: int, offset: int = 0) -> CronDict:
 class WinCronSchedule(CronSchedule):
     @classmethod
     def from_trigger(cls, trigger) -> 'WinCronSchedule':
-        if start := getattr(trigger, 'StartBoundary', None):
+        # log.debug(f'Converting trigger={com_repr(trigger)} to cron')
+        if start := getattr(trigger, 'StartBoundary', None) or None:  # May be an empty string
             try:
                 start = datetime.strptime(start, '%Y-%m-%dT%H:%M:%S')
             except ValueError:
@@ -46,7 +48,7 @@ class WinCronSchedule(CronSchedule):
         elif trigger.Type == 3:  # IWeeklyTrigger
             self.dow.set_intervals(_unpack(trigger.DaysOfWeek, 7))
             interval = trigger.WeeksInterval
-            self.week.set_intervals({i: i == interval for i in range(1, 6)})
+            self.week.set_intervals({i: i == interval for i in range(1, 7)})
         elif trigger.Type == 4:  # IMonthlyTrigger
             self.day.set_intervals(_unpack(trigger.DaysOfMonth, 31, 1))
             self.day['L'] = trigger.RunOnLastDayOfMonth
@@ -54,7 +56,7 @@ class WinCronSchedule(CronSchedule):
         elif trigger.Type == 5:  # IMonthlyDOWTrigger
             self.dow.set_intervals(_unpack(trigger.DaysOfWeek, 7))
             self.month.set_intervals(_unpack(trigger.MonthsOfYear, 12, 1))
-            self.week.set_intervals(_unpack(trigger.WeeksOfMonth, 4, 1))
+            self.week.set_intervals(_unpack(trigger.WeeksOfMonth, 6, 1))
             self.week['L'] = trigger.RunOnLastWeekOfMonth
         elif trigger.Type == 6:  # IIdleTrigger
             self._set_from_interval(trigger.Repetition.Interval)  # interval = at most this frequently on idle?
@@ -75,19 +77,20 @@ class WinCronSchedule(CronSchedule):
             self.reset()
             return
         elif not (m := INTERVAL_PAT.match(interval)):
-            raise ValueError(f'Unexpected {interval=!r}')
+            raise UnsupportedTriggerInterval(f'Unexpected {interval=!r}')
 
         parts = {k: v for k, v in m.groupdict().items() if v}
         if not parts:
-            raise ValueError(f'Unsupported {interval=!r} - no time divisions found')
+            raise UnsupportedTriggerInterval(f'Unsupported {interval=!r} - no time divisions found')
         elif len(parts) > 1:
-            raise ValueError(f'Unsupported {interval=!r} - contains multiple time divisions')
+            raise UnsupportedTriggerInterval(f'Unsupported {interval=!r} - contains multiple time divisions')
 
         # keys = ('day', 'hour', 'minute', 'second')
         key, value = parts.popitem()
         value = int(value)
         freq = getattr(self, key)
         start_val = getattr(self._start, key, 0)
+        # log.debug(f'Updating {freq=!r} for {interval=!r} with {start_val=!r} and {value=!r}')
         for i in freq:
             freq[i] = (i - start_val) % value == 0
 

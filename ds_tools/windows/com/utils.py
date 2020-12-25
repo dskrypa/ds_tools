@@ -4,6 +4,9 @@ Utilities for loading and working with Windows libraries using win32com.
 :author: Doug Skrypa
 """
 
+from itertools import chain
+from typing import Set, Mapping, Any, Optional
+
 # noinspection PyUnresolvedReferences
 from pythoncom import LoadTypeLib, DISPATCH_METHOD, DISPATCH_PROPERTYGET, DISPID_NEWENUM, IID_IEnumVARIANT
 # noinspection PyUnresolvedReferences
@@ -12,6 +15,7 @@ from win32com.client import Dispatch, DispatchBaseClass, _get_good_object_
 from win32com.client.gencache import GetModuleForTypelib
 from win32com.client.makepy import GenerateFromTypeLibSpec
 
+from ...output.formatting import short_repr
 from ..com.enums import ComClassEnum
 from .exceptions import ComClassCreationException, IterationNotSupported
 
@@ -20,6 +24,10 @@ __all__ = ['com_iter', 'create_entry', 'com_repr', 'load_module']
 
 def load_module(dll_name: str):
     """
+    Loads a generated Python module for the given dll.  Generated modules are located in
+    ``~/AppData/Local/Temp/gen_py/``.  Automatically generates the module if it was not already generated.  The method
+    of Generation is roughly the same as what is done when running ``win32com/client/makepy.py``.
+
     :param str dll_name: A DLL file name (e.g., ``taskschd.dll``)
     :return: The loaded module
     """
@@ -67,14 +75,37 @@ def com_iter(obj: DispatchBaseClass, lcid=0):
             yield _get_good_object_(value)  # When no clsid is provided, it returns the correct subclass
 
 
-def com_repr(obj):
+def com_repr(obj, is_trigger=False) -> str:
     if isinstance(obj, DispatchBaseClass):
-        attr_names = obj._prop_map_get_
-        return '<{}[{}]>'.format(
-            obj.__class__.__name__, ', '.join(f'{k}={com_repr(getattr(obj, k))}' for k in attr_names)
-        )
+        cls_name = obj.__class__.__name__
+        if cls_name == 'IRepetitionPattern':
+            if interval := obj.Interval:
+                return interval
+            return "''"
+        elif not is_trigger:
+            return _com_repr(obj, set())
+
+        skip = {'Id', 'Type'}
+        extra = {}
+        if cls_name == 'ILogonTrigger':
+            if obj.StartBoundary and obj.EndBoundary:
+                skip.update(('EndBoundary', 'StartBoundary'))
+                extra['bounds'] = '{}~{}'.format(obj.StartBoundary.split('T', 1)[0], obj.EndBoundary.split('T', 1)[0])
+
+        if obj.Enabled:
+            skip.add('Enabled')
+
+        return _com_repr(obj, skip, extra)
     else:
-        return repr(obj)
+        return short_repr(obj, 30, 12)
+
+
+def _com_repr(obj: DispatchBaseClass, skip: Set[str], extra: Optional[Mapping[str, Any]] = None) -> str:
+    attr_names = obj._prop_map_get_
+    attrs = ((k, com_repr(getattr(obj, k))) for k in attr_names if k not in skip)
+    if extra:
+        attrs = chain(attrs, extra.items())
+    return '<{}[{}]>'.format(obj.__class__.__name__, ', '.join(f'{k}={v}' for k, v in attrs if v != "''"))
 
 
 def _get_func_descs(type_info, type_attr):

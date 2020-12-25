@@ -49,11 +49,11 @@ class WinCronTest(TestCaseBase):
         self.assertEqual('0 0 0 * * 0#1,0#2,0#L,1#1,1#2,1#L', str(cron))
 
     def test_monthly_dow(self):
-        cron = WinCronSchedule.from_trigger(mock_monthly_dow_trigger(3, 4095, 15))
+        cron = WinCronSchedule.from_trigger(mock_monthly_dow_trigger(3, 4095, pack_all(6)))
         self.assertEqual('0 0 0 * * 0-1', str(cron))
 
     def test_monthly_dow_all(self):
-        cron = WinCronSchedule.from_trigger(mock_monthly_dow_trigger(2147483647, 4095, 15))
+        cron = WinCronSchedule.from_trigger(mock_monthly_dow_trigger(2147483647, 4095, pack_all(6)))
         self.assertEqual('0 0 0 * * *', str(cron))
 
     def test_monthly_dow_feb_thru_dec(self):
@@ -88,6 +88,24 @@ class WinCronTest(TestCaseBase):
     def test_daily_dows(self):
         cron = CronSchedule.from_cron('0 15 6 * * 0,5,6')
         self.assertEqual('0 15 6 * * 0,5-6', str(cron))
+
+    def test_min_max_values(self):
+        cron = CronSchedule()
+        attrs = ('day', 'day', 'day', 'week', 'week', 'week')
+        for attr, val in zip(attrs, (0, 32, -1, 0, 7, -1)):
+            with self.subTest(f'{attr}[{val}]'):
+                with self.assertRaises(IndexError):
+                    getattr(cron, attr)[val] = True
+
+        cron.day[1] = True
+        cron.day[31] = True
+        cron.week[1] = True
+        cron.week[5] = True
+        self.assertTrue(cron.day[31])
+
+
+def pack_all(count):
+    return (1 << count) - 1
 
 
 def mock_monthly_dow_trigger(dow, moy, wom, lwom=False):

@@ -39,6 +39,8 @@ def parser():
         table_parser.add_argument('path', nargs='?', help='The location of the tasks to list')
         table_parser.add_argument('--recursive', '-r', action='store_true', help='Recursively iterate through sub-paths')
         table_parser.add_argument('--times', '-t', action='store_true', help='Show the last and next run times')
+        table_parser.add_argument('--hide_actions', '-A', action='store_true', help='Hide actions')
+        table_parser.add_argument('--with_trigger', '-T', action='store_true', help='Only include tasks with active (enabled) triggers')
 
     with parser.add_subparser('action', 'create', help='Create a new task') as create_parser:
         create_parser.add_argument('path', help='The location + name for the new task')
@@ -64,7 +66,7 @@ def main():
             args.path or '\\', args.recursive, args.format, args.summarize, args.triggers, args.raw_xml
         )
     elif action == 'table':
-        table_tasks(args.path or '\\', args.recursive, args.times)
+        table_tasks(args.path or '\\', args.recursive, args.times, args.hide_actions, args.with_trigger)
     elif action == 'create':
         from ds_tools.windows.scheduler import Scheduler
         Scheduler().create_exec_task(args.path, args.command, args.args, args.schedule, allow_update=args.update)
@@ -72,12 +74,22 @@ def main():
         raise ValueError(f'Unexpected {action=!r}')
 
 
-def table_tasks(path: Optional[str] = '\\', recursive: bool = False, times: bool = False):
+def table_tasks(
+    path: Optional[str] = '\\',
+    recursive: bool = False,
+    times: bool = False,
+    hide_actions: bool = False,
+    with_trigger: bool = False,
+):
     from ds_tools.windows.scheduler import Scheduler
+
+    show_actions = not hide_actions
     tasks = Scheduler().get_tasks_dict(path, recursive=recursive, summarize=True)
     rows = []
     for task in tasks.values():
         triggers = task['Triggers']
+        if with_trigger and (not triggers or not any(t['Enabled'] for t in triggers)):
+            continue
         actions = task['Actions']
         row = {
             'Location': task['Location'],
@@ -92,6 +104,8 @@ def table_tasks(path: Optional[str] = '\\', recursive: bool = False, times: bool
         if not times:
             row.pop('Last')
             row.pop('Next')
+        if show_actions:
+            row.pop('Action')
 
         i = -1
         for i, (trigger, action) in enumerate(zip_longest(triggers, actions)):
@@ -103,7 +117,7 @@ def table_tasks(path: Optional[str] = '\\', recursive: bool = False, times: bool
                     row['Trigger'] = cron
                 else:
                     row['Trigger'] = f'{trigger["Type"]}: {cron}'
-            if action:
+            if action and show_actions:
                 if (a_type := action['Type']) == 'IExecAction':
                     row['Action'] = f'{a_type}: {action["Path"]} {action["Arguments"]}'
                 else:
