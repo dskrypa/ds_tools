@@ -16,6 +16,7 @@ from ds_tools.argparsing import ArgParser
 from ds_tools.core import wrap_main
 from ds_tools.fs.paths import iter_sorted_files
 from ds_tools.logging import init_logging
+from ds_tools.output.formatting import readable_bytes
 
 log = logging.getLogger(__name__)
 IGNORE_FILES = {'Thumbs.db'}
@@ -44,37 +45,47 @@ def main():
     if args.ignore_dirs:
         IGNORE_DIRS.update(args.ignore_dirs)
 
-    dry_run = args.dry_run
-    src_root = Path(args.source).expanduser().resolve()
-    prv_root = Path(args.last_dir).expanduser().resolve()
-    new_root = Path(args.dest_dir).expanduser().resolve()
-    prefix = '[DRY RUN] Would backup' if dry_run else 'Backing up'
+    BackupUtil(args.source, args.last_dir, args.dest_dir, args.follow_links, args.dry_run).backup_files()
 
-    for src_path in iter_sorted_files(src_root, IGNORE_DIRS, IGNORE_FILES, args.follow_links):
-        rel_path = src_path.relative_to(src_root)
-        prv_path = prv_root.joinpath(rel_path)
-        if prv_path.exists():
-            src_stat = src_path.stat()
-            prv_stat = prv_path.stat()
-            if src_stat.st_size == prv_stat.st_size and src_stat.st_mtime == prv_stat.st_mtime:
-                log.debug(f'Skipping previously backed up file: {rel_path}')
+
+class BackupUtil:
+    def __init__(self, src: str, last: str, dest: str, follow_links: bool, dry_run: bool):
+        self.src_root = Path(src).expanduser().resolve()
+        self.prv_root = Path(last).expanduser().resolve()
+        self.new_root = Path(dest).expanduser().resolve()
+        self.dry_run = dry_run
+        self.follow_links = follow_links
+        self._prefix = '[DRY RUN] Would backup' if dry_run else 'Backing up'
+
+    def backup_files(self):
+        for src_path, rel_path, adj, size in self.iter_target_files():
+            self.backup_file(src_path, rel_path, adj, size)
+
+    def iter_target_files(self):
+        for src_path in iter_sorted_files(self.src_root, IGNORE_DIRS, IGNORE_FILES, self.follow_links):
+            rel_path = src_path.relative_to(self.src_root)
+            prv_path = self.prv_root.joinpath(rel_path)
+            if prv_path.exists():
+                src_stat = src_path.stat()
+                prv_stat = prv_path.stat()
+                if src_stat.st_size == prv_stat.st_size and src_stat.st_mtime == prv_stat.st_mtime:
+                    log.debug(f'Skipping previously backed up file: {rel_path}')
+                else:
+                    yield src_path, rel_path, 'modified', src_stat.st_size
             else:
-                backup_file(src_path, new_root, rel_path, prefix, dry_run, 'modified')
+                yield src_path, rel_path, 'new', src_path.stat().st_size
+
+    def backup_file(self, src_path: Path, rel_path: Path, adj: str, size: int):
+        new_path = self.new_root.joinpath(rel_path)
+        if new_path.exists():
+            log.log(19, f'Skipping {rel_path} because it already exists in {self.new_root}')
         else:
-            backup_file(src_path, new_root, rel_path, prefix, dry_run, 'new')
-
-
-def backup_file(src_path: Path, new_root: Path, rel_path: Path, prefix: str, dry_run: bool, adj: str):
-    new_path = new_root.joinpath(rel_path)
-    if new_path.exists():
-        log.log(19, f'Skipping {rel_path} because it already exists in {new_root}')
-    else:
-        log.info(f'{prefix} {adj} {rel_path}')
-        if not dry_run:
-            dest_dir = new_path.parent
-            if not dest_dir.exists():
-                dest_dir.mkdir(parents=True)
-            shutil.copy(src_path, new_path)
+            log.info(f'{self._prefix} [{readable_bytes(size)}] {adj} {rel_path}')
+            if not self.dry_run:
+                dest_dir = new_path.parent
+                if not dest_dir.exists():
+                    dest_dir.mkdir(parents=True)
+                shutil.copy(src_path, new_path)
 
 
 if __name__ == '__main__':
