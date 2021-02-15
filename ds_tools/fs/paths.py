@@ -98,8 +98,8 @@ def iter_sorted_files(
     :param follow_links: Follow directory symlinks to also yield Path objects from the target of each symlink directory
     :return: Iterator that yields Path objects for the files in the given path or paths, sorted at each level.
     """
-    ignore_dirs = set(ignore_dirs) if ignore_dirs and not isinstance(ignore_dirs, set) else None
-    ignore_files = set(ignore_files) if ignore_files and not isinstance(ignore_files, set) else None
+    ignore_dirs = set(ignore_dirs) if ignore_dirs and not isinstance(ignore_dirs, set) else ignore_dirs
+    ignore_files = set(ignore_files) if ignore_files and not isinstance(ignore_files, set) else ignore_files
     for path in iter_paths(path_or_paths):
         if path.is_file():
             if not ignore_files or path.name not in ignore_files:
