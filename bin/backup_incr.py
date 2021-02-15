@@ -87,7 +87,7 @@ class BackupUtil:
         for new_path in iter_sorted_files(self.new_root, IGNORE_DIRS, IGNORE_FILES, self.follow_links):
             rel_path = new_path.relative_to(self.new_root)
             src_path = self.src_root.joinpath(rel_path)
-            log.info(f'[{prefix} {rel_path}')
+            log.info(f'{prefix} {rel_path}')
             if not self.dry_run:
                 shutil.copystat(src_path, new_path)
 
