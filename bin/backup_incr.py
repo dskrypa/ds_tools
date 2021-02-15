@@ -10,6 +10,7 @@ import _venv  # This will activate the venv, if it exists and is not already act
 import logging
 import os
 import shutil
+from typing import Iterable
 
 sys.path.append(PROJECT_ROOT.as_posix())
 from ds_tools.__version__ import __author_email__, __version__
@@ -28,12 +29,14 @@ IGNORE_DIRS = {'__pycache__', '.git', '.idea'}
 def parser():
     parser = ArgParser(description='Incremental Backup Tool')
     parser.add_argument('source', metavar='PATH', help='The file to backup')
-    parser.add_argument('last_dir', metavar='PATH', help='The directory in which the last backup was stored')
     parser.add_argument('dest_dir', metavar='PATH', help='The directory in which backups should be stored')
-    parser.add_argument('--ignore_files', nargs='+', help='Add additional file names to be ignored')
-    parser.add_argument('--ignore_dirs', nargs='+', help='Add additional directory names to be ignored')
-    parser.add_argument('--follow_links', '-L', action='store_true', help='Follow directory symlinks')
-    parser.add_argument('--fix_stat', '-x', action='store_true', help='Fix stat attrs for previously copied files')
+    parser.add_argument('--last_dirs', nargs='+', metavar='PATH', help='One or more previous backup directories')
+
+    options = parser.add_argument_group('Behavior Options')
+    options.add_argument('--ignore_files', nargs='+', help='Add additional file names to be ignored')
+    options.add_argument('--ignore_dirs', nargs='+', help='Add additional directory names to be ignored')
+    options.add_argument('--follow_links', '-L', action='store_true', help='Follow directory symlinks')
+
     parser.include_common_args('verbosity', 'dry_run')
     return parser
 
@@ -48,17 +51,14 @@ def main():
     if args.ignore_dirs:
         IGNORE_DIRS.update(args.ignore_dirs)
 
-    backup_util = BackupUtil(args.source, args.last_dir, args.dest_dir, args.follow_links, args.dry_run)
-    if args.fix_stat:
-        backup_util.fix_stat_attrs()
-    else:
-        backup_util.backup_files()
+    backup_util = BackupUtil(args.source, args.last_dirs, args.dest_dir, args.follow_links, args.dry_run)
+    backup_util.backup_files()
 
 
 class BackupUtil:
-    def __init__(self, src: str, last: str, dest: str, follow_links: bool, dry_run: bool):
+    def __init__(self, src: str, last: Iterable[str], dest: str, follow_links: bool, dry_run: bool):
         self.src_root = Path(src).expanduser().resolve()
-        self.prv_root = Path(last).expanduser().resolve()
+        self.prv_roots = [Path(p).expanduser().resolve() for p in last] if last else []
         self.new_root = Path(dest).expanduser().resolve()
         self.dry_run = dry_run
         self.follow_links = follow_links
@@ -68,28 +68,26 @@ class BackupUtil:
         for src_path, rel_path, adj, size in self.iter_target_files():
             self.backup_file(src_path, rel_path, adj, size)
 
+    def matches_previous_backup(self, src_path: Path, rel_path):
+        prv_paths = [path for root in self.prv_roots if (path := root.joinpath(rel_path)).exists()]
+        if prv_paths:
+            src_stat = src_path.stat()
+            for prv_path in reversed(prv_paths):  # More likely to match the latest one, assuming chronological order
+                prv_stat = prv_path.stat()
+                if src_stat.st_size == prv_stat.st_size and src_stat.st_mtime == prv_stat.st_mtime:
+                    return True, src_stat
+            return False, src_stat
+        return None, None
+
     def iter_target_files(self):
         for src_path in iter_sorted_files(self.src_root, IGNORE_DIRS, IGNORE_FILES, self.follow_links):
             rel_path = src_path.relative_to(self.src_root)
-            prv_path = self.prv_root.joinpath(rel_path)
-            if prv_path.exists():
-                src_stat = src_path.stat()
-                prv_stat = prv_path.stat()
-                if src_stat.st_size == prv_stat.st_size and src_stat.st_mtime == prv_stat.st_mtime:
-                    log.debug(f'Skipping previously backed up file: {rel_path}')
-                else:
-                    yield src_path, rel_path, 'modified', src_stat
+            matches_previous, src_stat = self.matches_previous_backup(src_path, rel_path)
+            if matches_previous:
+                log.debug(f'Skipping previously backed up file: {rel_path}')
             else:
-                yield src_path, rel_path, 'new', src_path.stat()
-
-    def fix_stat_attrs(self):
-        prefix = '[DRY RUN] Would update' if self.dry_run else 'Updating'
-        for new_path in iter_sorted_files(self.new_root, IGNORE_DIRS, IGNORE_FILES, self.follow_links):
-            rel_path = new_path.relative_to(self.new_root)
-            src_path = self.src_root.joinpath(rel_path)
-            log.info(f'{prefix} {rel_path}')
-            if not self.dry_run:
-                shutil.copystat(src_path, new_path)
+                adj = 'new' if matches_previous is None else 'modified'
+                yield src_path, rel_path, adj, src_stat or src_path.stat()
 
     def backup_file(self, src_path: Path, rel_path: Path, adj: str, src_stat: os.stat_result):
         new_path = self.new_root.joinpath(rel_path)
