@@ -18,6 +18,8 @@ from ds_tools.fs.paths import iter_files
 from ds_tools.logging import init_logging
 
 log = logging.getLogger(__name__)
+IGNORE_FILES = {'Thumbs.db'}
+IGNORE_DIRS = {'__pycache__', '.git', '.idea'}
 
 
 def parser():
@@ -25,6 +27,8 @@ def parser():
     parser.add_argument('source', metavar='PATH', help='The file to backup')
     parser.add_argument('last_dir', metavar='PATH', help='The directory in which the last backup was stored')
     parser.add_argument('dest_dir', metavar='PATH', help='The directory in which backups should be stored')
+    parser.add_argument('--ignore_files', nargs='+', help='Add additional file names to be ignored')
+    parser.add_argument('--ignore_dirs', nargs='+', help='Add additional directory names to be ignored')
     parser.include_common_args('verbosity', 'dry_run')
     return parser
 
@@ -34,13 +38,18 @@ def main():
     args = parser().parse_args()
     init_logging(args.verbose)
 
+    if args.ignore_files:
+        IGNORE_FILES.update(args.ignore_files)
+    if args.ignore_dirs:
+        IGNORE_DIRS.update(args.ignore_dirs)
+
     dry_run = args.dry_run
     src_root = Path(args.source).expanduser().resolve()
     prv_root = Path(args.last_dir).expanduser().resolve()
     new_root = Path(args.dest_dir).expanduser().resolve()
     prefix = '[DRY RUN] Would backup' if dry_run else 'Backing up'
 
-    for src_path in iter_files(src_root):  # only yields files, not directories
+    for src_path in iter_filtered_files(src_root):  # only yields files, not directories
         rel_path = src_path.relative_to(src_root)
         prv_path = prv_root.joinpath(rel_path)
         if prv_path.exists():
@@ -52,6 +61,13 @@ def main():
                 backup_file(src_path, new_root, rel_path, prefix, dry_run, 'modified')
         else:
             backup_file(src_path, new_root, rel_path, prefix, dry_run, 'new')
+
+
+def iter_filtered_files(path: Path):
+    ignore_path = IGNORE_DIRS.intersection
+    for file_path in iter_files(path):
+        if file_path.name not in IGNORE_FILES and not ignore_path(file_path.parts):
+            yield file_path
 
 
 def backup_file(src_path: Path, new_root: Path, rel_path: Path, prefix: str, dry_run: bool, adj: str):
