@@ -14,7 +14,7 @@ sys.path.append(PROJECT_ROOT.as_posix())
 from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
 from ds_tools.core import wrap_main
-from ds_tools.fs.paths import iter_files
+from ds_tools.fs.paths import iter_sorted_files
 from ds_tools.logging import init_logging
 
 log = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ def parser():
     parser.add_argument('dest_dir', metavar='PATH', help='The directory in which backups should be stored')
     parser.add_argument('--ignore_files', nargs='+', help='Add additional file names to be ignored')
     parser.add_argument('--ignore_dirs', nargs='+', help='Add additional directory names to be ignored')
+    parser.add_argument('--follow_links', '-L', action='store_true', help='Follow directory symlinks')
     parser.include_common_args('verbosity', 'dry_run')
     return parser
 
@@ -49,7 +50,7 @@ def main():
     new_root = Path(args.dest_dir).expanduser().resolve()
     prefix = '[DRY RUN] Would backup' if dry_run else 'Backing up'
 
-    for src_path in iter_filtered_files(src_root):  # only yields files, not directories
+    for src_path in iter_sorted_files(src_root, IGNORE_DIRS, IGNORE_FILES, args.follow_links):
         rel_path = src_path.relative_to(src_root)
         prv_path = prv_root.joinpath(rel_path)
         if prv_path.exists():
@@ -61,13 +62,6 @@ def main():
                 backup_file(src_path, new_root, rel_path, prefix, dry_run, 'modified')
         else:
             backup_file(src_path, new_root, rel_path, prefix, dry_run, 'new')
-
-
-def iter_filtered_files(path: Path):
-    ignore_path = IGNORE_DIRS.intersection
-    for file_path in iter_files(path):
-        if file_path.name not in IGNORE_FILES and not ignore_path(file_path.parts):
-            yield file_path
 
 
 def backup_file(src_path: Path, new_root: Path, rel_path: Path, prefix: str, dry_run: bool, adj: str):

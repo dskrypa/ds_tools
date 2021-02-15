@@ -7,11 +7,19 @@ import os
 from itertools import chain
 from pathlib import Path
 from platform import system
-from typing import Iterator, Union, Iterable
+from typing import Iterator, Union, Iterable, Optional, Collection, Set
 
 from ..core.patterns import FnMatcher
 
-__all__ = ['validate_or_make_dir', 'get_user_cache_dir', 'iter_paths', 'iter_files', 'Paths', 'relative_path']
+__all__ = [
+    'validate_or_make_dir',
+    'get_user_cache_dir',
+    'iter_paths',
+    'iter_files',
+    'Paths',
+    'relative_path',
+    'iter_sorted_files',
+]
 log = logging.getLogger(__name__)
 Paths = Union[str, Path, Iterable[Union[str, Path]]]
 
@@ -73,6 +81,61 @@ def iter_files(path_or_paths: Paths) -> Iterator[Path]:
                 root_path = Path(root)
                 for f in files:
                     yield root_path.joinpath(f)
+
+
+def iter_sorted_files(
+    path_or_paths: Paths,
+    ignore_dirs: Optional[Collection[str]] = None,
+    ignore_files: Optional[Collection[str]] = None,
+    follow_links: bool = False,
+) -> Iterator[Path]:
+    """
+    Similar to os.walk, but only yields Path objects for files, and traverses the directory tree in sorted order.
+
+    :param path_or_paths: A path or iterable that yields paths
+    :param ignore_dirs: Collection of directory names to skip (does not support wildcards)
+    :param ignore_files: Collection of file names to skip (does not support wildcards)
+    :param follow_links: Follow directory symlinks to also yield Path objects from the target of each symlink directory
+    :return: Iterator that yields Path objects for the files in the given path or paths, sorted at each level.
+    """
+    ignore_dirs = set(ignore_dirs) if ignore_dirs and not isinstance(ignore_dirs, set) else None
+    ignore_files = set(ignore_files) if ignore_files and not isinstance(ignore_files, set) else None
+    for path in iter_paths(path_or_paths):
+        if path.is_file():
+            if not ignore_files or path.name not in ignore_files:
+                yield path
+        else:
+            if (not ignore_dirs or path.name not in ignore_dirs) and (follow_links or not path.is_symlink()):
+                yield from _iter_sorted_files(path, ignore_dirs, ignore_files, follow_links)
+
+
+def _iter_sorted_files(
+    root: Path,
+    ignore_dirs: Optional[Set[str]] = None,
+    ignore_files: Optional[Set[str]] = None,
+    follow_links: bool = False,
+) -> Iterator[Path]:
+    """
+    Similar to os.walk, but only yields Path objects for files, and traverses the directory tree in sorted order.
+
+    :param root: The path to walk
+    :param ignore_dirs: Collection of directory names to skip (does not support wildcards)
+    :param ignore_files: Collection of file names to skip (does not support wildcards)
+    :param follow_links: Follow directory symlinks to also yield Path objects from the target of each symlink directory
+    :return: Iterator that yields Path objects for the files in the given path, sorted at each level.
+    """
+    dirs = []
+    for entry in sorted(os.listdir(root)):
+        path = root.joinpath(entry)
+        if path.is_dir():
+            if (not ignore_dirs or entry not in ignore_dirs) and (follow_links or not path.is_symlink()):
+                dirs.append(path)
+        else:
+            if not ignore_files or entry not in ignore_files:
+                yield path
+
+    for path in dirs:
+        yield from _iter_sorted_files(path, ignore_dirs, ignore_files, follow_links)
 
 
 def validate_or_make_dir(dir_path, permissions=None, suppress_perm_change_exc=True):
