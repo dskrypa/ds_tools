@@ -80,7 +80,7 @@ class BackupUtil:
         if new_path.exists():
             log.log(19, f'Skipping {rel_path} because it already exists in {self.new_root}')
         else:
-            log.info(f'{self._prefix} [{readable_bytes(size)}] {adj} {rel_path}')
+            log.info(f'[{readable_bytes(size):>10s}] {self._prefix} {adj} {rel_path}')
             if not self.dry_run:
                 dest_dir = new_path.parent
                 if not dest_dir.exists():
