@@ -13,8 +13,8 @@ sys.path.append(PROJECT_ROOT.joinpath('lib').as_posix())
 from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
 from ds_tools.core import wrap_main
+from ds_tools.ddc.vcp import WindowsVCP
 from ds_tools.logging import init_logging
-from ds_tools.windows.vcp import WindowsVCP, get_feature, FEATURE_NAMES
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +36,9 @@ def parser():
     set_parser.add_argument('feature', help='The feature to set')
     set_parser.add_argument('value', help='The hex value to use')
 
+    # cap_parser = parser.add_subparser('action', 'capabilities', 'Show monitor capabilities')
+    # cap_parser.add_argument('monitor', type=int, nargs='*', help='The index(es) of the monitor(s) to show (default: all)')
+
     parser.include_common_args('verbosity')
     return parser
 
@@ -47,30 +50,29 @@ def main():
 
     action = args.action
     if action == 'list':
-        feature = get_feature(args.feature) if args.feature else None
         monitors = WindowsVCP.get_monitors()
         for i, monitor in enumerate(monitors):
             print(f'{i}: {monitor}')
-            if feature:
-                current, max_val = monitor.get_vcp_feature(feature)
-                supported = monitor.get_supported_values(feature) or '[not supported]'
+            if args.feature:
+                current, max_val = monitor.get_feature_value(args.feature)
+                supported = monitor.get_supported_values(args.feature) or '[not supported]'
                 print(f'    current=0x{current:02X}, max=0x{max_val:02X}, supported={supported}')
             elif args.capabilities:
                 print(f'    {monitor.capabilities}')
     elif action == 'get':
         monitor = WindowsVCP.get_monitors()[args.monitor]
-        feature = get_feature(args.feature)
-        current, cur_name, max_val, max_name = monitor.get_vcp_feature_with_names(feature)
+        feature = monitor.get_feature(args.feature)
+        current, cur_name, max_val, max_name = monitor.get_feature_value_with_names(feature)
         print(
-            f'monitors[{args.monitor}]: {monitor}[{maybe_named(feature, FEATURE_NAMES.get(feature))}]:'
+            f'monitors[{args.monitor}]: {monitor}[{feature}]:'
             f' current={maybe_named(current, cur_name)}'
             f', max={maybe_named(max_val, max_name)}'
         )
     elif action == 'set':
         monitor = WindowsVCP.get_monitors()[args.monitor]
-        feature = get_feature(args.feature)
+        feature = monitor.get_feature(args.feature)
         monitor[feature] = value = monitor.normalize_feature_value(feature, args.value)
-        print(f'monitors[{args.monitor}][{maybe_named(feature, FEATURE_NAMES.get(feature))}] = 0x{value:02X}')
+        print(f'monitors[{args.monitor}][{feature}] = 0x{value:02X}')
     else:
         raise ValueError(f'Unknown {action=!r}')
 

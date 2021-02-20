@@ -22,17 +22,11 @@ if sys.platform == 'win32':
 else:
     DWORD, RECT, BOOL, HMONITOR, HDC, LPARAM, HANDLE, BYTE, WCHAR = (None,) * 9
 
+from .features import Feature
+
 log = logging.getLogger(__name__)
 
 CRG9 = 'CRG9_C49RG9xSS (DP)'
-VCP_FEATURES = {
-    'input': 0x60,
-}
-FEATURE_NAMES = {v: k for k, v in VCP_FEATURES.items()}
-DESCRIPTION_FEATURE_VALUE_NAME_MAP = {
-    'Generic PnP Monitor': {0x60: {0x01: 'VGA 1', 0x04: 'HDMI 1'}},
-    CRG9: {0x60: {0x06: 'HDMI 1', 0x09: 'DisplayPort 1'}},
-}
 
 
 class PhysicalMonitor(ctypes.Structure):
@@ -135,11 +129,11 @@ class WindowsVCP:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-    def __getitem__(self, item: int):
-        return self.get_vcp_feature(item)
+    def __getitem__(self, feature: Union[str, int, Feature]):
+        return self.get_feature_value(feature)
 
-    def __setitem__(self, key: int, value: int):
-        return self.set_vcp_feature(key, value)
+    def __setitem__(self, feature: Union[str, int, Feature], value: int):
+        return self.set_feature_value(feature, value)
 
     @cached_property
     def _monitor(self) -> 'PhysicalMonitor':
@@ -223,22 +217,31 @@ class WindowsVCP:
     def model(self):
         return self.info.get('model')
 
-    @cached_property
-    def feature_value_name_map(self):
-        return DESCRIPTION_FEATURE_VALUE_NAME_MAP.get(self.description, {})
+    def get_feature(self, feature: Union[str, int, Feature]) -> Feature:
+        if isinstance(feature, Feature):
+            return feature
+        elif isinstance(feature, int):
+            return Feature.for_code(feature, self.description)
+        try:
+            return Feature.for_name(feature, self.description)
+        except KeyError:
+            try:
+                return Feature.for_code(int(feature, 16), self.description)
+            except ValueError:
+                raise ValueError(f'Invalid VCP feature: {feature!r}')
 
-    def get_feature_value_name(self, feature: Union[str, int], value: int, default: Optional[str] = None):
-        val_name_map = self.feature_value_name_map.get(get_feature(feature), {})
-        return val_name_map.get(value, default)
+    def get_feature_value_name(self, feature: Union[str, int, Feature], value: int, default: Optional[str] = None):
+        try:
+            return self.get_feature(feature).value_names.get(value, default)
+        except KeyError:
+            return default
 
-    def normalize_feature_value(self, feature: Union[str, int], value: Union[str, int]):
-        feature = get_feature(feature)
+    def normalize_feature_value(self, feature: Union[str, int, Feature], value: Union[str, int]) -> int:
         try:
             return int(value, 16)
         except ValueError:
-            rev_val_map = {v: k for k, v in self.feature_value_name_map.get(feature, {}).items()}
             try:
-                return rev_val_map[value]
+                return self.get_feature(feature).name_value_map[value]
             except KeyError:
                 raise ValueError(f'Unexpected feature {value=!r}')
 
@@ -254,31 +257,38 @@ class WindowsVCP:
                     supported[f'0x{code}'] = {f'0x{v}' for v in values.split()}
 
         if self.description == CRG9:
-            supported['0x60'] = {f'0x{v}' for v in DESCRIPTION_FEATURE_VALUE_NAME_MAP[CRG9][0x60]}
+            supported['0x60'] = {f'0x{code:02X}' for code in Feature.for_code(0x60, CRG9).value_names}
 
         return supported
 
-    def get_supported_values(self, feature: Union[str, int]):
-        feature = get_feature(feature)
-        if str_values := self.supported_vcp_values.get(f'0x{feature:02X}'):
-            val_name_map = self.feature_value_name_map.get(feature, {})
-            int_values = {int(val, 16) for val in str_values}
+    def feature_value_map(self, feature: Union[str, int, Feature]):
+        try:
+            return self.get_feature(feature).value_names
+        except (KeyError, ValueError):
+            return {}
+
+    def get_supported_values(self, feature: Union[str, int, Feature]):
+        feature = self.get_feature(feature)
+        if str_values := self.supported_vcp_values.get(f'0x{feature.code:02X}'):
+            val_name_map = feature.value_names
+            int_values = sorted(val_name_map) if str_values == '*' else {int(val, 16) for val in str_values}
             return {f'0x{key:02X}': val_name_map.get(key, '[unknown]') for key in sorted(int_values)}
         else:
             return {}
 
-    def set_vcp_feature(self, code: int, value: int):
+    def set_feature_value(self, feature: Union[str, int, Feature], value: int):
         """
         Sets the value of a feature on the virtual control panel.
 
-        :param code: Feature code
+        :param feature: Feature code
         :param value: Feature value
         """
+        feature = self.get_feature(feature)
         try:
-            if not ctypes.windll.dxva2.SetVCPFeature(self.handle, BYTE(code), DWORD(value)):
+            if not ctypes.windll.dxva2.SetVCPFeature(self.handle, BYTE(feature.code), DWORD(value)):
                 raise ctypes.WinError()
         except OSError as e:
-            raise VCPError(f'Error setting VCP {code=!r} to {value=!r}') from e
+            raise VCPError(f'Error setting VCP {feature=!r} to {value=!r}') from e
 
     def save_settings(self):
         try:
@@ -287,45 +297,35 @@ class WindowsVCP:
         except OSError as e:
             raise VCPError('Error saving current settings') from e
 
-    def get_vcp_feature(self, code: int) -> Tuple[int, int]:
+    def get_feature_value(self, feature: Union[str, int, Feature]) -> Tuple[int, int]:
         """
         Gets the value of a feature from the virtual control panel.
 
-        :param code: Feature code
+        :param feature: Feature code
         :return: Tuple of the current value, and its maximum value
         """
+        feature = self.get_feature(feature)
         feature_current = DWORD()
         feature_max = DWORD()
         code_type = MC_VCP_CODE_TYPE()
         try:
             if not ctypes.windll.dxva2.GetVCPFeatureAndVCPFeatureReply(
                 HANDLE(self.handle),
-                BYTE(code),
+                BYTE(feature.code),
                 ctypes.byref(code_type),
                 ctypes.byref(feature_current),
                 ctypes.byref(feature_max),
             ):
                 raise ctypes.WinError()
         except OSError as e:
-            raise VCPError(f'Error getting VCP {code=!r}') from e
+            raise VCPError(f'Error getting VCP {feature=!r}') from e
 
-        log.debug(f'{code=!r} type: {code_type.MC_MOMENTARY=}, {code_type.MC_SET_PARAMETER=}')
+        log.debug(f'{feature=!r} type: {code_type.MC_MOMENTARY=}, {code_type.MC_SET_PARAMETER=}')
         return feature_current.value, feature_max.value
 
-    def get_vcp_feature_with_names(self, code: int):
-        current, max_val = self.get_vcp_feature(code)
-        cur_name = self.get_feature_value_name(code, current)
-        max_name = self.get_feature_value_name(code, max_val)
+    def get_feature_value_with_names(self, feature: Union[str, int, Feature]):
+        feat_obj = self.get_feature(feature)
+        current, max_val = self.get_feature_value(feat_obj.code)
+        cur_name = self.get_feature_value_name(feat_obj, current)
+        max_name = self.get_feature_value_name(feat_obj, max_val)
         return current, cur_name, max_val, max_name
-
-
-def get_feature(code: Union[str, int]) -> int:
-    if isinstance(code, int):
-        return code
-    try:
-        return VCP_FEATURES[code]
-    except KeyError:
-        try:
-            return int(code, 16)
-        except ValueError:
-            raise ValueError(f'Invalid VCP feature: {code!r}')
