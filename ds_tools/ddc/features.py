@@ -16,6 +16,7 @@ class Feature:
     name: str
     model: Optional[str] = None
     value_names: Dict[int, Optional[str]]
+    hide_extras = False
 
     def __init_subclass__(cls, code: int, name: str):  # noqa
         cls.code = code
@@ -51,6 +52,15 @@ class Feature:
             return f'<{self.__class__.__name__}[0x{self.code:02X} / {self.name} for {self.model}]>'
         return f'<{self.__class__.__name__}[0x{self.code:02X} / {self.name}]>'
 
+    def __eq__(self, other: 'Feature') -> bool:
+        return self.code == other.code
+
+    def __hash__(self):
+        return hash(self.code)
+
+    def __lt__(self, other: 'Feature'):
+        return self.code < other.code
+
     @classmethod
     def for_code(cls, code: Union[str, int], model: Optional[str] = None) -> 'Feature':
         try:
@@ -61,10 +71,10 @@ class Feature:
             except (TypeError, ValueError):
                 raise ValueError(f'Invalid feature {code=!r}')
 
-            class _Feature(Feature, code=code, name=f'feature 0x{code:02X}'):
+            class UnknownFeature(Feature, code=code, name=f'unknown feature 0x{code:02X}'):
                 value_names = {}
 
-            return _Feature(model)
+            return UnknownFeature()
 
     @classmethod
     def for_name(cls, name: str, model: Optional[str] = None) -> 'Feature':
@@ -77,8 +87,8 @@ class Feature:
     def code_for(self, str_value: str) -> int:
         return self.name_value_map[str_value]
 
-    def name_for(self, code: int) -> str:
-        return self.value_names[code]
+    def name_for(self, code: int, default=None) -> str:
+        return self.value_names.get(code, default)
 
 
 class InputSource(Feature, code=0x60, name='input'):
@@ -338,6 +348,7 @@ class FlatPanelSubpixelLayout(Feature, code=0xB2, name='flat panel subpixel layo
 
 
 class V20DisplayTechnologyType(Feature, code=0xB6, name='display technology type'):
+    hide_extras = True
     value_names = {
         0x01: 'CRT (shadow mask)',
         0x02: 'CRT (aperture grill)',
@@ -351,6 +362,7 @@ class V20DisplayTechnologyType(Feature, code=0xB6, name='display technology type
 
 
 class DisplayControllerType(Feature, code=0xC8, name='display controller type'):
+    hide_extras = True
     value_names = {
         0x01: 'Conexant',
         0x02: 'Genesis',
@@ -483,6 +495,7 @@ class PowerMode(Feature, code=0xD6, name='power mode'):
         0x01: 'DPM: On,  DPMS: Off',
         0x02: 'DPM: Off, DPMS: Standby',
         0x03: 'DPM: Off, DPMS: Suspend',
+        0x04: 'DPM: Off, DPMS: Off',
         0x05: 'Write only value to turn off display',
     }
 

@@ -14,7 +14,7 @@ import logging
 import re
 import sys
 from functools import cached_property
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, Dict, MutableSet
 from weakref import finalize
 
 if sys.platform == 'win32':
@@ -50,10 +50,10 @@ class VcpFeature:
         self.name = name
 
     def __get__(self, instance: 'WindowsVCP', owner):
-        return instance.get_vcp_feature(self.code)
+        return instance.get_feature_value(self.code)
 
     def __set__(self, instance: 'WindowsVCP', value: int):
-        instance.set_vcp_feature(self.code, value)
+        instance.set_feature_value(self.code, value)
 
 
 class WindowsVCP:
@@ -246,18 +246,16 @@ class WindowsVCP:
                 raise ValueError(f'Unexpected feature {value=!r}')
 
     @cached_property
-    def supported_vcp_values(self):
+    def supported_vcp_values(self) -> Dict[Feature, MutableSet[int]]:
         supported = {}
         if supported_str := self.info.get('vcp'):
             for m in re.finditer(r'([0-9A-F]{2})(?:\(\s*([^)]+)\)|\s|$|(?=[0-9A-F]))', supported_str):
                 code, values = m.groups()
-                if not values:
-                    supported[f'0x{code}'] = '*'
+                feature = self.get_feature(code)
+                if feature.model or not values:
+                    supported[feature] = set(feature.value_names)
                 else:
-                    supported[f'0x{code}'] = {f'0x{v}' for v in values.split()}
-
-        if self.description == CRG9:
-            supported['0x60'] = {f'0x{code:02X}' for code in Feature.for_code(0x60, CRG9).value_names}
+                    supported[feature] = {int(v, 16) for v in values.split()}
 
         return supported
 
@@ -267,11 +265,10 @@ class WindowsVCP:
         except (KeyError, ValueError):
             return {}
 
-    def get_supported_values(self, feature: Union[str, int, Feature]):
+    def get_supported_values(self, feature: Union[str, int, Feature]) -> Dict[str, str]:
         feature = self.get_feature(feature)
-        if str_values := self.supported_vcp_values.get(f'0x{feature.code:02X}'):
+        if int_values := self.supported_vcp_values.get(feature):
             val_name_map = feature.value_names
-            int_values = sorted(val_name_map) if str_values == '*' else {int(val, 16) for val in str_values}
             return {f'0x{key:02X}': val_name_map.get(key, '[unknown]') for key in sorted(int_values)}
         else:
             return {}

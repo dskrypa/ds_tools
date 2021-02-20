@@ -13,8 +13,9 @@ sys.path.append(PROJECT_ROOT.joinpath('lib').as_posix())
 from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
 from ds_tools.core import wrap_main
-from ds_tools.ddc.vcp import WindowsVCP
+from ds_tools.ddc.vcp import WindowsVCP, VCPError
 from ds_tools.logging import init_logging
+from ds_tools.output.color import colored
 
 log = logging.getLogger(__name__)
 
@@ -36,8 +37,8 @@ def parser():
     set_parser.add_argument('feature', help='The feature to set')
     set_parser.add_argument('value', help='The hex value to use')
 
-    # cap_parser = parser.add_subparser('action', 'capabilities', 'Show monitor capabilities')
-    # cap_parser.add_argument('monitor', type=int, nargs='*', help='The index(es) of the monitor(s) to show (default: all)')
+    cap_parser = parser.add_subparser('action', 'capabilities', 'Show monitor capabilities')
+    cap_parser.add_argument('monitor', type=int, nargs='*', help='The index(es) of the monitor(s) to show (default: all)')
 
     parser.include_common_args('verbosity')
     return parser
@@ -73,6 +74,32 @@ def main():
         feature = monitor.get_feature(args.feature)
         monitor[feature] = value = monitor.normalize_feature_value(feature, args.value)
         print(f'monitors[{args.monitor}][{feature}] = 0x{value:02X}')
+    elif action == 'capabilities':
+        monitors = WindowsVCP.get_monitors()
+        included = 0
+        for i, monitor in enumerate(monitors):
+            if not args.monitor or i in args.monitor:
+                if included:
+                    print()
+                included += 1
+                print(f'Monitor {i}: {monitor}')
+                log.debug(f'    Raw: {monitor.capabilities}')
+                for feature, values in sorted(monitor.supported_vcp_values.items()):
+                    try:
+                        current, max_val = monitor[feature]
+                    except VCPError as e:
+                        pass
+                    else:
+                        if feature.hide_extras:
+                            values = {current}
+                        else:
+                            if current not in values:
+                                values.add(current)
+
+                        print(f'    {feature}:')
+                        for value in sorted(values):
+                            line = f'        0x{value:02X} ({feature.name_for(value, "UNKNOWN")})'
+                            print(colored(line, 14) if value == current else line)
     else:
         raise ValueError(f'Unknown {action=!r}')
 
