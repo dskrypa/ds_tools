@@ -1,45 +1,19 @@
 """
-Windows API for accessing / controlling a monitor's VCP (Virtual Control Panel).
+API for accessing / controlling a monitor's VCP (Virtual Control Panel).
 
-Originally based on `monitorcontrol.vcp.vcp_windows <https://github.com/newAM/monitorcontrol>`_
-
-Available functions:
-https://docs.microsoft.com/en-us/windows/win32/monitor/monitor-configuration-functions
-Funcs, structs, enums:
-https://docs.microsoft.com/en-us/windows/win32/monitor/monitor-configuration-reference
+Originally based on `monitorcontrol <https://github.com/newAM/monitorcontrol>`_
 """
 
-import ctypes
 import logging
 import re
-import sys
+from abc import ABC, abstractmethod
 from functools import cached_property
 from typing import List, Optional, Tuple, Union, Dict, MutableSet
 from weakref import finalize
 
-if sys.platform == 'win32':
-    from ctypes.wintypes import (DWORD, RECT, BOOL, HMONITOR, HDC, LPARAM, HANDLE, BYTE, WCHAR)
-else:
-    DWORD, RECT, BOOL, HMONITOR, HDC, LPARAM, HANDLE, BYTE, WCHAR = (None,) * 9
-
 from .features import Feature
 
 log = logging.getLogger(__name__)
-
-CRG9 = 'CRG9_C49RG9xSS (DP)'
-
-
-class PhysicalMonitor(ctypes.Structure):
-    _fields_ = [('handle', HANDLE), ('description', WCHAR * 128)]
-
-
-class MC_VCP_CODE_TYPE(ctypes.Structure):
-    _fields_ = [('MC_MOMENTARY', DWORD), ('MC_SET_PARAMETER', DWORD)]
-
-
-class VCPError(Exception):
-    """Base class for all VCP related errors."""
-    pass
 
 
 class VcpFeature:
@@ -49,53 +23,26 @@ class VcpFeature:
     def __set_name__(self, owner, name):
         self.name = name
 
-    def __get__(self, instance: 'WindowsVCP', owner):
+    def __get__(self, instance: 'VCP', owner):
         return instance.get_feature_value(self.code)
 
-    def __set__(self, instance: 'WindowsVCP', value: int):
+    def __set__(self, instance: 'VCP', value: int):
         instance.set_feature_value(self.code, value)
 
 
-class WindowsVCP:
-    """
-    Windows API access to a monitor's virtual control panel.
-
-    References: https://stackoverflow.com/questions/16588133/
-    """
-    _monitors = []
+class VCP(ABC):
     input = VcpFeature(0x60)
 
-    def __init__(self, hmonitor: HMONITOR):
-        """
-        :param hmonitor: logical monitor handle
-        """
-        self._hmonitor = hmonitor
-        self.__finalizer = finalize(self, self.__close)
+    def __init__(self):
+        self.__finalizer = finalize(self, self._close)
 
     def __repr__(self):
-        return f'<{self.__class__.__name__}[{self.description}, hmonitor={self._hmonitor.value}]>'
+        return f'<{self.__class__.__name__}[{self.description}]>'
 
     @classmethod
-    def get_monitors(cls) -> List['WindowsVCP']:
-        if not cls._monitors:
-            hmonitors = []
-
-            def _callback(hmonitor, hdc, lprect, lparam):
-                hmonitors.append(HMONITOR(hmonitor))
-                del hmonitor, hdc, lprect, lparam
-                return True  # continue enumeration
-
-            try:
-                # noinspection PyTypeChecker
-                callback = ctypes.WINFUNCTYPE(BOOL, HMONITOR, HDC, ctypes.POINTER(RECT), LPARAM)(_callback)
-                if not ctypes.windll.user32.EnumDisplayMonitors(0, 0, callback, 0):
-                    raise ctypes.WinError()
-            except OSError as e:
-                raise VCPError('Failed to enumerate VCPs') from e
-
-            cls._monitors = [WindowsVCP(logical) for logical in hmonitors]
-
-        return cls._monitors
+    @abstractmethod
+    def get_monitors(cls) -> List['VCP']:
+        return NotImplemented
 
     def close(self):
         try:
@@ -104,26 +51,16 @@ class WindowsVCP:
             pass  # This happens if an exception was raised in __init__
         else:
             if finalizer.detach():
-                self.__close()
+                self._close()
 
     def __del__(self):
         self.close()
 
-    def __close(self):
-        """Close the handle, if it exists"""
-        try:
-            monitor = self.__dict__['_monitor']
-        except KeyError:
-            pass
-        else:
-            log.debug(f'Closing {self}')
-            try:
-                ctypes.windll.dxva2.DestroyPhysicalMonitor(monitor.handle)
-            except OSError as e:
-                raise VCPError('Failed to close handle') from e
-            del self.__dict__['_monitor']
+    @abstractmethod
+    def _close(self):
+        return NotImplemented
 
-    def __enter__(self) -> 'WindowsVCP':
+    def __enter__(self) -> 'VCP':
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -135,40 +72,12 @@ class WindowsVCP:
     def __setitem__(self, feature: Union[str, int, Feature], value: int):
         return self.set_feature_value(feature, value)
 
-    @cached_property
-    def _monitor(self) -> 'PhysicalMonitor':
-        num_physical = DWORD()
-        try:
-            if not ctypes.windll.dxva2.GetNumberOfPhysicalMonitorsFromHMONITOR(
-                self._hmonitor, ctypes.byref(num_physical)
-            ):
-                raise ctypes.WinError()
-        except OSError as e:
-            raise VCPError('Windows API call failed') from e
-
-        if num_physical.value != 1:
-            # The Windows API does not allow opening and closing of individual physical monitors without their hmonitors
-            raise VCPError(f'Found {num_physical.value} physical monitors for hmonitor={self._hmonitor}')
-
-        physical_monitors = (PhysicalMonitor * num_physical.value)()
-        try:
-            if not ctypes.windll.dxva2.GetPhysicalMonitorsFromHMONITOR(
-                self._hmonitor, num_physical.value, physical_monitors
-            ):
-                raise ctypes.WinError()
-        except OSError as e:
-            raise VCPError('Failed to open physical monitor handle') from e
-
-        return physical_monitors[0]
-
     @property
-    def handle(self):
-        return self._monitor.handle
-
-    @property
+    @abstractmethod
     def description(self):
-        return self._monitor.description
+        return NotImplemented
 
+    @abstractmethod
     @cached_property
     def capabilities(self) -> Optional[str]:
         """
@@ -185,16 +94,7 @@ class WindowsVCP:
             mswhql(1)
         )
         """
-        cap_len = DWORD()
-        if not ctypes.windll.dxva2.GetCapabilitiesStringLength(self.handle, ctypes.byref(cap_len)):
-            raise ctypes.WinError()
-
-        caps_string = (ctypes.c_char * cap_len.value)()
-        if not ctypes.windll.dxva2.CapabilitiesRequestAndCapabilitiesReply(self.handle, caps_string, cap_len):
-            log.error(ctypes.WinError())
-            return None
-
-        return caps_string.value.decode('ASCII')
+        return NotImplemented
 
     @cached_property
     def info(self):
@@ -273,6 +173,7 @@ class WindowsVCP:
         else:
             return {}
 
+    @abstractmethod
     def set_feature_value(self, feature: Union[str, int, Feature], value: int):
         """
         Sets the value of a feature on the virtual control panel.
@@ -280,20 +181,13 @@ class WindowsVCP:
         :param feature: Feature code
         :param value: Feature value
         """
-        feature = self.get_feature(feature)
-        try:
-            if not ctypes.windll.dxva2.SetVCPFeature(self.handle, BYTE(feature.code), DWORD(value)):
-                raise ctypes.WinError()
-        except OSError as e:
-            raise VCPError(f'Error setting VCP {feature=!r} to {value=!r}: {e}') from e
+        return NotImplemented
 
+    @abstractmethod
     def save_settings(self):
-        try:
-            if not ctypes.windll.dxva2.SaveCurrentMonitorSettings(self.handle):
-                raise ctypes.WinError()
-        except OSError as e:
-            raise VCPError('Error saving current settings') from e
+        return NotImplemented
 
+    @abstractmethod
     def get_feature_value(self, feature: Union[str, int, Feature]) -> Tuple[int, int]:
         """
         Gets the value of a feature from the virtual control panel.
@@ -301,24 +195,7 @@ class WindowsVCP:
         :param feature: Feature code
         :return: Tuple of the current value, and its maximum value
         """
-        feature = self.get_feature(feature)
-        feature_current = DWORD()
-        feature_max = DWORD()
-        code_type = MC_VCP_CODE_TYPE()
-        try:
-            if not ctypes.windll.dxva2.GetVCPFeatureAndVCPFeatureReply(
-                HANDLE(self.handle),
-                BYTE(feature.code),
-                ctypes.byref(code_type),
-                ctypes.byref(feature_current),
-                ctypes.byref(feature_max),
-            ):
-                raise ctypes.WinError()
-        except OSError as e:
-            raise VCPError(f'Error getting VCP {feature=!r}: {e}') from e
-
-        log.debug(f'{feature=!r} type: {code_type.MC_MOMENTARY=}, {code_type.MC_SET_PARAMETER=}')
-        return feature_current.value, feature_max.value
+        return NotImplemented
 
     def get_feature_value_with_names(self, feature: Union[str, int, Feature]):
         feat_obj = self.get_feature(feature)

@@ -1,6 +1,8 @@
 """
 Most classes automatically generated from https://github.com/rockowitz/ddcutil/blob/master/src/vcp/vcp_feature_codes.c
 
+Alternate versions of feature code:name maps based on mccs version are not supported.
+
 :author: Doug Skrypa
 """
 

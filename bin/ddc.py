@@ -13,7 +13,7 @@ sys.path.append(PROJECT_ROOT.joinpath('lib').as_posix())
 from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
 from ds_tools.core import wrap_main
-from ds_tools.ddc.vcp import WindowsVCP, VCPError
+from ds_tools.ddc import PlatformVcp, VCPError
 from ds_tools.logging import init_logging
 from ds_tools.output.color import colored
 
@@ -52,7 +52,7 @@ def main():
 
     action = args.action
     if action == 'list':
-        monitors = WindowsVCP.get_monitors()
+        monitors = PlatformVcp.get_monitors()
         for i, monitor in enumerate(monitors):
             print(f'{i}: {monitor}')
             if args.feature:
@@ -62,7 +62,7 @@ def main():
             elif args.capabilities:
                 print(f'    {monitor.capabilities}')
     elif action == 'get':
-        monitor = WindowsVCP.get_monitors()[args.monitor]
+        monitor = PlatformVcp.get_monitors()[args.monitor]
         feature = monitor.get_feature(args.feature)
         current, cur_name, max_val, max_name = monitor.get_feature_value_with_names(feature)
         print(
@@ -71,12 +71,12 @@ def main():
             f', max={maybe_named(max_val, max_name)}'
         )
     elif action == 'set':
-        monitor = WindowsVCP.get_monitors()[args.monitor]
+        monitor = PlatformVcp.get_monitors()[args.monitor]
         feature = monitor.get_feature(args.feature)
         monitor[feature] = value = monitor.normalize_feature_value(feature, args.value)
         print(f'monitors[{args.monitor}][{feature}] = 0x{value:02X}')
     elif action == 'capabilities':
-        monitors = WindowsVCP.get_monitors()
+        monitors = PlatformVcp.get_monitors()
         included = 0
         for i, monitor in enumerate(monitors):
             if not args.monitor or i in args.monitor:
