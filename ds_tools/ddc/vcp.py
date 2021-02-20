@@ -285,7 +285,7 @@ class WindowsVCP:
             if not ctypes.windll.dxva2.SetVCPFeature(self.handle, BYTE(feature.code), DWORD(value)):
                 raise ctypes.WinError()
         except OSError as e:
-            raise VCPError(f'Error setting VCP {feature=!r} to {value=!r}') from e
+            raise VCPError(f'Error setting VCP {feature=!r} to {value=!r}: {e}') from e
 
     def save_settings(self):
         try:
@@ -315,7 +315,7 @@ class WindowsVCP:
             ):
                 raise ctypes.WinError()
         except OSError as e:
-            raise VCPError(f'Error getting VCP {feature=!r}') from e
+            raise VCPError(f'Error getting VCP {feature=!r}: {e}') from e
 
         log.debug(f'{feature=!r} type: {code_type.MC_MOMENTARY=}, {code_type.MC_SET_PARAMETER=}')
         return feature_current.value, feature_max.value

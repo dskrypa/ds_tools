@@ -114,9 +114,6 @@ class InputSource(Feature, code=0x60, name='input'):
     }
 
 
-InputSource('CRG9_C49RG9xSS (DP)', {0x06: 'HDMI-1', 0x09: 'DisplayPort-1'})
-
-
 class NewControl(Feature, code=0x02, name='new control'):
     value_names = {
         0x01: 'No new control values',
@@ -546,3 +543,7 @@ class WoOperationMode(Feature, code=0xDE, name='wo operation mode'):
         0x01: 'Stand alone',
         0x02: 'Follower (full PC control)',
     }
+
+
+InputSource('CRG9_C49RG9xSS (DP)', {0x06: 'HDMI-1', 0x09: 'DisplayPort-1'})
+PowerMode('CRG9_C49RG9xSS (DP)', {0x01: 'On', 0x04: 'Off'})
