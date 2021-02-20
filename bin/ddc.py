@@ -39,6 +39,7 @@ def parser():
 
     cap_parser = parser.add_subparser('action', 'capabilities', 'Show monitor capabilities')
     cap_parser.add_argument('monitor', type=int, nargs='*', help='The index(es) of the monitor(s) to show (default: all)')
+    cap_parser.add_argument('--feature', '-f', nargs='*', help='One or more features to display (default: all supported)')
 
     parser.include_common_args('verbosity')
     return parser
@@ -79,12 +80,15 @@ def main():
         included = 0
         for i, monitor in enumerate(monitors):
             if not args.monitor or i in args.monitor:
+                allow_features = {monitor.get_feature(f) for f in args.feature} if args.feature else None
                 if included:
                     print()
                 included += 1
                 print(f'Monitor {i}: {monitor}')
                 log.debug(f'    Raw: {monitor.capabilities}')
                 for feature, values in sorted(monitor.supported_vcp_values.items()):
+                    if allow_features and feature not in allow_features:
+                        continue
                     try:
                         current, max_val = monitor[feature]
                     except VCPError as e:

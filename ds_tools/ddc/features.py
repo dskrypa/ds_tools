@@ -547,3 +547,6 @@ class WoOperationMode(Feature, code=0xDE, name='wo operation mode'):
 
 InputSource('CRG9_C49RG9xSS (DP)', {0x06: 'HDMI-1', 0x09: 'DisplayPort-1'})
 PowerMode('CRG9_C49RG9xSS (DP)', {0x01: 'On', 0x04: 'Off'})
+
+InputSource('LG FULLHD(HDMI)', {0x01: 'VGA-1', 0x04: 'HDMI-1'})
+PowerMode('LG FULLHD(HDMI)', {0x01: 'On', 0x04: 'Off'})
