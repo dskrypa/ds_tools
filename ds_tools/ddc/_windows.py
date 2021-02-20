@@ -25,6 +25,7 @@ from .features import Feature
 from .structs import PhysicalMonitor, MC_VCP_CODE_TYPE
 from .vcp import VCP
 
+__all__ = ['WindowsVCP']
 log = logging.getLogger(__name__)
 
 

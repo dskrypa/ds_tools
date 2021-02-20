@@ -183,9 +183,8 @@ class VCP(ABC):
         """
         return NotImplemented
 
-    @abstractmethod
     def save_settings(self):
-        return NotImplemented
+        raise NotImplementedError
 
     @abstractmethod
     def get_feature_value(self, feature: Union[str, int, Feature]) -> Tuple[int, int]:
