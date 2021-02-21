@@ -1,13 +1,18 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3.8
+
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, PROJECT_ROOT.joinpath('bin').as_posix())
+import _venv  # This will activate the venv, if it exists and is not already active
 
 import logging
 import os
 import re
-import sys
 from datetime import datetime
-from pathlib import Path
 
-sys.path.append(Path(__file__).resolve().parents[1].as_posix())
+sys.path.append(PROJECT_ROOT.as_posix())
 from ds_tools.argparsing import ArgParser
 # from ds_tools.core import now, DATE_FMT
 from ds_tools.logging import init_logging

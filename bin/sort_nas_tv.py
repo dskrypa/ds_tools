@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3.8
 
 import sys
 from pathlib import Path
@@ -26,7 +26,7 @@ def parser():
     parser = ArgParser(description='Sort TV show episodes')
     parser.add_argument('src_path', help='Source directory')
     parser.add_argument('dst_path', help='Target directory')
-    parser.add_argument('--rm', '-r', action='store_true', help='Do not remove files after copying')
+    parser.add_argument('--rm', '-r', action='store_true', help='Remove files after copying')
     parser.add_argument('--no-refresh', '-F', dest='refresh', action='store_false', help='Do not check for newly added files in src_path after copying existing files')
     parser.add_argument('--show-dests', '-S', action='store_true', help='Show show destination paths instead of copying any files')
     parser.include_common_args('verbosity', 'dry_run')
@@ -61,6 +61,7 @@ def get_destinations(dst_dir: Path) -> Dict[str, Path]:
     aliases = {
         'penn and teller fool us': 'fool us',
         'last week tonight with john oliver': 'last week tonight',
+        'the stand 2020': 'the stand',
     }
     for alias, target in aliases.items():
         if dst_path := dst_shows.get(target):
