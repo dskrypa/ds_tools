@@ -11,7 +11,7 @@ import time
 from functools import cached_property, wraps, reduce
 from operator import xor
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Union, Tuple
 
 if sys.platform.startswith('linux'):
     import fcntl
@@ -64,6 +64,17 @@ class ioctl_data(ctypes.Structure):
     _fields_ = [('msgs', ctypes.c_void_p), ('nmsgs', ctypes.c_uint)]
 
 
+class VcpRequest:
+    def __init__(self, name: str, req_code: int, resp_code: int):
+        self.name = name
+        self.req_code = req_code
+        self.resp_code = resp_code
+
+
+Capabilities = VcpRequest('capabilities', 0xF3, 0xE3)
+Identity = VcpRequest('identity', 0xF1, 0xE1)
+
+
 class LinuxVCP(VCP):
     _monitors = []
 
@@ -110,49 +121,54 @@ class LinuxVCP(VCP):
     def read(self, length: int):
         resp = self.i2c_read(length + 3)
         data_len = resp[1] & ~MAGIC_2
-        log.debug(f'Received read response with len={len(resp)} {data_len=}')
+        log.debug(f'Received read response with len={len(resp)} src=0x{resp[0]:02X} {data_len=}')
         if resp[0] != DDCCI_CHECK or resp[1] == data_len:  # Orig: resp[1] & MAGIC_2 == 0
-        # if resp[1] == data_len:  # Orig: resp[1] & MAGIC_2 == 0
             raise IOError(f'Invalid header in I2C response: {resp[0]:02X}{resp[1]:02X} (full {resp=})')
         elif data_len > length or data_len + 3 > len(resp):
             raise IOError(f'Invalid I2C response len={data_len} (full {resp=})')
-
-        # checksum = reduce(xor, resp[:data_len + 3], MAGIC_XOR)
-        # log.debug(f'Ignoring {checksum=}')
         elif (checksum := reduce(xor, resp[:data_len + 3], MAGIC_XOR)) != 0:
             raise IOError(f'Checksum error for I2C response ({checksum=:02X}, full {resp=})')
         return resp[2:data_len + 2]
 
-    def _get_capabilities(self, offset=0):
-        header = struct.Struct('>BH')
-        log.debug(f'Requesting capabilities with {offset=}')
-        self.write(header.pack(0xF3, offset))
-        return self.get_checked()
-
-    def _get_capabilities_chunk(self, offset: int) -> bytes:
-        log.debug(f'Requesting capabilities with {offset=}')
-        header = struct.Struct('>BH')
-        req = header.pack(0xF3, offset)
+    def request(self, op: int, ctrl: int = 0x00, value: Optional[int] = None) -> Optional[Tuple[int, int]]:
+        req = bytearray(struct.pack('BB', op, ctrl))
+        if value is not None:
+            req.extend(reversed(struct.pack('H', value)))
         self.write(req)
-        # resp = self.get_checked()
+        if value is None:
+            resp = self.read(8)
+            resp_code, result, resp_ctrl, vcp_type, max_value, current = struct.unpack(f'>BBBBHH', resp)
+            log.debug(f'Response: {locals()}')
+            if resp_code != 0x02:
+                raise VCPIOError(f'Received unexpected response code: {resp_code}')
+            elif resp_ctrl != ctrl:
+                raise VCPIOError(f'Received unexpected ctrl code: {resp_ctrl}')
+            elif result > 0:
+                raise VCPIOError('Unsupported VCP code' if result == 1 else f'Unknown {result=!r}')
+            return current, max_value
+
+    def _get_str(self, req: VcpRequest, offset: int) -> bytes:
+        log.debug(f'Requesting {req.name} with {offset=}')
+        header = struct.Struct('>BH')
+        self.write(header.pack(req.req_code, offset))
         resp = self.read(64)
         log.debug(f'Read {len(resp)} bytes: {resp}')
         if len(resp) <= 3:
             return b''
         code, for_offset = header.unpack_from(resp)
-        if code != 0xE3 or for_offset != offset:
+        if code != req.resp_code or for_offset != offset:
             raise IOError(
-                f'Invalid response for capabilities request - {code=:02X}, {for_offset=} != {offset} (full {resp=})'
+                f'Invalid response for {req.name} request - {code=:02X}, {for_offset=} != {offset} (full {resp=})'
             )
         return resp[3:]
 
-    def get_capabilities(self, retries: int = 3):
+    def get_str(self, req: VcpRequest, retries: int = 3):
         offset = 0
         buf = bytearray()
         max_retries = retries
         while True:
             try:
-                chunk = self._get_capabilities_chunk(offset)
+                chunk = self._get_str(req, offset)
             except IOError as e:
                 retries -= 1
                 if retries <= 0:
@@ -163,15 +179,15 @@ class LinuxVCP(VCP):
                 if not chunk:
                     break
                 buf.extend(chunk)
-                log.debug(f'Current capabilities buffer={buf.decode("utf-8")!r}')
+                log.debug(f'Current {req.name} buffer={buf.decode("utf-8")!r}')
                 offset += len(chunk)
 
-        capabilities = buf.decode('utf-8')
-        return capabilities.rstrip('\x00')
+        result = buf.decode('utf-8')
+        return result.rstrip('\x00')
 
     @cached_property
     def capabilities(self) -> Optional[str]:
-        return self.get_capabilities()
+        return self.get_str(Capabilities)
 
     @property
     def description(self):
@@ -223,44 +239,13 @@ class LinuxVCP(VCP):
 
             del self.__dict__['_fd']
 
-    def __get_capabilities(self):
-        # https://github.com/rockowitz/ddcutil/blob/df01384dc91639a3d65f6d31ec40ee11ebdd9a5d/src/base/ddc_packets.h#L95
-        self._send(0xf3, 0x00)
-        reply_code, result_code, vcp_opcode, vcp_type_code, capabilities = self._get(0xe3, 's')
-        return capabilities
-
-    def _save(self):
-        self._send(0x0c, 0x00)
-
-    def _get_id(self):
-        # https://github.com/rockowitz/ddcutil/blob/df01384dc91639a3d65f6d31ec40ee11ebdd9a5d/src/base/ddc_packets.h#L97
-        self._send(0xf1, 0x00)
-        reply_code, result_code, vcp_opcode, vcp_type_code, _id = self._get(0xe1, 's')
-        return _id
-
     def set_feature_value(self, feature: Union[str, int, Feature], value: int):
         feature = self.get_feature(feature)
-        self._send(0x03, feature.code, value)
+        return self.request(0x03, feature.code, value)
 
     def get_feature_value(self, feature: Union[str, int, Feature]) -> Tuple[int, int]:
         feature = self.get_feature(feature)
-        self._send(0x01, feature.code)
-        reply_code, result_code, vcp_opcode, vcp_type_code, (max_val, current) = self._get(0x02, 'HH', feature.code)
-        return current, max_val
-
-    def _send(self, cmd: int, sub_cmd: int, value: Optional[int] = None):
-        data = bytearray()
-        data.append(cmd)
-        data.append(sub_cmd)
-        if value is not None:
-            low_byte, high_byte = struct.pack('H', value)
-            data.append(high_byte)
-            data.append(low_byte)
-        data.insert(0, (len(data) | 0x80))
-        data.insert(0, 0x50)
-        data.append(get_checksum(data))
-        self._write_bytes(data)
-        self.last_write = time.monotonic()
+        return self.request(0x01, feature.code)
 
     def get_raw(self):
         time.sleep(0.04)  # Must wait at least 40 ms
@@ -270,12 +255,11 @@ class LinuxVCP(VCP):
         length &= ~0x80  # clear protocol flag
         return self._read_bytes(length + 1)
 
-    def get_checked(self):
+    def get_checked(self) -> bytes:
         header = self._read_bytes(2)
         source, length = struct.unpack('BB', header)
         length &= ~0x80  # clear protocol flag
         log.debug(f'Received {header=} -> {source=:02X} {length=}')
-
         payload = self._read_bytes(length + 1)
         log.debug(f'Received {len(payload)} bytes in raw {payload=}')
 
@@ -286,31 +270,6 @@ class LinuxVCP(VCP):
             else:
                 raise VCPIOError(f'Checksum does not match: {checksum_xor}')
         return payload
-
-    def _get(self, expected_reply: int, type: str, expected_op: Optional[int] = None):
-        time.sleep(0.04)  # Must wait at least 40 ms
-
-        header = self._read_bytes(2)
-        source, length = struct.unpack('BB', header)
-        length &= ~0x80  # clear protocol flag
-        payload = self._read_bytes(length + 1)
-
-        payload, checksum = struct.unpack(f'{length}sB', payload)
-        if checksum_xor := checksum ^ get_checksum(header + payload):
-            if self.ignore_checksum_errors:
-                log.warning(f'Checksum does not match: {checksum_xor}')
-            else:
-                raise VCPIOError(f'Checksum does not match: {checksum_xor}')
-
-        return payload
-        # reply_code, result_code, vcp_opcode, vcp_type_code, *values = struct.unpack(f'>BBBB{type}', payload)
-        # if reply_code != expected_reply:
-        #     raise VCPIOError(f'Received unexpected response code: {reply_code}')
-        # elif expected_op is not None and vcp_opcode != expected_op:
-        #     raise VCPIOError(f'Received unexpected opcode: {vcp_opcode}')
-        # elif result_code > 0:
-        #     raise VCPIOError('Unsupported VCP code' if result_code == 1 else f'Unknown {result_code=!r}')
-        # return reply_code, result_code, vcp_opcode, vcp_type_code, values
 
     @rate_limited
     def _read_bytes(self, num_bytes: int) -> bytes:
