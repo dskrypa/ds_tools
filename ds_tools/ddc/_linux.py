@@ -2,12 +2,14 @@
 Originally based on `monitorcontrol.vcp.vcp_linux <https://github.com/newAM/monitorcontrol>`_
 """
 
+import ctypes
 import logging
 import os
 import struct
 import sys
 import time
-from functools import cached_property, wraps
+from functools import cached_property, wraps, reduce
+from operator import xor
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
@@ -23,18 +25,40 @@ from .vcp import VCP
 __all__ = ['LinuxVCP']
 log = logging.getLogger(__name__)
 
+# fmt: off
+I2C_RDWR = 0x0707   # ioctl definition
+MAGIC_1 = 0x51      # first byte to send, host address
+MAGIC_2 = 0x80      # second byte to send, or'd with length
+MAGIC_XOR = 0x50    # initial xor for received frame
+EDID_ADDR = 0x50
+DDCCI_ADDR = 0x37
+DDCCI_CHECK = DDCCI_ADDR << 1
+# fmt: on
+
 
 def rate_limited(method):
     @wraps(method)
     def wrapper(self, *args, **kwargs):
-        if self.last_set is not None:
-            rate_delay = 0.05 - time.monotonic() - self.last_set  # Must wait at least 50 ms between messages
-            if rate_delay > 0:
-                time.sleep(rate_delay)
+        delay = 0.05 - time.monotonic() - self.last_write  # Must wait at least 50 ms between messages
+        if delay > 0:
+            time.sleep(delay)
 
         return method(self, *args, **kwargs)
 
     return wrapper
+
+
+class i2c_msg(ctypes.Structure):
+    _fields_ = [
+        ('addr', ctypes.c_ushort),
+        ('flags', ctypes.c_ushort),
+        ('len', ctypes.c_ushort),
+        ('buf', ctypes.c_char_p),
+    ]
+
+
+class ioctl_data(ctypes.Structure):
+    _fields_ = [('msgs', ctypes.c_void_p), ('nmsgs', ctypes.c_uint)]
 
 
 class LinuxVCP(VCP):
@@ -43,8 +67,63 @@ class LinuxVCP(VCP):
     def __init__(self, path: str, ignore_checksum_errors: bool = True):
         super().__init__()
         self.path = path  # /dev/i2c-*
-        self.last_set: Optional[float] = None  # time of last feature set call
+        self.last_write = 0
         self.ignore_checksum_errors = ignore_checksum_errors
+
+    @rate_limited
+    def _i2c(self, buf, action: int, addr: int = DDCCI_ADDR):
+        msg = i2c_msg(addr, action, len(buf), ctypes.addressof(buf))
+        data = ioctl_data(ctypes.addressof(msg), 1)
+        resp = fcntl.ioctl(self._fd, I2C_RDWR, data, not action)  # noqa
+        if resp != 1:
+            act_str = 'read' if action else 'write'
+            raise IOError(f'I2C {act_str} failed with code={resp}')
+
+    def i2c_write(self, buf, addr: int = DDCCI_ADDR):
+        self.last_write = time.monotonic()
+        self._i2c(buf, 0x00, addr)
+
+    def i2c_read(self, length, addr: int = DDCCI_ADDR) -> bytes:
+        buf = ctypes.create_string_buffer(length)
+        self._i2c(buf, 0x01, addr)
+        return buf.raw
+
+    def write(self, msg: bytes):
+        buf = ctypes.create_string_buffer(len(msg) + 3)
+        buf[0] = MAGIC_1
+        buf[1] = MAGIC_2 | len(msg)
+        buf[2:-1] = msg
+        buf[-1] = reduce(xor, buf.raw, DDCCI_CHECK)  # checksum
+        return self.i2c_write(buf)
+
+    def read(self, length: int):
+        resp = self.i2c_read(length + 3)
+        data_len = resp[1] & ~MAGIC_2
+        if resp[0] != DDCCI_CHECK or resp[1] == data_len:  # Orig: resp[1] & MAGIC_2 == 0
+            raise IOError(f'Invalid header in I2C response: {resp[0]:02X}{resp[1]:02X} (full {resp=})')
+        elif data_len > length or data_len + 3 > len(resp):
+            raise IOError(f'Invalid I2C response len={data_len} (full {resp=})')
+        elif (checksum := reduce(xor, resp[:data_len + 3], MAGIC_XOR)) != 0:
+            raise IOError(f'Checksum error for I2C response ({checksum=:02X}, full {resp=})')
+        return resp[2:data_len + 2]
+
+    def get_capabilities(self):
+        offset = 0
+        buf = bytearray()
+        header = struct.Struct('>BH')
+        while True:
+            self.write(header.pack(0xF3, offset))
+            resp = self.read(64)
+            if len(resp) <= 3:
+                break
+            code, for_offset = header.unpack_from(resp)
+            if code != 0xE3 or for_offset != offset:
+                raise IOError(
+                    f'Invalid response for capabilities request - {code=:02X}, {for_offset=} != {offset} (full {resp=})'
+                )
+            buf.extend(resp[3:])
+            offset += len(resp) - 3
+        return buf.decode('utf-8')
 
     def capabilities(self) -> Optional[str]:
         return ''
@@ -99,7 +178,7 @@ class LinuxVCP(VCP):
 
             del self.__dict__['_fd']
 
-    def get_capabilities(self):
+    def _get_capabilities(self):
         # https://github.com/rockowitz/ddcutil/blob/df01384dc91639a3d65f6d31ec40ee11ebdd9a5d/src/base/ddc_packets.h#L95
         self._send(0xf3, 0x00)
         reply_code, result_code, vcp_opcode, vcp_type_code, capabilities = self._get(0xe3, 's')
@@ -117,7 +196,7 @@ class LinuxVCP(VCP):
     def set_feature_value(self, feature: Union[str, int, Feature], value: int):
         feature = self.get_feature(feature)
         self._send(0x03, feature.code, value)
-        self.last_set = time.monotonic()
+        self.last_write = time.monotonic()
 
     def get_feature_value(self, feature: Union[str, int, Feature]) -> Tuple[int, int]:
         feature = self.get_feature(feature)
