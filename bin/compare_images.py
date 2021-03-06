@@ -12,7 +12,7 @@ import logging
 sys.path.append(PROJECT_ROOT.as_posix())
 from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
-from ds_tools.core import wrap_main
+from ds_tools.core.main import wrap_main
 from ds_tools.images.compare import ComparableImage
 from ds_tools.logging import init_logging
 

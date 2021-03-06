@@ -15,7 +15,7 @@ from typing import Iterable
 sys.path.append(PROJECT_ROOT.as_posix())
 from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
-from ds_tools.core import wrap_main
+from ds_tools.core.main import wrap_main
 from ds_tools.fs.copy import copy_file
 from ds_tools.fs.paths import iter_sorted_files
 from ds_tools.logging import init_logging
