@@ -9,6 +9,7 @@ import time
 from enum import Enum
 from errno import ENOSPC
 from hashlib import sha512
+# from io import DEFAULT_BUFFER_SIZE
 from pathlib import Path
 from shutil import disk_usage
 from typing import Union
@@ -23,6 +24,7 @@ log = logging.getLogger(__name__)
 
 GB_BYTES = 1073741824
 DEFAULT_CHUNK_SIZE = 1 << 21    # 2MB
+# DEFAULT_CHUNK_SIZE = DEFAULT_BUFFER_SIZE * 1024  # 8 MB  # 8MB seemed slower than 2MB
 
 ffi = cffi.FFI()
 ffi.cdef('static uint64_t fill_buffer(void *buf, size_t size, uint64_t offset);')
@@ -63,7 +65,7 @@ class F3Mode(Enum):
 
 
 class F3Data:
-    def __init__(self, mode, size: int = GB_BYTES, chunk_size: int = DEFAULT_CHUNK_SIZE):
+    def __init__(self, mode, size: int = GB_BYTES, chunk_size: int = DEFAULT_CHUNK_SIZE, buffering: int = -1):
         self.mode = F3Mode(mode)
         if chunk_size > size:
             chunk_size = size
@@ -71,6 +73,7 @@ class F3Data:
         self.chunk_size = chunk_size
         self.buf = bytearray(size if self.mode == F3Mode.FULL else chunk_size)
         self.view = memoryview(self.buf)
+        self.buffering = buffering
 
     def iter_data(self, num: int):
         size, chunk_size = self.size, self.chunk_size
@@ -91,15 +94,15 @@ class F3Data:
             offset = fill_buffer(from_buffer(chunk), chunk_size, offset)
         return self.buf
 
-    def _write_file(self, path: Path, num: int, total_files: int):
-        print(f'Writing file {path.name} / {total_files:,d} ... ', end='', flush=True)
+    def _write_file(self, path: Path, num: int, end: int):
+        print(f'Writing file {path.name} / {end:,d} ... ', end='', flush=True)
         mode = self.mode
         if mode == F3Mode.FULL:
             data = self.data(num)
-            with path.open('wb') as f:
+            with path.open('wb', buffering=self.buffering) as f:
                 f.write(data)
         elif mode == F3Mode.ITER:
-            with path.open('wb') as f:
+            with path.open('wb', buffering=self.buffering) as f:
                 for chunk in self.iter_data(num):
                     f.write(chunk)
 
@@ -108,8 +111,11 @@ class F3Data:
         if not path.exists():
             path.mkdir(parents=True)
 
-        free = disk_usage(path)[2]
-        end = end if end is not None else (free // GB_BYTES)    # TODO: fill all available space, even partial files
+        usage = disk_usage(path)
+        if end is None and start == 1 and not rewrite:
+            end = usage.total // GB_BYTES
+        else:   # TODO: fill all available space, even partial files
+            end = end if end is not None else (usage.free // GB_BYTES)
         if end < start:
             raise ValueError('end must be greater than start')
         size = self.size
@@ -132,12 +138,22 @@ class F3Data:
                 return
 
         total = end - start + 1
-        log.info(f'Writing {total:,d} files to {path} [free space: {readable_bytes(free)}]\n')
-        start_time = time.monotonic()
+        log.info(
+            f'Writing {total:,d} files to {path} [free space: {readable_bytes(usage.free)}]'
+            f' [buffering: {self.buffering}]\n'
+        )
+        monotonic = time.monotonic
+        start_time = monotonic()
         for i, num in enumerate(range(start, end + 1), 1):
             file_path = path.joinpath(f'{num}.h2w')
+            file_start = monotonic()
             try:
-                self._write_file(file_path, num, total)
+                self._write_file(file_path, num, end)
+            except KeyboardInterrupt:
+                if file_path.exists():
+                    log.info(f'Deleting incomplete file: {file_path}')
+                    file_path.unlink()
+                return False
             except Exception as e:
                 if isinstance(e, OSError) and e.errno == ENOSPC:
                     log.info(f'OK (No space left in {path})')
@@ -146,13 +162,18 @@ class F3Data:
                 log.error('Unexpected error:', exc_info=True)
                 return False
             else:
-                elapsed = time.monotonic() - start_time
+                now = monotonic()
+                elapsed = now - start_time
+                file_elapsed = now - file_start
+                file_bps = (size / file_elapsed) if file_elapsed else 0
                 bps = (i * size / elapsed) if elapsed else 0
                 # remaining = ((total - i) * size / bps) if bps else 0
                 remaining = elapsed * (total - i) / i
                 log.info(
-                    f'OK [Elapsed: {format_duration(elapsed)}] [{readable_bytes(bps)}/s] '
-                    f'[Est. Remaining: {format_duration(remaining)}]'
+                    f'OK [Elapsed: {format_duration(elapsed)}]'
+                    f' [Overall: {readable_bytes(bps)}/s]'
+                    f' [File: {readable_bytes(file_bps)}/s]'
+                    f' [Est. Remaining: {format_duration(remaining)}]'
                 )
         else:
             return True

@@ -36,6 +36,7 @@ def parser():
     write_parser.add_argument('--chunk_size', '-c', metavar='BYTES', type=parse_bytes, default=DEFAULT_CHUNK_SIZE, help='Chunk size to use (default: %(default)s)')
     write_parser.add_argument('--mode', '-m', choices=[e.value for e in F3Mode], default='iter', help='Buffer population mode (default: %(default)s)')
     write_parser.add_argument('--rewrite', '-r', action='store_true', help='If a file already exists for a given number, rewrite it (default: skip unless size is incorrect)')
+    write_parser.add_argument('--buffering', '-b', choices=(-1, 0, 1), default=-1, type=int, help='Whether to enable buffering or not')
 
     read_parser = parser.add_subparser('action', 'read', 'Simplified version of f3read')
     read_parser.add_argument('path', help='The directory from which files should be read')
@@ -52,7 +53,7 @@ def main():
     args = parser().parse_args(req_subparser_value=True)
     init_logging(args.verbose, log_path=None)
 
-    f3data = F3Data(args.mode, args.size, args.chunk_size)
+    f3data = F3Data(args.mode, args.size, args.chunk_size, args.buffering)
     action = args.action
     if action == 'write':
         if not f3data.write_files(args.path, args.start, args.end, args.rewrite):
