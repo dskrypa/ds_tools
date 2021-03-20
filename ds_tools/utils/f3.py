@@ -91,8 +91,8 @@ class F3Data:
             offset = fill_buffer(from_buffer(chunk), chunk_size, offset)
         return self.buf
 
-    def _write_file(self, path: Path, num: int):
-        print(f'Writing file {path.name} ... ', end='', flush=True)
+    def _write_file(self, path: Path, num: int, total_files: int):
+        print(f'Writing file {path.name} / {total_files:,d} ... ', end='', flush=True)
         mode = self.mode
         if mode == F3Mode.FULL:
             data = self.data(num)
@@ -137,23 +137,19 @@ class F3Data:
         for i, num in enumerate(range(start, end + 1), 1):
             file_path = path.joinpath(f'{num}.h2w')
             try:
-                self._write_file(file_path, num)
-            except OSError as e:
-                if e.errno == ENOSPC:
+                self._write_file(file_path, num, total)
+            except Exception as e:
+                if isinstance(e, OSError) and e.errno == ENOSPC:
                     log.info(f'OK (No space left in {path})')
                     return True
-                else:
-                    print('ERROR')
-                    log.error(f'Unexpected error:', exc_info=True)
-                    return False
-            except Exception:
                 print('ERROR')
-                log.error(f'Unexpected error:', exc_info=True)
+                log.error('Unexpected error:', exc_info=True)
                 return False
             else:
                 elapsed = time.monotonic() - start_time
                 bps = (i * size / elapsed) if elapsed else 0
-                remaining = ((total - i) * size / bps) if bps else 0
+                # remaining = ((total - i) * size / bps) if bps else 0
+                remaining = elapsed * (total - i) / i
                 log.info(
                     f'OK [Elapsed: {format_duration(elapsed)}] [{readable_bytes(bps)}/s] '
                     f'[Est. Remaining: {format_duration(remaining)}]'

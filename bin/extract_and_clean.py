@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.8
+#!/usr/bin/env python3
 
 import sys
 from pathlib import Path
@@ -57,7 +57,7 @@ def main():
 
     file_url_pat = re.compile(r'^\[.*\.com\](.*)', re.IGNORECASE)
     dir_url_pats = [
-        re.compile(r'(.*)\[www.*\.com\]$', re.IGNORECASE),
+        re.compile(r'(.*)\[(?:www)?.*\.com\]$', re.IGNORECASE),
         re.compile(r'^\[.*\.com\](.*)$', re.IGNORECASE)
     ]
     for artist in src_dir.iterdir():

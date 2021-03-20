@@ -10,6 +10,7 @@ import _venv  # This will activate the venv, if it exists and is not already act
 import logging
 
 from ds_tools.argparsing import ArgParser
+from ds_tools.input import choose_item
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ def parser():
     dl_parser = parser.add_subparser('action', 'dl', 'Download a video from YouTube')
     dl_parser.add_argument('url', metavar='URL', help='The name URL of the video to download')
     dl_parser.add_argument('--save_dir', '-d', metavar='PATH', default='~/Downloads/youtube/', help='Directory to store downloads')
-    dl_parser.add_argument('--resolution', '-r', default='1080p', help='Video resolution (default: %(default)s)')
+    # dl_parser.add_argument('--resolution', '-r', default='1080p', help='Video resolution (default: %(default)s)')
     dl_parser.add_argument('--extension', '-e', default='mp4', help='Video extension')
 
     list_parser = parser.add_subparser('action', 'list', 'List available parts for the given YouTube video')
@@ -53,11 +54,17 @@ def main():
             dest_dir.mkdir(parents=True)
 
         with TemporaryDirectory() as tmp_dir:
-            vid_stream = yt.streams.filter(file_extension=args.extension, res=args.resolution).order_by('resolution')[-1]
+            choices = yt.streams.order_by('resolution')
+            vid_stream = choose_item(choices.fmt_streams, 'stream')
+            # vid_stream = yt.streams.filter(file_extension=args.extension, res=args.resolution).order_by('resolution')[-1]
+
             log.info(f'Downloading video={vid_stream}')
             vid_path = Path(vid_stream.download(output_path=tmp_dir))
 
-            audio_stream = yt.streams.filter(type='audio').order_by('abr')[-1]
+            choices = yt.streams.filter(type='audio').order_by('abr')
+            audio_stream = choose_item(choices, 'audio stream')
+
+            # audio_stream = yt.streams.filter(type='audio').order_by('abr')[-1]
             log.info(f'Downloading audio={audio_stream}')
             audio_path = Path(audio_stream.download(output_path=tmp_dir))
 
@@ -97,7 +104,8 @@ def combine_via_ffmpeg(audio_path, video_path, dest_path):
         '-i', audio_path.as_posix(),
         '-i', video_path.as_posix(),
         '-c:v', 'copy',
-        '-c:a', 'aac',
+        # '-c:a', 'aac',
+        '-c:a', 'copy',
         '-strict', 'experimental',
         dest_path.as_posix()
     ]
