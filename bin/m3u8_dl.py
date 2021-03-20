@@ -85,6 +85,7 @@ class VideoStream:
             self.m3u8_path = self.temp_dir_path.joinpath(f'{self.name}.m3u8')
 
         self.session = Session()
+        self._m3u8_data = None
 
     @cached_property
     def temp_dir_path(self) -> Path:
@@ -100,8 +101,6 @@ class VideoStream:
     def m3u8_url(self) -> Optional[str]:
         if not self.info_url:
             return None
-        elif urlparse(self.info_url).path.lower().endswith('.m3u8'):
-            return self.info_url
         elif self.goplay:
             client = RequestsClient('goplay.anontpp.com', scheme='https', user_agent_fmt='Mozilla/5.0')
             return client.url_for('/', params={'dcode': self.info_url, 'quality': '1080p', 'downloadmp4vid': 1})
@@ -127,12 +126,14 @@ class VideoStream:
 
                 info, res = None, None
 
+        if not streams:
+            if urlparse(self.info_url).path.lower().endswith('.m3u8'):
+                self._m3u8_data = resp.text
+                return self.info_url
+            raise RuntimeError(f'Unable to find stream info in response from {self.info_url}:\n{resp.text}')
+
         stream = choose_item(streams, 'stream')
         return streams[stream]
-        # for line in resp.text.splitlines():
-        #     if line.startswith('https://') and line.endswith('.m3u8'):
-        #         return line
-        # raise AttributeError(f'Unable to find m3u8 url in response:\n{resp.text}')
 
     @cached_property
     def m3u8_parsed_url(self) -> Optional[ParseResult]:
@@ -144,19 +145,19 @@ class VideoStream:
 
     @cached_property
     def segment_url_bare_base(self) -> Optional[str]:
-        if not self.m3u8_url:
-            return None
-        return f'{self.m3u8_parsed_url.scheme}://{self.m3u8_parsed_url.netloc}'
+        return f'{self.m3u8_parsed_url.scheme}://{self.m3u8_parsed_url.netloc}' if self.m3u8_url else None
 
     @cached_property
     def ext_m3u(self) -> 'EXTM3U':
         if self.m3u8_url:
-            resp = self.session.get(self.m3u8_url)
+            if self._m3u8_data is None:
+                resp = self.session.get(self.m3u8_url)
+                self._m3u8_data = resp.text
+
             with self.m3u8_path.open('w', encoding='utf-8') as f:
-                log.debug(f'm3u8 content:\n{resp.text}')
-                f.write(resp.text)
-            return EXTM3U(self, resp.text)
-            # return [line for line in resp.text.splitlines() if not line.startswith('#')]
+                log.debug(f'm3u8 content:\n{self._m3u8_data}')
+                f.write(self._m3u8_data)
+            return EXTM3U(self, self._m3u8_data)
         else:
             with self.m3u8_path.open('r', encoding='utf-8') as f:
                 return EXTM3U(self, f.read())
@@ -175,7 +176,7 @@ class VideoStream:
                 resp = future.result()
                 content = resp.content
                 progress.send((i, len(content)))
-                segment = _futures[future]  # type: M3USegment
+                segment = _futures[future]  # type: MediaSegment
                 segment.save(content)
 
         self.ext_m3u.save_revised()
