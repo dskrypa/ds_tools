@@ -9,23 +9,24 @@ from urllib.parse import urlparse, ParseResult
 from requests import Session
 
 from ds_tools.input import choose_item
-from ds_tools.shell import exec_local, ExternalProcessException
+from ds_tools.shell import ExternalProcessException
 from ds_tools.utils.progress import progress_coroutine
 from requests_client.client import RequestsClient
 from .m3u import EXTM3U
+from .utils import Ffmpeg
 
 if TYPE_CHECKING:
     from .segments import MediaSegment
 
+__all__ = ['VideoStream', 'GoplayVideoStream']
 log = logging.getLogger(__name__)
 
 
 class VideoStream:
-    def __init__(self, source: str, save_dir: str, name: str, ext: str, goplay: bool = False, local: bool = False):
+    def __init__(self, source: str, save_dir: str, name: str, ext: str, local: bool = False):
         self.name = name
         self.ext = ext
         self.local = local
-        self.goplay = goplay
         self._temp_dir = None
         self.save_dir = Path(save_dir).expanduser().resolve()
         if not self.save_dir.exists():
@@ -66,9 +67,6 @@ class VideoStream:
     def m3u8_url(self) -> Optional[str]:
         if not self.info_url:
             return None
-        elif self.goplay:
-            client = RequestsClient('goplay.anontpp.com', scheme='https', user_agent_fmt='Mozilla/5.0')
-            return client.url_for('/', params={'dcode': self.info_url, 'quality': '1080p', 'downloadmp4vid': 1})
 
         resp = self.session.get(self.info_url)
         log.debug(f'M3U8 Data:\n{resp.text}')
@@ -147,40 +145,50 @@ class VideoStream:
         self.ext_m3u.save_revised()
         self.save_via_ffmpeg()
 
+    @cached_property
+    def _ffmpeg(self) -> 'Ffmpeg':
+        return Ffmpeg(self.ext_m3u.revised_path.as_posix(), fmt=self.ext)
+
     def save_via_ffmpeg(self):
+        vid_path = self.save_dir.joinpath(f'{self.name}.{self.ext}')
         try:
-            vid_path = self._save_via_ffmpeg()
+            vid_path = self._ffmpeg.save(vid_path.as_posix())
         except ExternalProcessException as e:
-            # TODO: Maybe copy the parts into a non-temp dir so the progress is not lost
             log.error(f'Error processing via ffmpeg: {e}')
             log.info('Retrying with higher ffmpeg logging verbosity...')
-            vid_path = self._save_via_ffmpeg('info')
+            vid_path = self._ffmpeg.save(vid_path.as_posix(), log_level='info')
 
         log.info(f'Successfully saved {vid_path}')
 
-    def _save_via_ffmpeg(self, log_level='fatal'):
-        vid_path = self.save_dir.joinpath(f'{self.name}.{self.ext}')
-        print()
-        cmd = [
-            'ffmpeg',
-            '-loglevel', log_level,     # debug, info, warning, fatal
-        ]
 
-        cmd.extend([
-            '-flags', '+global_header',
-            '-stats',
-            '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
-            '-allowed_extensions', 'ALL',
-            # '-reconnect_streamed', '1',
-            '-i', self.ext_m3u.revised_path.as_posix(),
-            # '-i', sub_id,
-            '-c:v', 'copy',
-            '-c:a', 'copy',
-            # '-c:s', 'mov_text',
-            '-disposition:s:0', 'default',
-            '-bsf:a', 'aac_adtstoasc',
-            '-f', self.ext,
-            vid_path.as_posix()
-        ])
-        code, out, err = exec_local(*cmd, mode='raw', raise_nonzero=True)
-        return vid_path
+class GoplayVideoStream(VideoStream):
+    @cached_property
+    def client(self):
+        return RequestsClient('goplay.anontpp.com', scheme='https', user_agent_fmt='Mozilla/5.0')
+
+    @cached_property
+    def m3u8_url(self) -> Optional[str]:
+        return self.client.url_for('/', params={'dcode': self.info_url, 'quality': '1080p', 'downloadmp4vid': 1})
+
+    @cached_property
+    def sub_path(self) -> Path:
+        return self.save_dir.joinpath(f'{self.name}.srt')
+
+    def download_subtitles(self):
+        if self.sub_path.exists():
+            return self.sub_path
+
+        log.info(f'Saving subtitles to {self.sub_path}')
+        sub_resp = self.client.get('/', params={'dcode': self.info_url, 'downloadccsub': 1})
+        with self.sub_path.open('wb') as f:
+            f.write(sub_resp.content)
+
+        return self.sub_path
+
+    @cached_property
+    def _ffmpeg(self) -> 'Ffmpeg':
+        return Ffmpeg(self.ext_m3u.revised_path, self.sub_path, fmt=self.ext, subs='mov_text')
+
+    def download(self, *args, **kwargs):
+        self.download_subtitles()
+        return super().download(*args, **kwargs)

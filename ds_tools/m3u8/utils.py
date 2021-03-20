@@ -1,3 +1,12 @@
+import logging
+from pathlib import Path
+from typing import Optional, Union
+
+from ds_tools.shell import exec_local
+
+log = logging.getLogger(__name__)
+
+
 class Retries:
     def __init__(self, min: int = 5, max: int = 20, incr: int = 5, per_step: int = 3):
         self.delay = min
@@ -17,3 +26,44 @@ class Retries:
         else:
             self.step_retries += 1
         return self.delay
+
+
+class Ffmpeg:
+    def __init__(
+        self, *inputs: Union[str, Path], log_level: str = 'fatal', subs: Optional[str] = None, fmt: str = 'mp4'
+    ):
+        self.inputs = inputs
+        self.log_level = log_level
+        self.subs = subs
+        self.format = fmt
+
+    def _cmd(self, path: str):
+        cmd = [
+            'ffmpeg',
+            '-loglevel', self.log_level,  # debug, info, warning, fatal
+            '-flags', '+global_header',
+            '-stats',
+            '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+            '-allowed_extensions', 'ALL',
+            # '-reconnect_streamed', '1',
+            '-disposition:s:0', 'default',
+            '-bsf:a', 'aac_adtstoasc',
+            '-c:v', 'copy',
+            '-c:a', 'copy',
+        ]
+        if self.subs:
+            cmd.extend(('-c:s', self.subs))
+        for path in self.inputs:
+            cmd.extend(('-i', path.as_posix() if isinstance(path, Path) else path))
+
+        cmd.extend(('-f', self.format))
+        cmd.append(path)
+        return cmd
+
+    def save(self, path: str, log_level: Optional[str] = None):
+        if log_level:
+            self.log_level = log_level
+        print()
+        cmd = self._cmd(path)
+        code, out, err = exec_local(*cmd, mode='raw', raise_nonzero=True)
+        return path
