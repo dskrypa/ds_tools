@@ -53,6 +53,15 @@ class Ffmpeg:
         ]
         if self.subs:
             cmd.extend(('-c:s', self.subs))
+
+        if any(path.startswith(('http://', 'https://')) for path in self.inputs):
+            cmd.extend((
+                # '-thread_queue_size', '2147483647',     # this is the max allowed queue size
+                '-thread_queue_size', '128',
+                '-timeout', '10000000',
+                '-reconnect', '1',
+            ))
+
         for path in self.inputs:
             cmd.extend(('-i', path.as_posix() if isinstance(path, Path) else path))
 

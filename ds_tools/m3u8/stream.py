@@ -23,12 +23,13 @@ log = logging.getLogger(__name__)
 
 
 class VideoStream:
-    def __init__(self, source: str, save_dir: str, name: str, ext: str, local: bool = False):
+    def __init__(self, source: str, save_dir: str, name: str, ext: str, local: bool = False, ffmpeg_dl: bool = False):
         self.name = name
         self.ext = ext
         self.local = local
         self._temp_dir = None
         self.save_dir = Path(save_dir).expanduser().resolve()
+        self.ffmpeg_dl = ffmpeg_dl
         if not self.save_dir.exists():
             self.save_dir.mkdir(parents=True)
 
@@ -145,9 +146,13 @@ class VideoStream:
         self.ext_m3u.save_revised()
         self.save_via_ffmpeg()
 
+    @property
+    def _video_input(self):
+        return self.m3u8_url if self.ffmpeg_dl else self.ext_m3u.revised_path
+
     @cached_property
     def _ffmpeg(self) -> 'Ffmpeg':
-        return Ffmpeg(self.ext_m3u.revised_path.as_posix(), fmt=self.ext)
+        return Ffmpeg(self._video_input, fmt=self.ext)
 
     def save_via_ffmpeg(self):
         vid_path = self.save_dir.joinpath(f'{self.name}.{self.ext}')
@@ -187,8 +192,5 @@ class GoplayVideoStream(VideoStream):
 
     @cached_property
     def _ffmpeg(self) -> 'Ffmpeg':
-        return Ffmpeg(self.ext_m3u.revised_path, self.sub_path, fmt=self.ext, subs='mov_text')
-
-    def download(self, *args, **kwargs):
         self.download_subtitles()
-        return super().download(*args, **kwargs)
+        return Ffmpeg(self._video_input, self.sub_path, fmt=self.ext, subs='mov_text')
