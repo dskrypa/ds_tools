@@ -42,18 +42,19 @@ optional_dependencies = {
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
 
 requirements = [
+    'db_cache@ git+git://github.com/dskrypa/db_cache',
     'requests_client@ git+git://github.com/dskrypa/requests_client',
     'tz_aware_dt@ git+git://github.com/dskrypa/tz_aware_dt',
-    'db_cache@ git+git://github.com/dskrypa/db_cache',
     'beautifulsoup4',
     'bitarray',
-    'SQLAlchemy',
-    'wrapt',
     'cachetools',
+    'psutil',
+    'PyYAML',
     'requests',
+    'SQLAlchemy',
     'tzlocal',
+    'wrapt',
     'wcwidth',
-    'PyYAML'
 ]
 
 

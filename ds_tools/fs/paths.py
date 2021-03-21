@@ -9,7 +9,11 @@ from pathlib import Path
 from platform import system
 from typing import Iterator, Union, Iterable, Optional, Collection, Set
 
+from psutil import disk_partitions
+from psutil._common import sdiskpart, get_procfs_path
+
 from ..core.patterns import FnMatcher
+from .exceptions import InvalidPathError
 
 __all__ = [
     'validate_or_make_dir',
@@ -19,6 +23,8 @@ __all__ = [
     'Paths',
     'relative_path',
     'iter_sorted_files',
+    'get_disk_partition',
+    'is_on_local_device',
 ]
 log = logging.getLogger(__name__)
 Paths = Union[str, Path, Iterable[Union[str, Path]]]
@@ -181,3 +187,42 @@ def relative_path(path: Union[str, Path], to: Union[str, Path] = '.') -> str:
         return path.relative_to(to).as_posix()
     except Exception:
         return path.as_posix()
+
+
+def get_disk_partition(path: Union[str, Path]) -> sdiskpart:
+    path = orig_path = Path(path).resolve()
+    partitions = {p.mountpoint: p for p in disk_partitions(all=True)}
+    while path != path.parent:
+        try:
+            return partitions[path.as_posix()]
+        except KeyError:
+            path = path.parent
+
+    try:
+        return partitions[path.as_posix()]
+    except KeyError:
+        pass
+
+    raise InvalidPathError(orig_path)
+
+
+def get_dev_fs_types():
+    """Based on code in psutil.disk_partitions"""
+    fs_types = set()
+    procfs_path = get_procfs_path()
+    with open(procfs_path + '/filesystems', 'r', encoding='utf-8') as f:
+        for line in map(str.strip, f):
+            if not line.startswith('nodev'):
+                fs_types.add(line)
+            elif line.split('\t', 1)[1] == 'zfs':
+                fs_types.add('zfs')
+    return fs_types
+
+
+def is_on_local_device(path: Union[str, Path]) -> bool:
+    try:
+        dev_fs_types = is_on_local_device._dev_fs_types
+    except AttributeError:
+        dev_fs_types = is_on_local_device._dev_fs_types = get_dev_fs_types()
+
+    return get_disk_partition(path).fstype in dev_fs_types
