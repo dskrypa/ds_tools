@@ -144,7 +144,7 @@ def _iter_sorted_files(
         yield from _iter_sorted_files(path, ignore_dirs, ignore_files, follow_links)
 
 
-def validate_or_make_dir(dir_path, permissions=None, suppress_perm_change_exc=True):
+def validate_or_make_dir(dir_path, permissions: int = None, suppress_perm_change_exc: bool = True):
     """
     Validate that the given path exists and is a directory.  If it does not exist, then create it and any intermediate
     directories.
@@ -171,7 +171,7 @@ def validate_or_make_dir(dir_path, permissions=None, suppress_perm_change_exc=Tr
     return dir_path
 
 
-def get_user_cache_dir(subdir=None, permissions=None):
+def get_user_cache_dir(subdir: str = None, permissions: int = None) -> str:
     from getpass import getuser
     cache_dir = os.path.join('C:/var/tmp' if system().lower() == 'windows' else '/var/tmp', getuser(), 'ds_tools_cache')
     if subdir:

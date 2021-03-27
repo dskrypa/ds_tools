@@ -16,6 +16,7 @@ with project_root.joinpath('ds_tools', '__version__.py').open('r', encoding='utf
 # scripts = ['bin/{}'.format(p.name) for p in project_root.joinpath('bin').iterdir()]
 
 optional_dependencies = {
+    'archives': ['py7zr', 'rarfile'],                   # ds_tools.fs.archives
     'cffi': ['cffi'],                                   # bin/cffi_test.py, bin/f3.py, examples/cffi/*
     'click': ['click', 'click_option_group'],           # ds_tools.argparsing.click_parsing
     'completion': ['argcomplete'],                      # bash autocompletion
