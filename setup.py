@@ -21,8 +21,9 @@ optional_dependencies = {
     'click': ['click', 'click_option_group'],           # ds_tools.argparsing.click_parsing
     'completion': ['argcomplete'],                      # bash autocompletion
     'dev': [                                            # Development env requirements
-        'pre-commit',                                   # run `pre-commit install` to install hooks
+        'coverage',
         'ipython',
+        'pre-commit',                                   # run `pre-commit install` to install hooks
     ],
     'exif': ['exifread'],                               # bin/exif_sort.py
     'flask': ['flask', 'jinja2', 'werkzeug'],           # flasks package

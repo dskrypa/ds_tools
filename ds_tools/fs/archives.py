@@ -1,8 +1,6 @@
 """
 Archive extraction utilities
 
-https://rarfile.readthedocs.io
-
 :author: Doug Skrypa
 """
 
@@ -18,6 +16,7 @@ from pathlib import Path
 from tarfile import TarFile
 from tempfile import TemporaryDirectory
 from typing import Union, Optional, Iterable, Iterator, Type, TypeVar
+from weakref import finalize
 from zipfile import ZipFile
 
 from py7zr import SevenZipFile, PasswordRequired
@@ -75,6 +74,7 @@ class ArchiveFile(ABC):
         lc_name = self.path.name.lower()
         self.ext = next(('.' + ext for ext in self._exts if lc_name.endswith(ext)), None)
         self.stem = self.path.name[:-len(self.ext)] if self.ext else self.path.name
+        self._finalizer = finalize(self, self._close)
 
     def __repr__(self):
         return f'<{self.__class__.__name__}({self.path.as_posix()!r})>'
@@ -141,6 +141,15 @@ class ArchiveFile(ABC):
     def file(self):
         return self._cls(self.path)
 
+    def _close(self):
+        if 'file' in self.__dict__ and (file := self.file) is not None:
+            file.close()  # noqa
+            self.__dict__['file'] = None
+
+    def close(self):
+        if self._finalizer.detach():
+            self._close()
+
     @abstractmethod
     def _extract_all(self, path: Union[Path, str], password: str = None, pw_n: int = None, pw_count: int = None):
         return NotImplemented
@@ -187,18 +196,24 @@ class SevenZipArchiveFile(ArchiveFile, fcls=SevenZipFile, ext='7z'):
 
     @property
     def needs_password(self):
-        if file := self.file:
-            return file.needs_password()
+        if self._pw_required is None and (file := self.file):
+            self._pw_required = file.needs_password()  # noqa
+            if self._pw_required:
+                file.close()
+                self.__dict__['file'] = None
         return self._pw_required
 
     def _extract_all(self, path: Union[Path, str], password: str = None, pw_n: int = None, pw_count: int = None):
+        file = SevenZipFile(self.path, password=password) if password else self.file
         try:
-            file = SevenZipFile(self.path, password=password) if password else self.file
-            file.extractall(path)
+            with file:
+                file.extractall(path)
         except LZMAError as e:
             if password:
                 raise InvalidPassword(self, e, password, pw_n, pw_count) from e
             raise
+        finally:
+            self.__dict__['file'] = None
 
 
 class TarArchiveFile(ArchiveFile, fcls=TarFile, exts=('tar', 'tgz', 'tar.gz', 'tbz2', 'tar.bz2', 'txz', 'tar.xz')):
