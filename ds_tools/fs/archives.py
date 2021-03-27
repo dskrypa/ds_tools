@@ -1,6 +1,11 @@
 """
 Archive extraction utilities
 
+.. warning:
+    Not intended to handle any files with sensitive passwords - this is intended to decompress files with perfunctory
+    passwords in bulk.  Passwords WILL BE PRINTED and stored very insecurely if you choose to save them.  Do not use
+    with any passwords that are sensitive.
+
 :author: Doug Skrypa
 """
 
