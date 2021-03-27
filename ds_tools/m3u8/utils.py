@@ -32,12 +32,12 @@ class Ffmpeg:
     def __init__(
         self, *inputs: Union[str, Path], log_level: str = 'fatal', subs: Optional[str] = None, fmt: str = 'mp4'
     ):
-        self.inputs = inputs
+        self.inputs = [i.as_posix() if isinstance(i, Path) else i for i in inputs]
         self.log_level = log_level
         self.subs = subs
         self.format = fmt
 
-    def _cmd(self, path: str):
+    def _cmd(self, out_path: str):
         cmd = [
             'ffmpeg',
             '-loglevel', self.log_level,  # debug, info, warning, fatal
@@ -46,13 +46,7 @@ class Ffmpeg:
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-allowed_extensions', 'ALL',
             # '-reconnect_streamed', '1',
-            '-disposition:s:0', 'default',
-            '-bsf:a', 'aac_adtstoasc',
-            '-c:v', 'copy',
-            '-c:a', 'copy',
         ]
-        if self.subs:
-            cmd.extend(('-c:s', self.subs))
 
         if any(path.startswith(('http://', 'https://')) for path in self.inputs):
             cmd.extend((
@@ -65,8 +59,18 @@ class Ffmpeg:
         for path in self.inputs:
             cmd.extend(('-i', path.as_posix() if isinstance(path, Path) else path))
 
-        cmd.extend(('-f', self.format))
-        cmd.append(path)
+        cmd.extend((
+            '-c:v', 'copy',
+            '-c:a', 'copy',
+        ))
+        if self.subs:
+            cmd.extend(('-c:s', self.subs, '-disposition:s:0', 'default'))
+
+        cmd.extend((
+            '-bsf:a', 'aac_adtstoasc',
+            '-f', self.format,
+            out_path
+        ))
         return cmd
 
     def save(self, path: str, log_level: Optional[str] = None):

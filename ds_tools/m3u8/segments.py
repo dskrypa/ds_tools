@@ -48,18 +48,18 @@ class FileSegment(M3USegment, ABC):
     def __repr__(self):
         return f'<{self.__class__.__name__}[{self._n}: {self.name}]>'
 
-    @abstractmethod
     @property
+    @abstractmethod
     def file_name(self) -> Optional[str]:
         return NotImplemented
 
-    @abstractmethod
     @property
+    @abstractmethod
     def name(self) -> Optional[str]:
         return NotImplemented
 
-    @abstractmethod
     @property
+    @abstractmethod
     def url(self) -> Optional[str]:
         return NotImplemented
 

@@ -118,7 +118,7 @@ class EXTM3U:
 
     def save_revised(self):
         with self.revised_path.open('w', encoding='utf-8') as f:
-            f.write('\n'.join(map(str, self._all_segments)))
+            f.write(''.join(map(str, self._all_segments)))
             f.write('\n')
             # f.write('\n'.join(self._headers) + '\n')
             # for segment in self.segments:
