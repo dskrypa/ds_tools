@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import MagicMock, patch, Mock
+from unittest.mock import patch
 
 sys.path.append(Path(__file__).parents[1].as_posix())
 from ds_tools.fs.archives import ArchiveFile, Passwords
@@ -20,9 +20,9 @@ class ArchiveTestCase(TestCaseBase):
     def tearDownClass(cls):
         cls.tmp_dir.cleanup()
 
-    def assert_extracted_content_matches(self, out_dir: str):
+    def assert_extracted_content_matches(self, out_dir: str, exp_dir: str = 'test_dir'):
         out_path = Path(out_dir)
-        expected = out_path.joinpath('test_dir')
+        expected = out_path.joinpath(exp_dir)
         self.assertTrue(expected.exists())
 
         exp_0 = expected.joinpath('test_file_0.txt')
@@ -64,6 +64,12 @@ class ArchiveTestCase(TestCaseBase):
             with self.subTest(f'enc_full + {"".join(path.suffixes)}'), TemporaryDirectory() as tmp_dir:
                 ArchiveFile(path).extract_all(tmp_dir)
                 self.assert_extracted_content_matches(tmp_dir)
+
+    def test_no_inner_dir(self):
+        path = DATA_DIR.joinpath('test_dir_files.7z')
+        with TemporaryDirectory() as tmp_dir:
+            ArchiveFile(path).extract_all(tmp_dir)
+            self.assert_extracted_content_matches(tmp_dir, 'test_dir_files')
 
 
 if __name__ == '__main__':
