@@ -37,6 +37,7 @@ class FileCopy:
         dst_path: Union[str, Path],
         buf_size: Optional[int] = None,
         fast: bool = True,
+        reuse_buf: bool = True,
     ):
         self.src_path = Path(src_path).expanduser() if not isinstance(src_path, Path) else src_path
         self.dst_path = Path(dst_path).expanduser() if not isinstance(dst_path, Path) else dst_path
@@ -49,6 +50,7 @@ class FileCopy:
         self.src_size = self.src_path.stat().st_size
         self.buf_size = buf_size
         self.fast = fast
+        self.reuse_buf = reuse_buf
 
     @property
     def buf_size(self) -> int:
@@ -82,6 +84,7 @@ class FileCopy:
         verify: bool = False,
         buf_size: Optional[int] = None,
         fast: bool = True,
+        reuse_buf: bool = True,
     ):
         """
         :param Path src_path: Source path
@@ -89,8 +92,10 @@ class FileCopy:
         :param bool verify: Verify integrity of copied file
         :param int buf_size: Number of bytes to read at a time (default: 8 MB)
         :param bool fast: Allow faster copy methods to be used when supported
+        :param bool reuse_buf: When not using os.sendfile, always readinto a buffer rather than obtaining a new bytes
+          object for each read
         """
-        cls(src_path, dst_path, buf_size, fast).run(verify)
+        cls(src_path, dst_path, buf_size, fast, reuse_buf).run(verify)
 
     def run(self, verify: bool = False):
         with futures.ThreadPoolExecutor(max_workers=2) as executor:
@@ -136,18 +141,20 @@ class FileCopy:
         with self.src_path.open('rb') as src, self.dst_path.open('wb') as dst:
             if self.fast:
                 # if _USE_CP_SENDFILE and is_on_local_device(self.src_path):
+                # if _USE_CP_SENDFILE and is_on_local_device(self.dst_path):
                 if _USE_CP_SENDFILE:
                     try:
                         return self._fastcopy_sendfile(src, dst)
                     except _GiveupOnFastCopy:
                         pass  # fall back to the default copy method
-                elif _WINDOWS and self.src_size > 0:
+                elif (_WINDOWS or self.reuse_buf) and self.src_size > 0:
                     # noinspection PyTypeChecker
                     return self._copyfileobj_readinto(src, dst, self.buf_size)
 
             self._copyfileobj(src, dst, self.buf_size)
 
     def _copyfileobj(self, src: BinaryIO, dst: BinaryIO, buf_size: int):
+        log.debug(f'\nUsing _copyfileobj with {buf_size=:,d} b [loop of read buf_size -> write]')
         read, write = src.read, dst.write
         finished = self.finished.is_set
         while (buf := read(buf_size)) and not finished():
@@ -155,6 +162,7 @@ class FileCopy:
 
     def _copyfileobj_readinto(self, src, dst: BinaryIO, buf_size: int):
         """Based on :func:`shutil._copyfileobj_readinto`"""
+        log.debug(f'\nUsing _copyfileobj_readinto with {buf_size=:,d} b [loop of readinto buf -> write]')
         src_readinto = src.readinto
         dst_write = dst.write
         buf = memoryview(bytearray(buf_size))
@@ -162,10 +170,10 @@ class FileCopy:
         while (read := src_readinto(buf)) and not finished():
             if read < buf_size:
                 # noinspection PyTypeChecker
-                dst_write(buf[:read])
+                self.copied += dst_write(buf[:read])
             else:
                 # noinspection PyTypeChecker
-                dst_write(buf)
+                self.copied += dst_write(buf)
 
     def _fastcopy_sendfile(self, src: BinaryIO, dst: BinaryIO):
         """Based on :func:`shutil._fastcopy_sendfile`"""
@@ -176,6 +184,7 @@ class FileCopy:
             raise _GiveupOnFastCopy(e)  # not a regular file
 
         buf_size = self.sendfile_buf_size
+        log.debug(f'\nUsing _fastcopy_sendfile with {buf_size=:,d} b [loop of os.sendfile]')
         finished = self.finished.is_set
         try:
             while (sent := os.sendfile(out_fd, in_fd, self.copied, buf_size)) and not finished():

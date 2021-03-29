@@ -29,6 +29,7 @@ def parser():
     parser.add_argument('--rm', '-r', action='store_true', help='Remove files after copying')
     parser.add_argument('--no-refresh', '-F', dest='refresh', action='store_false', help='Do not check for newly added files in src_path after copying existing files')
     parser.add_argument('--show-dests', '-S', action='store_true', help='Show show destination paths instead of copying any files')
+    parser.add_argument('--buf_size', '-b', type=int, help='Copy buffer size (default: usually ~8MB)')
     parser.include_common_args('verbosity', 'dry_run')
     return parser
 
@@ -52,7 +53,8 @@ def main():
             src_moved_dir.mkdir(parents=True)
 
         refresh = args.refresh and not args.dry_run
-        while (copied := copy_shows(src_dir, src_moved_dir, dst_shows, args.dry_run, args.rm)) and refresh:
+        copy_args = (src_dir, src_moved_dir, dst_shows, args.dry_run, args.rm, args.buf_size)
+        while (copied := copy_shows(*copy_args)) and refresh:
             log.debug(f'Copied {copied} files.  Checking for newly added files...')
 
 
@@ -69,13 +71,13 @@ def get_destinations(dst_dir: Path) -> Dict[str, Path]:
     return dst_shows
 
 
-def copy_shows(src_dir: Path, src_moved_dir: Path, dst_shows: Dict[str, Path], dry_run: bool, rm: bool):
+def copy_shows(src_dir: Path, src_moved_dir: Path, dst_shows: Dict[str, Path], dry_run: bool, rm: bool, buf_size: int):
     cp_prefix = '[DRY RUN] Would copy' if dry_run else 'Copying'
     mv_prefix = '[DRY RUN] Would move' if dry_run else 'Moving'
     rm_prefix = '[DRY RUN] Would delete' if dry_run else 'Deleting'
     title_match = re.compile(r'^(.+)\.S(\d\d)E(\d\d)\..*', re.IGNORECASE).match
     copied = 0
-    for copied, ep_path in enumerate(src_dir.iterdir()):
+    for copied, ep_path in enumerate(src_dir.iterdir(), 1):
         if m := title_match(ep_path.stem):
             show, season, ep_num = m.groups()
             normalized = norm_show(show.replace('.', ' '))
@@ -90,7 +92,8 @@ def copy_shows(src_dir: Path, src_moved_dir: Path, dst_shows: Dict[str, Path], d
                 if not dry_run:
                     if not dst_season_dir.exists():
                         dst_season_dir.mkdir(parents=True)
-                    copy_file(ep_path, dst_ep_path)
+
+                    copy_file(ep_path, dst_ep_path, buf_size=buf_size)
                     if rm:
                         log.info(f'{rm_prefix} {ep_path}')
                         ep_path.unlink()
