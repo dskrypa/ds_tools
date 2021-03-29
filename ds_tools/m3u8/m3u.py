@@ -117,12 +117,7 @@ class EXTM3U:
         return self.stream.temp_dir_path.joinpath(f'{self.stream.name}.revised.m3u8')
 
     def save_revised(self):
+        log.debug(f'Saving revised m3u8 file: {self.revised_path}')
         with self.revised_path.open('w', encoding='utf-8') as f:
             f.write(''.join(map(str, self._all_segments)))
             f.write('\n')
-            # f.write('\n'.join(self._headers) + '\n')
-            # for segment in self.segments:
-            #     for key, value in segment.info.items():
-            #         f.write(f'#{key}:{value}\n')
-            #     f.write(f'{segment.file_name}\n')
-            # f.write('\n'.join(self._footers) + '\n')

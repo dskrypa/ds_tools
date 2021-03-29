@@ -3,6 +3,7 @@ from concurrent import futures
 from functools import cached_property
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Event
 from typing import TYPE_CHECKING, Optional
 from urllib.parse import urlparse, ParseResult
 
@@ -52,6 +53,7 @@ class VideoStream:
             self.m3u8_path = self.temp_dir_path.joinpath(f'{self.name}.m3u8')
 
         self.session = Session()
+        self._exiting = Event()
         self._m3u8_data = None
 
     @cached_property
@@ -136,19 +138,29 @@ class VideoStream:
 
         with futures.ThreadPoolExecutor(max_workers=threads) as executor:
             _futures = {executor.submit(seg.get): seg for seg in self.ext_m3u.segments}
-            for i, future in enumerate(futures.as_completed(_futures)):
-                resp = future.result()
-                content = resp.content
-                progress.send((i, len(content)))
-                segment = _futures[future]  # type: MediaSegment
-                segment.save(content)
+            try:
+                for i, future in enumerate(futures.as_completed(_futures)):
+                    resp = future.result()
+                    content = resp.content
+                    progress.send((i, len(content)))
+                    segment = _futures[future]  # type: MediaSegment
+                    segment.save(content)
+            except BaseException:
+                self._exiting.set()
+                raise
 
         self.ext_m3u.save_revised()
         self.save_via_ffmpeg()
 
     @property
     def _video_input(self):
-        return self.m3u8_url if self.ffmpeg_dl else self.ext_m3u.revised_path
+        if self.ffmpeg_dl:
+            return self.m3u8_url
+
+        revised_path = self.ext_m3u.revised_path
+        if self.local and not revised_path.exists():
+            self.ext_m3u.save_revised()
+        return revised_path
 
     @cached_property
     def _ffmpeg(self) -> 'Ffmpeg':

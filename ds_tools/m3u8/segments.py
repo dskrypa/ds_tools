@@ -1,5 +1,4 @@
 import logging
-import time
 from abc import ABC, abstractmethod
 from base64 import b64decode
 from functools import cached_property
@@ -75,13 +74,15 @@ class FileSegment(M3USegment, ABC):
                 resp.raise_for_status()
             except RequestException as e:
                 exc = e
-                log.error(f'Error retrieving {self!r}, will sleep {t}s: {e}')
-                time.sleep(t)
-                log.info(f'Retrying {self!r}...')
+                log.error(f'\nError retrieving {self!r}, will sleep {t}s: {e}')
+                if self.stream._exiting.wait(t):
+                    log.warning(f'\nGiving up on {self!r} due to exit event')
+                    raise
+                log.info(f'\nRetrying {self!r}...')
             else:
                 return resp
 
-        log.critical(f'Unable to retrieve {self!r}')
+        log.critical(f'\nUnable to retrieve {self!r}')
         if exc is None:
             raise RuntimeError(f'Unable to retrieve {self!r} and no HTTP exception was captured')
         raise exc
