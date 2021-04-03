@@ -10,7 +10,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from threading import RLock
-from typing import Set, Optional, List, Union, Collection, Iterable, Callable
+from typing import Optional, Union, Collection, Iterable, Callable, Mapping, Any
 
 from tzlocal import get_localzone
 
@@ -36,11 +36,32 @@ SUPPRESS_WARNINGS = ('InsecureRequestWarning',)
 
 
 def init_logging(
-    verbosity=0, *, log_path=_NotSet, names=_NotSet, names_add=_NotSet, date_fmt=None, millis=False, entry_fmt=None,
-    file_fmt=None, file_perm=0o666, file_lvl=logging.DEBUG, file_dir=None,
-    filename_fmt='{prog}.{user}.{time}{uniq}.log', file_handler_opts=None, fix_sigpipe=True, patch_emit='quiet',
-    replace_handlers=True, lvl_names=_NotSet, lvl_names_add=None, set_levels=None, streams=True, reopen_streams=True,
-    color_threads=None, capture_warnings=True, suppress_warnings=_NotSet, suppress_additional_warnings=None,
+    verbosity: Union[int, bool, None] = 0,
+    *,
+    log_path: Union[Path, str, None] = _NotSet,
+    names: Optional[Collection[str]] = _NotSet,
+    names_add: Optional[Collection[str]] = _NotSet,
+    date_fmt: str = None,
+    millis: bool = False,
+    entry_fmt: str = None,
+    file_fmt: str = None,
+    file_perm: int = 0o666,
+    file_lvl: int = logging.DEBUG,
+    file_dir: Union[Path, str, None] = None,
+    filename_fmt: str = '{prog}.{user}.{time}{uniq}.log',
+    file_handler_opts: Mapping[str, Any] = None,
+    fix_sigpipe: bool = True,
+    patch_emit: str = 'quiet',
+    replace_handlers: bool = True,
+    lvl_names: Mapping[int, str] = _NotSet,
+    lvl_names_add: Mapping[int, str] = None,
+    set_levels: Mapping[str, int] = None,
+    streams: bool = True,
+    reopen_streams: bool = True,
+    color_threads: bool = None,
+    capture_warnings: bool = True,
+    suppress_warnings: Optional[Collection[str]] = _NotSet,
+    suppress_additional_warnings: Optional[Collection[str]] = None,
 ):
     """
     Configures stream handlers for stdout and stderr so that logs with level logging.INFO and below are sent to stdout
@@ -57,60 +78,62 @@ def init_logging(
     - 3: 9
     - 12: 0 = highest verbosity
 
-    :param bool|int verbosity: Higher values increase stdout output verbosity.  Default (0) results in only allowing
-      logging.INFO messages and above to go to stdout.  Higher values result in lower log levels being allowed to go to
-      stdout.
-    :param Path|str|None log_path: The path where logs should be written, or None to prevent logging to file.  If not
-      specified, a path will be chosen based on the script that called this function and the current user.
-    :param list|tuple|set|str|None names: The names of the loggers for which handlers should be configured.  If set to
-      None, or if not specified and ``verbosity`` > 10, then the root logger will be configured.  If not specified and
-      ``verbosity`` < 10, then 2 loggers are configured: one for ``__main__``, and one for the base logger of the
-      package that this function is in.
-    :param str date_fmt: The `datetime format code
+    :param verbosity: Higher values increase stdout output verbosity.  Default (0) results in only allowing logging.INFO
+      messages and above to go to stdout.  Higher values result in lower log levels being allowed to go to stdout.
+    :param log_path: The path where logs should be written, or None to prevent logging to file.  If not specified, a
+      path will be chosen based on the script that called this function and the current user.
+    :param names: The names of the loggers for which handlers should be configured.  If set to None, or if not specified
+      and ``verbosity`` > 10, then the root logger will be configured.  If not specified and ``verbosity`` < 10, then 2
+      loggers are configured: one for ``__main__``, and one for the base logger of the package that this function is in.
+    :param names_add: The names of loggers for which handlers should be configured, in addition to the default handlers.
+    :param date_fmt: The `datetime format code
       <https://docs.python.org/3/library/datetime.html#strftime-and-strptime-format-codes>`_ to use for timestamps
-    :param bool millis: Include milliseconds in the datetime format (ignored if ``date_fmt`` is specified)
-    :param str entry_fmt: The stream handler `log message format
+    :param millis: Include milliseconds in the datetime format (ignored if ``date_fmt`` is specified)
+    :param entry_fmt: The stream handler `log message format
       <https://docs.python.org/3/library/logging.html#logrecord-attributes>`_ to use for stdout/stderr.  If not
       specified, the default is based on the specified verbosity - '%(message)s' is used when verbosity < 3, otherwise
       :data:`ENTRY_FMT_DETAILED` is used.
-    :param str file_fmt: The file handler `log message format
+    :param file_fmt: The file handler `log message format
       <https://docs.python.org/3/library/logging.html#logrecord-attributes>`_ to use for logs written to a log file.
       Defaults to :data:`ENTRY_FMT_DETAILED`.
-    :param int file_perm: The octal unix file permissions to set for the log file, if writing to a log file.  This is
-      only used immediately after initializing the file handler - if the file rotates, the new file is not guaranteed to
-      have this permission set.
-    :param int file_lvl: The minimum `log level <https://docs.python.org/3/library/logging.html#logging-levels>`_ that
+    :param file_perm: The octal unix file permissions to set for the log file, if writing to a log file.  This is only
+      used immediately after initializing the file handler - if the file rotates, the new file is not guaranteed to have
+      this permission set.
+    :param file_lvl: The minimum `log level <https://docs.python.org/3/library/logging.html#logging-levels>`_ that
       should be written to the log file, if configured.
-    :param Path|str file_dir: Directory in which log files should be stored for automatically generated log file paths.
-      Ignored if ``log_path`` is specified (default: :data:`DEFAULT_LOG_DIR`).
-    :param str filename_fmt: Format string to use for automatically generated log file names.  Supported variables
-      include:
+    :param file_dir: Directory in which log files should be stored for automatically generated log file paths. Ignored
+      if ``log_path`` is specified (default: :data:`DEFAULT_LOG_DIR`).
+    :param filename_fmt: Format string to use for automatically generated log file names.  Supported variables include:
       - ``{prog}``: The name of the top-level script that is running (without its extension)
       - ``{user}``: The name of the current user
       - ``{time}``: Unix epoch timestamp
       - ``{uniq}``: Empty by default; if a file already exists with the same name, then this value will be ``-0`` or the
         first integer that results in a unique filename.
       - ``{pid}``: The pid of the current process
-    :param dict file_handler_opts: Keyword arguments to pass to :class:`TimedRotatingFileHandler
+    :param file_handler_opts: Keyword arguments to pass to :class:`TimedRotatingFileHandler
       <logging.handlers.TimedRotatingFileHandler>`.  Overrides all arguments specified by default, except the log path.
       Defaults to ``{'when': 'midnight', 'backupCount': 7, 'encoding': 'utf-8'}``
-    :param bool fix_sigpipe: Restores the default handler for SIGPIPE so that a closed pipe (such as when piping
+    :param fix_sigpipe: Restores the default handler for SIGPIPE so that a closed pipe (such as when piping
       output to ``| head``) will not cause an exception.
-    :param bool|str patch_emit: Patches :meth:`logging.StreamHandler.emit` to fix closed pipe behavior on Windows (such
+    :param patch_emit: Patches :meth:`logging.StreamHandler.emit` to fix closed pipe behavior on Windows (such
       as when piping output to ``| head``) since the SIGPIPE handler solution does not work on Windows.  Accepts
       ``'quiet'`` (default) to silently ignore :exc:`OSError` / :exc:`BrokenPipeError`, ``True`` to re-raise those
       exceptions without attempting to continue logging the record, or ``False`` to use the original method, which
       calls :meth:`logging.Handler.handleError` to log the message and a full stack trace to stderr for every message
       that could not be written.
-    :param bool replace_handlers: Remove any existing handlers on loggers before adding handlers to them
-    :param dict lvl_names: Mapping of {int(level): str(name)} to set non-default log level names
-    :param dict lvl_names_add: Additional level names to add, besides the defaults
-    :param dict set_levels: Mapping of {str(logger name): int(level)} to set the log level for the given loggers
-    :param bool streams: Log to stdout and stderr (default: True).
-    :param bool reopen_streams: Reopen stdout/stderr to ensure UTF-8 output
-    :param bool color_threads: Use :class:`ColorThreadFormatter` to color-code output for threads.  If specified, this
+    :param replace_handlers: Remove any existing handlers on loggers before adding handlers to them
+    :param lvl_names: Mapping of {int(level): str(name)} to set non-default log level names
+    :param lvl_names_add: Additional level names to add, besides the defaults
+    :param set_levels: Mapping of {str(logger name): int(level)} to set the log level for the given loggers
+    :param streams: Log to stdout and stderr (default: True).
+    :param reopen_streams: Reopen stdout/stderr to ensure UTF-8 output
+    :param color_threads: Use :class:`ColorThreadFormatter` to color-code output for threads.  If specified, this
       overrides the ``DS_TOOLS_COLOR_CODED_THREAD_LOGS`` environment variable
-    :return str|None: The path to which logs are being written, or None if no file handler was configured.
+    :param capture_warnings: Have the logging framework capture warnings instead of emitting them as warnings
+    :param suppress_warnings: Warnings to be suppressed (only works when ``capture_warnings`` is True)
+    :param suppress_additional_warnings: Warnings to be suppressed in addition to the default warnings that will be
+      suppressed (only works when ``capture_warnings`` is True)
+    :return: The path to which logs are being written, or None if no file handler was configured.
     """
     if fix_sigpipe:
         import signal
@@ -151,7 +174,15 @@ def init_logging(
     return log_path
 
 
-def stream_config_dict(verbosity=0, *, names=_NotSet, names_add=_NotSet, entry_fmt=None, date_fmt=None, millis=False):
+def stream_config_dict(
+    verbosity: Union[int, bool, None] = 0,
+    *,
+    names: Optional[Collection[str]] = _NotSet,
+    names_add: Optional[Collection[str]] = _NotSet,
+    entry_fmt: str = None,
+    date_fmt: str = None,
+    millis: bool = False,
+):
     date_fmt = date_fmt or ('%Y-%m-%d %H:%M:%S.%f %Z' if millis else '%Y-%m-%d %H:%M:%S %Z')  # used by all handlers
     entry_fmt = entry_fmt or (ENTRY_FMT_DETAILED if verbosity and verbosity > 2 else '%(message)s')
     names = _get_logger_names(names, verbosity, names_add)
@@ -197,8 +228,8 @@ def _add_stream_handlers(
     entry_fmt: Optional[str] = None,
     stdout_lvl_filter: Optional[Callable] = None,
     stderr_lvl_filter: Optional[Callable] = None,
-    reopen_streams=True,
-    color_threads=False,
+    reopen_streams: bool = True,
+    color_threads: bool = False,
 ):
     entry_fmt = entry_fmt or (ENTRY_FMT_DETAILED if verbosity and verbosity > 2 else '%(message)s')
 
@@ -226,7 +257,7 @@ def _add_stream_handlers(
             logger.addHandler(handler)
 
 
-def _choose_log_path(file_dir, filename_fmt, cleanup_old=True) -> Path:
+def _choose_log_path(file_dir: Union[str, Path], filename_fmt: str, cleanup_old: bool = True) -> Path:
     import inspect
     import re
     import time
@@ -264,7 +295,15 @@ def _choose_log_path(file_dir, filename_fmt, cleanup_old=True) -> Path:
     return log_path
 
 
-def _add_file_handler(loggers, log_path, date_fmt, file_fmt, file_lvl, file_handler_opts, file_perm):
+def _add_file_handler(
+    loggers: Iterable[logging.Logger],
+    log_path: Path,
+    date_fmt: str,
+    file_fmt: str,
+    file_lvl: int,
+    file_handler_opts: Mapping[str, Any],
+    file_perm: int,
+):
     from logging.handlers import TimedRotatingFileHandler
     log_path = log_path.as_posix()
     prep_log_dir(log_path)
@@ -282,7 +321,11 @@ def _add_file_handler(loggers, log_path, date_fmt, file_fmt, file_lvl, file_hand
     log.log(19, 'Logging to {}'.format(log_path))
 
 
-def _get_logger_names(names=_NotSet, verbosity=0, names_add=_NotSet) -> Set[Optional[str]]:
+def _get_logger_names(
+    names: Optional[Collection[str]] = _NotSet,
+    verbosity: Union[int, bool, None] = 0,
+    names_add: Optional[Collection[str]] = _NotSet,
+) -> set[Optional[str]]:
     if names is _NotSet:
         if verbosity and verbosity > 10:
             names = {None}
@@ -300,7 +343,12 @@ def _get_logger_names(names=_NotSet, verbosity=0, names_add=_NotSet) -> Set[Opti
     return names
 
 
-def _get_loggers(names, verbosity, names_add, replace_handlers) -> List[logging.Logger]:
+def _get_loggers(
+    names: Optional[Collection[str]],
+    verbosity: Union[int, bool, None],
+    names_add: Optional[Collection[str]],
+    replace_handlers: bool,
+) -> list[logging.Logger]:
     loggers = list(map(logging.getLogger, _get_logger_names(names, verbosity, names_add)))
     for logger in loggers:
         logger.setLevel(logging.NOTSET)  # Let handlers deal with log levels
@@ -312,9 +360,7 @@ def _get_loggers(names, verbosity, names_add, replace_handlers) -> List[logging.
     return loggers
 
 
-def _capture_warnings(
-    warnings: Optional[Collection[str]] = _NotSet, additional: Optional[Collection[str]] = None
-):
+def _capture_warnings(warnings: Optional[Collection[str]] = _NotSet, additional: Optional[Collection[str]] = None):
     logging.captureWarnings(True)
     warnings = set(SUPPRESS_WARNINGS) if warnings is _NotSet else set(warnings) if warnings else set()
     if additional:
@@ -330,7 +376,7 @@ def _capture_warnings(
     logging.getLogger('py.warnings').addFilter(WarningFilter())
 
 
-def _configure_level_names(lvl_names=_NotSet, lvl_names_add=None):
+def _configure_level_names(lvl_names: Mapping[int, str] = _NotSet, lvl_names_add: Mapping[int, str] = None):
     if lvl_names is _NotSet:
         lvl_names = {lvl: 'DBG_{}'.format(lvl) for lvl in range(1, 10)}
         lvl_names.update({lvl: 'Lv_{}'.format(lvl) for lvl in range(11, 19)})
@@ -345,7 +391,7 @@ def _configure_level_names(lvl_names=_NotSet, lvl_names_add=None):
                 logging.addLevelName(lvl, name)
 
 
-def create_filter(filter_fn):
+def create_filter(filter_fn: Callable):
     """
     Uses the given function to filter log entries based on level number.  The function should return True if the
     record should be logged, or False to ignore it.
@@ -415,13 +461,13 @@ class ColorThreadFormatter(ColorLogFormatter):
         return formatted
 
 
-def prep_log_dir(log_path, perm_change_prefix='/var/tmp/', new_dir_permissions=0o1777):
+def prep_log_dir(log_path: Union[str, Path], perm_change_prefix: str = '/var/tmp/', new_dir_permissions: int = 0o1777):
     """
     Creates any necessary intermediate directories in order for the given log path to be valid.  Log directory's
     permissions default to 1777 (sticky, read/write/exec for everyone).
 
-    :param Path|str log_path: Log file destination
-    :param str perm_change_prefix: Apply new_dir_permissions to the dir if it needs to be created and starts with this
+    :param log_path: Log file destination
+    :param perm_change_prefix: Apply new_dir_permissions to the dir if it needs to be created and starts with this
     :param new_dir_permissions: Octal permissions for the new directory if it needs to be created.
     """
     log_dir = Path(log_path).parent
@@ -437,11 +483,11 @@ def prep_log_dir(log_path, perm_change_prefix='/var/tmp/', new_dir_permissions=0
                 log.error('Error changing permissions for {} to 0o{:o}: {}'.format(log_dir, new_dir_permissions, e))
 
 
-def add_context_filter(filter_instance, name=None):
+def add_context_filter(filter_instance: logging.Filter, name: str = None):
     """
     :param filter_instance: An instance of the :class:`logging.Filter` class that should be used
-    :param str|None name: None to add to all loggers, or a string that is the prefix of all loggers that should use the
-      given filter
+    :param name: None to add to all loggers, or a string that is the prefix of all loggers that should use the given
+      filter
     """
     # noinspection PyUnresolvedReferences
     for lname, logger in logging.Logger.manager.loggerDict.items():
@@ -452,7 +498,7 @@ def add_context_filter(filter_instance, name=None):
                 pass
 
 
-def update_level(name, level, verbosity='set', handlers=True, handlers_only=False):
+def update_level(name: str, level: int, verbosity: str = 'set', handlers: bool = True, handlers_only: bool = False):
     """
     Recursively update loggers and their handlers to change the level of logs that are emitted.
 
@@ -487,7 +533,7 @@ def update_level(name, level, verbosity='set', handlers=True, handlers_only=Fals
         update_level(name.rsplit('.', 1)[0], level, verbosity, handlers)
 
 
-def get_logger_info(only_with_handlers=False, non_null_handlers_only=False, test_filters=False):
+def get_logger_info(only_with_handlers: bool = False, non_null_handlers_only: bool = False, test_filters: bool = False):
     from collections import ChainMap
     loggers = {}
     # noinspection PyUnresolvedReferences
@@ -557,7 +603,7 @@ def get_logger_info(only_with_handlers=False, non_null_handlers_only=False, test
     return loggers
 
 
-def get_level_info(handler):
+def get_level_info(handler: logging.Handler) -> str:
     """
     :param handler: An instance of a logging handler object
     :return: A string representation of the handler's logging level and its filters
@@ -569,7 +615,7 @@ def get_level_info(handler):
     return '{}: {} ({})'.format(htype, handler.level, logging.getLevelName(handler.level))
 
 
-def get_levels(logger):
+def get_levels(logger: logging.Logger) -> list[str]:
     """
     :param logger: A Logger
     :return: A list of information about the given logger's handlers from :func:`get_level_info`
@@ -620,7 +666,7 @@ def _stream_handler_emit_quiet(self, record):
         self.handleError(record)
 
 
-def logger_has_non_null_handlers(logger):
+def logger_has_non_null_handlers(logger: logging.Logger):
     # Based on logging.Logger.hasHandlers(), but checks that they are not all NullHandlers
     c = logger
     rv = False
