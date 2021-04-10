@@ -11,7 +11,7 @@ import logging
 import os
 import re
 from datetime import datetime
-from typing import Pattern
+from typing import Pattern, Iterable
 
 sys.path.append(PROJECT_ROOT.as_posix())
 from ds_tools.argparsing import ArgParser
@@ -49,21 +49,21 @@ def main():
 def extract_albums(src_dir: Path, zip_dir: Path):
     for artist in src_dir.iterdir():
         if artist.is_dir():
-            dest = zip_dir.joinpath(artist.stem)
-            if not dest.exists():
-                dest.mkdir(parents=True)
+            zip_dest = zip_dir.joinpath(artist.stem)
+            if not zip_dest.exists():
+                zip_dest.mkdir(parents=True)
 
             for f in artist.iterdir():
                 if f.is_file():
                     try:
-                        ArchiveFile(f).extract_all(dest)
+                        ArchiveFile(f).extract_all(artist)
                     except UnknownArchiveType as e:
                         log.warning(f'Skipping {f.as_posix()} due to error: {e}')
                     else:
-                        f.rename(dest.joinpath(f.name))
+                        f.rename(zip_dest.joinpath(f.name))
         else:
             try:
-                ArchiveFile(artist).extract_all(zip_dir)
+                ArchiveFile(artist).extract_all(src_dir)
             except UnknownArchiveType as e:
                 log.warning(f'Skipping {artist.as_posix()} due to error: {e}')
             else:
@@ -98,26 +98,34 @@ def cleanup_names(src_dir: Path):
         re.compile(r'(.*)\[(?:www)?.*\.com\]$', re.IGNORECASE),
         re.compile(r'^\[.*\.com\](.*)$', re.IGNORECASE)
     ]
-    for artist in src_dir.iterdir():
-        if artist.is_dir():
-            for album in artist.iterdir():
-                if album.is_dir():
-                    for f in album.iterdir():
-                        if f.suffix in ('.url', '.htm', '.html', '.db'):
-                            log.info(f'Deleting: {f.as_posix()}')
-                            f.unlink()
-                        else:
-                            rename_path(f, file_url_pat)
-
-                    for dir_url_pat in dir_url_pats:
-                        rename_path(album, dir_url_pat)
-                else:
-                    log.info(f'Skipping non-directory at album level: {album.as_posix()}')
+    for artist_or_album in src_dir.iterdir():
+        if artist_or_album.is_dir():
+            contents = list(artist_or_album.iterdir())
+            if all(p.is_dir() for p in contents):
+                for album in contents:
+                    if album.is_dir():
+                        cleanup_album_dir(album, file_url_pat, dir_url_pats)
+                    else:
+                        log.info(f'Skipping non-directory at album level: {album.as_posix()}')
+            else:
+                cleanup_album_dir(artist_or_album, file_url_pat, dir_url_pats)
         else:
-            log.info(f'Skipping non-directory at artist level: {artist.as_posix()}')
+            log.info(f'Skipping non-directory at artist level: {artist_or_album.as_posix()}')
 
 
-def rename_path(path: Path, pat: Pattern):
+def cleanup_album_dir(path: Path, file_url_pat: Pattern, dir_url_pats: Iterable[Pattern]):
+    for f in path.iterdir():
+        if f.suffix in ('.url', '.htm', '.html', '.db'):
+            log.info(f'Deleting: {f.as_posix()}')
+            f.unlink()
+        else:
+            maybe_rename_path(f, file_url_pat)
+
+    for dir_url_pat in dir_url_pats:
+        path = maybe_rename_path(path, dir_url_pat)
+
+
+def maybe_rename_path(path: Path, pat: Pattern) -> Path:
     if m := pat.match(path.name):
         try:
             cleaned = path.with_name(m.group(1).strip())
@@ -129,6 +137,9 @@ def rename_path(path: Path, pat: Pattern):
                 path.rename(cleaned)
             except OSError as e:
                 log.error(e)
+            else:
+                return cleaned
+    return path
 
 
 if __name__ == '__main__':
