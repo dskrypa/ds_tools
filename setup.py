@@ -36,6 +36,7 @@ optional_dependencies = {
         'scipy',
     ],
     'J2R': ['pykakasi'],                                # ds_tools.unicode.languages
+    'pdf': ['pypdf2'],                                  # bin/pdf_merge.py
     'socketio': ['flask_socketio', 'gevent'],           # flasks package with socketio
     'translate': ['googletrans'],                       # ds_tools.unicode.translate
     'windows': ['pywin32'],                             # bin/windows_tasks.py
