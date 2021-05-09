@@ -68,8 +68,16 @@ def get_input(
 
 
 def choose_item(
-    items: Collection[Any], name: str = 'value', source: Any = '', *, before: Optional[str] = None, retry: int = 0,
-    before_color: Color = None, prompt_color: Color = 14, error_color: Color = 9, repr_func: Callable = repr,
+    items: Collection[Any],
+    name: str = 'value',
+    source: Any = '',
+    *,
+    before: Optional[str] = None,
+    retry: int = 0,
+    before_color: Color = None,
+    prompt_color: Color = 14,
+    error_color: Color = 9,
+    repr_func: Callable = repr,
 ) -> Any:
     """
     Given a list of items from which only one value can be used, prompt the user to choose an item.  If only one item
