@@ -8,7 +8,9 @@ import json
 from base64 import b64encode
 from collections import UserDict
 from collections.abc import Mapping, KeysView, ValuesView
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
+from traceback import format_tb
+from types import TracebackType
 
 import yaml
 
@@ -30,8 +32,12 @@ class PermissiveJSONEncoder(json.JSONEncoder):
                 return b64encode(o).decode('utf-8')
         elif isinstance(o, datetime):
             return o.strftime('%Y-%m-%d %H:%M:%S %Z')
+        elif isinstance(o, date):
+            return o.strftime('%Y-%m-%d')
         elif isinstance(o, (type, timedelta)):
             return str(o)
+        elif isinstance(o, TracebackType):
+            return ''.join(format_tb(o)).splitlines()
         elif hasattr(o, '__to_json__'):
             return o.__to_json__()
         elif hasattr(o, '__serializable__'):
@@ -59,6 +65,8 @@ def prep_for_yaml(obj):
         return obj.decode('utf-8')
     elif isinstance(obj, datetime):
         return obj.strftime('%Y-%m-%d %H:%M:%S %Z')
+    elif isinstance(obj, date):
+        return obj.strftime('%Y-%m-%d')
     elif isinstance(obj, (type, timedelta)):
         return str(obj)
     else:

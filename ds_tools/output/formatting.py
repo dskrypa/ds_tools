@@ -7,13 +7,20 @@ Output formatting functions
 import logging
 import math
 from collections import OrderedDict
-from collections.abc import Mapping, Sized, Iterable, Container
+from typing import Union, Mapping, Sized, Iterable, Container
 
 from .color import colored
 
 __all__ = [
-    'format_output', 'format_percent', 'format_tiered', 'pseudo_yaml', 'readable_bytes', 'to_bytes', 'to_str',
-    'short_repr', 'bullet_list'
+    'format_output',
+    'format_percent',
+    'format_tiered',
+    'pseudo_yaml',
+    'readable_bytes',
+    'to_bytes',
+    'to_str',
+    'short_repr',
+    'bullet_list',
 ]
 log = logging.getLogger(__name__)
 
@@ -39,19 +46,24 @@ def short_repr(obj, when_gt=100, parts=45, sep='...', func=repr, containers_only
     return obj_repr
 
 
-def readable_bytes(file_size, dec_places=None, dec_by_unit=None):
+def readable_bytes(size: Union[float, int], dec_places: int = None, dec_by_unit: Mapping[str, int] = None):
+    """
+    :param size: The number of bytes to render as a human-readable string
+    :param dec_places: Number of decimal places to include (overridden by dec_by_unit if specified)
+    :param dec_by_unit: Mapping of {unit: number of decimal places to include}
+    :return:
+    """
     units = list(zip(['B ', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'], [0, 2, 2, 2, 2, 2, 2, 2, 2]))
     try:
-        exp = min(int(math.log(file_size, 1024)), len(units) - 1) if file_size > 0 else 0
+        exp = min(int(math.log(abs(size), 1024)), len(units) - 1) if abs(size) > 0 else 0
     except TypeError as e:
-        print('Invalid file size: {!r}'.format(file_size))
-        raise e
+        raise ValueError(f'Invalid {size=}') from e
     unit, dec = units[exp]
     if dec_places is not None:
         dec = dec_places
     if isinstance(dec_by_unit, dict):
         dec = dec_by_unit.get(unit, 2)
-    return '{{:,.{}f}} {}'.format(dec, unit).format(file_size / 1024 ** exp)
+    return '{{:,.{}f}} {}'.format(dec, unit).format(size / 1024 ** exp)
 
 
 def format_percent(num, div):

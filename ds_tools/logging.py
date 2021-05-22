@@ -61,7 +61,8 @@ def init_logging(
     color_threads: bool = None,
     capture_warnings: bool = True,
     suppress_warnings: Optional[Collection[str]] = _NotSet,
-    suppress_additional_warnings: Optional[Collection[str]] = None,
+    suppress_additional_warnings: Collection[str] = None,
+    http_debugging: bool = False,
 ):
     """
     Configures stream handlers for stdout and stderr so that logs with level logging.INFO and below are sent to stdout
@@ -133,6 +134,7 @@ def init_logging(
     :param suppress_warnings: Warnings to be suppressed (only works when ``capture_warnings`` is True)
     :param suppress_additional_warnings: Warnings to be suppressed in addition to the default warnings that will be
       suppressed (only works when ``capture_warnings`` is True)
+    :param http_debugging: Enable HTTP request debug logging
     :return: The path to which logs are being written, or None if no file handler was configured.
     """
     if fix_sigpipe:
@@ -145,6 +147,9 @@ def init_logging(
         logging.StreamHandler.emit = _stream_handler_emit_quiet if patch_emit == 'quiet' else _stream_handler_emit
 
     _configure_level_names(lvl_names, lvl_names_add)
+
+    if http_debugging and names_add is _NotSet:
+        names_add = ['http.client', 'requests', 'urllib3']
     loggers = _get_loggers(names, verbosity, names_add, replace_handlers)
     root_logger = logging.getLogger()
     if root_logger in loggers:
@@ -168,8 +173,9 @@ def init_logging(
         _add_file_handler(loggers, log_path, date_fmt, file_fmt, file_lvl, file_handler_opts, file_perm)
 
     if capture_warnings:
-        # noinspection PyTypeChecker
-        _capture_warnings(suppress_warnings, suppress_additional_warnings)
+        _capture_warnings(suppress_warnings, suppress_additional_warnings)  # noqa
+    if http_debugging:
+        enable_http_debug_logging()
 
     return log_path
 
@@ -389,6 +395,27 @@ def _configure_level_names(lvl_names: Mapping[int, str] = _NotSet, lvl_names_add
             # noinspection PyUnresolvedReferences
             if (name not in logging._nameToLevel) and (lvl not in logging._levelToName):
                 logging.addLevelName(lvl, name)
+
+
+def enable_http_debug_logging():
+    import http.client as http_client
+    from urllib3.connection import HTTPConnection, HTTPSConnection
+
+    http_client_logger = logging.getLogger('http.client')
+
+    def _http_log(*args):
+        http_client_logger.debug(' '.join(args))
+
+    http_client.print = _http_log
+    for cls in (http_client.HTTPConnection, http_client.HTTPSConnection, HTTPConnection, HTTPSConnection):
+        cls.debuglevel = property(lambda s: 1, lambda s, level: None)
+        cls.set_debuglevel = lambda level: None
+
+    for name in ('requests.packages.urllib3', 'urllib3', 'requests'):
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.NOTSET)
+        logger.setLevel = lambda level: None  # prevent other libs from changing these levels
+        logger.propagate = True
 
 
 def create_filter(filter_fn: Callable):

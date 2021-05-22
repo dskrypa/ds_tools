@@ -7,7 +7,7 @@ Functions that expand upon those in the built-in itertools module.
 from collections.abc import Mapping, MutableMapping
 from copy import deepcopy
 from itertools import chain, zip_longest
-from typing import Iterable, Iterator, Tuple
+from typing import Iterable, Iterator
 
 __all__ = ['chunked', 'flatten_mapping', 'itemfinder', 'kwmerge', 'merge', 'partitioned']
 
@@ -34,7 +34,7 @@ def chunked(seq, n):
         i = j
 
 
-def partitioned(iterable: Iterable, n: int) -> Iterator[Tuple]:
+def partitioned(iterable: Iterable, n: int) -> Iterator[tuple]:
     """
     :param iterable: An iterable object
     :param n: The maximum number of elements in a given partition
@@ -48,13 +48,13 @@ def partitioned(iterable: Iterable, n: int) -> Iterator[Tuple]:
     try:
         last = next(zipper)
     except StopIteration:
-        return
+        pass
+    else:
+        for part in zipper:
+            yield last
+            last = part
 
-    for part in zipper:
-        yield last
-        last = part
-
-    yield tuple(ele for ele in last if ele is not _NotSet)
+        yield tuple(ele for ele in last if ele is not _NotSet)
 
 
 def kwmerge(*params, **kwargs):

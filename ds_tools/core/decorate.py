@@ -50,13 +50,13 @@ class cached_classproperty:
         if not isinstance(func, (classmethod, staticmethod)):
             func = classmethod(func)
         self.func = func
+        self.values = {}
 
     def __get__(self, obj, cls):
         try:
-            return self.value
-        except AttributeError:
-            # noinspection PyCallingNonCallable
-            value = self.value = self.func.__get__(obj, cls)()
+            return self.values[cls]
+        except KeyError:
+            self.values[cls] = value = self.func.__get__(obj, cls)()  # noqa
             return value
 
 
