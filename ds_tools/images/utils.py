@@ -12,6 +12,7 @@ from typing import Union
 
 from PIL import Image, ImageColor
 from PIL.Image import Image as PILImage
+from PIL.ImagePalette import ImagePalette
 
 __all__ = [
     'ImageType',
@@ -103,3 +104,17 @@ def color_to_alpha(image: ImageType, color: str) -> PILImage:
     #
     # image.putdata(updated)
     return image
+
+
+def color_at_pos(image: ImageType, pos: tuple[int, int]):
+    image = as_image(image)
+    color = image.getpixel(pos)
+    if isinstance(color, int) and image.palette:
+        palette = image.palette  # type: ImagePalette
+        chars = len(palette.mode)
+        index = chars * color
+        return tuple(palette.palette[index:index + chars])
+    elif isinstance(color, tuple):
+        return color
+    else:
+        raise ValueError('Unhandled image type')
