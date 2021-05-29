@@ -24,6 +24,8 @@ __all__ = [
     'scale_image',
     'color_to_rgb',
     'color_to_alpha',
+    'palette_index_to_color',
+    'color_at_pos',
 ]
 log = logging.getLogger(__name__)
 ImageType = Union[PILImage, bytes, Path, str, None]
@@ -106,15 +108,24 @@ def color_to_alpha(image: ImageType, color: str) -> PILImage:
     return image
 
 
-def color_at_pos(image: ImageType, pos: tuple[int, int]):
+def palette_index_to_color(image_or_palette: Union[ImageType, ImagePalette], index: int) -> tuple[int, ...]:
+    if isinstance(image_or_palette, ImagePalette):
+        palette = image_or_palette
+    else:
+        image = as_image(image_or_palette)
+        if not (palette := image.palette):
+            raise ValueError(f'Image={image} has no palette')
+    chars = len(palette.mode)
+    offset = chars * index
+    return tuple(palette.palette[offset:offset + chars])
+
+
+def color_at_pos(image: ImageType, pos: tuple[int, int]) -> Union[tuple[int, ...], int]:
     image = as_image(image)
     color = image.getpixel(pos)
-    if isinstance(color, int) and image.palette:
-        palette = image.palette  # type: ImagePalette
-        chars = len(palette.mode)
-        index = chars * color
-        return tuple(palette.palette[index:index + chars])
-    elif isinstance(color, tuple):
+    if isinstance(color, tuple):
         return color
+    elif image.palette:
+        return palette_index_to_color(image.palette, color)
     else:
-        raise ValueError('Unhandled image type')
+        return color
