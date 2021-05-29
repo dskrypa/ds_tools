@@ -168,6 +168,9 @@ class FrameCycle:
 
         self._frames_and_durations = tuple((wrapper(f), get_duration(f)) for f in frames)
 
+    def __len__(self):
+        return len(self._frames_and_durations)
+
     def __iter__(self):
         return self
 
