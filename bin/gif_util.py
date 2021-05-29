@@ -28,7 +28,7 @@ def parser():
     alpha_parser.add_argument('path', help='Path to the input file')
     alpha_parser.add_argument('output', help='Path for the output file')
     alpha_parser.add_argument('--color', '-c', metavar='RGB', help='Color to convert to alpha as an RGB hex code', required=True)
-    alpha_parser.add_argument('--disposal', type=int, nargs='+', help='Way to treat the graphic after displaying it. Specify 1 value to apply to all, or per-frame values. 1: Do not dispose; 2: Restore to bg color; 3: Restore to prev content')
+    alpha_parser.add_argument('--disposal', '-d', type=int, nargs='+', help='Way to treat the graphic after displaying it. Specify 1 value to apply to all, or per-frame values. 1: Do not dispose; 2: Restore to bg color; 3: Restore to prev content')
     # alpha_parser.add_argument('--threshold', '-t', type=float, default=0.95, help='Threshold to convert to alpha')
 
     split_parser = parser.add_subparser('action', 'split', help='Save each frame of an animated gif as a separate file')

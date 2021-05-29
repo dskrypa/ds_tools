@@ -36,7 +36,7 @@ def as_image(image: ImageType) -> PILImage:
     elif isinstance(image, bytes):
         return Image.open(BytesIO(image))
     elif isinstance(image, (Path, str)):
-        path = Path(image)
+        path = Path(image).expanduser()
         if not path.is_file():
             raise ValueError(f'Invalid image path={path.as_posix()!r} - it is not a file')
         return Image.open(path)

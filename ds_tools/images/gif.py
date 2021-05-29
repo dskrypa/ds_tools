@@ -7,7 +7,7 @@ Utilities for working with animated gif images
 import logging
 from functools import cached_property
 from pathlib import Path
-from typing import Union, Iterator, Iterable, Sequence
+from typing import Union, Iterator, Iterable, Sequence, Callable
 
 from PIL import Image
 from PIL.Image import Image as PILImage
@@ -65,12 +65,15 @@ class AnimatedGif:
     def color_to_alpha(self, color: str) -> 'AnimatedGif':
         return self.__class__((color_to_alpha(frame, color) for frame in self.frames(True)))
 
-    def resize(self, size: Size, resample: int = Image.BICUBIC, box: Box = None, reducing_gap: float = None):
+    def resize(self, size: Size, resample: int = Image.ANTIALIAS, box: Box = None, reducing_gap: float = None):
         frames = (
             frame.resize(size, resample=resample, box=box, reducing_gap=reducing_gap)
             for frame in self.frames(True)
         )
         return self.__class__(frames)
+
+    def cycle(self, wrapper: Callable = None, duration: int = None, default_duration: int = 100) -> 'FrameCycle':
+        return FrameCycle(self.frames(), wrapper, duration, default_duration)
 
     def get_info(self, frames: bool = False):
         if frames:
@@ -147,6 +150,42 @@ class AnimatedGif:
         log.info(f'Saving {path.as_posix()}')
         with path.open('wb') as f:
             frame.save(f, save_all=True, append_images=frames, **kwargs)
+
+
+class FrameCycle:
+    def __init__(
+        self,
+        frames: Iterable[PILImage],
+        wrapper: Callable = None,
+        duration: int = None,
+        default_duration: int = 100,
+    ):
+        self.n = 0
+        wrapper = wrapper if wrapper is not None else lambda f: f
+
+        def get_duration(f):
+            return duration if duration is not None else f.info.get('duration', default_duration)
+
+        self._frames_and_durations = tuple((wrapper(f), get_duration(f)) for f in frames)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        self.n += 1
+        try:
+            return self._frames_and_durations[self.n]
+        except IndexError:
+            self.n = 0
+            return self._frames_and_durations[0]
+
+    next = __next__
+
+    def back(self):
+        self.n -= 1
+        if self.n < 0:
+            self.n = len(self._frames_and_durations) - 1
+        return self._frames_and_durations[self.n]
 
 
 def _frame_info(frame: PILImage):
