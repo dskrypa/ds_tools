@@ -161,12 +161,13 @@ class FrameCycle:
         default_duration: int = 100,
     ):
         self.n = 0
+        self._frames = tuple(frames) if wrapper is not None else None
         wrapper = wrapper if wrapper is not None else lambda f: f
 
         def get_duration(f):
             return duration if duration is not None else f.info.get('duration', default_duration)
 
-        self._frames_and_durations = tuple((wrapper(f), get_duration(f)) for f in frames)
+        self._frames_and_durations = tuple((wrapper(f), get_duration(f)) for f in self._frames)
         self.first_delay = self._frames_and_durations[0][1]
 
     def __len__(self):
@@ -190,6 +191,12 @@ class FrameCycle:
         if self.n < 0:
             self.n = len(self._frames_and_durations) - 1
         return self._frames_and_durations[self.n]
+
+    @property
+    def current_image(self) -> PILImage:
+        if self._frames is not None:
+            return self._frames[self.n]
+        return self._frames_and_durations[self.n][0]
 
 
 def _frame_info(frame: PILImage):
