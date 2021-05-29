@@ -167,6 +167,7 @@ class FrameCycle:
             return duration if duration is not None else f.info.get('duration', default_duration)
 
         self._frames_and_durations = tuple((wrapper(f), get_duration(f)) for f in frames)
+        self.first_delay = self._frames_and_durations[0][1]
 
     def __len__(self):
         return len(self._frames_and_durations)
