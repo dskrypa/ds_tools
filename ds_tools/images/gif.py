@@ -6,15 +6,19 @@ Utilities for working with animated gif images
 
 import logging
 from functools import cached_property
+from math import pi, cos, sin
 from pathlib import Path
-from typing import Union, Iterator, Iterable, Sequence, Callable
+from random import randrange
+from tempfile import TemporaryDirectory
+from typing import Union, Iterator, Iterable, Sequence, Callable, Collection
 
-from PIL import Image
+from PIL import Image, ImageShow
 from PIL.Image import Image as PILImage
+from PIL.ImageDraw import ImageDraw, Draw
 from PIL.ImagePalette import ImagePalette
 from PIL.ImageSequence import Iterator as FrameIterator
 
-from .utils import ImageType, Size, Box, as_image, color_to_alpha
+from .utils import ImageType, Size, Box, as_image, color_to_alpha, color_to_rgb
 
 __all__ = ['AnimatedGif']
 log = logging.getLogger(__name__)
@@ -151,6 +155,18 @@ class AnimatedGif:
         with path.open('wb') as f:
             frame.save(f, save_all=True, append_images=frames, **kwargs)
 
+    def show(self, name: str = None, **kwargs):
+        name = name or 'temp.gif'
+        kwargs.setdefault('disposal', 3)
+        kwargs.setdefault('transparency', 0)
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir).joinpath(name)
+            self.save(tmp_path, **kwargs)
+            for viewer in ImageShow._viewers:
+                if viewer.show_file(tmp_path.as_posix()):
+                    return True
+        return False
+
 
 class FrameCycle:
     def __init__(
@@ -208,3 +224,100 @@ def _frame_info(frame: PILImage):
         info['palette'] = f'<ImagePalette[mode={palette.mode!r}, raw={palette.rawmode}, len={len(palette.palette)}]>'
 
     return info
+
+
+class Spinner:
+    def __init__(
+        self,
+        size: Union[Size, int],
+        color: str = '#204274',
+        spokes: int = 8,
+        bg: str = None,
+        size_min_pct: float = 0.5,
+        opacity_min_pct: float = 0.3,
+        frames_per_spoke: int = 4,
+        frame_duration_ms: int = 30,
+        frame_fade_pct: float = 0.025,
+        reverse: bool = False,
+    ):
+        self.rgb = color_to_rgb(color)
+        self.size = (size, size) if isinstance(size, int) else size
+        self.inner_radius = int(min(self.size) / 2 * 0.7)
+        self.spoke_radius = self.inner_radius // 3
+        self.bg = color_to_rgb(bg) if bg else (*_random_color([self.rgb]), 0)
+        self.spokes = spokes
+        self.size_min_pct = size_min_pct
+        self.opacity_min_pct = opacity_min_pct
+        self.frames_per_spoke = frames_per_spoke
+        self.frame_duration_ms = frame_duration_ms
+        self.frame_fade_pct = frame_fade_pct
+        self.reverse = reverse
+
+    def _iter_centers(self, spoke: int = 0):
+        width, height = self.size
+        a = width // 2
+        b = height // 2
+        angle = -2 * pi / self.spokes
+        if self.reverse:
+            angle *= -1
+        r = self.inner_radius
+        for n in range(self.spokes):
+            t = (n + spoke) * angle
+            x = a + r * cos(t)
+            y = b + r * sin(t)
+            yield x, y
+
+    def _iter_boxes(self, spoke: int = 0):
+        step = (1 - self.size_min_pct) / self.spokes
+        for i, (x, y) in enumerate(self._iter_centers(spoke)):
+            r = self.spoke_radius * (1 - (i * step))
+            yield x - r, y - r, x + r, y + r
+
+    def create_frame(self, spoke: int = 0, spoke_frame: int = 0) -> PILImage:
+        image = Image.new('RGBA', self.size, self.bg)
+        draw = Draw(image, 'RGBA')  # type: ImageDraw
+        step = (1 - self.opacity_min_pct) / self.spokes
+        a_offset = int(255 * (spoke_frame * self.frame_fade_pct))
+        log.debug(f'Creating frame for {spoke=} {spoke_frame=} {step=} {a_offset=}')
+        for i, box in enumerate(self._iter_boxes(spoke)):
+            a = int(255 * (1 - (i * step))) - a_offset
+            draw.ellipse(box, fill=(*self.rgb, a))
+        return image
+
+    @cached_property
+    def gif(self) -> AnimatedGif:
+        spoke_nums = reversed(tuple(range(self.spokes))) if not self.reverse else range(self.spokes)
+        frames = (
+            self.create_frame(spoke, spoke_frame)
+            for spoke in spoke_nums
+            for spoke_frame in range(self.frames_per_spoke)
+        )
+        return AnimatedGif(frames)
+
+    def make_frame(self, n: int) -> PILImage:
+        i = 0
+        for spoke in range(self.spokes):
+            for spoke_frame in range(self.frames_per_spoke):
+                if i == n:
+                    return self.create_frame(spoke, spoke_frame)
+                i += 1
+        raise IndexError(f'Invalid frame index={n}')
+
+    def show(self):
+        self.gif.show(duration=self.frame_duration_ms)
+
+    def save(self, path: Union[Path, str], **kwargs):
+        kwargs.setdefault('disposal', 2)
+        kwargs.setdefault('transparency', 0)
+        kwargs.setdefault('duration', self.frame_duration_ms)
+        self.gif.save(path, **kwargs)
+
+
+def _random_color(skip: Collection[tuple[int, int, int]]):
+    skip = set(skip)
+    if len(skip) > 256 ** 3:
+        raise ValueError(f'Too many colors ({len(skip)}) - impossible to generate different unique random color')
+    while True:
+        color = (randrange(256), randrange(256), randrange(256))
+        if color not in skip:
+            return color
