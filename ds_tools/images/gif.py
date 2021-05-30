@@ -7,10 +7,10 @@ Utilities for working with animated gif images
 import logging
 from functools import cached_property
 from math import pi, cos, sin
+from operator import xor
 from pathlib import Path
-from random import randrange
 from tempfile import TemporaryDirectory
-from typing import Union, Iterator, Iterable, Sequence, Callable, Collection
+from typing import Union, Iterator, Iterable, Sequence, Callable
 
 from PIL import Image, ImageShow
 from PIL.Image import Image as PILImage
@@ -18,7 +18,8 @@ from PIL.ImageDraw import ImageDraw, Draw
 from PIL.ImagePalette import ImagePalette
 from PIL.ImageSequence import Iterator as FrameIterator
 
-from .utils import ImageType, Size, Box, as_image, color_to_alpha, color_to_rgb
+from .colors import color_to_rgb, color_to_alpha, find_unused_color
+from .utils import ImageType, Size, Box, as_image, FloatBox, get_image_info
 
 __all__ = ['AnimatedGif']
 log = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ class AnimatedGif:
         tile = (decoder, (x0, y0, x1, y1), frame_byte_offset, (bits, interlace, transparency))
     """
     def __init__(self, image: Union[ImageType, Iterable[ImageType]]):
+        self._path = Path(image) if isinstance(image, (str, Path)) else None
         try:
             image = as_image(image)
         except (TypeError, ValueError):
@@ -61,10 +63,8 @@ class AnimatedGif:
     def frames(self, copy: bool = False) -> Iterator[PILImage]:
         frame_iter = self._frames if self._frames is not None else FrameIterator(self._image)
         if copy:
-            for frame in frame_iter:
-                yield frame.copy()
-        else:
-            yield from frame_iter
+            frame_iter = (frame.copy() for frame in frame_iter)
+        yield from frame_iter
 
     def color_to_alpha(self, color: str) -> 'AnimatedGif':
         return self.__class__((color_to_alpha(frame, color) for frame in self.frames(True)))
@@ -81,19 +81,21 @@ class AnimatedGif:
 
     def get_info(self, frames: bool = False):
         if frames:
-            return list(map(_frame_info, self.frames()))
+            return list(map(get_image_info, self.frames()))
         else:
             image = self._image or self._frames[0]
-            return _frame_info(image)
+            return get_image_info(image)
+
+    def print_info(self, frames: bool = False):
+        if frames:
+            for i, frame in enumerate(self.frames()):
+                print(get_image_info(frame, True, f'Frame {i}'))
+        else:
+            key = self._path.as_posix() if self._path else str(self._image if self._image else self._frames[0])
+            print(get_image_info(self._image or self._frames[0], True, key))
 
     def save_frames(self, path: Union[Path, str], prefix: str = 'frame_', format: str = 'PNG', mode: str = None):  # noqa
-        path = Path(path).expanduser().resolve() if isinstance(path, str) else path
-        if path.exists():
-            if not path.is_dir():
-                raise ValueError(f'Invalid path={path.as_posix()!r} - it must be a directory')
-        else:
-            path.mkdir(parents=True)
-
+        path = _prepare_dir(path)
         name_fmt = prefix + '{:0' + str(len(str(self.n_frames))) + 'd}.' + format.lower()
         for i, frame in enumerate(self.frames()):
             if mode and mode != frame.mode:
@@ -157,7 +159,7 @@ class AnimatedGif:
 
     def show(self, name: str = None, **kwargs):
         name = name or 'temp.gif'
-        kwargs.setdefault('disposal', 3)
+        kwargs.setdefault('disposal', 2)
         kwargs.setdefault('transparency', 0)
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir).joinpath(name)
@@ -215,17 +217,6 @@ class FrameCycle:
         return self._frames_and_durations[self.n][0]
 
 
-def _frame_info(frame: PILImage):
-    base_info = frame.info
-    info = {key: base_info.get(key) for key in ('background', 'duration', 'loop', 'transparency', 'extension')}
-    attrs = ('disposal_method', 'disposal', 'dispose_extent', 'tile')
-    info.update((attr, getattr(frame, attr, None)) for attr in attrs)
-    if palette := frame.palette:
-        info['palette'] = f'<ImagePalette[mode={palette.mode!r}, raw={palette.rawmode}, len={len(palette.palette)}]>'
-
-    return info
-
-
 class Spinner:
     def __init__(
         self,
@@ -239,12 +230,13 @@ class Spinner:
         frame_duration_ms: int = 30,
         frame_fade_pct: float = 0.025,
         reverse: bool = False,
+        clockwise: bool = True,
     ):
         self.rgb = color_to_rgb(color)
         self.size = (size, size) if isinstance(size, int) else size
         self.inner_radius = int(min(self.size) / 2 * 0.7)
         self.spoke_radius = self.inner_radius // 3
-        self.bg = color_to_rgb(bg) if bg else (*_random_color([self.rgb]), 0)
+        self.bg = color_to_rgb(bg) if bg else (*find_unused_color([self.rgb]), 0)
         self.spokes = spokes
         self.size_min_pct = size_min_pct
         self.opacity_min_pct = opacity_min_pct
@@ -252,59 +244,62 @@ class Spinner:
         self.frame_duration_ms = frame_duration_ms
         self.frame_fade_pct = frame_fade_pct
         self.reverse = reverse
+        self.clockwise = clockwise
 
-    def _iter_centers(self, spoke: int = 0):
-        width, height = self.size
-        a = width // 2
-        b = height // 2
-        angle = -2 * pi / self.spokes
-        if self.reverse:
-            angle *= -1
+    def __len__(self) -> int:
+        return self.spokes * self.frames_per_spoke
+
+    def _iter_centers(self, spoke: int = 0) -> Iterator[tuple[float, float]]:
+        a, b = map(lambda s: s // 2, self.size)
         r = self.inner_radius
-        for n in range(self.spokes):
+        angle = (2 * pi / self.spokes) * (1 if self.reverse else -1)
+        spoke_nums = range(self.spokes) if self.clockwise else range(self.spokes - 1, -1, -1)
+        for n in spoke_nums:
             t = (n + spoke) * angle
-            x = a + r * cos(t)
-            y = b + r * sin(t)
-            yield x, y
+            yield a + r * cos(t), b + r * sin(t)
 
-    def _iter_boxes(self, spoke: int = 0):
+    def _iter_boxes(self, spoke: int = 0) -> Iterator[tuple[int, float, FloatBox]]:
         step = (1 - self.size_min_pct) / self.spokes
         for i, (x, y) in enumerate(self._iter_centers(spoke)):
             r = self.spoke_radius * (1 - (i * step))
-            yield x - r, y - r, x + r, y + r
+            yield i, r, (x - r, y - r, x + r, y + r)
 
     def create_frame(self, spoke: int = 0, spoke_frame: int = 0) -> PILImage:
         image = Image.new('RGBA', self.size, self.bg)
         draw = Draw(image, 'RGBA')  # type: ImageDraw
-        step = (1 - self.opacity_min_pct) / self.spokes
+        opacity_step_pct = (1 - self.opacity_min_pct) / self.spokes
         a_offset = int(255 * (spoke_frame * self.frame_fade_pct))
-        log.debug(f'Creating frame for {spoke=} {spoke_frame=} {step=} {a_offset=}')
-        for i, box in enumerate(self._iter_boxes(spoke)):
-            a = int(255 * (1 - (i * step))) - a_offset
+        log.debug(f'Creating frame for focused {spoke=} {spoke_frame=} {opacity_step_pct=} {a_offset=}')
+        for i, r, box in self._iter_boxes(spoke):
+            a = int(255 * (1 - (i * opacity_step_pct))) - a_offset
+            log.debug(f'    Drawing spoke={i} with {box=} alpha={a} {r=} area={pi * r ** 2:,.2f} px')
             draw.ellipse(box, fill=(*self.rgb, a))
         return image
 
+    def __getitem__(self, i: int) -> PILImage:
+        spoke, spoke_frame = divmod(i, self.frames_per_spoke)
+        if i < 0 or spoke >= self.spokes or spoke_frame >= self.frames_per_spoke:
+            last = len(self) - 1
+            raise IndexError(f'Invalid frame {i=} ({spoke=}, {spoke_frame=}) - must be between 0 - {last} (inclusive)')
+        return self.create_frame(spoke, spoke_frame)
+
+    def __iter__(self) -> Iterator[PILImage]:
+        spoke_nums = range(self.spokes) if xor(self.clockwise, not self.reverse) else range(self.spokes - 1, -1, -1)
+        for spoke in spoke_nums:
+            for spoke_frame in range(self.frames_per_spoke):
+                yield self.create_frame(spoke, spoke_frame)
+
+    frames = __iter__
+
     @cached_property
     def gif(self) -> AnimatedGif:
-        spoke_nums = reversed(tuple(range(self.spokes))) if not self.reverse else range(self.spokes)
-        frames = (
-            self.create_frame(spoke, spoke_frame)
-            for spoke in spoke_nums
-            for spoke_frame in range(self.frames_per_spoke)
-        )
-        return AnimatedGif(frames)
+        return AnimatedGif(self.frames())
 
-    def make_frame(self, n: int) -> PILImage:
-        i = 0
-        for spoke in range(self.spokes):
-            for spoke_frame in range(self.frames_per_spoke):
-                if i == n:
-                    return self.create_frame(spoke, spoke_frame)
-                i += 1
-        raise IndexError(f'Invalid frame index={n}')
-
-    def show(self):
-        self.gif.show(duration=self.frame_duration_ms)
+    def show(self, **kwargs):
+        kwargs.setdefault('disposal', 2)
+        kwargs.setdefault('transparency', 0)
+        kwargs.setdefault('duration', self.frame_duration_ms)
+        self.gif.show(**kwargs)
 
     def save(self, path: Union[Path, str], **kwargs):
         kwargs.setdefault('disposal', 2)
@@ -312,12 +307,23 @@ class Spinner:
         kwargs.setdefault('duration', self.frame_duration_ms)
         self.gif.save(path, **kwargs)
 
+    def save_frames(self, path: Union[Path, str], prefix: str = 'frame_', format: str = 'PNG', mode: str = None):  # noqa
+        path = _prepare_dir(path)
+        name_fmt = prefix + '{:0' + str(len(str(len(self)))) + 'd}.' + format.lower()
+        for i, frame in enumerate(self.frames()):
+            if mode and mode != frame.mode:
+                frame = frame.convert(mode=mode)
+            frame_path = path.joinpath(name_fmt.format(i))
+            log.info(f'Saving {frame_path.as_posix()}')
+            with frame_path.open('wb') as f:
+                frame.save(f, format=format)
 
-def _random_color(skip: Collection[tuple[int, int, int]]):
-    skip = set(skip)
-    if len(skip) > 256 ** 3:
-        raise ValueError(f'Too many colors ({len(skip)}) - impossible to generate different unique random color')
-    while True:
-        color = (randrange(256), randrange(256), randrange(256))
-        if color not in skip:
-            return color
+
+def _prepare_dir(path: Union[Path, str]) -> Path:
+    path = Path(path).expanduser().resolve() if isinstance(path, str) else path
+    if path.exists():
+        if not path.is_dir():
+            raise ValueError(f'Invalid path={path.as_posix()!r} - it must be a directory')
+    else:
+        path.mkdir(parents=True)
+    return path

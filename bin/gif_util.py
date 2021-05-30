@@ -7,16 +7,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, PROJECT_ROOT.joinpath('bin').as_posix())
 import _venv  # This will activate the venv, if it exists and is not already active
 
-import json
 import logging
 
 sys.path.append(PROJECT_ROOT.as_posix())
 from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
 from ds_tools.core.main import wrap_main
-from ds_tools.core.serialization import PermissiveJSONEncoder
 from ds_tools.logging import init_logging
 from ds_tools.images.gif import AnimatedGif
+from ds_tools.images.utils import get_image_info
 
 log = logging.getLogger(__name__)
 
@@ -80,20 +79,10 @@ def _int_or_list(value):
 
 
 def show_info(path: Path, show_frames: bool):
-    image = AnimatedGif(path)
-    if show_frames:
-        for i, info in enumerate(image.get_info(True)):
-            print_info(f'Frame {i}', info)
-    else:
-        print_info(path.as_posix(), image.get_info())
-
-
-def print_info(identifier, info):
-    print(f'---\n{identifier}:')
-    for key, val in sorted(info.items()):
-        if not isinstance(val, (str, int, float)):
-            val = json.dumps(val, cls=PermissiveJSONEncoder)
-        print(f'  {key}: {val}')
+    try:
+        AnimatedGif(path).print_info(show_frames)
+    except ValueError:
+        print(get_image_info(path, True, path.as_posix()))
 
 
 if __name__ == '__main__':

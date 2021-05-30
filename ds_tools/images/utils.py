@@ -4,33 +4,35 @@ Utilities for working with images
 :author: Doug Skrypa
 """
 
+import json
 import logging
-from io import BytesIO
+from copy import deepcopy
+from io import BytesIO, StringIO
 from math import floor, ceil
 from pathlib import Path
-from typing import Union
+from typing import Union, Any
 
-from PIL import Image, ImageColor
+from PIL import Image
 from PIL.Image import Image as PILImage
-from PIL.ImagePalette import ImagePalette
+
+from ..core.serialization import PermissiveJSONEncoder
 
 __all__ = [
     'ImageType',
     'Size',
     'Box',
+    'FloatBox',
     'as_image',
     'image_to_bytes',
     'calculate_resize',
     'scale_image',
-    'color_to_rgb',
-    'color_to_alpha',
-    'palette_index_to_color',
-    'color_at_pos',
+    'get_image_info',
 ]
 log = logging.getLogger(__name__)
 ImageType = Union[PILImage, bytes, Path, str, None]
 Size = tuple[int, int]
 Box = tuple[int, int, int, int]
+FloatBox = tuple[float, float, float, float]
 
 
 def as_image(image: ImageType) -> PILImage:
@@ -81,51 +83,37 @@ def _round_aspect(number, key):
     return max(min(floor(number), ceil(number), key=key), 1)
 
 
-def color_to_rgb(color: str) -> tuple[int, int, int]:
-    try:
-        return ImageColor.getrgb(color)
-    except ValueError:
-        if isinstance(color, str) and len(color) in (3, 4, 6, 8):
-            return ImageColor.getrgb(f'#{color}')
-        raise
-
-
-def color_to_alpha(image: ImageType, color: str) -> PILImage:
-    r, g, b = color_to_rgb(color)
-    image = as_image(image).convert('RGBA')
-    data = image.load()
-    width, height = image.size
-    for x in range(width):
-        for y in range(height):
-            pr, pg, pb, pa = data[x, y]
-            a = max(abs(pr - r), abs(pg - g), abs(pb - b))
-            data[x, y] = pr, pg, pb, a
-
-    # data = image.getdata()
-    # updated = []
-    #
-    # image.putdata(updated)
-    return image
-
-
-def palette_index_to_color(image_or_palette: Union[ImageType, ImagePalette], index: int) -> tuple[int, ...]:
-    if isinstance(image_or_palette, ImagePalette):
-        palette = image_or_palette
-    else:
-        image = as_image(image_or_palette)
-        if not (palette := image.palette):
-            raise ValueError(f'Image={image} has no palette')
-    chars = len(palette.mode)
-    offset = chars * index
-    return tuple(palette.palette[offset:offset + chars])
-
-
-def color_at_pos(image: ImageType, pos: tuple[int, int]) -> Union[tuple[int, ...], int]:
+def get_image_info(image: ImageType, as_str: bool = False, identifier: str = None) -> Union[dict[str, Any], str]:
     image = as_image(image)
-    color = image.getpixel(pos)
-    if isinstance(color, tuple):
-        return color
-    elif image.palette:
-        return palette_index_to_color(image.palette, color)
+    info = deepcopy(image.info)
+    info['mode'] = image.mode
+    info['size'] = '{}x{}'.format(*image.size)
+    info['class'] = image.__class__.__qualname__
+    if fmt := image.format:
+        info['format'] = image.format
+        info['mime_type'] = Image.MIME[fmt]
+        if fmt == 'GIF':
+            attrs = ('disposal_method', 'disposal', 'dispose_extent', 'tile')
+            info.update((attr, getattr(image, attr, None)) for attr in attrs)
+    if palette := image.palette:
+        info['palette'] = f'<ImagePalette[mode={palette.mode!r}, raw={palette.rawmode}, len={len(palette.palette)}]>'
+
+    if as_str:
+        if identifier is None:
+            try:
+                identifier = Path(image.filename).as_posix()
+            except Exception:
+                try:
+                    identifier = Path(image.fp.name).as_posix()
+                except Exception:
+                    identifier = str(image)
+
+        sio = StringIO()
+        sio.write(f'---\n{identifier}:')
+        for key, val in sorted(info.items()):
+            if not isinstance(val, (str, int, float)):
+                val = json.dumps(val, cls=PermissiveJSONEncoder)
+            sio.write(f'\n  {key}: {val}')
+        return sio.getvalue()
     else:
-        return color
+        return info
