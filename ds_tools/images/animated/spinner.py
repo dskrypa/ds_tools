@@ -1,5 +1,9 @@
 """
-Utilities for working with animated gif images
+Animated spinner.
+
+Note: GIF does not support partially transparent images - it only supports a single transparent color (index in its
+RGB palette).  Spinners with partial transparency must be saved as separate PNG images and played in order, or the PIL
+Image frames from the Spinner may be used directly.
 
 :author: Doug Skrypa
 """
@@ -116,18 +120,30 @@ class Spinner:
         kwargs.setdefault('duration', self.frame_duration_ms)
         self.gif.show(**kwargs)
 
-    def save(self, path: Union[Path, str], **kwargs):
-        # TODO: During save, the palette gets converted to RGB instead of RGBA...
+    def save(self, path: Union[Path, str], lib: str = 'PIL', **kwargs):
+        if lib == 'PIL':
+            self._save_via_pil(path, **kwargs)
+        elif lib == 'imageio':
+            self._save_via_imageio(path, **kwargs)
+        else:
+            raise ValueError(f'Unsupported save {lib=}')
+
+    def _save_via_imageio(self, path: Union[Path, str], **kwargs):
+        import imageio
+        import numpy
+
+        path = Path(path).expanduser().resolve() if isinstance(path, str) else path
+        kwargs.setdefault('fps', 1000 / self.frame_duration_ms)
+        log.info(f'Saving {path.as_posix()} with {kwargs=}')
+        with imageio.get_writer(path, format='gif', mode='I', **kwargs) as writer:  # This uses PIL too...
+            for frame in map(numpy.asarray, self.frames()):  # noqa
+                writer.append_data(frame)
+
+    def _save_via_pil(self, path: Union[Path, str], **kwargs):
         kwargs.setdefault('disposal', 2)
         kwargs.setdefault('transparency', 0)
         kwargs.setdefault('duration', self.frame_duration_ms)
-        # kwargs.setdefault('palette', self.gif[0].convert('P').palette)
         self.gif.save(path, **kwargs)
-
-        # path = Path(path).expanduser().resolve() if isinstance(path, str) else path
-        # log.info(f'Saving {path.as_posix()} with {kwargs=}')
-        # with path.open('wb') as f:
-        #     GifSaver(self.frames(), f, **kwargs).save()
 
     def save_frames(self, path: Union[Path, str], prefix: str = 'frame_', format: str = 'PNG', mode: str = None):  # noqa
         path = prepare_dir(path)
