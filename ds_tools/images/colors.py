@@ -7,20 +7,32 @@ Utilities for working with colors in images
 from random import randrange
 from typing import Union, Collection
 
-from PIL import ImageColor
+import numpy
+from PIL import Image, ImageColor
 from PIL.Image import Image as PILImage
 from PIL.ImagePalette import ImagePalette
 
 from .utils import ImageType, as_image
 
 __all__ = [
-    'color_to_rgb', 'color_to_alpha', 'palette_index_to_color', 'color_at_pos', 'find_unused_color', 'RGB', 'RGBA'
+    'color_to_rgb',
+    'color_to_alpha',
+    'palette_index_to_color',
+    'color_at_pos',
+    'find_unused_color',
+    'RGB',
+    'RGBA',
+    'Color',
+    'replace_color',
 ]
 RGB = tuple[int, int, int]
 RGBA = tuple[int, int, int, int]
+Color = Union[str, RGB, RGBA]
 
 
-def color_to_rgb(color: str) -> RGB:
+def color_to_rgb(color: Color) -> Union[RGB, RGBA]:
+    if isinstance(color, tuple):
+        return color
     try:
         return ImageColor.getrgb(color)
     except ValueError:
@@ -29,7 +41,7 @@ def color_to_rgb(color: str) -> RGB:
         raise
 
 
-def color_to_alpha(image: ImageType, color: str) -> PILImage:
+def color_to_alpha(image: ImageType, color: Color) -> PILImage:
     r, g, b = color_to_rgb(color)
     image = as_image(image).convert('RGBA')
     data = image.load()
@@ -73,3 +85,19 @@ def find_unused_color(used: Collection[RGB]) -> RGB:
         color = (randrange(256), randrange(256), randrange(256))
         if color not in used:
             return color
+
+
+def replace_color(image: ImageType, old_color: Color, new_color: Color) -> PILImage:
+    old_r, old_g, old_b = color_to_rgb(old_color)[:3]
+    new_color = color_to_rgb(new_color)[:3]
+    image = as_image(image)
+    if (orig_mode := image.mode) != 'RGBA':
+        image = image.convert('RGBA')
+    data = numpy.array(image)  # noqa
+    r, g, b, a = data.T
+    to_replace = (r == old_r) & (g == old_g) & (b == old_b)
+    data[..., :-1][to_replace.T] = new_color  # noqa
+    updated = Image.fromarray(data)
+    if orig_mode != 'RGBA':
+        updated = updated.convert(orig_mode)
+    return updated
