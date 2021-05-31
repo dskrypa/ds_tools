@@ -5,11 +5,16 @@ Utilities for working with animated gif images
 """
 
 import logging
-from typing import Iterable, Callable
+from pathlib import Path
+from typing import Iterable, Callable, Union
 
 from PIL.Image import Image as PILImage
+from PIL.ImageTk import PhotoImage
+from PIL.ImageSequence import Iterator as FrameIterator
 
-__all__ = ['FrameCycle']
+from ..utils import as_image
+
+__all__ = ['FrameCycle', 'PhotoImageCycle']
 log = logging.getLogger(__name__)
 
 
@@ -58,3 +63,23 @@ class FrameCycle:
         if self._frames is not None:
             return self._frames[self.n]
         return self._frames_and_durations[self.n][0]
+
+
+class PhotoImageCycle(FrameCycle):
+    # noinspection PyMissingConstructor
+    def __init__(self, path: Union[Path, str], duration: int = None, default_duration: int = 100):
+        self.path = Path(path).expanduser()
+        self.n = 0
+        image = as_image(self.path)
+        self._pi_frames = tuple(PhotoImage(file=path, format=f'gif -index {n}') for n in range(image.n_frames))
+        self._frames = tuple(FrameIterator(image))
+
+        def get_duration(f):
+            return duration if duration is not None else f.info.get('duration', default_duration)
+
+        self._frames_and_durations = tuple((pi, get_duration(f)) for pi, f in zip(self._pi_frames, self._frames))
+        self.first_delay = self._frames_and_durations[0][1]
+
+    @property
+    def current_image(self) -> PILImage:
+        return self._frames[self.n]
