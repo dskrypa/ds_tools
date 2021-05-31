@@ -44,7 +44,9 @@ def parser():
 
     info_parser = parser.add_subparser('action', 'info', help='Display information about the given image')
     info_parser.add_argument('path', help='Path to the input file')
-    info_parser.add_argument('--frames', '-f', action='store_true', help='Show information about each frame')
+    mgroup = info_parser.add_mutually_exclusive_group()
+    mgroup.add_argument('--all', '-a', action='store_true', help='Show information about all frames')
+    mgroup.add_argument('--frames', '-f', type=int, help='Show information about up to the specified number of frames')
 
     parser.include_common_args('verbosity')
     return parser
@@ -67,7 +69,7 @@ def main():
         kwargs = dict(zip(('disposal', 'duration'), map(_int_or_list, (args.disposal, args.duration))))
         AnimatedGif(args.paths).save(args.output, **kwargs)
     elif action == 'info':
-        show_info(Path(args.path).resolve(), args.frames)
+        show_info(Path(args.path).resolve(), args.all or args.frames or False)
     else:
         raise ValueError(f'Unsupported {action=}')
 
@@ -78,7 +80,7 @@ def _int_or_list(value):
     return value[0] if len(value) == 1 else value
 
 
-def show_info(path: Path, show_frames: bool):
+def show_info(path: Path, show_frames):
     try:
         AnimatedGif(path).print_info(show_frames)
     except ValueError:

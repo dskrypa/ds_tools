@@ -60,11 +60,25 @@ class AnimatedGif:
             images = path.iterdir()
         return cls(images)
 
-    def frames(self, copy: bool = False) -> Iterator[PILImage]:
+    def __getitem__(self, index: int) -> PILImage:
+        if self._frames:
+            return self._frames[index]
+        if index < 0 or index >= self.n_frames:
+            raise IndexError(f'Invalid {index=} - this gif has {self.n_frames} frames')
+        self._image.seek(index)
+        return self._image
+
+    def frames(self, copy: bool = False, n: int = None) -> Iterator[PILImage]:
         frame_iter = self._frames if self._frames is not None else FrameIterator(self._image)
         if copy:
             frame_iter = (frame.copy() for frame in frame_iter)
-        yield from frame_iter
+        if n is not None:
+            for i, frame in enumerate(frame_iter, 1):
+                yield frame
+                if i >= n:
+                    break
+        else:
+            yield from frame_iter
 
     def color_to_alpha(self, color: str) -> 'AnimatedGif':
         return self.__class__((color_to_alpha(frame, color) for frame in self.frames(True)))
@@ -79,16 +93,16 @@ class AnimatedGif:
     def cycle(self, wrapper: Callable = None, duration: int = None, default_duration: int = 100) -> 'FrameCycle':
         return FrameCycle(self.frames(), wrapper, duration, default_duration)
 
-    def get_info(self, frames: bool = False):
-        if frames:
-            return list(map(get_image_info, self.frames()))
+    def get_info(self, frames: Union[bool, int] = False):
+        if frames is not False:
+            return list(map(get_image_info, self.frames(n=None if frames is True else frames)))
         else:
             image = self._image or self._frames[0]
             return get_image_info(image)
 
-    def print_info(self, frames: bool = False):
-        if frames:
-            for i, frame in enumerate(self.frames()):
+    def print_info(self, frames: Union[bool, int] = False):
+        if frames is not False:
+            for i, frame in enumerate(self.frames(n=None if frames is True else frames)):
                 print(get_image_info(frame, True, f'Frame {i}'))
         else:
             key = self._path.as_posix() if self._path else str(self._image if self._image else self._frames[0])
@@ -153,7 +167,7 @@ class AnimatedGif:
 
         frames = iter(self.frames())
         frame = next(frames)
-        log.info(f'Saving {path.as_posix()}')
+        log.info(f'Saving {path.as_posix()} with {kwargs=}')
         with path.open('wb') as f:
             frame.save(f, save_all=True, append_images=frames, **kwargs)
 
@@ -225,10 +239,10 @@ class Spinner:
         spokes: int = 8,
         bg: str = None,
         size_min_pct: float = 0.5,
-        opacity_min_pct: float = 0.3,
+        opacity_min_pct: float = 0.4,
         frames_per_spoke: int = 4,
         frame_duration_ms: int = 30,
-        frame_fade_pct: float = 0.025,
+        frame_fade_pct: float = 0.05,
         reverse: bool = False,
         clockwise: bool = True,
     ):
@@ -265,14 +279,16 @@ class Spinner:
             yield i, r, (x - r, y - r, x + r, y + r)
 
     def create_frame(self, spoke: int = 0, spoke_frame: int = 0) -> PILImage:
+        # image = Image.new('RGBA', self.size, self.bg).convert('P')
+        # draw = Draw(image, 'P')  # type: # ImageDraw
         image = Image.new('RGBA', self.size, self.bg)
         draw = Draw(image, 'RGBA')  # type: ImageDraw
         opacity_step_pct = (1 - self.opacity_min_pct) / self.spokes
         a_offset = int(255 * (spoke_frame * self.frame_fade_pct))
-        log.debug(f'Creating frame for focused {spoke=} {spoke_frame=} {opacity_step_pct=} {a_offset=}')
+        # log.debug(f'Creating frame for focused {spoke=} {spoke_frame=} {opacity_step_pct=} {a_offset=}')
         for i, r, box in self._iter_boxes(spoke):
             a = int(255 * (1 - (i * opacity_step_pct))) - a_offset
-            log.debug(f'    Drawing spoke={i} with {box=} alpha={a} {r=} area={pi * r ** 2:,.2f} px')
+            # log.debug(f'    Drawing spoke={i} with {box=} alpha={a} {r=} area={pi * r ** 2:,.2f} px')
             draw.ellipse(box, fill=(*self.rgb, a))
         return image
 
@@ -293,6 +309,8 @@ class Spinner:
 
     @cached_property
     def gif(self) -> AnimatedGif:
+        # frames = (TransparentAnimatedGifConverter(frame).process() for frame in self.frames())
+        # return AnimatedGif(frames)
         return AnimatedGif(self.frames())
 
     def show(self, **kwargs):
@@ -302,10 +320,17 @@ class Spinner:
         self.gif.show(**kwargs)
 
     def save(self, path: Union[Path, str], **kwargs):
+        # TODO: During save, the palette gets converted to RGB instead of RGBA...
         kwargs.setdefault('disposal', 2)
         kwargs.setdefault('transparency', 0)
         kwargs.setdefault('duration', self.frame_duration_ms)
+        # kwargs.setdefault('palette', self.gif[0].convert('P').palette)
         self.gif.save(path, **kwargs)
+
+        # path = Path(path).expanduser().resolve() if isinstance(path, str) else path
+        # log.info(f'Saving {path.as_posix()} with {kwargs=}')
+        # with path.open('wb') as f:
+        #     GifSaver(self.frames(), f, **kwargs).save()
 
     def save_frames(self, path: Union[Path, str], prefix: str = 'frame_', format: str = 'PNG', mode: str = None):  # noqa
         path = _prepare_dir(path)
