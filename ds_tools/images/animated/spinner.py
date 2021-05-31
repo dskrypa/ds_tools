@@ -105,6 +105,10 @@ class Spinner:
 
     frames = __iter__
 
+    def resize(self, size: Union[Size, int]):
+        self.size = (size, size) if isinstance(size, int) else size
+        return self
+
     def cycle(self, wrapper: Callable = None, duration: int = None, default_duration: int = 100) -> 'FrameCycle':
         return FrameCycle(self.frames(), wrapper, duration, default_duration)
 
