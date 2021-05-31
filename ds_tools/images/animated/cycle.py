@@ -6,10 +6,10 @@ Utilities for working with animated gif images
 
 import logging
 from pathlib import Path
+from tkinter import PhotoImage
 from typing import Iterable, Callable, Union
 
 from PIL.Image import Image as PILImage
-from PIL.ImageTk import PhotoImage
 from PIL.ImageSequence import Iterator as FrameIterator
 
 from ..utils import as_image
@@ -71,7 +71,9 @@ class PhotoImageCycle(FrameCycle):
         self.path = Path(path).expanduser()
         self.n = 0
         image = as_image(self.path)
-        self._pi_frames = tuple(PhotoImage(file=path, format=f'gif -index {n}') for n in range(image.n_frames))
+        self._pi_frames = tuple(
+            PhotoImage(file=path.as_posix(), format=f'gif -index {n}') for n in range(image.n_frames)
+        )
         self._frames = tuple(FrameIterator(image))
 
         def get_duration(f):
