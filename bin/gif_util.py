@@ -14,7 +14,7 @@ from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
 from ds_tools.core.main import wrap_main
 from ds_tools.logging import init_logging
-from ds_tools.images.gif import AnimatedGif
+from ds_tools.images.animated.gif import AnimatedGif
 from ds_tools.images.utils import get_image_info
 
 log = logging.getLogger(__name__)
