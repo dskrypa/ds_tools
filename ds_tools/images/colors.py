@@ -13,8 +13,11 @@ from PIL.ImagePalette import ImagePalette
 
 from .utils import ImageType, as_image
 
-__all__ = ['color_to_rgb', 'color_to_alpha', 'palette_index_to_color', 'color_at_pos', 'find_unused_color']
+__all__ = [
+    'color_to_rgb', 'color_to_alpha', 'palette_index_to_color', 'color_at_pos', 'find_unused_color', 'RGB', 'RGBA'
+]
 RGB = tuple[int, int, int]
+RGBA = tuple[int, int, int, int]
 
 
 def color_to_rgb(color: str) -> RGB:
