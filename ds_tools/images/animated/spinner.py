@@ -77,8 +77,6 @@ class Spinner:
             yield i, r, (x - r, y - r, x + r, y + r)
 
     def create_frame(self, spoke: int = 0, spoke_frame: int = 0) -> PILImage:
-        # image = Image.new('RGBA', self.size, self.bg).convert('P')
-        # draw = Draw(image, 'P')  # type: # ImageDraw
         image = Image.new('RGBA', self.size, self.bg)
         draw = Draw(image, 'RGBA')  # type: ImageDraw
         opacity_step_pct = (1 - self.opacity_min_pct) / self.spokes
@@ -114,8 +112,6 @@ class Spinner:
 
     @cached_property
     def gif(self) -> AnimatedGif:
-        # frames = (TransparentAnimatedGifConverter(frame).process() for frame in self.frames())
-        # return AnimatedGif(frames)
         return AnimatedGif(self.frames())
 
     def show(self, **kwargs):
