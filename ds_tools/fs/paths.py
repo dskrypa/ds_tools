@@ -7,7 +7,7 @@ import os
 from itertools import chain
 from pathlib import Path
 from platform import system
-from typing import Iterator, Union, Iterable, Optional, Collection, Set
+from typing import Iterator, Union, Iterable, Collection
 
 from psutil import disk_partitions
 from psutil._common import sdiskpart, get_procfs_path
@@ -25,6 +25,7 @@ __all__ = [
     'iter_sorted_files',
     'get_disk_partition',
     'is_on_local_device',
+    'unique_path',
 ]
 log = logging.getLogger(__name__)
 Paths = Union[str, Path, Iterable[Union[str, Path]]]
@@ -52,16 +53,15 @@ def iter_paths(path_or_paths: Paths) -> Iterator[Path]:
             p = Path(p)
         if isinstance(p, Path):
             try:
-                if on_windows and not p.exists():
-                    if m := win_bash_path_match(p.as_posix()):
-                        p = Path(f'{m.group(1).upper()}:/{m.group(2)}')
+                if on_windows and not p.exists() and (m := win_bash_path_match(p.as_posix())):
+                    p = Path(f'{m.group(1).upper()}:/{m.group(2)}')
             except OSError:
                 if any(c in p.name for c in '*?['):
                     matcher = FnMatcher(p.name)
                     for root, dirs, files in os.walk(os.getcwd()):
-                        root_path = Path(root)
+                        root_join = Path(root).joinpath
                         for f in matcher.matching_values(chain(dirs, files)):
-                            yield root_path.joinpath(f)
+                            yield root_join(f)
                 else:
                     raise
             else:
@@ -82,17 +82,16 @@ def iter_files(path_or_paths: Paths) -> Iterator[Path]:
         if path.is_file():
             yield path
         else:
-            # noinspection PyTypeChecker
             for root, dirs, files in os.walk(path):
-                root_path = Path(root)
+                root_join = Path(root).joinpath
                 for f in files:
-                    yield root_path.joinpath(f)
+                    yield root_join(f)
 
 
 def iter_sorted_files(
     path_or_paths: Paths,
-    ignore_dirs: Optional[Collection[str]] = None,
-    ignore_files: Optional[Collection[str]] = None,
+    ignore_dirs: Collection[str] = None,
+    ignore_files: Collection[str] = None,
     follow_links: bool = False,
 ) -> Iterator[Path]:
     """
@@ -116,10 +115,7 @@ def iter_sorted_files(
 
 
 def _iter_sorted_files(
-    root: Path,
-    ignore_dirs: Optional[Set[str]] = None,
-    ignore_files: Optional[Set[str]] = None,
-    follow_links: bool = False,
+    root: Path, ignore_dirs: set[str] = None, ignore_files: set[str] = None, follow_links: bool = False
 ) -> Iterator[Path]:
     """
     Similar to os.walk, but only yields Path objects for files, and traverses the directory tree in sorted order.
@@ -144,17 +140,17 @@ def _iter_sorted_files(
         yield from _iter_sorted_files(path, ignore_dirs, ignore_files, follow_links)
 
 
-def validate_or_make_dir(dir_path, permissions: int = None, suppress_perm_change_exc: bool = True):
+def validate_or_make_dir(dir_path: Union[str, Path], permissions: int = None, suppress_perm_change_exc: bool = True):
     """
     Validate that the given path exists and is a directory.  If it does not exist, then create it and any intermediate
     directories.
 
     Example value for permissions: 0o1777
 
-    :param str dir_path: The path of a directory that exists or should be created if it doesn't
-    :param int permissions: Permissions to set on the directory if it needs to be created (octal notation is suggested)
-    :param bool suppress_perm_change_exc: Suppress an OSError if the permission change is unsuccessful (default: suppress/True)
-    :return str: The path
+    :param dir_path: The path of a directory that exists or should be created if it doesn't
+    :param permissions: Permissions to set on the directory if it needs to be created (octal notation is suggested)
+    :param suppress_perm_change_exc: Suppress an OSError if the permission change is unsuccessful (default: suppress/True)
+    :return: The path
     """
     if os.path.exists(dir_path):
         if not os.path.isdir(dir_path):
@@ -226,3 +222,19 @@ def is_on_local_device(path: Union[str, Path]) -> bool:
         dev_fs_types = is_on_local_device._dev_fs_types = get_dev_fs_types()
 
     return get_disk_partition(path).fstype in dev_fs_types
+
+
+def unique_path(parent: Path, stem: str, suffix: str, sep: str = '-', n: int = 1) -> Path:
+    """
+    :param parent: Directory in which a unique file name should be created
+    :param stem: File name without extension
+    :param suffix: File extension, including `.`
+    :param sep: Separator between stem and n
+    :param n: First number to try; incremented by 1 until adding this value would cause the file name to be unique
+    :return: Path with a file name that does not currently exist in the target directory
+    """
+    name = stem + suffix
+    while (path := parent.joinpath(name)).exists():
+        name = f'{stem}{sep}{n}{suffix}'
+        n += 1
+    return path
