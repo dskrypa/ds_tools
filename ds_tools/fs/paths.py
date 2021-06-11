@@ -4,15 +4,18 @@
 
 import logging
 import os
+import string
 from datetime import datetime
 from itertools import chain
 from pathlib import Path
 from platform import system
-from typing import Iterator, Union, Iterable, Collection
+from typing import Iterator, Union, Iterable, Collection, Mapping, Optional
+from urllib.parse import quote
 
 from psutil import disk_partitions
 from psutil._common import sdiskpart, get_procfs_path
 
+from ..core.decorate import cached_classproperty
 from ..core.patterns import FnMatcher
 from .exceptions import InvalidPathError
 
@@ -27,9 +30,12 @@ __all__ = [
     'get_disk_partition',
     'is_on_local_device',
     'unique_path',
+    'PathValidator',
+    'sanitize_file_name',
 ]
 log = logging.getLogger(__name__)
 Paths = Union[str, Path, Iterable[Union[str, Path]]]
+_NotSet = object()
 
 
 def iter_paths(path_or_paths: Paths) -> Iterator[Path]:
@@ -243,3 +249,44 @@ def unique_path(parent: Path, stem: str, suffix: str, seps=('_', '-'), n: int = 
         name = f'{stem}{n_sep}{n}{suffix}'
         n += 1
     return path
+
+
+class PathValidator:
+    _replacements = {'/': '_', ':': '-', '\\': '_', '|': '-'}
+    _mac_reserved = {':'}
+
+    def __init__(self, replacements: Optional[Mapping[str, str]] = _NotSet):
+        replacements = self._replacements if replacements is _NotSet else {} if replacements is None else replacements
+        self.table = str.maketrans({i: replacements.get(i) or quote(i, safe='') for i in self._invalid_chars})
+
+    def validate(self, file_name: str):
+        root = os.path.splitext(os.path.basename(file_name))
+        if root in self._mac_reserved or root in self._win_reserved:
+            raise ValueError(f'Invalid {file_name=} - it contains reserved name={root!r}')
+        if invalid := next((c for c in self._invalid_chars if c in file_name), None):
+            raise ValueError(f'Invalid {file_name=} - it contains 1 or more invalid characters, including {invalid!r}')
+
+    def sanitize(self, file_name: str) -> str:
+        root = os.path.splitext(os.path.basename(file_name))
+        if root in self._mac_reserved or root in self._win_reserved:
+            file_name = f'_{file_name}'
+        return file_name.translate(self.table)
+
+    @classmethod
+    def _sanitize(cls, file_name: str, replacements: Optional[Mapping[str, str]] = _NotSet) -> str:
+        return cls(replacements).sanitize(file_name)
+
+    @cached_classproperty
+    def _win_reserved(cls) -> set[str]:
+        reserved = {'CON', 'PRN', 'AUX', 'CLOCK$', 'NUL'}
+        reserved.update(f'{n}{i}' for n in ('COM', 'LPT') for i in range(1, 10))
+        return reserved
+
+    @cached_classproperty
+    def _invalid_chars(cls) -> set[str]:
+        unprintable_ascii = {c for c in map(chr, range(128)) if c not in string.printable}
+        win_invalid = '/:*?"<>|\t\n\r\x0b\x0c\\'
+        return unprintable_ascii.union(win_invalid)
+
+
+sanitize_file_name = PathValidator._sanitize
