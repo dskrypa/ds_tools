@@ -6,9 +6,10 @@ import logging
 import os
 import string
 from datetime import datetime
+from getpass import getuser
 from itertools import chain
 from pathlib import Path
-from platform import system
+from tempfile import gettempdir
 from typing import Iterator, Union, Iterable, Collection, Mapping, Optional
 from urllib.parse import quote
 
@@ -21,9 +22,11 @@ from .exceptions import InvalidPathError
 
 __all__ = [
     'validate_or_make_dir',
+    'get_user_temp_dir',
     'get_user_cache_dir',
     'iter_paths',
     'iter_files',
+    'PathLike',
     'Paths',
     'relative_path',
     'iter_sorted_files',
@@ -35,7 +38,9 @@ __all__ = [
     'prepare_path',
 ]
 log = logging.getLogger(__name__)
-Paths = Union[str, Path, Iterable[Union[str, Path]]]
+PathLike = Union[str, Path]
+Paths = Union[PathLike, Iterable[PathLike]]
+ON_WINDOWS = os.name == 'nt'
 _NotSet = object()
 
 
@@ -55,13 +60,12 @@ def iter_paths(path_or_paths: Paths) -> Iterator[Path]:
     if isinstance(path_or_paths, (str, Path)):
         path_or_paths = (path_or_paths,)
 
-    on_windows = system().lower() == 'windows'
     for p in path_or_paths:
         if isinstance(p, str):
             p = Path(p)
         if isinstance(p, Path):
             try:
-                if on_windows and not p.exists() and (m := win_bash_path_match(p.as_posix())):
+                if ON_WINDOWS and not p.exists() and (m := win_bash_path_match(p.as_posix())):
                     p = Path(f'{m.group(1).upper()}:/{m.group(2)}')
             except OSError:
                 if any(c in p.name for c in '*?['):
@@ -148,7 +152,9 @@ def _iter_sorted_files(
         yield from _iter_sorted_files(path, ignore_dirs, ignore_files, follow_links)
 
 
-def validate_or_make_dir(dir_path: Union[str, Path], permissions: int = None, suppress_perm_change_exc: bool = True):
+def validate_or_make_dir(
+    dir_path: PathLike, permissions: int = None, suppress_perm_change_exc: bool = True
+) -> Path:
     """
     Validate that the given path exists and is a directory.  If it does not exist, then create it and any intermediate
     directories.
@@ -160,31 +166,48 @@ def validate_or_make_dir(dir_path: Union[str, Path], permissions: int = None, su
     :param suppress_perm_change_exc: Suppress an OSError if the permission change is unsuccessful (default: suppress/True)
     :return: The path
     """
-    if os.path.exists(dir_path):
-        if not os.path.isdir(dir_path):
-            raise ValueError('Invalid path - not a directory: {}'.format(dir_path))
+    path = Path(dir_path).expanduser()
+    if path.exists():
+        if not path.is_dir():
+            raise ValueError(f'Invalid path - not a directory: {dir_path}')
     else:
-        os.makedirs(dir_path)
+        path.mkdir(parents=True)
         if permissions is not None:
             try:
-                os.chmod(dir_path, permissions)
+                path.chmod(permissions)
             except OSError as e:
-                log.error('Error changing permissions of path {!r} to 0o{:o}: {}'.format(dir_path, permissions, e))
+                log.error(f'Error changing permissions of path {dir_path!r} to 0o{permissions:o}: {e}')
                 if not suppress_perm_change_exc:
-                    raise e
-    return dir_path
+                    raise
+    return path
 
 
-def get_user_cache_dir(subdir: str = None, permissions: int = None) -> str:
-    from getpass import getuser
-    cache_dir = os.path.join('C:/var/tmp' if system().lower() == 'windows' else '/var/tmp', getuser(), 'ds_tools_cache')
-    if subdir:
-        cache_dir = os.path.join(cache_dir, subdir)
-    validate_or_make_dir(cache_dir, permissions=permissions)
+def get_user_cache_dir(subdir: str = None, mode: int = 0o777) -> Path:
+    cache_dir = get_user_temp_dir(*filter(None, ('ds_tools_cache', subdir)), mode=mode)
+    if not cache_dir.is_dir():
+        raise ValueError(f'Invalid path - not a directory: {cache_dir.as_posix()}')
     return cache_dir
 
 
-def relative_path(path: Union[str, Path], to: Union[str, Path] = '.') -> str:
+def get_user_temp_dir(*sub_dirs, mode: int = 0o777) -> Path:
+    """
+    On Windows, returns `~/AppData/Local/Temp` or a sub-directory named after the current user of another temporary
+    directory.  On Linux, returns a sub-directory named after the current user in `/tmp`, `/var/tmp`, or `/usr/tmp`.
+    :param sub_dirs: Child directories of the chosen directory to include/create
+    :param mode: Permissions to set if the directory needs to be created (0o777 by default, which matches the default
+      for :meth:`pathlib.Path.mkdir`)
+    """
+    path = Path(gettempdir())
+    if not ON_WINDOWS or not path.as_posix().endswith('AppData/Local/Temp'):
+        path = path.joinpath(getuser())
+    if sub_dirs:
+        path = path.joinpath(*sub_dirs)
+    if not path.exists():
+        path.mkdir(mode=mode, parents=True)
+    return path
+
+
+def relative_path(path: PathLike, to: PathLike = '.') -> str:
     path = Path(path).resolve()
     to = Path(to).resolve()
     try:
@@ -193,7 +216,7 @@ def relative_path(path: Union[str, Path], to: Union[str, Path] = '.') -> str:
         return path.as_posix()
 
 
-def get_disk_partition(path: Union[str, Path]) -> sdiskpart:
+def get_disk_partition(path: PathLike) -> sdiskpart:
     path = orig_path = Path(path).resolve()
     partitions = {p.mountpoint: p for p in disk_partitions(all=True)}
     while path != path.parent:
@@ -223,7 +246,7 @@ def get_dev_fs_types():
     return fs_types
 
 
-def is_on_local_device(path: Union[str, Path]) -> bool:
+def is_on_local_device(path: PathLike) -> bool:
     try:
         dev_fs_types = is_on_local_device._dev_fs_types
     except AttributeError:
@@ -298,7 +321,7 @@ class PathValidator:
 sanitize_file_name = PathValidator._sanitize
 
 
-def prepare_path(path: Union[str, Path], default_name: tuple[str, str] = None, exist_ok: bool = True, **kwargs) -> Path:
+def prepare_path(path: PathLike, default_name: tuple[str, str] = None, exist_ok: bool = True, **kwargs) -> Path:
     """
     Convenience function to prepare a file path, creating its parent directory if it does not already exist, and
     optionally generating a file name if a directory is provided and default_name is specified.
