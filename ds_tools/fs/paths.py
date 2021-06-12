@@ -32,6 +32,7 @@ __all__ = [
     'unique_path',
     'PathValidator',
     'sanitize_file_name',
+    'prepare_path',
 ]
 log = logging.getLogger(__name__)
 Paths = Union[str, Path, Iterable[Union[str, Path]]]
@@ -290,3 +291,29 @@ class PathValidator:
 
 
 sanitize_file_name = PathValidator._sanitize
+
+
+def prepare_path(path: Union[str, Path], default_name: tuple[str, str] = None, exist_ok: bool = True, **kwargs) -> Path:
+    """
+    Convenience function to prepare a file path, creating its parent directory if it does not already exist, and
+    optionally generating a file name if a directory is provided and default_name is specified.
+
+    :param path: A path to a file that will be created, or possibly the directory in which to create it
+    :param default_name: Tuple of (stem, suffix) to use with :func:`unique_path` to find a unique file name when the
+      given path is a directory or has no suffix/extension.
+    :param exist_ok: Whether it is okay if the target file exists already. If False, then a ValueError will be raised if
+      the final path already exists.
+    :param kwargs: Additional keyword arguments to pass to :func:`unique_path`
+    :return: The path for a file
+    """
+    path = Path(path).expanduser()
+    if default_name and (path.is_dir() or not path.suffix):
+        stem, suffix = default_name
+        path = unique_path(path, stem, suffix, **kwargs)
+    if not path.parent.exists():
+        path.parent.mkdir(parents=True)
+    if path.is_dir():
+        raise ValueError(f'Invalid file path={path.as_posix()!r} - it is a directory')
+    elif not exist_ok and path.exists():
+        raise ValueError(f'Invalid file path={path.as_posix()!r} - it already exists')
+    return path
