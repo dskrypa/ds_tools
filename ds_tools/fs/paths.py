@@ -232,7 +232,9 @@ def is_on_local_device(path: Union[str, Path]) -> bool:
     return get_disk_partition(path).fstype in dev_fs_types
 
 
-def unique_path(parent: Path, stem: str, suffix: str, seps=('_', '-'), n: int = 1, add_date: bool = True) -> Path:
+def unique_path(
+    parent: Path, stem: str, suffix: str, seps=('_', '-'), n: int = 1, add_date: bool = True, sanitize: bool = False,
+) -> Path:
     """
     :param parent: Directory in which a unique file name should be created
     :param stem: File name without extension
@@ -240,8 +242,11 @@ def unique_path(parent: Path, stem: str, suffix: str, seps=('_', '-'), n: int = 
     :param seps: Separators between stem and date/n, respectfully.
     :param n: First number to try; incremented by 1 until adding this value would cause the file name to be unique
     :param add_date: Whether a date should be added before n. If True, a date will always be added.
+    :param sanitize: Whether the stem should be sanitized
     :return: Path with a file name that does not currently exist in the target directory
     """
+    if sanitize:
+        stem = sanitize_file_name(stem)
     date_sep, n_sep = seps
     if add_date:
         stem = f'{stem}{date_sep}{datetime.now().strftime("%Y-%m-%d")}'
