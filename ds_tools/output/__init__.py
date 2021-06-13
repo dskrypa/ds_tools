@@ -13,7 +13,6 @@ if TYPE_CHECKING:
     from .formatting import readable_bytes, short_repr, bullet_list
     from .printer import Printer
     from .table import Column, SimpleColumn, Table, TableBar, HeaderRow
-    from .terminal import uprint, uerror
 
 __attr_module_map = {
     # color
@@ -32,9 +31,6 @@ __attr_module_map = {
     'Table': 'table',
     'TableBar': 'table',
     'HeaderRow': 'table',
-    # terminal
-    'uprint': 'terminal',
-    'uerror': 'terminal',
 }
 
 # noinspection PyUnresolvedReferences

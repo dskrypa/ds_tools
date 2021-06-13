@@ -6,9 +6,11 @@ Table and supporting classes for formatting / printing tabular data to stdout.
 
 import csv
 import re
+import sys
 from contextlib import contextmanager
 from functools import cached_property
 from io import StringIO
+from shutil import get_terminal_size
 from types import GeneratorType
 from typing import Union, Collection, TextIO, Optional, List, Dict, Mapping, Any, Type, Iterable
 from unicodedata import normalize
@@ -17,7 +19,6 @@ from wcwidth import wcswidth
 
 from ..caching.mixins import ClearableCachedPropertyMixin
 from .color import colored
-from .terminal import _uout, Terminal
 
 __all__ = ['Column', 'SimpleColumn', 'Table', 'TableBar', 'HeaderRow', 'TableFormatException']
 
@@ -222,8 +223,15 @@ class Table(ClearableCachedPropertyMixin):
         self.update_width = update_width
         self.fix_ansi_width = fix_ansi_width
         self._flush = file is None
-        self._file = _uout if file is None else file
-        self._term = Terminal()
+        if file is not None:
+            self._file = file
+            self._stdout = False
+        else:
+            self._stdout = True
+            if sys.stdout.encoding.lower().startswith('utf'):
+                self._file = sys.stdout
+            else:
+                self._file = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
 
     def __getitem__(self, item):
         for c in self.columns:
@@ -281,7 +289,7 @@ class Table(ClearableCachedPropertyMixin):
     def header_bar(self, char: str = '-') -> Optional[str]:
         if self.mode == 'table':
             bar = char * len(self.header_row)
-            return bar[:self._term.width] if self._file is _uout else bar
+            return bar[:get_terminal_size().columns] if self._stdout else bar
         return None
 
     @classmethod

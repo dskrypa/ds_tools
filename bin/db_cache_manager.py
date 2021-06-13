@@ -16,7 +16,7 @@ from db_cache import DBCache
 sys.path.append(Path(__file__).resolve().parents[1].as_posix())
 from ds_tools.argparsing import ArgParser
 from ds_tools.logging import init_logging
-from ds_tools.output import uprint
+from ds_tools.output.terminal import uprint
 
 log = logging.getLogger('ds_tools.{}'.format(__name__))
 
@@ -78,4 +78,3 @@ if __name__ == '__main__':
         main()
     except KeyboardInterrupt:
         print()
-
