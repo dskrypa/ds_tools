@@ -64,6 +64,7 @@ def get_destinations(dst_dir: Path) -> Dict[str, Path]:
         'penn and teller fool us': 'fool us',
         'last week tonight with john oliver': 'last week tonight',
         'the stand 2020': 'the stand',
+        'mythic quest ravens banquet': 'mythic quest',
     }
     for alias, target in aliases.items():
         if dst_path := dst_shows.get(target):

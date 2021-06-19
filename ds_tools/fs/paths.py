@@ -217,7 +217,7 @@ def relative_path(path: PathLike, to: PathLike = '.') -> str:
 
 
 def get_disk_partition(path: PathLike) -> sdiskpart:
-    path = orig_path = Path(path).resolve()
+    path = orig_path = Path(path).expanduser().resolve()
     partitions = {p.mountpoint: p for p in disk_partitions(all=True)}
     while path != path.parent:
         try:

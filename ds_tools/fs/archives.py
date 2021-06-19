@@ -114,7 +114,7 @@ class ArchiveFile(ABC):
             log.debug(f'Successfully extracted {self.path.as_posix()} with no password')
             return result
 
-        return False
+        return None
 
     def _try_extract(self, dst_root: Path, password: str = None, pw_n: int = None, pw_count: int = None):
         with TemporaryDirectory(dir=dst_root) as tmp_dir:
@@ -132,7 +132,7 @@ class ArchiveFile(ABC):
                     if not dst_path.exists():
                         log.debug(f'Renaming extracted dir={extracted.as_posix()} -> {dst_path.as_posix()}')
                         extracted.rename(dst_path)
-                        return True
+                        return dst_path
                     else:
                         log.debug(f'Destination={dst_path.as_posix()} already existed')
                     # else fall back to using arc name
@@ -140,7 +140,7 @@ class ArchiveFile(ABC):
                 dst_path = _prep_extracted_dest(dst_root, self.stem)
                 log.debug(f'Renaming tmp={tmp_dir_path.as_posix()} -> {dst_path.as_posix()}')
                 tmp_dir_path.rename(dst_path)
-                return True
+                return dst_path
 
     @cached_property
     def file(self):

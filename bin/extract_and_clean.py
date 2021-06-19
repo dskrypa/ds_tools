@@ -47,6 +47,9 @@ def main():
 
 
 def extract_albums(src_dir: Path, zip_dir: Path):
+    if not zip_dir.exists():
+        zip_dir.mkdir(parents=True)
+
     for artist in src_dir.iterdir():
         if artist.is_dir():
             zip_dest = zip_dir.joinpath(artist.stem)
@@ -56,18 +59,24 @@ def extract_albums(src_dir: Path, zip_dir: Path):
             for f in artist.iterdir():
                 if f.is_file():
                     try:
-                        ArchiveFile(f).extract_all(artist)
+                        extracted_path = ArchiveFile(f).extract_all(artist)
                     except UnknownArchiveType as e:
                         log.warning(f'Skipping {f.as_posix()} due to error: {e}')
                     else:
-                        f.rename(zip_dest.joinpath(f.name))
+                        log.info(f'Extracted {f} to {extracted_path}')
+                        new_path = zip_dest.joinpath(f.name)
+                        log.info(f'Renaming {f} to {new_path}')
+                        f.rename(new_path)
         else:
             try:
-                ArchiveFile(artist).extract_all(src_dir)
+                extracted_path = ArchiveFile(artist).extract_all(src_dir)
             except UnknownArchiveType as e:
                 log.warning(f'Skipping {artist.as_posix()} due to error: {e}')
             else:
-                artist.rename(zip_dir.joinpath(artist.name))
+                log.info(f'Extracted {artist} to {extracted_path}')
+                new_path = zip_dir.joinpath(artist.name)
+                log.info(f'Renaming {artist} to {new_path}')
+                artist.rename(new_path)
 
 
 def old_extract_albums(src_dir: Path, zip_dir: Path):

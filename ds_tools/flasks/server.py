@@ -167,6 +167,6 @@ def debug_info():
         'request.environ': {k: request.environ[k] for k in sorted(request.environ)},
         'os.environ': {k: os.environ[k] for k in sorted(os.environ)},
         'request.args': {k: request.args[k] for k in sorted(request.args)},
-        'request.headers': {k: request.headers[k] for k in sorted(request.headers)},
+        'request.headers': {k: request.headers[k] for k in sorted(request.headers.keys())},
     }
     return Response(Template(debug_table_template).render(tables=tables))

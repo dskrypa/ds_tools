@@ -18,7 +18,7 @@ from typing import Union, BinaryIO, Optional
 from tz_aware_dt.utils import format_duration
 from ..output.formatting import readable_bytes
 from .hash import sha512sum
-from .paths import is_on_local_device
+from .paths import is_on_local_device, get_disk_partition
 
 __all__ = ['copy_file']
 log = logging.getLogger(__name__)
@@ -123,20 +123,54 @@ class FileCopy:
         fmt = '\r{{:11}} {{:>9}}/s {{:6.2%}} [{{:10}}] [{}] {{}}'.format(readable_bytes(src_size))
         is_finished, wait = self.finished.is_set, self.finished.wait
         start = monotonic()
-        while not is_finished() and pct < 1:
-            elapsed = monotonic() - start
-            rate = readable_bytes((self.copied / elapsed) if elapsed else 0)
-            pct_chars = int(pct * 10)
-            bar = '{}{}{}'.format('=' * pct_chars, next(spinner), ' ' * (9 - pct_chars))
-            print(fmt.format(format_duration(int(elapsed)), rate, pct, bar, name), end='' if pct < 1 else '\n')
-            wait(0.3)
-            pct = self.copied / src_size
+
+        dst_fs = get_disk_partition(self.dst_path).fstype
+        if not _WINDOWS and dst_fs == 'nfs':
+            while not is_finished() and pct < .9:
+                elapsed = monotonic() - start
+                rate = readable_bytes((self.copied / elapsed) if elapsed else 0)
+                pct_chars = int(pct * 10)
+                bar = '{}{}{}'.format('=' * pct_chars, next(spinner), ' ' * (9 - pct_chars))
+                print(fmt.format(format_duration(int(elapsed)), rate, pct, bar, name), end='' if pct < 1 else '\n')
+                wait(0.3)
+                pct = self.copied / src_size
+
+            while not is_finished() and (remaining := get_writeback_size()):
+                elapsed = monotonic() - start
+                copied = src_size - remaining  # noqa
+                pct = copied / src_size
+                rate = readable_bytes((copied / elapsed) if elapsed else 0)
+                pct_chars = int(pct * 10)
+                bar = '{}{}{}'.format('=' * pct_chars, next(spinner), ' ' * (9 - pct_chars))
+                print(fmt.format(format_duration(int(elapsed)), rate, pct, bar, name), end='' if pct < 1 else '\n')
+                wait(0.3)
+
+            pct = 1
+        else:
+            while not is_finished() and pct < 1:
+                elapsed = monotonic() - start
+                rate = readable_bytes((self.copied / elapsed) if elapsed else 0)
+                pct_chars = int(pct * 10)
+                bar = '{}{}{}'.format('=' * pct_chars, next(spinner), ' ' * (9 - pct_chars))
+                print(fmt.format(format_duration(int(elapsed)), rate, pct, bar, name), end='' if pct < 1 else '\n')
+                wait(0.3)
+                pct = self.copied / src_size
 
         if pct == 1:
             bar = '=' * 10
             print(fmt.format(format_duration(int(elapsed)), rate, pct, bar, name), end='' if pct < 1 else '\n')
 
     def copy_file(self):
+        """
+        Seems related to async writes, but hard to tell how to track:
+        $ cat /proc/meminfo | egrep -v ' 0 kB'
+        ...
+        Dirty:             67288 kB
+        Writeback:       1995224 kB
+        ...
+        NFS_Unstable:      24096 kB
+        ...
+        """
         sys.audit('ds_tools.fs.copy.copy_file', self.src_path, self.dst_path)
         with self.src_path.open('rb') as src, self.dst_path.open('wb') as dst:
             if self.fast:
@@ -223,3 +257,11 @@ copy_file = FileCopy.copy
 
 class _GiveupOnFastCopy(Exception):
     """Fallback to using raw read()/write() file copy when fast-copy functions fail to do so."""
+
+
+def get_writeback_size():
+    with open('/proc/meminfo', 'rb') as f:
+        for line in f:
+            if line.startswith(b'Writeback:'):
+                return int(line.split()[1]) * 1024
+    return 0
