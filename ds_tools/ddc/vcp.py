@@ -8,9 +8,11 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from functools import cached_property
-from typing import List, Optional, Tuple, Union, Dict, MutableSet
+from typing import Optional, Union, MutableSet, Collection
 from weakref import finalize
 
+from ..output.color import colored
+from .exceptions import VCPError
 from .features import Feature
 
 log = logging.getLogger(__name__)
@@ -33,15 +35,29 @@ class VcpFeature:
 class VCP(ABC):
     input = VcpFeature(0x60)
 
-    def __init__(self):
+    def __init__(self, n: int):
+        self.n = n
         self.__finalizer = finalize(self, self._close)
 
     def __repr__(self):
         return f'<{self.__class__.__name__}[{self.description}]>'
 
     @classmethod
+    def get_monitor(cls, monitor_id: Union[str, int]) -> 'VCP':
+        if isinstance(monitor_id, str) and monitor_id.isdigit():
+            monitor_id = int(monitor_id)
+        if isinstance(monitor_id, int):
+            return cls.get_monitors()[monitor_id]
+        return cls.for_id(monitor_id)
+
+    @classmethod
     @abstractmethod
-    def get_monitors(cls) -> List['VCP']:
+    def for_id(cls, monitor_id: str) -> 'VCP':
+        return NotImplemented
+
+    @classmethod
+    @abstractmethod
+    def get_monitors(cls) -> list['VCP']:
         return NotImplemented
 
     def close(self):
@@ -146,7 +162,7 @@ class VCP(ABC):
                 raise ValueError(f'Unexpected feature {value=!r}')
 
     @cached_property
-    def supported_vcp_values(self) -> Dict[Feature, MutableSet[int]]:
+    def supported_vcp_values(self) -> dict[Feature, MutableSet[int]]:
         supported = {}
         if supported_str := self.info.get('vcp'):
             for m in re.finditer(r'([0-9A-F]{2})(?:\(\s*([^)]+)\)|\s|$|(?=[0-9A-F]))', supported_str):
@@ -165,7 +181,7 @@ class VCP(ABC):
         except (KeyError, ValueError):
             return {}
 
-    def get_supported_values(self, feature: Union[str, int, Feature]) -> Dict[str, str]:
+    def get_supported_values(self, feature: Union[str, int, Feature]) -> dict[str, str]:
         feature = self.get_feature(feature)
         if int_values := self.supported_vcp_values.get(feature):
             val_name_map = feature.value_names
@@ -187,7 +203,7 @@ class VCP(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_feature_value(self, feature: Union[str, int, Feature]) -> Tuple[int, int]:
+    def get_feature_value(self, feature: Union[str, int, Feature]) -> tuple[int, int]:
         """
         Gets the value of a feature from the virtual control panel.
 
@@ -202,3 +218,26 @@ class VCP(ABC):
         cur_name = self.get_feature_value_name(feat_obj, current)
         max_name = self.get_feature_value_name(feat_obj, max_val)
         return current, cur_name, max_val, max_name
+
+    def print_capabilities(self, features: Collection[str] = None):
+        allow_features = {self.get_feature(f) for f in features} if features else None
+        print(f'Monitor {self.n}: {self}')
+        log.debug(f'    Raw: {self.capabilities}')
+        for feature, values in sorted(self.supported_vcp_values.items()):
+            if allow_features and feature not in allow_features:
+                continue
+            try:
+                current, max_val = self[feature]
+            except VCPError:
+                pass
+            else:
+                if feature.hide_extras:
+                    values = {current}
+                else:
+                    if current not in values:
+                        values.add(current)
+
+                print(f'    {feature}:')
+                for value in sorted(values):
+                    line = f'        0x{value:02X} ({feature.name_for(value, "UNKNOWN")})'
+                    print(colored(line, 14) if value == current else line)

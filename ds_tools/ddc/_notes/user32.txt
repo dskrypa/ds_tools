@@ -1,0 +1,26 @@
+``$ dumpbin.exe -EXPORTS /c/Windows/System32/user32.dll > ~/etc/user32_exports.txt``:
+       ...
+       1759   FC 00008C30 EnumDisplayDevicesA
+       1760   FD 000271F0 EnumDisplayDevicesW
+       1761   FE 00033DD0 EnumDisplayMonitors
+       1762   FF 00008A00 EnumDisplaySettingsA
+       1763  100 00008A20 EnumDisplaySettingsExA
+       1764  101 000088C0 EnumDisplaySettingsExW
+       1765  102 000088A0 EnumDisplaySettingsW
+       ...
+       1844  151 00088090 GetDpiAwarenessContextForProcess
+       1845  152 000278B0 GetDpiForMonitorInternal
+       1846  153 00011650 GetDpiForSystem
+       1847  154 00013F40 GetDpiForWindow
+       1848  155 000880B0 GetDpiFromDpiAwarenessContext
+       ...
+       1901  18A 0002DBE0 GetMonitorInfoA
+       1902  18B 000207A0 GetMonitorInfoW
+       ...
+       2162  28F 000294C0 MonitorFromPoint
+       2163  290 00013750 MonitorFromRect
+       2164  291 000210E0 MonitorFromWindow
+       ...
+       2321  330 00034AB0 SetDisplayAutoRotationPreferences
+       2322  331 0008D180 SetDisplayConfig
+       ...

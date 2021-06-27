@@ -7,13 +7,16 @@ Available functions:
 https://docs.microsoft.com/en-us/windows/win32/monitor/monitor-configuration-functions
 Funcs, structs, enums:
 https://docs.microsoft.com/en-us/windows/win32/monitor/monitor-configuration-reference
+
+Additional potentially interesting things that are potentially available via ctypes.windll.{dll_name} are listed in
+_notes/{dll_name}.txt
 """
 
 import ctypes
 import logging
 import sys
 from functools import cached_property
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Union
 
 if sys.platform == 'win32':
     from ctypes.wintypes import DWORD, RECT, BOOL, HMONITOR, HDC, LPARAM, HANDLE, BYTE
@@ -22,7 +25,7 @@ else:
 
 from .exceptions import VCPError
 from .features import Feature
-from .structs import PhysicalMonitor, MC_VCP_CODE_TYPE
+from .structs import PhysicalMonitor, MC_VCP_CODE_TYPE, DisplayDevice, MonitorState
 from .vcp import VCP
 
 __all__ = ['WindowsVCP']
@@ -35,20 +38,48 @@ class WindowsVCP(VCP):
 
     References: https://stackoverflow.com/questions/16588133/
     """
-    _monitors = []
+    _monitors = {}
 
-    def __init__(self, hmonitor: HMONITOR):
+    def __init__(self, n: int, hmonitor: HMONITOR, device: DisplayDevice):
         """
         :param hmonitor: logical monitor handle
         """
-        super().__init__()
+        super().__init__(n)
         self._hmonitor = hmonitor
+        self.device = device
 
     def __repr__(self):
-        return f'<{self.__class__.__name__}[{self.description}, hmonitor={self._hmonitor.value}]>'
+        return f'<{self.__class__.__name__}[{self.description!r}, hmonitor={self._hmonitor.value}]>'
 
     @classmethod
-    def get_monitors(cls) -> List['WindowsVCP']:
+    def for_id(cls, monitor_id: str) -> 'WindowsVCP':
+        """
+        Truncated :class:`DisplayDevice<ds_tools.ddc.structs.DisplayDevice>` reprs showing example ID values::
+            <DisplayDevice[name='\\\\.\\DISPLAY1\\Monitor0' description='CRG9_C49RG9xSS (DP)' id='MONITOR\\SAM0F9C\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0002']>
+            <DisplayDevice[name='\\\\.\\DISPLAY2\\Monitor0' description='LG FULLHD(HDMI)' id='MONITOR\\GSM5ABB\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0004']>
+            <DisplayDevice[name='\\\\.\\DISPLAY3\\Monitor0' description='LG FULLHD(HDMI)' id='MONITOR\\GSM5ABB\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0003']>
+
+        :param monitor_id: A full display device ID, or a unique portion of it.  In the above example, ``SAM0F9C`` could
+          be used to uniquely identify ``DISPLAY1\\Monitor0``, but ``GSM5ABB`` matches both LG monitors, so a longer
+          portion of the ID would need to be provided.
+        :return: The :class:`WindowsVCP` object representing the specified monitor.
+        :raise: :class:`ValueError` if the specified ID is ambiguous or does not match any active monitors.
+        """
+        if not cls._monitors:
+            cls.get_monitors()
+        monitor_id = monitor_id.upper()
+        try:
+            return cls._monitors[monitor_id]
+        except KeyError:
+            pass
+        if id_matches := {mid for mid in cls._monitors if monitor_id in mid}:
+            if len(id_matches) == 1:
+                return cls._monitors[next(iter(id_matches))]
+            raise ValueError(f'Invalid {monitor_id=} - found {len(id_matches)} matches: {id_matches}')
+        raise ValueError(f'Invalid {monitor_id=} - found no matches')
+
+    @classmethod
+    def get_monitors(cls) -> list['WindowsVCP']:
         if not cls._monitors:
             hmonitors = []
 
@@ -58,16 +89,18 @@ class WindowsVCP(VCP):
                 return True  # continue enumeration
 
             try:
-                # noinspection PyTypeChecker
                 callback = ctypes.WINFUNCTYPE(BOOL, HMONITOR, HDC, ctypes.POINTER(RECT), LPARAM)(_callback)
                 if not ctypes.windll.user32.EnumDisplayMonitors(0, 0, callback, 0):
                     raise ctypes.WinError()
             except OSError as e:
                 raise VCPError('Failed to enumerate VCPs') from e
 
-            cls._monitors = [WindowsVCP(logical) for logical in hmonitors]
+            cls._monitors = {
+                mon.id.upper(): WindowsVCP(n, hmonitor, mon)
+                for n, (hmonitor, mon) in enumerate(zip(hmonitors, get_active_monitors()))
+            }
 
-        return cls._monitors
+        return list(cls._monitors.values())
 
     def _close(self):
         """Close the handle, if it exists"""
@@ -165,7 +198,7 @@ class WindowsVCP(VCP):
         except OSError as e:
             raise VCPError('Error saving current settings') from e
 
-    def get_feature_value(self, feature: Union[str, int, Feature]) -> Tuple[int, int]:
+    def get_feature_value(self, feature: Union[str, int, Feature]) -> tuple[int, int]:
         """
         Gets the value of a feature from the virtual control panel.
 
@@ -190,3 +223,38 @@ class WindowsVCP(VCP):
 
         log.debug(f'{feature=!r} type: {code_type.MC_MOMENTARY=}, {code_type.MC_SET_PARAMETER=}')
         return feature_current.value, feature_max.value
+
+
+class Adapter:
+    def __init__(self, n: int, dev: DisplayDevice):
+        self.n = n
+        self.dev = dev
+        self.monitors = []
+
+    def __repr__(self):
+        return (
+            f'<Adapter#{self.n}[name={self.dev.name!r} description={self.dev.description!r}'
+            f' state={self.dev.state!r} id={self.dev.id!r} key={self.dev.key!r}]>'
+        )
+
+    def __iter__(self):
+        yield from self.monitors
+
+
+def get_display_devices():
+    enum_display_devices = ctypes.windll.user32.EnumDisplayDevicesW
+    enum_display_devices.restype = ctypes.c_bool
+    adapters = []
+    a = 0
+    while enum_display_devices(None, a, ctypes.byref(adapter_dev := DisplayDevice()), 0):
+        adapter = Adapter(a, adapter_dev)
+        adapters.append(adapter)
+        while enum_display_devices(adapter_dev.name, len(adapter.monitors), ctypes.byref(dev := DisplayDevice()), 0):
+            adapter.monitors.append(dev)
+        a += 1
+
+    return adapters
+
+
+def get_active_monitors():
+    return [mon for adapter in get_display_devices() for mon in adapter if mon.state & MonitorState.ACTIVE]

@@ -1,0 +1,95 @@
+``$ dumpbin.exe -EXPORTS /c/Windows/System32/win32u.dll > ~/etc/win32u_exports.txt``:
+        ...
+        166   A5 00004450 NtGdiDDCCIGetCapabilitiesString
+        167   A6 00004470 NtGdiDDCCIGetCapabilitiesStringLength
+        168   A7 00004490 NtGdiDDCCIGetTimingReport
+        169   A8 000044B0 NtGdiDDCCIGetVCPFeature
+        170   A9 000044D0 NtGdiDDCCISaveCurrentSettings
+        171   AA 000044F0 NtGdiDDCCISetVCPFeature
+        ...
+        182   B5 00004650 NtGdiDdDDICheckMonitorPowerState
+        ...
+        207   CE 00004970 NtGdiDdDDIDDisplayEnum
+        ...
+        221   DC 00004B30 NtGdiDdDDIDispMgrCreate
+        222   DD 00004B50 NtGdiDdDDIDispMgrSourceOperation
+        223   DE 00004B70 NtGdiDdDDIDispMgrTargetOperation
+        224   DF 00004B90 NtGdiDdDDIEnumAdapters
+        225   E0 00004BB0 NtGdiDdDDIEnumAdapters2
+        ...
+        233   E8 00004CB0 NtGdiDdDDIGetCachedHybridQueryValue
+        ...
+        237   EC 00004D30 NtGdiDdDDIGetDeviceState
+        238   ED 00004D50 NtGdiDdDDIGetDisplayModeList
+        ...
+        242   F1 00004DD0 NtGdiDdDDIGetOverlayState
+        243   F2 00004DF0 NtGdiDdDDIGetPostCompositionCaps
+        244   F3 00004E10 NtGdiDdDDIGetPresentHistory
+        245   F4 00004E30 NtGdiDdDDIGetPresentQueueEvent
+        ...
+        249   F8 00004EB0 NtGdiDdDDIGetResourcePresentPrivateDriverData
+        250   F9 00004ED0 NtGdiDdDDIGetRuntimeData
+        ...
+        253   FC 00004F30 NtGdiDdDDIGetSharedPrimaryHandle
+        254   FD 00004F50 NtGdiDdDDIGetSharedResourceAdapterLuid
+        255   FE 00004F70 NtGdiDdDDIGetSharedResourceAdapterLuidFlipManager
+        256   FF 00004F90 NtGdiDdDDIGetYieldPercentage
+        257  100 00004FB0 NtGdiDdDDIInvalidateActiveVidPn
+        258  101 00004FD0 NtGdiDdDDIInvalidateCache
+        ...
+        262  105 00005050 NtGdiDdDDIMapGpuVirtualAddress
+        263  106 00005070 NtGdiDdDDIMarkDeviceAsError
+        264  107 00005090 NtGdiDdDDINetDispGetNextChunkInfo
+        ...
+        270  10D 00005150 NtGdiDdDDIOpenAdapterFromDeviceName
+        271  10E 00005170 NtGdiDdDDIOpenAdapterFromHdc
+        272  10F 00005190 NtGdiDdDDIOpenAdapterFromLuid
+        273  110 000051B0 NtGdiDdDDIOpenBundleObjectNtHandleFromName
+        ...
+        286  11D 00005350 NtGdiDdDDIOutputDuplGetFrameInfo
+        287  11E 00005370 NtGdiDdDDIOutputDuplGetMetaData
+        288  11F 00005390 NtGdiDdDDIOutputDuplGetPointerShapeData
+        289  120 000053B0 NtGdiDdDDIOutputDuplPresent
+        290  121 000053D0 NtGdiDdDDIOutputDuplReleaseFrame
+        291  122 000053F0 NtGdiDdDDIPollDisplayChildren
+        292  123 00005410 NtGdiDdDDIPresent
+        ...
+        297  128 000054B0 NtGdiDdDDIQueryAdapterInfo
+        298  129 000054D0 NtGdiDdDDIQueryAllocationResidency
+        299  12A 000054F0 NtGdiDdDDIQueryClockCalibration
+        300  12B 00005510 NtGdiDdDDIQueryFSEBlock
+        301  12C 00005530 NtGdiDdDDIQueryProcessOfferInfo
+        302  12D 00005550 NtGdiDdDDIQueryProtectedSessionInfoFromNtHandle
+        303  12E 00005570 NtGdiDdDDIQueryProtectedSessionStatus
+        304  12F 00005590 NtGdiDdDDIQueryRemoteVidPnSourceFromGdiDisplayName
+        305  130 000055B0 NtGdiDdDDIQueryResourceInfo
+        306  131 000055D0 NtGdiDdDDIQueryResourceInfoFromNtHandle
+        307  132 000055F0 NtGdiDdDDIQueryStatistics
+        308  133 00005610 NtGdiDdDDIQueryVidPnExclusiveOwnership
+        309  134 00005630 NtGdiDdDDIQueryVideoMemoryInfo
+        ...
+        322  141 000057D0 NtGdiDdDDISetDisplayMode
+        ...
+        346  159 00005AD0 NtGdiDdDDISubmitCommand
+        347  15A 00005AF0 NtGdiDdDDISubmitCommandToHwQueue
+        ...
+        469  1D4 00006690 NtGdiGetDeviceCaps
+        470  1D5 000066B0 NtGdiGetDeviceCapsAll
+        471  1D6 000066D0 NtGdiGetDeviceGammaRamp
+        472  1D7 000066F0 NtGdiGetDeviceWidth
+        ...
+        491  1EA 00006930 NtGdiGetMonitorID
+        ...
+        494  1ED 00006950 NtGdiGetNumberOfPhysicalMonitors
+        ...
+        501  1F4 00006A10 NtGdiGetPhysicalMonitorDescription
+        502  1F5 00006A30 NtGdiGetPhysicalMonitors
+        ...
+        842  349 00008A30 NtUserDisplayConfigGetDeviceInfo
+        843  34A 00008A50 NtUserDisplayConfigSetDeviceInfo
+        ...
+       1114  459 0000A2F0 NtUserQueryDisplayConfig
+       ...
+       1188  4A3 0000A9B0 NtUserSetDisplayConfig
+       1189  4A4 0000A9D0 NtUserSetDisplayMapping
+       ...

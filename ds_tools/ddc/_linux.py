@@ -11,7 +11,7 @@ import time
 from functools import cached_property, wraps, reduce
 from operator import xor
 from pathlib import Path
-from typing import List, Optional, Union, Tuple
+from typing import Optional, Union
 
 if sys.platform.startswith('linux'):
     import fcntl
@@ -78,11 +78,15 @@ Identity = VcpRequest('identity', 0xF1, 0xE1)
 class LinuxVCP(VCP):
     _monitors = []
 
-    def __init__(self, path: str, ignore_checksum_errors: bool = True):
-        super().__init__()
+    def __init__(self, n: int, path: str, ignore_checksum_errors: bool = True):
+        super().__init__(n)
         self.path = path  # /dev/i2c-*
         self.last_write = 0
         self.ignore_checksum_errors = ignore_checksum_errors
+
+    @classmethod
+    def for_id(cls, monitor_id: str) -> 'LinuxVCP':
+        raise NotImplementedError
 
     @rate_limited
     def _i2c(self, buf, action: int, addr: int = DDCCI_ADDR):
@@ -130,7 +134,7 @@ class LinuxVCP(VCP):
             raise IOError(f'Checksum error for I2C response ({checksum=:02X}, full {resp=})')
         return resp[2:data_len + 2]
 
-    def request(self, op: int, ctrl: int = 0x00, value: Optional[int] = None) -> Optional[Tuple[int, int]]:
+    def request(self, op: int, ctrl: int = 0x00, value: Optional[int] = None) -> Optional[tuple[int, int]]:
         req = bytearray(struct.pack('BB', op, ctrl))
         if value is not None:
             req.extend(reversed(struct.pack('H', value)))
@@ -197,10 +201,10 @@ class LinuxVCP(VCP):
         pass
 
     @classmethod
-    def get_monitors(cls, ignore_checksum_errors: bool = True) -> List['LinuxVCP']:
+    def get_monitors(cls, ignore_checksum_errors: bool = True) -> list['LinuxVCP']:
         if not cls._monitors:
             for path in Path('/dev').glob('i2c-*'):
-                vcp = cls(path.as_posix(), ignore_checksum_errors)
+                vcp = cls(int(path.name.rsplit('-', 1)[1]), path.as_posix(), ignore_checksum_errors)
                 try:
                     vcp._fd  # noqa
                 except (OSError, VCPIOError):
@@ -243,7 +247,7 @@ class LinuxVCP(VCP):
         feature = self.get_feature(feature)
         return self.request(0x03, feature.code, value)
 
-    def get_feature_value(self, feature: Union[str, int, Feature]) -> Tuple[int, int]:
+    def get_feature_value(self, feature: Union[str, int, Feature]) -> tuple[int, int]:
         feature = self.get_feature(feature)
         return self.request(0x01, feature.code)
 

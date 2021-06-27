@@ -13,9 +13,8 @@ sys.path.append(PROJECT_ROOT.joinpath('lib').as_posix())
 from ds_tools.__version__ import __author_email__, __version__
 from ds_tools.argparsing import ArgParser
 from ds_tools.core.main import wrap_main
-from ds_tools.ddc import PlatformVcp, VCPError
+from ds_tools.ddc import PlatformVcp
 from ds_tools.logging import init_logging
-from ds_tools.output.color import colored
 
 log = logging.getLogger(__name__)
 
@@ -29,16 +28,16 @@ def parser():
     list_opts.add_argument('--feature', '-f', help='Show the value for the given feature for each monitor')
 
     get_parser = parser.add_subparser('action', 'get', 'Get a VCP feature value')
-    get_parser.add_argument('monitor', type=int, help='The index of the monitor for which the feature should be retrieved')
+    get_parser.add_argument('monitor', help='The ID/index of the monitor for which the feature should be retrieved')
     get_parser.add_argument('feature', help='The feature to get')
 
     set_parser = parser.add_subparser('action', 'set', 'Set a VCP feature')
-    set_parser.add_argument('monitor', type=int, help='The index of the monitor on which the feature should be set')
+    set_parser.add_argument('monitor', help='The ID/index of the monitor on which the feature should be set')
     set_parser.add_argument('feature', help='The feature to set')
     set_parser.add_argument('value', help='The hex value to use')
 
     cap_parser = parser.add_subparser('action', 'capabilities', 'Show monitor capabilities')
-    cap_parser.add_argument('monitor', type=int, nargs='*', help='The index(es) of the monitor(s) to show (default: all)')
+    cap_parser.add_argument('monitor', nargs='*', help='The ID/index(es) of the monitor(s) to show (default: all)')
     cap_parser.add_argument('--feature', '-f', nargs='*', help='One or more features to display (default: all supported)')
 
     parser.include_common_args('verbosity')
@@ -62,7 +61,7 @@ def main():
             elif args.capabilities:
                 print(f'    {monitor.capabilities}')
     elif action == 'get':
-        monitor = PlatformVcp.get_monitors()[args.monitor]
+        monitor = PlatformVcp.get_monitor(args.monitor)
         feature = monitor.get_feature(args.feature)
         current, cur_name, max_val, max_name = monitor.get_feature_value_with_names(feature)
         print(
@@ -71,39 +70,16 @@ def main():
             f', max={maybe_named(max_val, max_name)}'
         )
     elif action == 'set':
-        monitor = PlatformVcp.get_monitors()[args.monitor]
+        monitor = PlatformVcp.get_monitor(args.monitor)
         feature = monitor.get_feature(args.feature)
         monitor[feature] = value = monitor.normalize_feature_value(feature, args.value)
         print(f'monitors[{args.monitor}][{feature}] = 0x{value:02X}')
     elif action == 'capabilities':
-        monitors = PlatformVcp.get_monitors()
-        included = 0
+        monitors = map(PlatformVcp.get_monitor, args.monitor) if args.monitor else PlatformVcp.get_monitors()
         for i, monitor in enumerate(monitors):
-            if not args.monitor or i in args.monitor:
-                allow_features = {monitor.get_feature(f) for f in args.feature} if args.feature else None
-                if included:
-                    print()
-                included += 1
-                print(f'Monitor {i}: {monitor}')
-                log.debug(f'    Raw: {monitor.capabilities}')
-                for feature, values in sorted(monitor.supported_vcp_values.items()):
-                    if allow_features and feature not in allow_features:
-                        continue
-                    try:
-                        current, max_val = monitor[feature]
-                    except VCPError as e:
-                        pass
-                    else:
-                        if feature.hide_extras:
-                            values = {current}
-                        else:
-                            if current not in values:
-                                values.add(current)
-
-                        print(f'    {feature}:')
-                        for value in sorted(values):
-                            line = f'        0x{value:02X} ({feature.name_for(value, "UNKNOWN")})'
-                            print(colored(line, 14) if value == current else line)
+            if i:
+                print()
+            monitor.print_capabilities(args.feature)
     else:
         raise ValueError(f'Unknown {action=!r}')
 
