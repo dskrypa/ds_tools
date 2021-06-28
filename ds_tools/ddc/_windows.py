@@ -66,7 +66,7 @@ class WindowsVCP(VCP):
         :raise: :class:`ValueError` if the specified ID is ambiguous or does not match any active monitors.
         """
         if not cls._monitors:
-            cls.get_monitors()
+            cls._get_monitors()
         monitor_id = monitor_id.upper()
         try:
             return cls._monitors[monitor_id]
@@ -79,7 +79,7 @@ class WindowsVCP(VCP):
         raise ValueError(f'Invalid {monitor_id=} - found no matches')
 
     @classmethod
-    def get_monitors(cls) -> list['WindowsVCP']:
+    def _get_monitors(cls) -> list['WindowsVCP']:
         if not cls._monitors:
             hmonitors = []
 

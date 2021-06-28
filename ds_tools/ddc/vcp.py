@@ -11,6 +11,7 @@ from functools import cached_property
 from typing import Optional, Union, MutableSet, Collection
 from weakref import finalize
 
+from ..core.patterns import FnMatcher
 from ..output.color import colored
 from .exceptions import VCPError
 from .features import Feature
@@ -47,8 +48,30 @@ class VCP(ABC):
         if isinstance(monitor_id, str) and monitor_id.isdigit():
             monitor_id = int(monitor_id)
         if isinstance(monitor_id, int):
-            return cls.get_monitors()[monitor_id]
+            return cls._get_monitors()[monitor_id]
         return cls.for_id(monitor_id)
+
+    @classmethod
+    def get_monitors(cls, *id_patterns: Union[str, int, None]) -> set['VCP']:
+        all_monitors = cls._get_monitors()
+        id_patterns = {i for i in id_patterns if i is not None}
+        str_patterns = {i for i in id_patterns if isinstance(i, str)}
+        if not id_patterns or '*' in str_patterns or 'ALL' in str_patterns:
+            return set(all_monitors)
+
+        nums = {i for i in id_patterns if isinstance(i, int)}
+        for i in id_patterns:
+            if isinstance(i, str) and i.isdigit():
+                str_patterns.remove(i)
+                nums.add(int(i))
+
+        monitors = set()
+        if str_patterns and isinstance((id_mon_map := getattr(cls, '_monitors', None)), dict):
+            matches = FnMatcher(str_patterns).match
+            monitors.update(monitor for mon_id, monitor in id_mon_map.items() if matches(mon_id))
+        if nums:
+            monitors.update(monitor for i, monitor in enumerate(all_monitors) if i in nums)
+        return monitors
 
     @classmethod
     @abstractmethod
@@ -57,7 +80,7 @@ class VCP(ABC):
 
     @classmethod
     @abstractmethod
-    def get_monitors(cls) -> list['VCP']:
+    def _get_monitors(cls) -> list['VCP']:
         return NotImplemented
 
     def close(self):

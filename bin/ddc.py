@@ -32,13 +32,16 @@ def parser():
     get_parser.add_argument('feature', help='The feature to get')
 
     set_parser = parser.add_subparser('action', 'set', 'Set a VCP feature')
-    set_parser.add_argument('monitor', help='The ID/index of the monitor on which the feature should be set')
+    set_parser.add_argument('monitor', help='The ID/index of the monitor on which the feature should be set, or ALL to set it for all monitors')
     set_parser.add_argument('feature', help='The feature to set')
     set_parser.add_argument('value', help='The hex value to use')
 
     cap_parser = parser.add_subparser('action', 'capabilities', 'Show monitor capabilities')
     cap_parser.add_argument('monitor', nargs='*', help='The ID/index(es) of the monitor(s) to show (default: all)')
     cap_parser.add_argument('--feature', '-f', nargs='*', help='One or more features to display (default: all supported)')
+
+    off_parser = parser.add_subparser('action', 'turn_off', 'Turn off the specified monitors')
+    off_parser.add_argument('monitor', nargs='*', help='The ID pattern(s) / index(es) of the monitor(s) to show (default: all)')
 
     parser.include_common_args('verbosity')
     return parser
@@ -51,8 +54,7 @@ def main():
 
     action = args.action
     if action == 'list':
-        monitors = PlatformVcp.get_monitors()
-        for i, monitor in enumerate(monitors):
+        for i, monitor in enumerate(PlatformVcp.get_monitors()):
             print(f'{i}: {monitor}')
             if args.feature:
                 current, max_val = monitor.get_feature_value(args.feature)
@@ -70,16 +72,20 @@ def main():
             f', max={maybe_named(max_val, max_name)}'
         )
     elif action == 'set':
-        monitor = PlatformVcp.get_monitor(args.monitor)
-        feature = monitor.get_feature(args.feature)
-        monitor[feature] = value = monitor.normalize_feature_value(feature, args.value)
-        print(f'monitors[{args.monitor}][{feature}] = 0x{value:02X}')
+        for monitor in PlatformVcp.get_monitors(args.monitor):
+            feature = monitor.get_feature(args.feature)
+            monitor[feature] = value = monitor.normalize_feature_value(feature, args.value)
+            print(f'monitors[{args.monitor}][{feature}] = 0x{value:02X}')
     elif action == 'capabilities':
-        monitors = map(PlatformVcp.get_monitor, args.monitor) if args.monitor else PlatformVcp.get_monitors()
-        for i, monitor in enumerate(monitors):
+        for i, monitor in enumerate(PlatformVcp.get_monitors(*args.monitor)):
             if i:
                 print()
             monitor.print_capabilities(args.feature)
+    elif action == 'turn_off':
+        for monitor in PlatformVcp.get_monitors(*args.monitor):
+            feature = monitor.get_feature(0xD6)
+            monitor[feature] = value = 0x4
+            print(f'monitors[{monitor.n}][{feature}] = 0x{value:02X}')
     else:
         raise ValueError(f'Unknown {action=!r}')
 

@@ -201,7 +201,7 @@ class LinuxVCP(VCP):
         pass
 
     @classmethod
-    def get_monitors(cls, ignore_checksum_errors: bool = True) -> list['LinuxVCP']:
+    def _get_monitors(cls, ignore_checksum_errors: bool = True) -> list['LinuxVCP']:
         if not cls._monitors:
             for path in Path('/dev').glob('i2c-*'):
                 vcp = cls(int(path.name.rsplit('-', 1)[1]), path.as_posix(), ignore_checksum_errors)
