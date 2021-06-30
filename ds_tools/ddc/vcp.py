@@ -67,8 +67,13 @@ class VCP(ABC):
 
         monitors = set()
         if str_patterns and isinstance((id_mon_map := getattr(cls, '_monitors', None)), dict):
+            for mon_id, monitor in id_mon_map.items():
+                log.debug(f'{mon_id=}: {monitor}')
+
             matches = FnMatcher(str_patterns).match
             monitors.update(monitor for mon_id, monitor in id_mon_map.items() if matches(mon_id))
+            if not monitors:
+                monitors.update(mon for mon_id, mon in id_mon_map.items() if any(pat in mon_id for pat in id_patterns))
         if nums:
             monitors.update(monitor for i, monitor in enumerate(all_monitors) if i in nums)
         return monitors

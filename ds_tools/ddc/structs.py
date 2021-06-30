@@ -10,11 +10,11 @@ from enum import IntFlag
 from functools import cached_property
 
 if sys.platform == 'win32':
-    from ctypes.wintypes import DWORD, HANDLE, WCHAR
+    from ctypes.wintypes import DWORD, HANDLE, WCHAR, RECT
 else:
-    DWORD, HANDLE, WCHAR = None, None, None
+    DWORD, HANDLE, WCHAR, RECT = None, None, None, None
 
-__all__ = ['PhysicalMonitor', 'MC_VCP_CODE_TYPE', 'DisplayDevice', 'AdapterState', 'MonitorState']
+__all__ = ['PhysicalMonitor', 'MC_VCP_CODE_TYPE', 'DisplayDevice', 'AdapterState', 'MonitorState', 'MonitorInfo']
 
 
 class PhysicalMonitor(ctypes.Structure):
@@ -39,6 +39,7 @@ class DisplayDevice(ctypes.Structure):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._struct_size = ctypes.sizeof(self)
+        self.adapter = None
 
     def __repr__(self):
         return (
@@ -53,6 +54,24 @@ class DisplayDevice(ctypes.Structure):
     @cached_property
     def state(self):
         return AdapterState(self.state_flags) if self.type == 'adapter' else MonitorState(self.state_flags)
+
+
+class MonitorInfo(ctypes.Structure):
+    _fields_ = [
+        ('_struct_size', DWORD), ('monitor_rect', RECT), ('work_area', RECT), ('flags', DWORD), ('name', WCHAR * 32)
+    ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._struct_size = ctypes.sizeof(self)
+        self.flags = 0x01  # MONITORINFOF_PRIMARY
+
+    @classmethod
+    def for_handle(cls, handle):
+        self = cls()
+        if not ctypes.windll.user32.GetMonitorInfoW(handle, ctypes.byref(self)):
+            raise ctypes.WinError()
+        return self
 
 
 class AdapterState(IntFlag):

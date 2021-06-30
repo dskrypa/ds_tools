@@ -72,10 +72,12 @@ def main():
             f', max={maybe_named(max_val, max_name)}'
         )
     elif action == 'set':
-        for monitor in PlatformVcp.get_monitors(args.monitor):
+        if not (monitors := PlatformVcp.get_monitors(args.monitor)):
+            print(f'No monitors found for {args.monitor=}')
+        for monitor in monitors:
             feature = monitor.get_feature(args.feature)
             monitor[feature] = value = monitor.normalize_feature_value(feature, args.value)
-            print(f'monitors[{args.monitor}][{feature}] = 0x{value:02X}')
+            print(f'monitors[{monitor.n}][{feature}] = 0x{value:02X}')
     elif action == 'capabilities':
         for i, monitor in enumerate(PlatformVcp.get_monitors(*args.monitor)):
             if i:

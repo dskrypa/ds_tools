@@ -25,7 +25,7 @@ else:
 
 from .exceptions import VCPError
 from .features import Feature
-from .structs import PhysicalMonitor, MC_VCP_CODE_TYPE, DisplayDevice, MonitorState
+from .structs import PhysicalMonitor, MC_VCP_CODE_TYPE, DisplayDevice, MonitorState, MonitorInfo
 from .vcp import VCP
 
 __all__ = ['WindowsVCP']
@@ -95,9 +95,12 @@ class WindowsVCP(VCP):
             except OSError as e:
                 raise VCPError('Failed to enumerate VCPs') from e
 
+            handles = {MonitorInfo.for_handle(hmonitor).name: hmonitor for hmonitor in hmonitors}
+            displays = {dev.adapter.dev.name: dev for dev in get_active_monitors()}
             cls._monitors = {
-                mon.id.upper(): WindowsVCP(n, hmonitor, mon)
-                for n, (hmonitor, mon) in enumerate(zip(hmonitors, get_active_monitors()))
+                mon.id.upper(): WindowsVCP(n, handles[adapter_id], mon)
+                for n, adapter_id in enumerate(sorted(handles))
+                if (mon := displays[adapter_id])
             }
 
         return list(cls._monitors.values())
@@ -248,8 +251,10 @@ def get_display_devices():
     a = 0
     while enum_display_devices(None, a, ctypes.byref(adapter_dev := DisplayDevice()), 0):
         adapter = Adapter(a, adapter_dev)
+        adapter_dev.adapter = adapter_dev
         adapters.append(adapter)
         while enum_display_devices(adapter_dev.name, len(adapter.monitors), ctypes.byref(dev := DisplayDevice()), 0):
+            dev.adapter = adapter
             adapter.monitors.append(dev)
         a += 1
 
