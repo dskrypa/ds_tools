@@ -57,6 +57,7 @@ class DisplayDevice(ctypes.Structure):
 
 
 class MonitorInfo(ctypes.Structure):
+    # Info source: https://docs.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-monitorinfo
     _fields_ = [
         ('_struct_size', DWORD), ('monitor_rect', RECT), ('work_area', RECT), ('flags', DWORD), ('name', WCHAR * 32)
     ]
