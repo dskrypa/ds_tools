@@ -7,7 +7,7 @@ ANSI Color Handling (originally based on the 'colored' module)
 __all__ = ['colored', 'InvalidAnsiCode']
 
 
-def colored(text, color=None, bg_color=None, attrs=None, reset=True, *, prefix=None):
+def colored(text: str, color=None, bg_color=None, attrs=None, reset=True, *, prefix: str = None):
     parts = (
         f'\x1b[{prefix}m' if prefix else '',
         fg_color_code(color) if color is not None else '',
@@ -19,7 +19,7 @@ def colored(text, color=None, bg_color=None, attrs=None, reset=True, *, prefix=N
     return ''.join(parts)
 
 
-def attr_code(attr):
+def attr_code(attr) -> str:
     try:
         attrs = attr_code._attrs
     except AttributeError:
@@ -53,15 +53,15 @@ def attr_code(attr):
             raise InvalidAnsiCode(attr) from e
 
 
-def fg_color_code(color):
+def fg_color_code(color) -> str:
     return ansi_color_code(color, '38;5;')
 
 
-def bg_color_code(color):
+def bg_color_code(color) -> str:
     return ansi_color_code(color, '48;5;')
 
 
-def ansi_color_code(color, base):
+def ansi_color_code(color, base) -> str:
     color = str(color)
     code = '\x1b[' + base
     try:

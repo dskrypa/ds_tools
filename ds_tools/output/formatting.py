@@ -21,6 +21,7 @@ __all__ = [
     'to_str',
     'short_repr',
     'bullet_list',
+    'to_hex_and_str',
 ]
 log = logging.getLogger(__name__)
 
@@ -180,3 +181,31 @@ def bullet_list(data, bullet='-', indent=2, sort=True):
     data = sorted(data) if sort else data
     fmt = '{}{} {{}}'.format(' ' * indent, bullet)
     return '\n'.join(fmt.format(line) for line in data)
+
+
+def to_hex_and_str(pre, data: bytes, encoding: str = 'utf-8', fill: int = 0) -> str:
+    """
+    Format the given bytes to appear similar to the format used by xxd.  Intended to be called for each line - splitting
+    the data into the amount to appear on each line should be done before calling this function.
+
+    :param pre: Line prefix
+    :param data: The binary data to be converted
+    :param encoding: Encoding to use for the str portion
+    :param fill: Ensure hex fills the amount of space that would be required for this many bytes
+    :return: String containing both the hex and str representations
+    """
+    try:
+        replacements = to_hex_and_str._replacements
+    except AttributeError:
+        import sys
+        from unicodedata import category
+        repl_map = {c: '.' for c in map(chr, range(sys.maxunicode + 1)) if category(c) == 'Cc'}
+        to_hex_and_str._replacements = replacements = str.maketrans(repl_map | {'\r': '\\r', '\n': '\\n', '\t': '\\t'})
+
+    as_hex = data.hex(' ', 4)
+    if fill:
+        if (to_fill := fill * 2 + (fill // 4) - 1 - len(as_hex)) > 0:
+            as_hex += ' ' * to_fill
+
+    as_str = data.decode(encoding, 'replace').translate(replacements)
+    return f'{pre} {as_hex}  |  {as_str}'
