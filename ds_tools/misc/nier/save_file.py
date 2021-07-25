@@ -21,6 +21,7 @@ from ...output.formatting import to_hex_and_str
 from ...output.printer import PseudoJsonEncoder
 from ...utils.diff import unified_byte_diff
 from .constants import ABILITIES, CHARACTERS, ONE_HANDED_SWORDS, TWO_HANDED_SWORDS, SPEARS, MAP_ZONE_MAP
+from .constants import PLANTS, FERTILIZER
 from .exceptions import UnpackError
 from .struct_parts import Savefile as _Savefile
 from .structs import FIELD_STRUCT_MAP, GAMEDATA_struct, Savefile_struct, WORD_FLAGS, Time
@@ -219,7 +220,11 @@ class SaveFile(ClearableCachedPropertyMixin):
                 last_was_view = False
 
 
-class GardenPlot:
+class GardenPlot(ClearableCachedPropertyMixin):
+    seed = DictAttrProperty('processed', 'Seed')
+    fertilizer = DictAttrProperty('processed', 'Fertilizer')
+    water = DictAttrProperty('processed', 'Water')
+
     def __init__(self, plot: str, data: bytes):
         self.plot = plot
         self._data = data
@@ -232,12 +237,25 @@ class GardenPlot:
         return data
 
     @cached_property
+    def processed(self):
+        seed = self.data['Seed']
+        data = {
+            'Seed': PLANTS[seed] if len(PLANTS) >= self.data['Seed'] else None,
+            'Fertilizer': FERTILIZER[self.data['Fertilizer']],
+            'Water': bool(self.data['Water']),
+        }
+        return data
+
+    @cached_property
     def planted(self):
         return datetime(*self.data['Time']) if self.data['Time'][0] else None
 
     def __repr__(self):
         planted = self.planted.isoformat(' ') if self.planted else None
-        return f'GardenPlot[{self.plot} @ {planted}, {self._data[:-8].hex(" ", -4)}]'
+        return (
+            f'<GardenPlot[{self.plot} @ {planted}, {self.seed} + {self.fertilizer} (watered: {self.water})]'
+            f'({self._data[:-8].hex(" ", -4)})>'
+        )
 
     __serializable__ = __repr__
 

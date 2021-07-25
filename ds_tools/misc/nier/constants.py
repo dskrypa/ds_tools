@@ -489,3 +489,28 @@ LEVEL_TO_EXP = [
 ]
 
 CHARACTERS = ['NieR (Young)', 'NieR (Prologue)', 'NieR (Old)', 'NieR (Gestalt)', 'Kainé']
+
+PLANTS = [
+    'Tomato Seed',              # 0
+    'Eggplant Seed',            # 1 (unconfirmed)
+    'Bell Pepper Seed',         # 2 (unconfirmed)
+    'Bean Seed',                # 3
+    'Pumpkin Seed',             # 4 (unconfirmed)
+    'Watermelon Seed',          # 5
+    'Melon Seed',               # 6
+    'Gourd Seed',               # 7
+    'Wheat Seedling',           # 8
+    'Rice Plant Seedling',      # 9
+    'Dahlia Bulb',              # 10 (unconfirmed)
+    'Tulip Bulb',               # 11 (unconfirmed)
+    'Freesia Bulb',             # 12 (unconfirmed)
+    'Red Moonflower Seed',      # 13
+    'Gold Moonflower Seed',     # 14
+    'Peach Moonflower Seed',    # 15
+    'Pink Moonflower Seed',     # 16 (unconfirmed)
+    'Blue Moonflower Seed',     # 17
+    'Indigo Moonflower Seed',   # 18
+    'White Moonflower Seed',    # 19 (unconfirmed)
+]
+
+FERTILIZER = ['None', 'Speed Fertilizer', 'Flowering Fertilizer', 'Bounty Fertilizer']

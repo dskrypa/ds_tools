@@ -102,8 +102,8 @@ Garden_fields = [
     'plot_2x0', 'plot_2x1', 'plot_2x2', 'plot_2x3', 'plot_2x4',
 ]
 
-GardenPlot_struct = Struct('16s 7s x')
-GardenPlot_fields = ['unknown', 'Time']
+GardenPlot_struct = Struct('B 3s B 3s B 7s 7s x')
+GardenPlot_fields = ['Seed', 'unk1', 'Fertilizer', 'unk2', 'Water', 'unk3', 'Time']
 
 Savefile_struct = Struct(
     'I 32s II 32s' 'iii fff' 'i 8s i 12s II' 'IIII 8s'
