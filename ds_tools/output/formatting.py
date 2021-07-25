@@ -7,6 +7,7 @@ Output formatting functions
 import logging
 import math
 from collections import OrderedDict
+from struct import iter_unpack
 from typing import Union, Mapping, Sized, Iterable, Container
 
 from .color import colored
@@ -183,7 +184,9 @@ def bullet_list(data, bullet='-', indent=2, sort=True):
     return '\n'.join(fmt.format(line) for line in data)
 
 
-def to_hex_and_str(pre, data: bytes, encoding: str = 'utf-8', fill: int = 0) -> str:
+def to_hex_and_str(
+    pre, data: bytes, encoding: str = 'utf-8', fill: int = 0, struct: str = None, pad: bool = False
+) -> str:
     """
     Format the given bytes to appear similar to the format used by xxd.  Intended to be called for each line - splitting
     the data into the amount to appear on each line should be done before calling this function.
@@ -192,6 +195,8 @@ def to_hex_and_str(pre, data: bytes, encoding: str = 'utf-8', fill: int = 0) -> 
     :param data: The binary data to be converted
     :param encoding: Encoding to use for the str portion
     :param fill: Ensure hex fills the amount of space that would be required for this many bytes
+    :param struct: Interpret contents as an array of the given struct format character
+    :param pad: Pad the string portion to ensure alignment when escaped characters are found
     :return: String containing both the hex and str representations
     """
     try:
@@ -203,9 +208,18 @@ def to_hex_and_str(pre, data: bytes, encoding: str = 'utf-8', fill: int = 0) -> 
         to_hex_and_str._replacements = replacements = str.maketrans(repl_map | {'\r': '\\r', '\n': '\\n', '\t': '\\t'})
 
     as_hex = data.hex(' ', 4)
+    if pad:
+        esc = {'\r', '\n', '\t'}
+        as_str = ''.join(c if c in esc else f' {c}' for c in data.decode(encoding, 'replace')).translate(replacements)
+    else:
+        as_str = data.decode(encoding, 'replace').translate(replacements)
     if fill:
         if (to_fill := fill * 2 + (fill // 4) - 1 - len(as_hex)) > 0:
             as_hex += ' ' * to_fill
+        if to_fill := fill * (1 + int(pad)) - len(as_str):
+            as_str += ' ' * to_fill
 
-    as_str = data.decode(encoding, 'replace').translate(replacements)
+    if struct:
+        from_struct = [v for vals in iter_unpack(struct, data) for v in vals]
+        return f'{pre} {as_hex}  |  {as_str}  |  {from_struct}'
     return f'{pre} {as_hex}  |  {as_str}'
