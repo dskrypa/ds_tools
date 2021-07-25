@@ -29,7 +29,7 @@ class PermissiveJSONEncoder(json.JSONEncoder):
             try:
                 return o.decode('utf-8')
             except UnicodeDecodeError:
-                return b64encode(o).decode('utf-8')
+                return o.hex(' ', -4)
         elif isinstance(o, datetime):
             return o.strftime('%Y-%m-%d %H:%M:%S %Z')
         elif isinstance(o, date):
@@ -62,13 +62,18 @@ def prep_for_yaml(obj):
     elif isinstance(obj, (list, tuple, map, ValuesView)):
         return [prep_for_yaml(v) for v in obj]
     elif isinstance(obj, bytes):
-        return obj.decode('utf-8')
+        try:
+            return obj.decode('utf-8')
+        except UnicodeDecodeError:
+            return obj.hex(' ', -4)
     elif isinstance(obj, datetime):
         return obj.strftime('%Y-%m-%d %H:%M:%S %Z')
     elif isinstance(obj, date):
         return obj.strftime('%Y-%m-%d')
     elif isinstance(obj, (type, timedelta)):
         return str(obj)
+    elif hasattr(obj, '__serializable__'):
+        return obj.__serializable__()
     else:
         return obj
 

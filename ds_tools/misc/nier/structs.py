@@ -4,6 +4,7 @@ from struct import Struct
 from ...core.itertools import partitioned
 from .constants import WORDS
 
+# region Item Structs
 Recovery_struct = Struct('BBB18sBBBBBBBB2sBsB')
 Recovery_fields = [
     'Medicinal Herb', 'Health Salve', 'Recovery Potion', 'unk', 'Strength Drop', 'Strength Capsule', 'Magic Drop',
@@ -92,17 +93,39 @@ Weapons_fields = [
     'The Devil Queen', 'Sunrise', 'Spear of the Usurper', 'Dragoon Lance', "Captain's Holy Spear", 'Virtuous Dignity'
 ]
 
-Savefile_struct = Struct('I32sII32siiifffi8si12sIIIIII8sIIII12si34s7s50s10s25s5s125s80s176s24s168s24s264sd4s51s225s16I312s4I168s3I1104sI34304sI12s')
+# endregion
+
+Garden_struct = Struct('24s24s24s24s24s24s24s24s24s24s24s24s24s24s24s')
+Garden_fields = [
+    'plot_0x0', 'plot_0x1', 'plot_0x2', 'plot_0x3', 'plot_0x4',
+    'plot_1x0', 'plot_1x1', 'plot_1x2', 'plot_1x3', 'plot_1x4',
+    'plot_2x0', 'plot_2x1', 'plot_2x2', 'plot_2x3', 'plot_2x4',
+]
+
+GardenPlot_struct = Struct('16s 7s x')
+GardenPlot_fields = ['unknown', 'Time']
+
+Savefile_struct = Struct(
+    'I 32s II 32s' 'iii fff' 'i 8s i 12s II' 'IIII 8s'
+    'IIII 12s' 'i 34s 7s 50s 10s 25s 5s 125s 80s 176s' '24s 168s 24s 264s d 4s' '51s 225s 16I 312s 4I 168s 3I'
+    '412s 360s 332s' 'I' '1326s 7s 32971s' 'I 12s'
+)
+
 Savefile_fields = [
     'Corruptness', 'Map', 'Spawn', 'Character', 'Name',
-    'Health', 'Health Kaine', 'Health Emil',
-    'Magic', 'Magic Kaine', 'Magic Emil',
+    'Health', 'Health Kaine', 'Health Emil', 'Magic', 'Magic Kaine', 'Magic Emil',
     'Level', 'unk3', 'XP', 'unk4', 'Order Kaine', 'Order Emil',
     'Active Weapon', 'Selected One Handed Sword', 'Selected Two Handed Sword', 'Selected Spear', 'unk5',
+
     'Left Bumper', 'Right Bumper', 'Left Trigger', 'Right Trigger', 'unk6',
     'Money', 'Recovery', 'unk7', 'Cultivation', 'unk8', 'Fishing', 'unk9', 'Raw Materials', 'Key Items', 'unk10',
     'Documents', 'unk11', 'Maps', 'unk12', 'Total Play Time', 'unk13',
-    'Weapons', 'unk14', 'Quests', 'unk15', 'Words', 'unk16', 'Tutorials', 'unk17', 'Quest', 'unk18', 'Checksum', 'unk19'
+    'Weapons', 'unk14', 'Quests', 'unk15', 'Words', 'unk16', 'Tutorials',
+
+    'unk17a', 'Garden', 'unk17b',
+    'Quest',
+    'unk18a', 'Time', 'unk18b',
+    'Checksum', 'unk19'
 ]
 
 GAMEDATA_struct = Struct('33120s37472s37472s37472s149888s')
@@ -117,7 +140,11 @@ FIELD_STRUCT_MAP = {
     'Documents': (Documents_struct, Documents_fields),
     'Maps': (Maps_struct, Maps_fields),
     'Weapons': (Weapons_struct, Weapons_fields),
+    'Garden': (Garden_struct, Garden_fields),
+    'GardenPlot': (GardenPlot_struct, GardenPlot_fields),
 }
+
+Time = Struct('HBBBBB')
 
 
 class IterIntFlag(IntFlag):

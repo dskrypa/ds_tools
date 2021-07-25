@@ -221,11 +221,14 @@ def to_hex_and_str(
             as_str += ' ' * to_fill
 
     if struct:
-        from_struct = []
-        for i in range(offset, len(data), calcsize(struct)):
-            try:
-                from_struct.extend(unpack_from(struct, data, i))
-            except StructError:
-                pass
+        if struct is repr:
+            from_struct = data
+        else:
+            from_struct = []
+            for i in range(offset, len(data), calcsize(struct)):
+                try:
+                    from_struct.extend(unpack_from(struct, data, i))
+                except StructError:
+                    pass
         return f'{pre} {as_hex}  |  {as_str}  |  {from_struct}'
     return f'{pre} {as_hex}  |  {as_str}'

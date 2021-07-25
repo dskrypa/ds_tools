@@ -8,20 +8,22 @@ Based on https://github.com/Acurisu/NieR-Replicant-ver.1.22474487139/blob/main/E
 
 import json
 import logging
+from datetime import datetime
+from difflib import unified_diff
 from functools import cached_property
 from pathlib import Path
 from typing import Union, Optional
 
-from tz_aware_dt.utils import format_duration
+from ...core.serialization import yaml_dump
 from ...caching.mixins import DictAttrProperty, ClearableCachedPropertyMixin
 from ...output.color import colored
 from ...output.formatting import to_hex_and_str
 from ...output.printer import PseudoJsonEncoder
 from ...utils.diff import unified_byte_diff
-from .constants import ABILITIES, CHARACTERS, ONE_HANDED_SWORDS, TWO_HANDED_SWORDS, SPEARS
+from .constants import ABILITIES, CHARACTERS, ONE_HANDED_SWORDS, TWO_HANDED_SWORDS, SPEARS, MAP_ZONE_MAP
 from .exceptions import UnpackError
 from .struct_parts import Savefile as _Savefile
-from .structs import FIELD_STRUCT_MAP, GAMEDATA_struct, Savefile_struct, WORD_FLAGS
+from .structs import FIELD_STRUCT_MAP, GAMEDATA_struct, Savefile_struct, WORD_FLAGS, Time
 
 __all__ = ['Gamedata', 'SaveFile']
 log = logging.getLogger(__name__)
@@ -45,12 +47,14 @@ class Gamedata:
     def __getitem__(self, slot: int):
         return self.slots[slot]
 
+    def __iter__(self):
+        yield from self.slots
+
 
 class SaveFile(ClearableCachedPropertyMixin):
     character = DictAttrProperty('processed', 'Character')
     name = DictAttrProperty('processed', 'Name')
     level = DictAttrProperty('processed', 'Level')
-    play_time = DictAttrProperty('processed', 'Total Play Time', type=format_duration)
 
     def __init__(self, data: bytes, slot: int):
         self._slot = slot
@@ -58,7 +62,10 @@ class SaveFile(ClearableCachedPropertyMixin):
 
     def __repr__(self):
         name = self.character if self.name.lower() in self.character.lower() else f'{self.name} ({self.character})'
-        return f'<SaveFile#{self._slot}[{name}, Lv.{self.level}, play time={self.play_time}]>'
+        return (
+            f'<SaveFile#{self._slot}[{name}, Lv.{self.level} @ {self.location}][{self.play_time}]'
+            f'[{self.time.isoformat(" ")}]>'
+        )
 
     def __getitem__(self, key: str):
         try:
@@ -93,6 +100,16 @@ class SaveFile(ClearableCachedPropertyMixin):
         return self.data['Corruptness'] == 200
 
     @cached_property
+    def play_time(self):
+        hours, seconds = divmod(int(self['Total Play Time']), 3600)
+        minutes, seconds = divmod(seconds, 60)
+        return f'{hours:01d}:{minutes:02d}:{seconds:02d}'
+
+    @cached_property
+    def time(self):
+        return datetime(*Time.unpack(self.data['Time']))
+
+    @cached_property
     def processed(self):
         data = {}
         for key, val in self.data.items():
@@ -117,9 +134,16 @@ class SaveFile(ClearableCachedPropertyMixin):
 
         data['Character'] = CHARACTERS[data['Character']]
         data['Words'] = [w.name for group, group_enum in zip(data['Words'], WORD_FLAGS) for w in group_enum(group)]
+        data['Time'] = datetime(*Time.unpack(data['Time'])).isoformat(' ')
+        data['Garden'] = {k: GardenPlot(k, v) for k, v in data['Garden'].items()}
         return data
 
-    def diff(self, other: 'SaveFile', max_len: Optional[int] = 30):
+    @cached_property
+    def location(self):
+        loc_part = '_'.join(self['Map'].split('_')[1:3])
+        return MAP_ZONE_MAP.get(loc_part, self['Map'])
+
+    def diff(self, other: 'SaveFile', max_len: Optional[int] = 30, per_line: int = 20):
         found_difference = False
         for key, own_val in self.data.items():
             other_val = other.data[key]
@@ -129,8 +153,20 @@ class SaveFile(ClearableCachedPropertyMixin):
                     print(f'--- {self}')
                     print(f'+++ {other}')
 
-                if max_len and isinstance(own_val, bytes) and len(own_val) > max_len:
-                    unified_byte_diff(own_val, other_val, lineterm=key)
+                if (own_processed := self[key]) != own_val:
+                    print(colored(f'@@ {key} @@', 6))
+                    a, b = yaml_dump(own_processed).splitlines(), yaml_dump(other[key]).splitlines()
+                    for i, line in enumerate(unified_diff(a, b, n=2, lineterm='')):
+                        if line.startswith('+'):
+                            if i > 1:
+                                print(colored(line, 2))
+                        elif line.startswith('-'):
+                            if i > 1:
+                                print(colored(line, 1))
+                        elif not line.startswith('@@ '):
+                            print(line)
+                elif max_len and isinstance(own_val, bytes) and len(own_val) > max_len:
+                    unified_byte_diff(own_val, other_val, lineterm=key, struct=repr, per_line=per_line)
                 else:
                     print(colored(f'@@ {key} @@', 6))
                     print(colored(f'- {own_val}', 1))
@@ -181,6 +217,29 @@ class SaveFile(ClearableCachedPropertyMixin):
                     val = json.dumps(val, sort_keys=True, indent=4, cls=PseudoJsonEncoder)
                 print(f'{colored(key, 14)}: {val}')
                 last_was_view = False
+
+
+class GardenPlot:
+    def __init__(self, plot: str, data: bytes):
+        self.plot = plot
+        self._data = data
+
+    @cached_property
+    def data(self):
+        struct, fields = FIELD_STRUCT_MAP['GardenPlot']
+        data = dict(zip(fields, struct.unpack(self._data)))
+        data['Time'] = Time.unpack(data['Time'])
+        return data
+
+    @cached_property
+    def planted(self):
+        return datetime(*self.data['Time']) if self.data['Time'][0] else None
+
+    def __repr__(self):
+        planted = self.planted.isoformat(' ') if self.planted else None
+        return f'GardenPlot[{self.plot} @ {planted}, {self._data[:-8].hex(" ", -4)}]'
+
+    __serializable__ = __repr__
 
 
 def weapon_name(index: int):

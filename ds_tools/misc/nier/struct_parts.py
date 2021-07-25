@@ -438,11 +438,39 @@ Savefile = {
     "Words": ["array", "uint32", 4],
     "unk16": ["skip", 168],
     "Tutorials": ["array", "uint32", 3],
-    "unk17": ["skip", 1104],
+
+    # "unk17": ["skip", 1104],
+    "unk17a": ["skip", 412],
+    'Garden': 'Garden',  # 360
+    "unk17b": ["skip", 332],
+
     "Quest": "uint32",
-    "unk18": ["skip", 0x8600],
+
+    # "unk18": ["skip", 0x8600],
+    "unk18a": ["skip", 1326],
+    'Time': ["string0", 7],
+    "unk18b": ["skip", 32971],
+
     "Checksum": "uint32",
     "unk19": ["skip", 0xc],
+}
+
+Garden = {
+    'plot_0x0': ["string0", 24],
+    'plot_0x1': ["string0", 24],
+    'plot_0x2': ["string0", 24],
+    'plot_0x3': ["string0", 24],
+    'plot_0x4': ["string0", 24],
+    'plot_1x0': ["string0", 24],
+    'plot_1x1': ["string0", 24],
+    'plot_1x2': ["string0", 24],
+    'plot_1x3': ["string0", 24],
+    'plot_1x4': ["string0", 24],
+    'plot_2x0': ["string0", 24],
+    'plot_2x1': ["string0", 24],
+    'plot_2x2': ["string0", 24],
+    'plot_2x3': ["string0", 24],
+    'plot_2x4': ["string0", 24],
 }
 
 GAMEDATA = {
@@ -462,6 +490,7 @@ parts = {
     'Documents': Documents,
     'Maps': Maps,
     'Weapons': Weapons,
+    'Garden': Garden,
     'Savefile': Savefile,
     'GAMEDATA': GAMEDATA,
 }
