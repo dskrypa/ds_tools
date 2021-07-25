@@ -7,7 +7,7 @@ Output formatting functions
 import logging
 import math
 from collections import OrderedDict
-from struct import iter_unpack
+from struct import calcsize, unpack_from, error as StructError
 from typing import Union, Mapping, Sized, Iterable, Container
 
 from .color import colored
@@ -185,7 +185,7 @@ def bullet_list(data, bullet='-', indent=2, sort=True):
 
 
 def to_hex_and_str(
-    pre, data: bytes, encoding: str = 'utf-8', fill: int = 0, struct: str = None, pad: bool = False
+    pre, data: bytes, *, encoding: str = 'utf-8', fill: int = 0, struct: str = None, offset: int = 0, pad: bool = False
 ) -> str:
     """
     Format the given bytes to appear similar to the format used by xxd.  Intended to be called for each line - splitting
@@ -196,6 +196,7 @@ def to_hex_and_str(
     :param encoding: Encoding to use for the str portion
     :param fill: Ensure hex fills the amount of space that would be required for this many bytes
     :param struct: Interpret contents as an array of the given struct format character
+    :param offset: Offset to apply before processing contents as a struct array
     :param pad: Pad the string portion to ensure alignment when escaped characters are found
     :return: String containing both the hex and str representations
     """
@@ -207,7 +208,7 @@ def to_hex_and_str(
         repl_map = {c: '.' for c in map(chr, range(sys.maxunicode + 1)) if category(c) == 'Cc'}
         to_hex_and_str._replacements = replacements = str.maketrans(repl_map | {'\r': '\\r', '\n': '\\n', '\t': '\\t'})
 
-    as_hex = data.hex(' ', 4)
+    as_hex = data.hex(' ', -4)
     if pad:
         esc = {'\r', '\n', '\t'}
         as_str = ''.join(c if c in esc else f' {c}' for c in data.decode(encoding, 'replace')).translate(replacements)
@@ -220,6 +221,11 @@ def to_hex_and_str(
             as_str += ' ' * to_fill
 
     if struct:
-        from_struct = [v for vals in iter_unpack(struct, data) for v in vals]
+        from_struct = []
+        for i in range(offset, len(data), calcsize(struct)):
+            try:
+                from_struct.extend(unpack_from(struct, data, i))
+            except StructError:
+                pass
         return f'{pre} {as_hex}  |  {as_str}  |  {from_struct}'
     return f'{pre} {as_hex}  |  {as_str}'

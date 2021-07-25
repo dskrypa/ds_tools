@@ -165,15 +165,15 @@ class SaveFile(ClearableCachedPropertyMixin):
                 print(colored('\n{}  {}  {}'.format('=' * 30, key, '=' * 30), 14))
                 self.view(key, per_line, hide_empty, **kwargs)
 
-    def pprint(self, **kwargs):
-        skip = {'Quests', 'Tutorials'}
+    def pprint(self, unknowns: bool = False, **kwargs):
         last_was_view = False
         for key in self.data:
             val = self[key]
-            if isinstance(val, bytes) or (isinstance(val, list) and all(isinstance(v, int) for v in val) and key not in skip):
-                print(colored('\n{}  {}  {}'.format('=' * 30, key, '=' * 30), 14))
-                self.view(key, **kwargs)
-                last_was_view = True
+            if isinstance(val, bytes):
+                if unknowns or not key.startswith('unk'):
+                    print(colored('\n{}  {}  {}'.format('=' * 30, key, '=' * 30), 14))
+                    self.view(key, **kwargs)
+                    last_was_view = True
             else:
                 if last_was_view:
                     print()
