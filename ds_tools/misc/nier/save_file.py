@@ -144,7 +144,7 @@ class SaveFile(ClearableCachedPropertyMixin):
         loc_part = '_'.join(self['Map'].split('_')[1:3])
         return MAP_ZONE_MAP.get(loc_part, self['Map'])
 
-    def diff(self, other: 'SaveFile', max_len: Optional[int] = 30, per_line: int = 20):
+    def diff(self, other: 'SaveFile', max_len: Optional[int] = 30, per_line: int = 20, byte_diff: bool = False):
         found_difference = False
         for key, own_val in self.data.items():
             other_val = other.data[key]
@@ -154,7 +154,7 @@ class SaveFile(ClearableCachedPropertyMixin):
                     print(f'--- {self}')
                     print(f'+++ {other}')
 
-                if (own_processed := self[key]) != own_val:
+                if not byte_diff and (own_processed := self[key]) != own_val:
                     print(colored(f'@@ {key} @@', 6))
                     a, b = yaml_dump(own_processed).splitlines(), yaml_dump(other[key]).splitlines()
                     for i, line in enumerate(unified_diff(a, b, n=2, lineterm='')):
@@ -242,7 +242,7 @@ class GardenPlot(ClearableCachedPropertyMixin):
         data = {
             'Seed': PLANTS[seed] if len(PLANTS) >= self.data['Seed'] else None,
             'Fertilizer': FERTILIZER[self.data['Fertilizer']],
-            'Water': bool(self.data['Water']),
+            'Water': bool(self.data['Water']),  # TODO: Stage 1 = 0x1, Stage 2 = 0x3
         }
         return data
 

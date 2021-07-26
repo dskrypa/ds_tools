@@ -4,6 +4,7 @@ Slightly modified versions of https://github.com/Acurisu/NieR-Replicant-ver.1.22
 """
 
 import logging
+import re
 from typing import Union
 
 log = logging.getLogger(__name__)
@@ -557,3 +558,43 @@ def make_structs():
         # print(f'class {name}:')
         # print(f'    _struct = Struct({as_struct!r})')
         # print(f'    _fields = {list(data.keys())}')
+
+
+TYPE_CONSTRUCT_MAP = {
+    'uint8': 'Int8ul',
+    'int32': 'Int32sl',
+    'uint32': 'Int32ul',
+    'double': 'Float64l',
+    'float32': 'Float32l',
+    'skip': 'Bytes',
+    # 'skip': 'c',
+    'string0': 'PaddedString',
+}
+
+
+def to_construct(name: str, data: dict[str, Union[str, list[Union[str, int]]]]):
+    to_call = {'PaddedString', 'Bytes'}
+    parts = []
+    for orig_key, value in data.items():
+        basic_key = orig_key.replace(' ', '_').lower()
+        key = re.sub(r'\W+', '', basic_key.replace('-', '_').replace('+', '_plus'))
+        n = 1
+        if isinstance(value, str):
+            t = value
+        else:
+            if len(value) == 3:
+                _, t, n = value
+            else:
+                t, n = value
+
+        c_type = TYPE_CONSTRUCT_MAP.get(t, t)
+        suffix = f'({n})' if c_type in to_call else '' if n == 1 else f'[{n}]'
+        comment = '' if basic_key == key else f'  # {orig_key}'
+        parts.append(f"    '{key}' / {c_type}{suffix},{comment}")
+
+    return '{} = Struct(\n{}\n)\n'.format(name, '\n'.join(parts))
+
+
+def make_constructs():
+    for name, data in parts.items():
+        print(to_construct(name, data))
