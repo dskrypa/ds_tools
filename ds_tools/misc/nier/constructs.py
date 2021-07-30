@@ -1,5 +1,13 @@
 """
+Structs that represent parts of NieR Replicant ver.1.22474487139... save files.
 
+Credit for decoding most of the struct fields goes to https://github.com/Acurisu
+Most constants and original structs were translated to Python from
+https://github.com/Acurisu/NieR-Replicant-ver.1.22474487139/blob/main/Editor/src/Nier.ts
+
+Newly decoded fields in this module include time (for a given save + for each garden plot) and garden plots.
+
+:author: Doug Skrypa
 """
 
 import logging
@@ -15,8 +23,10 @@ from .constants import DOCUMENTS, KEY_ITEMS, MAPS, WORDS, CHARACTERS, PLANTS, FE
 from .constants import RAW_MATERIALS, RECOVERY, FERTILIZERS, SEEDS, CULTIVATED, BAIT, FISH, ABILITIES
 
 log = logging.getLogger(__name__)
-__all__ = ['Savefile', 'Gamedata']
+__all__ = ['Savefile', 'Gamedata', 'Plot']
 
+
+# region Helpers
 
 class DateTimeAdapter(Adapter):  # noqa
     def _decode(self, obj, context, path) -> Optional[datetime]:
@@ -74,6 +84,17 @@ class Weapon(Adapter):  # noqa
         return SPEARS.index(name) + 40
 
 
+def _struct_parts(sections, unknowns):
+    for i, (unknown, section) in enumerate(zip(unknowns, sections)):
+        yield from (v / Int8ul for v in section)
+        if unknown:
+            yield f'_unk{i}' / Bytes(unknown)
+
+# endregion
+
+# region Save Slot Fields
+
+
 DateTime = DateTimeAdapter(Struct(year=Int16ul, month=Int8ul, day=Int8ul, hour=Int8ul, minute=Int8ul, second=Int8ul))
 Character = Enum(Int32ul, **{k: i for i, k in enumerate(CHARACTERS)})
 Ability = Enum(Int32ul, **{k: i for i, k in enumerate(ABILITIES)})
@@ -93,15 +114,7 @@ Plot = Struct(
     time=DateTime,
     _unk3=Bytes(1),
 )
-Garden = Sequence(Plot[5], Plot[5], Plot[5])
-
-
-def _struct_parts(sections, unknowns):
-    for i, (unknown, section) in enumerate(zip(unknowns, sections)):
-        yield from (v / Int8ul for v in section)
-        if unknown:
-            yield f'_unk{i}' / Bytes(unknown)
-
+Garden = Sequence(RawCopy(Plot)[5], RawCopy(Plot)[5], RawCopy(Plot)[5])
 
 Recovery = Struct(*_struct_parts(RECOVERY.values(), (18, 2, 1, 0)))
 Cultivation = Struct(*_struct_parts((FERTILIZERS, SEEDS, CULTIVATED), (2, 5, 0)))
@@ -109,6 +122,7 @@ Fishing = Struct(*_struct_parts((BAIT, FISH), (7, 0)))
 RawMaterials = Struct(*_struct_parts(RAW_MATERIALS.values(), (3, 4, 5, 4, 1, 5, 1, 3, 0)))
 Weapons = Struct(*_struct_parts((SWORDS_1H, SWORDS_2H, SPEARS), (3, 10, 0)))
 
+# endregion
 
 Savefile = Struct(
     corruptness=ExprValidator(Int32ul, lambda val, ctx: val == 200),

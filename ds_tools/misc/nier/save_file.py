@@ -1,28 +1,28 @@
 """
-NieR Replicant ver.1.22474487139... Save File reader/editor.
-
-Based on https://github.com/Acurisu/NieR-Replicant-ver.1.22474487139/blob/main/Editor/src/Nier.ts
+Higher level classes for working with NieR Replicant ver.1.22474487139... save files.
 
 :author: Doug Skrypa
 """
 
 import json
 import logging
+from datetime import datetime, timedelta
 from difflib import unified_diff
 from functools import cached_property
 from pathlib import Path
 from typing import Union, Optional
 
+from construct.lib.containers import ListContainer, Container
+
 from ...core.decorate import cached_classproperty
 from ...core.serialization import yaml_dump
-from ...caching.mixins import DictAttrProperty, ClearableCachedPropertyMixin
+from ...caching.mixins import ClearableCachedPropertyMixin
 from ...output.color import colored
 from ...output.formatting import to_hex_and_str
 from ...output.printer import PseudoJsonEncoder
 from ...utils.diff import unified_byte_diff
-from .constants import MAP_ZONE_MAP, PLANTS, FERTILIZER
-from .exceptions import UnpackError
-from .constructs import Gamedata, Savefile
+from .constants import MAP_ZONE_MAP, SEED_RESULT_MAP
+from .constructs import Gamedata, Savefile, Plot
 
 __all__ = ['GameData', 'SaveFile']
 log = logging.getLogger(__name__)
@@ -32,8 +32,14 @@ class Constructed:
     def __init_subclass__(cls, construct):  # noqa
         cls._construct = construct
 
-    def __init__(self, data: bytes):
+    def __init__(self, data: bytes, parsed=None):
         self._data = data
+        self._parsed = parsed or self._construct.parse(data)
+
+    def __getattr__(self, attr: str):
+        return _clean(getattr(self._parsed, attr))
+
+    __getitem__ = __getattr__
 
     @cached_classproperty
     def _offsets_and_sizes(cls):
@@ -45,112 +51,34 @@ class Constructed:
             offset += size
         return offsets_and_sizes
 
+    def _build(self):
+        return _build(self._parsed)
+
     def raw(self, key: str) -> bytes:
         offset, size = self._offsets_and_sizes[key]
         return self._data[offset: offset + size]  # noqa
 
+    def raw_items(self):
+        for key, (offset, size) in self._offsets_and_sizes.items():
+            yield key, self._data[offset: offset + size]
 
-class GameData(Constructed, construct=Gamedata):
-    def __init__(self, data: bytes):
-        super().__init__(data)
-        self._parsed = Gamedata.parse(data)
-        self.slots = [SaveFile(slot, i) for i, slot in enumerate(self._parsed.slots, 1)]
-
-    @classmethod
-    def load(cls, path: Union[str, Path]) -> 'Gamedata':
-        with Path(path).expanduser().open('rb') as f:
-            return cls(f.read())
-
-    def save(self, path: Union[str, Path]):
-        with Path(path).expanduser().open('wb') as f:
-            f.write(Gamedata.build(self._parsed))
-
-    @property
-    def ok(self):
-        return all(f.ok for f in self.slots)
-
-    def __getitem__(self, slot: int):
-        return self.slots[slot]
-
-    def __iter__(self):
-        yield from self.slots
-
-
-class SaveFile(ClearableCachedPropertyMixin, Constructed, construct=Savefile):
-    def __init__(self, data, slot: int):
-        super().__init__(data.data)  # noqa
-        self._slot = slot
-        self.data: Savefile = data.value  # noqa
-
-    def __repr__(self):
-        name = self.character if self.name.lower() in self.character.lower() else f'{self.name} ({self.character})'
-        return (
-            f'<SaveFile#{self._slot}[{name}, Lv.{self.level} @ {self.location}][{self.play_time}]'
-            f'[{self.save_time.isoformat(" ")}]>'
-        )
-
-    def __getattr__(self, attr: str):
-        return getattr(self.data, attr)
-
-    __getitem__ = __getattr__
-
-    @property
-    def ok(self):
-        return self.data.corruptness == 200
-
-    @cached_property
-    def play_time(self):
-        hours, seconds = divmod(int(self.data.total_play_time), 3600)
-        minutes, seconds = divmod(seconds, 60)
-        return f'{hours:01d}:{minutes:02d}:{seconds:02d}'
-
-    # @cached_property
-    # def processed(self):
-    #     data = {}
-    #     for key, val in self.data.items():
-    #         if key.startswith('unk'):
-    #             continue
-    #         try:
-    #             key_struct, key_fields = FIELD_STRUCT_MAP[key]
-    #         except KeyError:
-    #             data[key] = val
-    #         else:
-    #             try:
-    #                 data[key] = dict(zip(key_fields, key_struct.unpack(val)))
-    #             except Exception as e:
-    #                 raise UnpackError(f'Unable to unpack field={key!r} in save#{self._slot}') from e
-    #
-    #     for field in ('Name', 'Map'):
-    #         data[field] = data[field].split(b'\x00', 1)[0].decode('utf-8')
-    #     for field in ('Active Weapon', 'Selected One Handed Sword', 'Selected Spear', 'Selected Two Handed Sword'):
-    #         data[field] = weapon_name(data[field])
-    #     for field in ('Right Bumper', 'Right Trigger', 'Left Bumper', 'Left Trigger'):
-    #         data[field] = ABILITIES[data[field]]
-    #
-    #     data['Character'] = CHARACTERS[data['Character']]
-    #     data['Words'] = [w.name for group, group_enum in zip(data['Words'], WORD_FLAGS) for w in group_enum(group)]
-    #     data['Time'] = datetime(*Time.unpack(data['Time'])).isoformat(' ')
-    #     data['Garden'] = {k: GardenPlot(k, v) for k, v in data['Garden'].items()}
-    #     return data
-
-    @cached_property
-    def location(self):
-        loc_part = '_'.join(self.data.map.split('_')[1:3])
-        return MAP_ZONE_MAP.get(loc_part, self.data.map)
-
-    def diff(self, other: 'SaveFile', max_len: Optional[int] = 30, per_line: int = 20, byte_diff: bool = False):
+    def diff(self, other: 'Constructed', max_len: Optional[int] = 30, per_line: int = 20, byte_diff: bool = False):
         found_difference = False
-        for key, own_val in self.data.items():
-            other_val = other.data[key]
-            if own_val != other_val:
+        for key, own_raw in self.raw_items():
+            own_val = self[key]
+            other_raw = other.raw(key)
+            if own_raw != other_raw:
                 if not found_difference:
                     found_difference = True
                     print(f'--- {self}')
                     print(f'+++ {other}')
 
-                if not byte_diff and (own_processed := self[key]) != own_val:
+                if isinstance(self, GameData) and key == 'slots':
+                    for own_slot, other_slot in zip(self.slots, other.slots):
+                        own_slot.diff(other_slot, max_len, per_line, byte_diff)
+                elif not byte_diff and own_val != own_raw and not isinstance(own_val, (float, int, str)):
                     print(colored(f'@@ {key} @@', 6))
-                    a, b = yaml_dump(own_processed).splitlines(), yaml_dump(other[key]).splitlines()
+                    a, b = yaml_dump(own_val).splitlines(), yaml_dump(other[key]).splitlines()
                     for i, line in enumerate(unified_diff(a, b, n=2, lineterm='')):
                         if line.startswith('+'):
                             if i > 1:
@@ -160,15 +88,15 @@ class SaveFile(ClearableCachedPropertyMixin, Constructed, construct=Savefile):
                                 print(colored(line, 1))
                         elif not line.startswith('@@ '):
                             print(line)
-                elif max_len and isinstance(own_val, bytes) and len(own_val) > max_len:
-                    unified_byte_diff(own_val, other_val, lineterm=key, struct=repr, per_line=per_line)
+                elif max_len and isinstance(own_raw, bytes) and len(own_raw) > max_len:
+                    unified_byte_diff(own_raw, other_raw, lineterm=key, struct=repr, per_line=per_line)
                 else:
                     print(colored(f'@@ {key} @@', 6))
                     print(colored(f'- {own_val}', 1))
-                    print(colored(f'+ {other_val}', 2))
+                    print(colored(f'+ {other[key]}', 2))
 
     def view(self, key: str, per_line: int = 40, hide_empty: Union[bool, int] = 10, **kwargs):
-        data = self.data[key]
+        data = self.raw(key)
         if isinstance(hide_empty, int):
             hide_empty = (len(data) / per_line) > hide_empty
 
@@ -191,17 +119,17 @@ class SaveFile(ClearableCachedPropertyMixin, Constructed, construct=Savefile):
             print(to_hex_and_str(offset_fmt.format(offset), line, fill=per_line, **kwargs))
 
     def view_unknowns(self, per_line: int = 40, hide_empty: Union[bool, int] = 10, **kwargs):
-        for key in self.data:
-            if key.startswith('unk'):
+        for key in self._offsets_and_sizes:
+            if key.startswith('_unk'):
                 print(colored('\n{}  {}  {}'.format('=' * 30, key, '=' * 30), 14))
                 self.view(key, per_line, hide_empty, **kwargs)
 
     def pprint(self, unknowns: bool = False, **kwargs):
         last_was_view = False
-        for key in self.data:
+        for key in self._offsets_and_sizes:
             val = self[key]
             if isinstance(val, bytes):
-                if unknowns or not key.startswith('unk'):
+                if unknowns or not key.startswith('_unk'):
                     print(colored('\n{}  {}  {}'.format('=' * 30, key, '=' * 30), 14))
                     self.view(key, **kwargs)
                     last_was_view = True
@@ -214,42 +142,133 @@ class SaveFile(ClearableCachedPropertyMixin, Constructed, construct=Savefile):
                 last_was_view = False
 
 
-# class GardenPlot(ClearableCachedPropertyMixin):
-#     seed = DictAttrProperty('processed', 'Seed')
-#     fertilizer = DictAttrProperty('processed', 'Fertilizer')
-#     water = DictAttrProperty('processed', 'Water')
-#
-#     def __init__(self, plot: str, data: bytes):
-#         self.plot = plot
-#         self._data = data
-#
-#     @cached_property
-#     def data(self):
-#         struct, fields = FIELD_STRUCT_MAP['GardenPlot']
-#         data = dict(zip(fields, struct.unpack(self._data)))
-#         data['Time'] = Time.unpack(data['Time'])
-#         return data
-#
-#     @cached_property
-#     def processed(self):
-#         seed = self.data['Seed']
-#         data = {
-#             'Seed': PLANTS[seed] if len(PLANTS) >= self.data['Seed'] else None,
-#             'Fertilizer': FERTILIZER[self.data['Fertilizer']],
-#             'Water': bool(self.data['Water']),  # TODO: Stage 1 = 0x1, Stage 2 = 0x3
-#         }
-#         return data
-#
-#     @cached_property
-#     def planted(self):
-#         return datetime(*self.data['Time']) if self.data['Time'][0] else None
-#
-#     def __repr__(self):
-#         planted = self.planted.isoformat(' ') if self.planted else None
-#         return (
-#             f'<GardenPlot[{self.plot} @ {planted}, {self.seed} + {self.fertilizer} (watered: {self.water})]'
-#             f'({self._data[:-8].hex(" ", -4)})>'
-#         )
-#
-#     __serializable__ = __repr__
+class GameData(Constructed, construct=Gamedata):
+    def __init__(self, data: bytes):
+        super().__init__(data)
+        self._parsed: Gamedata = self._construct.parse(data)
+        self.slots = [SaveFile(slot, i) for i, slot in enumerate(self._parsed.slots, 1)]
 
+    @classmethod
+    def load(cls, path: Union[str, Path]) -> 'Gamedata':
+        with Path(path).expanduser().open('rb') as f:
+            return cls(f.read())
+
+    def save(self, path: Union[str, Path]):
+        with Path(path).expanduser().open('wb') as f:
+            f.write(self._construct.build(self._build()))
+
+    @property
+    def ok(self) -> bool:
+        return all(f.ok for f in self.slots)
+
+    def __getitem__(self, slot_or_key: Union[int, str]):
+        try:
+            return self.slots[slot_or_key] if isinstance(slot_or_key, int) else getattr(self._parsed, slot_or_key)
+        except AttributeError as e:
+            raise KeyError(slot_or_key) from e
+
+    def __iter__(self):
+        yield from self.slots
+
+
+class SaveFile(ClearableCachedPropertyMixin, Constructed, construct=Savefile):
+    def __init__(self, slot, num: int):
+        super().__init__(slot.data, slot.value)
+        self._num = num
+
+    def __repr__(self):
+        name = self.character if self.name.lower() in self.character.lower() else f'{self.name} ({self.character})'
+        return (
+            f'<SaveFile#{self._num}[{name}, Lv.{self.level} @ {self.location}][{self.play_time}]'
+            f'[{self.save_time.isoformat(" ")}]>'
+        )
+
+    @property
+    def ok(self):
+        return self._parsed.corruptness == 200
+
+    @cached_property
+    def play_time(self):
+        hours, seconds = divmod(int(self._parsed.total_play_time), 3600)
+        minutes, seconds = divmod(seconds, 60)
+        return f'{hours:01d}:{minutes:02d}:{seconds:02d}'
+
+    @cached_property
+    def known_words(self):
+        return [w for w, v in self.words.items() if v]
+
+    @cached_property
+    def location(self):
+        loc_part = '_'.join(self._parsed.map.split('_')[1:3])
+        return MAP_ZONE_MAP.get(loc_part, self._parsed.map)
+
+    @cached_property
+    def garden(self):
+        return [[GardenPlot(plot, r, i) for i, plot in enumerate(row)] for r, row in enumerate(self._parsed.garden)]
+
+    def show_garden(self, func=str):
+        columns = [list(map(func, row)) for row in self.garden]
+        row_fmt = '{{:>{}s}}  {{:>{}s}}  {{:>{}s}}'.format(*(max(map(len, col)) for col in columns))
+        print('\n'.join(row_fmt.format(*row) for row in zip(*columns)))
+
+    def iter_garden_plots(self):
+        for row in self.garden:
+            yield from row
+
+    def set_plant_times(self, dt: datetime = None, hours: int = None):
+        if (dt and hours) or (not dt and not hours):
+            raise ValueError(f'set_plant_times() requires ONE of dt or hours')
+        dt = dt or (datetime.now() - timedelta(hours=hours))
+        for plot in self.iter_garden_plots():
+            if plot._parsed.seed != 255:
+                plot._parsed.time = dt
+
+
+class GardenPlot(ClearableCachedPropertyMixin, Constructed, construct=Plot):
+    def __init__(self, plot, row: int, num: int):
+        super().__init__(plot.data, plot.value)
+        self._row = row
+        self._num = num
+
+    @cached_property
+    def watered(self):
+        return ''.join('\u25cb' if v else '\u2715' for k, v in self.water.items() if k != '_flagsenum')
+
+    def __str__(self):
+        planted = self.time.isoformat(' ') if self.time else None
+        plant = SEED_RESULT_MAP.get(self.seed, self.seed)
+        plant = 'None' if plant == 255 else plant
+        fertilizer = self.fertilizer.split()[0]
+        unk = self.raw('_unk2')[-4:].hex()
+        return f'\u2039{plant} | F:{fertilizer} | W:{self.watered} | {planted} | {unk}\u203a'
+
+    def __repr__(self):
+        planted = self.time.isoformat(' ') if self.time else None
+        return (
+            f'<GardenPlot[{self._row}x{self._num} @ {planted}, {self.seed} + {self.fertilizer} (watered:'
+            f' {self.watered})]({self._data[:-8].hex(" ", -4)})>'
+        )
+
+    __serializable__ = __repr__
+
+
+def _build(obj):
+    if isinstance(obj, ListContainer):
+        return [_build(li) for li in obj]
+    elif isinstance(obj, Container):
+        if set(obj) == {'offset1', 'length', 'offset2', 'data', 'value'}:
+            return {'value': _build(obj.value)}
+        return {key: _build(val) for key, val in obj.items() if key != '_io'}
+    else:
+        return obj
+
+
+def _clean(obj):
+    if isinstance(obj, ListContainer):
+        return [_clean(li) for li in obj]
+    elif isinstance(obj, Container):
+        if set(obj) == {'offset1', 'length', 'offset2', 'data', 'value'}:
+            return _clean(obj.value)
+        return {key: _build(val) for key, val in obj.items() if key not in ('_io', '_flagsenum')}
+    else:
+        return obj
