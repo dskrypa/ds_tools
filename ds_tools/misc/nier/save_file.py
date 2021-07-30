@@ -6,6 +6,7 @@ Higher level classes for working with NieR Replicant ver.1.22474487139... save f
 
 import json
 import logging
+import shutil
 from datetime import datetime, timedelta
 from difflib import unified_diff
 from functools import cached_property
@@ -17,6 +18,7 @@ from construct.lib.containers import ListContainer, Container
 from ...core.decorate import cached_classproperty
 from ...core.serialization import yaml_dump
 from ...caching.mixins import ClearableCachedPropertyMixin
+from ...fs.paths import unique_path
 from ...output.color import colored
 from ...output.formatting import to_hex_and_str
 from ...output.printer import PseudoJsonEncoder
@@ -143,19 +145,32 @@ class Constructed:
 
 
 class GameData(Constructed, construct=Gamedata):
-    def __init__(self, data: bytes):
+    def __init__(self, data: bytes, path: Path = None):
         super().__init__(data)
+        self._path = path
         self._parsed: Gamedata = self._construct.parse(data)
         self.slots = [SaveFile(slot, i) for i, slot in enumerate(self._parsed.slots, 1)]
 
     @classmethod
     def load(cls, path: Union[str, Path]) -> 'Gamedata':
-        with Path(path).expanduser().open('rb') as f:
-            return cls(f.read())
+        path = Path(path).expanduser()
+        with path.open('rb') as f:
+            return cls(f.read(), path)
 
-    def save(self, path: Union[str, Path]):
+    def save(self, path: Union[str, Path] = None, backup: bool = True):
+        path = path or self._path
+        if not path:
+            raise ValueError(f'A path is required to save {self}')
+        if backup:
+            bkp_path = unique_path(path.parent, path.name, '.bkp')
+            log.info(f'Creating backup: {bkp_path.as_posix()}')
+            shutil.copy(path, bkp_path)
+        log.info(f'Saving {path.as_posix()}')
         with Path(path).expanduser().open('wb') as f:
             f.write(self._construct.build(self._build()))
+
+    def __repr__(self):
+        return '++'.join(map(repr, self.slots))
 
     @property
     def ok(self) -> bool:
@@ -206,9 +221,9 @@ class SaveFile(ClearableCachedPropertyMixin, Constructed, construct=Savefile):
     def garden(self):
         return [[GardenPlot(plot, r, i) for i, plot in enumerate(row)] for r, row in enumerate(self._parsed.garden)]
 
-    def show_garden(self, func=str):
+    def show_garden(self, func=str, prefix: str = ''):
         columns = [list(map(func, row)) for row in self.garden]
-        row_fmt = '{{:>{}s}}  {{:>{}s}}  {{:>{}s}}'.format(*(max(map(len, col)) for col in columns))
+        row_fmt = '{}{{:>{}s}}  {{:>{}s}}  {{:>{}s}}'.format(prefix, *(max(map(len, col)) for col in columns))
         print('\n'.join(row_fmt.format(*row) for row in zip(*columns)))
 
     def iter_garden_plots(self):
