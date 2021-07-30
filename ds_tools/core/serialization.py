@@ -5,7 +5,6 @@ Helpers for serializing Python data structures to JSON or YAML
 """
 
 import json
-from base64 import b64encode
 from collections import UserDict
 from collections.abc import Mapping, KeysView, ValuesView
 from datetime import datetime, date, timedelta
