@@ -32,20 +32,32 @@ Fishing_fields = [
 
 RawMaterials_struct = Struct('BBBB3sBBBBBBBBBBB4sBBBBBBBBB5sBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB4sBBBBBBBBBBBBBBBBBBBBBBBBBsBBBBBBBBBB5sBBBBBBBsBB3sB')
 RawMaterials_fields = [
-    'Aquatic Plant', 'Deadwood', 'Rusty Bucket', 'Empty Can', 'unk', 'Gold Ore', 'Silver Ore', 'Copper Ore', 'Iron Ore',
-    'Crystal', 'Pyrite', 'Moldavite', 'Meteorite', 'Amber', 'Fluorite', 'Clay', 'unk1', 'Berries', 'Royal Fern',
-    'Tree Branch', 'Log', 'Natural Rubber', 'Ivy', 'Lichen', 'Mushroom', 'Sap', 'unk2', 'Mutton', 'Boar Meat', 'Wool',
-    'Boar Hide', 'Wolf Hide', 'Wolf Fang', 'Giant Spider Silk', 'Bat Fang', 'Bat Wing', 'Goat Meat', 'Goat Hide',
-    'Venison', 'Rainbow Spider Silk', 'Boar Liver', 'Scorpion Claw', 'Scorpion Tail', 'Dented Metal Board',
-    'Stripped Bolt', 'Broken Lens', 'Severed Cable', 'Broken Arm', 'Broken Antenna', 'Broken Motor', 'Broken Battery',
-    'Mysterious Switch', 'Large Gear', 'Titanium Alloy', 'Memory Alloy', 'Rusted Clump', 'Machine Oil', 'unk3',
+    'Aquatic Plant', 'Deadwood', 'Rusty Bucket', 'Empty Can',
+    'unk',
+    'Gold Ore', 'Silver Ore', 'Copper Ore', 'Iron Ore', 'Crystal', 'Pyrite', 'Moldavite', 'Meteorite', 'Amber', 'Fluorite', 'Clay',
+    'unk1',
+    'Berries', 'Royal Fern', 'Tree Branch', 'Log', 'Natural Rubber', 'Ivy', 'Lichen', 'Mushroom', 'Sap',
+    'unk2',
+    'Mutton', 'Boar Meat', 'Wool', 'Boar Hide', 'Wolf Hide', 'Wolf Fang', 'Giant Spider Silk', 'Bat Fang', 'Bat Wing',
+    'Goat Meat', 'Goat Hide', 'Venison', 'Rainbow Spider Silk', 'Boar Liver', 'Scorpion Claw', 'Scorpion Tail',
+    'Dented Metal Board', 'Stripped Bolt', 'Broken Lens', 'Severed Cable', 'Broken Arm', 'Broken Antenna',
+    'Broken Motor', 'Broken Battery', 'Mysterious Switch', 'Large Gear', 'Titanium Alloy', 'Memory Alloy',
+    'Rusted Clump', 'Machine Oil',
+    'unk3',
     'Forlorn Necklace', 'Twisted Ring', 'Broken Earring', 'Pretty Choker', 'Metal Piercing', 'Subdued Bracelet',
     'Technical Guide', 'Grubby Book', 'Thick Dictionary', 'Closed Book', 'Used Coloring Book', 'Old Schoolbook',
     'Dirty Bag', 'Flashy Hat', 'Leather Gloves', 'Silk Handkerchief', 'Leather Boots', 'Complex Machine',
     'Elaborate Machine', 'Simple Machine', 'Stopped Clock', 'Broken Wristwatch', 'Rusty Kitchen Knife', 'Broken Saw',
-    'Dented Metal Bat', 'unk4', 'Shell', 'Gastropod', 'Bivalve', 'Seaweed', 'Empty Bottle', 'Driftwood', 'Pearl',
-    'Black Pearl', 'Crab', 'Starfish', 'unk5', 'Sea Turtle Egg', 'Broken Pottery', 'Desert Rose', 'Giant Egg',
-    'Damascus Steel', 'Eagle Egg', 'Chicken Egg', 'unk6', 'Mouse Tail', 'Lizard Tail', 'unk7', 'Deer Antler'
+    'Dented Metal Bat',
+    'unk4',
+    'Shell', 'Gastropod', 'Bivalve', 'Seaweed', 'Empty Bottle', 'Driftwood', 'Pearl',
+    'Black Pearl', 'Crab', 'Starfish',
+    'unk5',
+    'Sea Turtle Egg', 'Broken Pottery', 'Desert Rose', 'Giant Egg', 'Damascus Steel', 'Eagle Egg', 'Chicken Egg',
+    'unk6',
+    'Mouse Tail', 'Lizard Tail',
+    'unk7',
+    'Deer Antler',
 ]
 
 KeyItems_struct = Struct('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB')
@@ -87,10 +99,13 @@ Weapons_struct = Struct('BBBBBBBBBBBBBBBBB3sBBBBBBBBBB10sBBBBBBBBBBB')
 Weapons_fields = [
     'Nameless Blade', 'Phoenix Dagger', 'Beastbain', "Labyrinth's Whisper", "Fool's Embrace", 'Ancient Overlord',
     'Rebirth', "Earth Wyrm's Claw", 'Nirvana Dagger', 'Moonrise', 'Blade of Treachery', 'Lily-Leaf Sword', 'Faith',
-    'Iron Pipe', "Kainé's Sword", 'Virtuous Contract', 'Cruel Oath', 'unk', 'Kusanagi', 'Phoenix Sword', 'Beastlord',
-    "Labyrinth's Song", "Fool's Lament", 'Fang of the Twins', 'Axe of Beheading', 'Vile Axe', 'Iron Will',
-    'Virtuous Treaty', 'unk1', 'Transience', 'Phoenix Spear', 'Beastcurse', "Labyrinth's Shout", "Fool's Accord",
-    'The Devil Queen', 'Sunrise', 'Spear of the Usurper', 'Dragoon Lance', "Captain's Holy Spear", 'Virtuous Dignity'
+    'Iron Pipe', "Kainé's Sword", 'Virtuous Contract', 'Cruel Oath',
+    'unk',
+    'Kusanagi', 'Phoenix Sword', 'Beastlord', "Labyrinth's Song", "Fool's Lament", 'Fang of the Twins',
+    'Axe of Beheading', 'Vile Axe', 'Iron Will', 'Virtuous Treaty',
+    'unk1',
+    'Transience', 'Phoenix Spear', 'Beastcurse', "Labyrinth's Shout", "Fool's Accord", 'The Devil Queen', 'Sunrise',
+    'Spear of the Usurper', 'Dragoon Lance', "Captain's Holy Spear", 'Virtuous Dignity'
 ]
 
 # endregion

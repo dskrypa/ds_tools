@@ -1,4 +1,4 @@
-MAPS = [
+MAP_ZONES = [
     'NO_IMAGE_AREA_00',
     'B_CASTLE_FIELD_01', 'B_CASTLE_FIELD_011_D', 'B_CASTLE_FIELD_02', 'B_CASTLE_FIELD_021_D', 'B_CASTLE_FIELD_03', 'B_CASTLE_FIELD_04', 'B_CASTLE_FIELD_041_D', 'B_CASTLE_FIELD_10',
     'B_CENTER_LIBRARY_01', 'B_CENTER_LIBRARY_011_D',
@@ -66,7 +66,7 @@ ABILITIES = [
     'Dark Execution',
 ]
 
-ONE_HANDED_SWORDS = [
+SWORDS_1H = [
     "Nameless Blade",
     "Phoenix Dagger",
     "Beastbain",
@@ -86,7 +86,7 @@ ONE_HANDED_SWORDS = [
     "Cruel Oath",
 ]
 
-TWO_HANDED_SWORDS = [
+SWORDS_2H = [
     "Kusanagi",
     "Phoenix Sword",
     "Beastlord",
@@ -204,39 +204,23 @@ WORDS = [
     'Pah', 'Paha', 'Pahi', 'Paho', 'Pahu', 'Pahal', 'Pahil', 'Pahol', 'Pahul', 'Pahuloth',
     'Var', 'Vara', 'Vari', 'Varo', 'Varu', 'Varal', 'Varil', 'Varol', 'Varul', 'Varuloth',
     'Geb', 'Geba', 'Gebi', 'Gebo', 'Gebu', 'Gebal', 'Gebil', 'Gebol', 'Gebul', 'Gebuloth',
-    'Ul', 'Ula', 'Uli', 'Ulo', 'Ulu', 'Ulal', 'Ulil', 'Ulol', 'Ulul', 'Ululoth',
+    'Ul', 'Ula',
+
+    'Uli', 'Ulo', 'Ulu', 'Ulal', 'Ulil', 'Ulol', 'Ulul', 'Ululoth',
     'Hod', 'Hoda', 'Hodi', 'Hodo', 'Hodu', 'Hodal', 'Hodil', 'Hodol', 'Hodul', 'Hoduloth',
     'Bes', 'Besa', 'Besi', 'Beso', 'Besu', 'Besal', 'Besil', 'Besol', 'Besul', 'Besuloth',
     '', '', '', '',
+
     'Lug', 'Lugir', 'Luges', 'Lugka', 'Lugza', 'Lugira', 'Lugesra', 'Lugkarr', 'Lugzarr', 'Lugzarken',
     'Ot', 'Otir', 'Otes', 'Otka', 'Otza', 'Otira', 'Otesra', 'Otkarr', 'Otzarr', 'Otzarken',
     'Mah', 'Mahir', 'Mahes', 'Mahka', 'Mahza', 'Mahira', 'Mahesra', 'Mahkarr', 'Mahzarr', 'Mahzarken',
-    'Ashur', 'Ashurir', 'Ashures', 'Ashurka', 'Ashurza', 'Ashurira', 'Ashuresra', 'Ashurkarr', 'Ashurzarr', 'Ashurzarken',
+    'Ashur', 'Ashurir',
+
+    'Ashures', 'Ashurka', 'Ashurza', 'Ashurira', 'Ashuresra', 'Ashurkarr', 'Ashurzarr', 'Ashurzarken',
     'Kon', 'Konir', 'Kones', 'Konka', 'Konza', 'Konira', 'Konesra', 'Konkarr', 'Konzarr', 'Konzarken',
     'Sol', 'Solir', 'Soles', 'Solka', 'Solza', 'Solira', 'Solesra', 'Solkarr', 'Solzarr', 'Solzarken',
     'Ashurfarra',
-]
-
-WORD_GROUPS = [
-    [
-        'Pah', 'Paha', 'Pahi', 'Paho', 'Pahu', 'Pahal', 'Pahil', 'Pahol', 'Pahul', 'Pahuloth',
-        'Var', 'Vara', 'Vari', 'Varo', 'Varu', 'Varal', 'Varil', 'Varol', 'Varul', 'Varuloth',
-        'Geb', 'Geba', 'Gebi', 'Gebo', 'Gebu', 'Gebal', 'Gebil', 'Gebol', 'Gebul', 'Gebuloth',
-        'Ul', 'Ula',
-
-        'Uli', 'Ulo', 'Ulu', 'Ulal', 'Ulil', 'Ulol', 'Ulul', 'Ululoth',
-        'Hod', 'Hoda', 'Hodi', 'Hodo', 'Hodu', 'Hodal', 'Hodil', 'Hodol', 'Hodul', 'Hoduloth',
-        'Bes', 'Besa', 'Besi', 'Beso', 'Besu', 'Besal', 'Besil', 'Besol', 'Besul', 'Besuloth',
-    ],
-    [
-        'Lug', 'Lugir', 'Luges', 'Lugka', 'Lugza', 'Lugira', 'Lugesra', 'Lugkarr', 'Lugzarr', 'Lugzarken',
-        'Ot', 'Otir', 'Otes', 'Otka', 'Otza', 'Otira', 'Otesra', 'Otkarr', 'Otzarr', 'Otzarken',
-        'Mah', 'Mahir', 'Mahes', 'Mahka', 'Mahza', 'Mahira', 'Mahesra', 'Mahkarr', 'Mahzarr', 'Mahzarken',
-        'Ashur', 'Ashurir', 'Ashures', 'Ashurka', 'Ashurza', 'Ashurira', 'Ashuresra', 'Ashurkarr', 'Ashurzarr', 'Ashurzarken',
-        'Kon', 'Konir', 'Kones', 'Konka', 'Konza', 'Konira', 'Konesra', 'Konkarr', 'Konzarr', 'Konzarken',
-        'Sol', 'Solir', 'Soles', 'Solka', 'Solza', 'Solira', 'Solesra', 'Solkarr', 'Solzarr', 'Solzarken',
-        'Ashurfarra',
-    ],
+    '', '', '',
 ]
 
 QUESTS = [
@@ -512,5 +496,129 @@ PLANTS = [
     'Indigo Moonflower Seed',   # 18
     'White Moonflower Seed',    # 19 (unconfirmed)
 ]
-
 FERTILIZER = ['None', 'Speed Fertilizer', 'Flowering Fertilizer', 'Bounty Fertilizer']
+
+FERTILIZERS = ['Speed Fertilizer', 'Flowering Fertilizer', 'Bounty Fertilizer']
+SEEDS = [
+    'Pumpkin Seed',
+    'Watermelon Seed',
+    'Melon Seed',
+    'Gourd Seed',
+    'Tomato Seed',
+    'Eggplant Seed',
+    'Bell Pepper Seed',
+    'Bean Seed',
+    'Wheat Seedling',
+    'Rice Plant Seedling',
+    'Dahlia Bulb',
+    'Tulip Bulb',
+    'Freesia Bulb',
+    'Red Moonflower Seed',
+    'Gold Moonflower Seed',
+    'Peach Moonflower Seed',
+    'Pink Moonflower Seed',
+    'Blue Moonflower Seed',
+    'Indigo Moonflower Seed',
+    'White Moonflower Seed',
+]
+CULTIVATED = [
+    'Pumpkin',
+    'Watermelon',
+    'Melon',
+    'Gourd',
+    'Tomato',
+    'Eggplant',
+    'Bell Pepper',
+    'Beans',
+    'Wheat',
+    'Rice',
+    'Dahlia',
+    'Tulip',
+    'Freesia',
+    'Red Moonflower',
+    'Gold Moonflower',
+    'Peach Moonflower',
+    'Pink Moonflower',
+    'Blue Moonflower',
+    'Indigo Moonflower',
+    'White Moonflower',
+]
+
+BAIT = ['Lugworm', 'Earthworm', 'Lure']
+FISH = [
+    'Sardine', 'Carp', 'Blowfish', 'Bream', 'Shark', 'Blue Marlin', 'Dunkleosteus', 'Rainbow Trout', 'Black Bass',
+    'Giant Catfish', 'Royal Fish', 'Hyneria', 'Sandfish', 'Rhizodont', 'Shaman Fish'
+]
+
+DOCUMENTS = [
+    'Look at the Sky', "Don't try so hard", 'My Birthday!', 'Love Letter 2/12/3340', 'Love Letter 3/28/3340',
+    'Love Letter 5/1/3340', 'Letter from the Mayor', "The Postman's Request", "The Postman's Thanks",
+    'Invitation from a Stranger', 'Grand Re-Opening Notice', 'Wedding Invitation', 'Letter from the King',
+    'Underground Research Record 1', 'Underground Research Record 2', 'Underground Research Record 3',
+    'Underground Research Record 4', 'Letter to the Chief', 'Letter to two Brothers Weaponry', 'Letter to Popola',
+    'Letter to a Faraway Lover', 'Letter from Emil', 'Weapon Upgrade Notice', 'Letter from the Chief of The Aerie'
+]
+KEY_ITEMS = [
+    'Moon Key', 'Star Key', 'Light Key', 'Darkness Key', 'Fine Flour', 'Coarse Flour', 'Perfume Bottle',
+    "Postman's Parcel", "Lover's Letter", 'Water Filter', 'Royal Compass', 'Vapor Moss', 'Valley Spider Silk',
+    'Animal Guidebook', 'Ore Guidebook', 'Plant Guidebook', 'Red Book', 'Blue Book', "Old Lady's Elixir",
+    "Old Lady's Elixir+", 'Parcel for The Aerie', 'Parcel for Seafront', 'Cookbook', 'Parcel for Facade', "Max's Herbs",
+    'Drifting Cargo', 'Drifting Cargo 2', 'Drifting Cargo 3', 'Drifting Cargo 4', 'Old Package', 'Mermaid Tear',
+    'Mandrake Leaf', 'Energizer', 'Toad Oil', 'Sleep-B-Gone', 'Antidote', 'Gold Bracelet', 'Elite Kitchen Knife',
+    'Elevator Parts', 'Dirty Treasure Map', 'Restored Treasure Map', 'Jade Hair Ornament', 'Employee List',
+    'Small Safe', 'Safe Key', 'Great Tree Root', 'Eye of Power', 'Ribbon', "Yonah's Ribbon", 'Bronze Key', 'Brass Key',
+    'Boar Tusk', 'Pressed Freesia', 'Potted Freesia', 'Freesia (Delivery)', 'Pile of Junk', 'Old Gold Coin',
+    'Marked Map', 'AA Keycard', 'KA Keycard', 'SA Keycard', 'TA Keycard', 'NA Keycard', 'HA Keycard', 'MA Keycard',
+    'YA Keycard', 'RA Keycard', 'WA Keycard', "Cultivator's Handbook", 'Red Bag', 'Lantern', 'Empty Lantern',
+    'Hold Key', 'Passageway Key', 'Goat Key', 'Lizard Key', 'Unlocking Procedure Memo', 'Red Jewel?', 'Red Flowers',
+    'Apples'
+]
+MAPS = [
+    'World Map', '_unknown_0', '_unknown_1', 'Central Village Map', 'Lost Shrine Area Map', 'Lost Shrine Map',
+    'The Aerie Map', 'Seafront Map', 'Desert Map', 'Facade Map', 'Barren Temple Map', 'Junk Heap Area Map',
+    'Junk Heap Map', 'Manor Map', 'Forest of Myth Map', 'Underground Facility Map', '_unknown_2',
+    'Shadowlord\'s Castle Map', '_unknown_3', 'Northern Plains Map', 'Southern Plains Map', 'Eastern Road Map',
+    'Beneath the Forest of Myth Map', 'Toyko Map',
+]
+
+RAW_MATERIALS = {
+    'fished': ['Aquatic Plant', 'Deadwood', 'Rusty Bucket', 'Empty Can'],
+    'minerals': [
+        'Gold Ore', 'Silver Ore', 'Copper Ore', 'Iron Ore',
+        'Crystal', 'Pyrite', 'Moldavite', 'Meteorite', 'Amber', 'Fluorite', 'Clay'
+    ],
+    'plants': ['Berries', 'Royal Fern', 'Tree Branch', 'Log', 'Natural Rubber', 'Ivy', 'Lichen', 'Mushroom', 'Sap'],
+    'scavenged': [
+        'Mutton', 'Boar Meat', 'Wool', 'Boar Hide', 'Wolf Hide', 'Wolf Fang', 'Giant Spider Silk', 'Bat Fang',
+        'Bat Wing', 'Goat Meat', 'Goat Hide', 'Venison', 'Rainbow Spider Silk', 'Boar Liver', 'Scorpion Claw',
+        'Scorpion Tail', 'Dented Metal Board', 'Stripped Bolt', 'Broken Lens', 'Severed Cable', 'Broken Arm',
+        'Broken Antenna', 'Broken Motor', 'Broken Battery', 'Mysterious Switch', 'Large Gear', 'Titanium Alloy',
+        'Memory Alloy', 'Rusted Clump', 'Machine Oil',
+    ],
+    'shades': [
+        'Forlorn Necklace', 'Twisted Ring', 'Broken Earring', 'Pretty Choker', 'Metal Piercing', 'Subdued Bracelet',
+        'Technical Guide', 'Grubby Book', 'Thick Dictionary', 'Closed Book', 'Used Coloring Book', 'Old Schoolbook',
+        'Dirty Bag', 'Flashy Hat', 'Leather Gloves', 'Silk Handkerchief', 'Leather Boots', 'Complex Machine',
+        'Elaborate Machine', 'Simple Machine', 'Stopped Clock', 'Broken Wristwatch', 'Rusty Kitchen Knife',
+        'Broken Saw', 'Dented Metal Bat',
+    ],
+    'seafront': [
+        'Shell', 'Gastropod', 'Bivalve', 'Seaweed', 'Empty Bottle', 'Driftwood', 'Pearl', 'Black Pearl', 'Crab',
+        'Starfish',
+    ],
+    'misc': [
+        'Sea Turtle Egg', 'Broken Pottery', 'Desert Rose', 'Giant Egg', 'Damascus Steel', 'Eagle Egg', 'Chicken Egg'
+    ],
+    'tails': ['Mouse Tail', 'Lizard Tail'],
+    'antlers': ['Deer Antler'],
+}
+
+RECOVERY = {
+    'health': ['Medicinal Herb', 'Health Salve', 'Recovery Potion'],
+    'stats': [
+        'Strength Drop', 'Strength Capsule', 'Magic Drop', 'Magic Capsule', 'Defense Drop', 'Defense Capsule',
+        'Spirit Drop', 'Spirit Capsule',
+    ],
+    'status': ['Antidotal Weed'],
+    'misc': ['Smelling Salts'],
+}

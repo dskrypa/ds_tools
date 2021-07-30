@@ -20,7 +20,7 @@ from ...output.color import colored
 from ...output.formatting import to_hex_and_str
 from ...output.printer import PseudoJsonEncoder
 from ...utils.diff import unified_byte_diff
-from .constants import ABILITIES, CHARACTERS, ONE_HANDED_SWORDS, TWO_HANDED_SWORDS, SPEARS, MAP_ZONE_MAP
+from .constants import ABILITIES, CHARACTERS, SWORDS_1H, SWORDS_2H, SPEARS, MAP_ZONE_MAP
 from .constants import PLANTS, FERTILIZER
 from .exceptions import UnpackError
 from .struct_parts import Savefile as _Savefile
@@ -86,15 +86,8 @@ class SaveFile(ClearableCachedPropertyMixin):
         return data
 
     @cached_property
-    def checksum(self):
-        a, b, c, d = 0, 0, 0, 0
-        buf = memoryview(self._data)
-        for i in range(0, 0xC20, 8):
-            a += buf[i] + buf[i + 4]
-            b += buf[i + 1] + buf[i + 5]
-            c += buf[i + 2] + buf[i + 6]
-            d += buf[i + 3] + buf[i + 7]
-        return a + b + c + d
+    def checksum(self) -> int:
+        return sum(memoryview(self._data)[:3104])
 
     @property
     def ok(self):
@@ -262,7 +255,7 @@ class GardenPlot(ClearableCachedPropertyMixin):
 
 def weapon_name(index: int):
     if index < 20:
-        return ONE_HANDED_SWORDS[index]
+        return SWORDS_1H[index]
     elif index < 40:
-        return TWO_HANDED_SWORDS[index - 20]
+        return SWORDS_2H[index - 20]
     return SPEARS[index - 40]

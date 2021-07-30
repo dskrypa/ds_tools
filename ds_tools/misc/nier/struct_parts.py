@@ -590,7 +590,8 @@ def to_construct(name: str, data: dict[str, Union[str, list[Union[str, int]]]]):
         c_type = TYPE_CONSTRUCT_MAP.get(t, t)
         suffix = f'({n})' if c_type in to_call else '' if n == 1 else f'[{n}]'
         comment = '' if basic_key == key else f'  # {orig_key}'
-        parts.append(f"    '{key}' / {c_type}{suffix},{comment}")
+        # parts.append(f"    '{key}' / {c_type}{suffix},{comment}")
+        parts.append(f"    {key}={c_type}{suffix},{comment}")
 
     return '{} = Struct(\n{}\n)\n'.format(name, '\n'.join(parts))
 
