@@ -9,13 +9,13 @@ from typing import Optional
 
 from construct import Struct, Int8ul, Int32sl, Int32ul, Float64l, Float32l, PaddedString, Bytes, Int16ul
 from construct import Enum, FlagsEnum, Sequence, Adapter, BitStruct, Flag, BitsSwapped, ExprValidator, Subconstruct
-from construct import ValidationError
+from construct import ValidationError, RawCopy
 
 from .constants import DOCUMENTS, KEY_ITEMS, MAPS, WORDS, CHARACTERS, PLANTS, FERTILIZER, SWORDS_1H, SWORDS_2H, SPEARS
-from .constants import RAW_MATERIALS, RECOVERY, FERTILIZERS, SEEDS, CULTIVATED, BAIT, FISH
+from .constants import RAW_MATERIALS, RECOVERY, FERTILIZERS, SEEDS, CULTIVATED, BAIT, FISH, ABILITIES
 
 log = logging.getLogger(__name__)
-__all__ = ['Savefile', 'GameData']
+__all__ = ['Savefile', 'Gamedata']
 
 
 class DateTimeAdapter(Adapter):  # noqa
@@ -51,8 +51,32 @@ class Checksum(Subconstruct):  # noqa
         return self.subcon._build(self._get_checksum(stream), stream, context, path)
 
 
+class Weapon(Adapter):  # noqa
+    def __init__(self):
+        super().__init__(Int32ul)
+
+    def _decode(self, index: int, context, path) -> Optional[str]:
+        if index < 20:
+            return SWORDS_1H[index]
+        elif index < 40:
+            return SWORDS_2H[index - 20]
+        return SPEARS[index - 40]
+
+    def _encode(self, name: Optional[str], context, path) -> int:
+        try:
+            return SWORDS_1H.index(name)
+        except ValueError:
+            pass
+        try:
+            return SWORDS_2H.index(name) + 20
+        except ValueError:
+            pass
+        return SPEARS.index(name) + 40
+
+
 DateTime = DateTimeAdapter(Struct(year=Int16ul, month=Int8ul, day=Int8ul, hour=Int8ul, minute=Int8ul, second=Int8ul))
 Character = Enum(Int32ul, **{k: i for i, k in enumerate(CHARACTERS)})
+Ability = Enum(Int32ul, **{k: i for i, k in enumerate(ABILITIES)})
 Words = BitsSwapped(BitStruct(*((w if w else f'_word_{i}') / Flag for i, w in enumerate(WORDS))))
 
 KeyItems = Struct(*(v / Int8ul for v in KEY_ITEMS))
@@ -99,9 +123,9 @@ Savefile = Struct(
     xp=Int32sl,
     _unk4=Bytes(12),
     order_kaine=Int32ul, order_emil=Int32ul,
-    active_weapon=Int32ul, selected_sword_1h=Int32ul, selected_sword_2h=Int32ul, selected_spear=Int32ul,
+    active_weapon=Weapon(), selected_sword_1h=Weapon(), selected_sword_2h=Weapon(), selected_spear=Weapon(),
     _unk5=Bytes(8),
-    left_bumper=Int32ul, right_bumper=Int32ul, left_trigger=Int32ul, right_trigger=Int32ul,
+    left_bumper=Ability, right_bumper=Ability, left_trigger=Ability, right_trigger=Ability,
     _unk6=Bytes(12),
     money=Int32sl,
     recovery=Recovery,
@@ -137,4 +161,4 @@ Savefile = Struct(
     _unk19=Bytes(12),
 )
 
-GameData = Struct(_unk=Bytes(33120), slots=Savefile[3], _unk2=Bytes(149888))
+Gamedata = Struct(_unk=Bytes(33120), slots=RawCopy(Savefile)[3], _unk2=Bytes(149888))
