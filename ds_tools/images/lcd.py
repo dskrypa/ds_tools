@@ -159,3 +159,126 @@ def _num_cell_points(width: int, height: int, slim: bool = False):
         'low_right': [(me, mid_c + d), (out_e, ms + d), (out_e, out_s - d), (in_e, in_s - d), (in_e, ms + d)],
         'low_center': [(in_w + d, in_s), (in_e - d, in_s), (out_e - d, out_s), (out_w + d, out_s)],
     }
+
+
+# =====================================================================================================================
+
+
+class LCDCell:
+    def __init__(
+        self,
+        center: tuple[float, float],
+        length: float,
+        thickness: float,
+        horizontal: bool,
+        corners: tuple[bool, bool, bool, bool],
+    ):
+        # corners=(left, right) + side=[top|bottom] may be simpler
+        self.center = center
+        self.length = length
+        self.thickness = thickness
+        self.corners = corners  # NW, NE, SE, SW
+        self.d = 2 if length < 80 else 3 if length < 400 else 4
+        self.points = self._points_horizontal if horizontal else self._points_vertical
+
+    def _points_horizontal(self):
+        NW, NE, SE, SW = self.corners
+        if (NW and SW) or (NE and SE):
+            raise ValueError(f'Invalid corner combination {NW=} {NE=} {SE=} {SW=}')
+
+        d = self.d
+        x, y = self.center
+        dy = self.thickness / 2
+        top = y - dy
+        bottom = y + dy
+        dx = self.length / 2 - dy
+
+        points = []
+        if not NW and not SW:
+            points.append((x + d - dx + dy, bottom))
+            points.append((x + d - dx, y))
+            points.append((x + d - dx + dy, top))
+        elif NW:
+            points.append((x + d - dx + dy, bottom))
+            points.append((x + d - dx - dy, top))
+        elif SW:
+            points.append((x + d - dx - dy, bottom))
+            points.append((x + d - dx + dy, top))
+
+        if not NE and not SE:
+            points.append((x - d + dx - dy, top))
+            points.append((x - d + dx, y))
+            points.append((x - d + dx - dy, bottom))
+        elif NE:
+            points.append((x - d + dx + dy, top))
+            points.append((x - d + dx - dy, bottom))
+        elif SE:
+            points.append((x - d + dx - dy, top))
+            points.append((x - d + dx + dy, bottom))
+        return points
+
+    def _points_vertical(self):
+        NW, NE, SE, SW = self.corners
+        if (NW and NE) or (SW and SE):
+            raise ValueError(f'Invalid corner combination {NW=} {NE=} {SE=} {SW=}')
+
+        d = self.d
+        x, y = self.center
+        dx = self.thickness / 2
+        left = x - dx
+        right = x + dx
+        dy = self.length / 2 - dx
+
+        points = []
+        if not NW and not NE:
+            points.append((left, y + d - dy + dx))
+            points.append((x, y + d - dy))
+            points.append((right, y + d - dy + dx))
+        elif NW:
+            points.append((left, y + d - dy - dx))
+            points.append((right, y + d - dy + dx))
+        elif NE:
+            points.append((left, y + d - dy + dx))
+            points.append((right, y + d - dy - dx))
+
+        if not SW and not SE:
+            points.append((right, y - d + dy - dx))
+            points.append((x, y - d + dy))
+            points.append((left, y - d + dy - dx))
+        elif SW:
+            points.append((right, y - d + dy - dx))
+            points.append((left, y - d + dy + dx))
+        elif SE:
+            points.append((right, y - d + dy + dx))
+            points.append((left, y - d + dy - dx))
+        return points
+
+
+def eight(width: int, slim: bool = False):
+    xu, yu = (8, 14) if slim else (4, 7)
+    height = width * 7 // 4
+    thickness = width / xu
+    y = height / 7
+    y1 = y * 2
+    y2 = y * 5
+    x1 = thickness / 2
+    x2 = width - x1
+    mid = width / 2
+
+    cells = [
+        LCDCell((x1, y1), width, thickness, False, (True, False, False, False)),
+        LCDCell((mid, x1), width, thickness, True, (True, True, False, False)),
+        LCDCell((x2, y1), width, thickness, False, (False, True, False, False)),
+
+        LCDCell((mid, height / 2), width, thickness, True, (False, False, False, False)),
+
+        LCDCell((x2, y2), width, thickness, False, (False, False, True, False)),
+        LCDCell((mid, height - x1), width, thickness, True, (False, False, True, True)),
+        LCDCell((x1, y2), width, thickness, False, (False, False, False, True)),
+    ]
+
+    image = Image.new('RGBA', (width, height), '#000000')
+    draw = Draw(image, 'RGBA')
+    for cell in cells:
+        draw.polygon(cell.points(), fill='#FF0000')
+    return image
