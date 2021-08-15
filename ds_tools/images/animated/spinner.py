@@ -45,7 +45,7 @@ class Spinner:
         clockwise: bool = True,
     ):
         self.rgb = color_to_rgb(color)
-        self.size = (size, size) if isinstance(size, int) else size
+        self.size = (size, size) if isinstance(size, int) else size  # width, height
         self.inner_radius = int(min(self.size) / 2 * 0.7)
         self.spoke_radius = self.inner_radius // 3
         self.bg = color_to_rgb(bg) if bg else (*find_unused_color([self.rgb]), 0)
