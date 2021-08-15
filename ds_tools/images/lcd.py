@@ -38,6 +38,13 @@ class LCDClock:
         self.char_size = (char_width, char_width * 7 // 4)  # width, height
         self.bg = color_to_rgb(bg) if bg else (*find_unused_color([self.rgb]), 0)
 
+    @classmethod
+    def time_size(cls, char_width: int, seconds: bool = True):
+        height = char_width * 7 // 4
+        x = char_width // 4
+        full_width = char_width * (6 if seconds else 4) + x * (9 if seconds else 5)
+        return full_width, height
+
     @cached_property
     def cell_bounds(self):
         return num_cell_points(*self.char_size)
@@ -46,8 +53,7 @@ class LCDClock:
         width, height = self.char_size
         x = width // 4
         ndx = x * 5
-        full_width = width * (6 if seconds else 4) + x * (9 if seconds else 5)
-        image = Image.new('RGBA', (full_width, height), self.bg)
+        image = Image.new('RGBA', (self.time_size(width, seconds)[0], height), self.bg)
         draw = Draw(image, 'RGBA')  # type: ImageDraw
         for i, h in enumerate(divmod(dt.hour, 10)):
             self._draw_num(h, draw, ndx * i)
