@@ -173,7 +173,7 @@ class SevenSegmentDisplay:
 
     def __init__(
         self,
-        width: int,
+        width: float,
         bar: int = None,
         gap: int = None,
         *,
@@ -190,7 +190,7 @@ class SevenSegmentDisplay:
         self.bg = color_to_rgb(bg) if bg else (*find_unused_color([self.fg]), 0)
 
     # noinspection PyAttributeOutsideInit
-    def resize(self, width: int, bar: int = None, gap: int = None, bar_pct: float = None):
+    def resize(self, width: float, bar: int = None, gap: int = None, bar_pct: float = None):
         if not (bar is None) ^ (bar_pct is None) and self._bar is None and self._bar_pct is None:
             raise ValueError('One and only one of bar or bar_pct must be provided')
         if bar is not None:
@@ -210,7 +210,7 @@ class SevenSegmentDisplay:
 
     def calc_width(self, height: float) -> float:
         if self._bar_pct:
-            return height / (2 + self._bar_pct)
+            return height / (2 - self._bar_pct)
         elif self._bar:
             return (height - self._bar) / 2
 
@@ -219,7 +219,7 @@ class SevenSegmentDisplay:
         return self._width
 
     @width.setter
-    def width(self, value: int):
+    def width(self, value: float):
         if self._bar_pct:
             self.bar = ceil(value * self._bar_pct)
         if value < (min_width := self._bar * (4 if self._bar % 2 == 0 else 5)):
