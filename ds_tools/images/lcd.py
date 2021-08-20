@@ -212,7 +212,7 @@ class SevenSegmentDisplay:
         if self._bar_pct:
             return height / (2 - self._bar_pct)
         elif self._bar:
-            return (height - self._bar) / 2
+            return (height + self._bar) / 2
 
     @property
     def width(self):
