@@ -68,3 +68,9 @@ def view_unpacked(data: bytes, *, split: int = 4, sep: str = ' ', offset: int = 
                 pass
         unpacked[name] = from_struct
     return unpacked
+
+
+def bit_unpack_bools(byte: int) -> tuple[bool, ...]:
+    if not 0 <= byte < 256:
+        raise ValueError(f'Unsupported value={byte!r} - expected an integer between 0-255 (inclusive)')
+    return tuple(not not byte & bit for bit in (1, 2, 4, 8, 16, 32, 64, 128))

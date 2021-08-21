@@ -22,7 +22,6 @@ PolygonPoints = tuple[tuple[float, float], ...]
 
 class SevenSegmentDisplay:
     _nums = (0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f)    # 0-9 with bit order: gfedcba
-    _bits = tuple(1 << i for i in range(7))                                 # abcdefg
 
     def __init__(
         self,
@@ -42,14 +41,26 @@ class SevenSegmentDisplay:
         self.fg = color_to_rgb(fg)
         self.bg = color_to_rgb(bg) if bg else (*find_unused_color([self.fg]), 0)
 
+    def __repr__(self) -> str:
+        return (
+            f'<{self.__class__.__name__}(width={self.width}, height={self.height}, bar={self.bar},'
+            f' bar_pct={self.bar_pct}, gap={self.gap}, corners={self.corners}, fg={self.fg}, bg={self.bg})>'
+        )
+
     # noinspection PyAttributeOutsideInit
-    def resize(self, width: int, bar: int = None, gap: int = None, bar_pct: float = None):
+    def resize(self, width: int = None, bar: int = None, gap: int = None, bar_pct: float = None):
         if not (bar is None) ^ (bar_pct is None) and self._bar is None and self._bar_pct is None:
             raise ValueError('One and only one of bar or bar_pct must be provided')
+        if width is None:
+            if not hasattr(self, '_width'):
+                raise ValueError('Missing required argument: width')
+            width = self._width
         if bar is not None:
             self._bar_pct = None
             self.bar = bar
         elif bar_pct is not None:
+            if not 0 < bar_pct <= 0.25:
+                raise ValueError(f'Invalid {bar_pct=:.1%} - must be between 1-25%, inclusive')
             self._bar_pct = bar_pct
         self.width = width
         bar = self._bar
@@ -88,6 +99,10 @@ class SevenSegmentDisplay:
         if value < 3:
             raise ValueError(f'Invalid bar={value} size - minimum value is 3 px')
         self._bar = value
+
+    @property
+    def bar_pct(self) -> float:
+        return self._bar_pct
 
     def time_size(self, seconds: bool = True):
         nums, colons = (6, 2) if seconds else (4, 1)
@@ -132,7 +147,7 @@ class SevenSegmentDisplay:
             segments = self._nums[num]
         except IndexError as e:
             raise ValueError(f'Invalid {num=} - only positive integers between 0-9 (inclusive) are supported') from e
-        for seg in self._bits:
+        for seg in (1, 2, 4, 8, 16, 32, 64):
             if seg & segments:
                 func = self._vertical_segment if seg & 0x36 else self._horizontal_segment
                 yield func(seg, x_offset, y_offset)  # noqa
@@ -198,11 +213,13 @@ class SevenSegmentDisplay:
 
     def colon_points(self, x_offset: float = 0, y_offset: float = 0) -> Iterator[PolygonPoints]:
         bar = self._bar
+        sh = self.seg_height
+        hb = bar / 2
         x0 = x_offset
         x1 = x0 + bar
-        y0 = y_offset + 2 * bar
+        y0 = y_offset + 2 * sh / 3 - hb
         y1 = y0 + bar
-        y2 = y1 + 3 * bar
+        y2 = y_offset + sh + sh / 3 + hb
         y3 = y2 + bar
         yield (x0, y0), (x1, y0), (x1, y1), (x0, y1)
         yield (x0, y2), (x1, y2), (x1, y3), (x0, y3)
