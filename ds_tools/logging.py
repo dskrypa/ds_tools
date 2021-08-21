@@ -441,14 +441,12 @@ class DatetimeFormatter(logging.Formatter):
     _local_tz = get_localzone()
 
     def formatTime(self, record, datefmt=None):
-        # noinspection PyUnresolvedReferences
-        dt = self._local_tz.localize(datetime.fromtimestamp(record.created))
+        dt = datetime.fromtimestamp(record.created, self._local_tz)
         if datefmt:
-            s = dt.strftime(datefmt)
+            return dt.strftime(datefmt)
         else:
             t = dt.strftime(self.default_time_format)
-            s = self.default_msec_format % (t, record.msecs)
-        return s
+            return self.default_msec_format % (t, record.msecs)
 
 
 class ColorLogFormatter(DatetimeFormatter):
