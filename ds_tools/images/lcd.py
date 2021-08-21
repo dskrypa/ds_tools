@@ -7,7 +7,7 @@ LCD Clock numbers
 import logging
 from datetime import datetime
 from math import ceil
-from typing import Iterator
+from typing import Iterator, Optional
 
 from PIL import Image
 from PIL.Image import Image as PILImage
@@ -48,33 +48,36 @@ class SevenSegmentDisplay:
         )
 
     # noinspection PyAttributeOutsideInit
-    def resize(self, width: int = None, bar: int = None, gap: int = None, bar_pct: float = None):
+    def resize(
+        self, width: int = None, bar: int = None, gap: int = None, bar_pct: float = None, preserve_height: bool = False
+    ):
         if not (bar is None) ^ (bar_pct is None) and self._bar is None and self._bar_pct is None:
             raise ValueError('One and only one of bar or bar_pct must be provided')
-        if width is None:
-            if not hasattr(self, '_width'):
-                raise ValueError('Missing required argument: width')
-            width = self._width
+        elif width is None and bar is None and gap is None and bar_pct is None:
+            return
+        elif width and preserve_height:
+            raise ValueError('Cannot preserve height when setting a new width value')
+        elif width is None and not hasattr(self, '_width'):
+            raise ValueError('Missing required argument: width')
         if bar is not None:
             self._bar_pct = None
             self.bar = bar
         elif bar_pct is not None:
-            if not 0 < bar_pct <= 0.25:
-                raise ValueError(f'Invalid {bar_pct=:.1%} - must be between 1-25%, inclusive')
-            self._bar_pct = bar_pct
+            self.bar_pct = bar_pct
+        if width is None:
+            width = self.calc_width(self.height) if preserve_height else self._width
         self.width = width
         bar = self._bar
-        if gap is None:
-            gap = ceil(bar / 10)
-        if gap < 1:
-            raise ValueError(f'Invalid {gap=} size (min: 1px)')
         self.height = 2 * width - bar
         self.gap = gap
         self.seg_height = width - bar
 
     def calc_width(self, height: float) -> int:
-        if self._bar_pct:
-            return int(height / (2 - self._bar_pct))
+        if bar_pct := self._bar_pct:
+            width = ceil(height / (2 - bar_pct))
+            if 2 * width - ceil(width * bar_pct) <= height:
+                return width
+            return width - 1
         elif self._bar:
             return (height + self._bar) // 2
 
@@ -101,8 +104,26 @@ class SevenSegmentDisplay:
         self._bar = value
 
     @property
-    def bar_pct(self) -> float:
+    def bar_pct(self) -> Optional[float]:
         return self._bar_pct
+
+    @bar_pct.setter
+    def bar_pct(self, value: float):
+        if not 0 < value <= 0.25:
+            raise ValueError(f'Invalid bar_pct={value:.1%} - must be between 1-25%, inclusive')
+        self._bar_pct = value
+
+    @property
+    def gap(self) -> int:
+        return self._gap
+
+    @gap.setter
+    def gap(self, value: int):
+        if value is None:
+            value = ceil(self.bar / 10)
+        if value < 1:
+            raise ValueError(f'Invalid gap={value} size (min: 1px)')
+        self._gap = value  # noqa
 
     def time_size(self, seconds: bool = True):
         nums, colons = (6, 2) if seconds else (4, 1)
