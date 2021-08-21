@@ -125,11 +125,16 @@ class SevenSegmentDisplay:
             raise ValueError(f'Invalid gap={value} size (min: 1px)')
         self._gap = value  # noqa
 
-    def time_size(self, seconds: bool = True):
+    def time_size(self, seconds: bool = True, width: int = None):
         nums, colons = (6, 2) if seconds else (4, 1)
         spaces = nums + colons - 1
-        full_width = nums * self._width + colons * self._bar + spaces * self._bar
-        return full_width, self.height
+        if width:
+            bar = ceil(width * self._bar_pct) if self._bar_pct else self._bar
+            height = 2 * width - bar
+        else:
+            width, height, bar = self._width, self.height, self._bar
+        full_width = nums * width + colons * bar + spaces * bar
+        return full_width, height
 
     def draw_time(self, dt: datetime = None, seconds: bool = True) -> PILImage:
         dt = dt or datetime.now()
