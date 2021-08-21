@@ -127,7 +127,7 @@ class SevenSegmentDisplay:
 
     def time_size(self, seconds: bool = True, width: int = None):
         nums, colons = (6, 2) if seconds else (4, 1)
-        spaces = nums + colons - 1
+        spaces = nums + colons
         if width:
             bar = ceil(width * self._bar_pct) if self._bar_pct else self._bar
             height = 2 * width - bar
