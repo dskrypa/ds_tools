@@ -74,3 +74,20 @@ def bit_unpack_bools(byte: int) -> tuple[bool, ...]:
     if not 0 <= byte < 256:
         raise ValueError(f'Unsupported value={byte!r} - expected an integer between 0-255 (inclusive)')
     return tuple(not not byte & bit for bit in (1, 2, 4, 8, 16, 32, 64, 128))
+
+
+def bit_unpack_bool_arrays(data: bytes) -> list[bool]:
+    try:
+        cache = bit_unpack_bool_arrays.cache
+    except AttributeError:
+        bit_unpack_bool_arrays.cache = cache = {}
+
+    unpacked = []
+    extend = unpacked.extend
+    for b in data:
+        try:
+            extend(cache[b])
+        except KeyError:
+            cache[b] = expanded = tuple(not not b & bit for bit in (1, 2, 4, 8, 16, 32, 64, 128))
+            extend(expanded)
+    return unpacked

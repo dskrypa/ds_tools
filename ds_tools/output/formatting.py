@@ -6,9 +6,10 @@ Output formatting functions
 
 import logging
 import math
+import re
 from collections import OrderedDict
 from struct import calcsize, unpack_from, error as StructError
-from typing import Union, Mapping, Sized, Iterable, Container
+from typing import Union, Mapping, Sized, Iterable, Container, Iterator
 
 from .color import colored
 
@@ -18,25 +19,13 @@ __all__ = [
     'format_tiered',
     'pseudo_yaml',
     'readable_bytes',
-    'to_bytes',
-    'to_str',
     'short_repr',
     'bullet_list',
     'to_hex_and_str',
+    'collapsed_ranges_str',
+    'collapse_ranges',
 ]
 log = logging.getLogger(__name__)
-
-
-def to_bytes(data):
-    if isinstance(data, str):
-        return data.encode('utf-8')
-    return data
-
-
-def to_str(data):
-    if isinstance(data, bytes):
-        return data.decode('utf-8')
-    return data
 
 
 def short_repr(obj, when_gt=100, parts=45, sep='...', func=repr, containers_only=True):
@@ -232,3 +221,66 @@ def to_hex_and_str(
                     pass
         return f'{pre} {as_hex}  |  {as_str}  |  {from_struct}'
     return f'{pre} {as_hex}  |  {as_str}'
+
+
+def collapsed_ranges_str(values: Iterable[str], sep: str = '...', delim: str = ', ') -> str:
+    """
+    Collapse the given values using :func:`collapse_ranges` and return a string that represents the sorted results.
+    Standalone values are included verbatim, and ranges are collapsed to show the first and last values with the
+    specified separator.
+
+    :param values: Strings with common prefixes ending with integers
+    :param sep: The separator to use between the first and last element in each range (default: ``...``)
+    :param delim: The delimiter between ranges / standalone values (default: ``, ``)
+    :return: String representing the given values
+    """
+    return delim.join(start if start == end else f'{start}{sep}{end}' for start, end in collapse_ranges(values))
+
+
+def collapse_ranges(values: Iterable[str]) -> list[tuple[str, str]]:
+    try:
+        match_suffix = collapse_ranges._match_suffix
+    except AttributeError:
+        collapse_ranges._match_suffix = match_suffix = re.compile(r'^(.*?)(\d+)$').match
+
+    groups = []
+    with_suffix = {}
+    for value in values:
+        if m := match_suffix(value):
+            prefix, suffix = m.groups()
+            with_suffix[value] = (prefix, int(suffix))
+        else:
+            groups.append((value, value))
+
+    group = {}
+    last = None
+    for value, (prefix, suffix) in sorted(with_suffix.items(), key=lambda kv: kv[1]):
+        if prefix != last and group:
+            groups.extend(_collapse_ranges(group))
+            group = {}
+
+        group[value] = suffix
+        last = prefix
+
+    if group:
+        groups.extend(_collapse_ranges(group))
+
+    groups.sort()
+    return groups
+
+
+def _collapse_ranges(values: dict[str, int]) -> Iterator[tuple[str, str]]:
+    start, end, last = None, None, None
+    for value, suffix in values.items():
+        if start is None:
+            start = end = value
+        elif suffix - last == 1:
+            end = value
+        else:
+            yield start, end
+            start = end = value
+
+        last = suffix
+
+    if start is not None:
+        yield start, end

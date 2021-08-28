@@ -12,9 +12,6 @@ from subprocess import Popen, PIPE, STDOUT
 from threading import Thread
 from io import StringIO
 
-from .core.itertools import kwmerge
-from .output.formatting import to_str
-
 __all__ = ['exec_local', 'exec_via_ssh', 'tee', 'psg', 'ExternalProcessException']
 log = logging.getLogger(__name__)
 
@@ -34,50 +31,37 @@ def exec_local(*cmd, mode='capture', raise_nonzero=False, debug=False, pybuf=Fal
     :param dict env: Optional dict of env variables to include in the execution environment
     :return tuple: exit_code, stdout, stderr
     """
-    if (len(cmd) == 1) and not isinstance(cmd, str):
+    if len(cmd) == 1:
         cmd = cmd[0]
     cmd_arr = list(map(str, cmd)) if not isinstance(cmd, str) else shlex.split(cmd)
     cmd_str = ' '.join(map(str, cmd_arr))
-    log.debug('Executing: {}'.format(cmd_str))
+    log.debug(f'Executing: {cmd_str}')
 
-    proc_env = kwmerge(os.environ, env, PYTHONUNBUFFERED='1' if not pybuf else '0')
+    proc_env = dict(os.environ) | (env if env else {}) | {'PYTHONUNBUFFERED': '0' if pybuf else '1'}
 
     if mode == 'raw':
         p = Popen(cmd_arr, env=proc_env)
         stdout, stderr = None, None
-    elif mode == 'capture':
-        p = Popen(cmd_arr, stdout=PIPE, stderr=PIPE, env=proc_env)
-        stdout, stderr = p.communicate()
-    elif mode == 'combined':
-        p = Popen(cmd_arr, stdout=PIPE, stderr=STDOUT, env=proc_env)
-        stdout, stderr = p.communicate()    # stderr will be None
+    elif mode in {'capture', 'combined', 'binary'}:
+        kwargs = {'stderr': STDOUT if mode == 'combined' else PIPE, 'encoding': None if mode == 'binary' else 'utf-8'}
+        p = Popen(cmd_arr, stdout=PIPE, env=proc_env, **kwargs)
+        stdout, stderr = p.communicate()  # stderr will be None for mode=combined
     elif mode == 'tee':
-        p = Popen(cmd_arr, stdout=PIPE, stderr=PIPE, env=proc_env)
+        p = Popen(cmd_arr, stdout=PIPE, stderr=PIPE, env=proc_env, encoding='utf-8')
         outstr, errstr = StringIO(), StringIO()
         for t in [tee(p.stdout, outstr, sys.stdout), tee(p.stderr, errstr, sys.stderr)]:
             t.join()
         stdout, stderr = outstr.getvalue(), errstr.getvalue()
-    elif mode == 'binary':
-        p = Popen(cmd_arr, stdout=PIPE, stderr=PIPE, env=proc_env)
-        stdout, stderr = p.communicate()
-        exit_code = p.wait()
-        if raise_nonzero and exit_code != 0:
-            streams = {'stdout': stdout, 'stderr': stderr}
-            raise ExternalProcessException('`{}` exited with code {}'.format(cmd_str, exit_code), streams)
-        return exit_code, stdout, stderr
     else:
-        raise ValueError('Invalid exec_local output handling mode: {}'.format(mode))
+        raise ValueError(f'Invalid exec_local output handling mode: {mode}')
+
     exit_code = p.wait()
-
-    stdout = to_str(stdout)
-    stderr = to_str(stderr)
-
     if debug:
-        log.debug('`{}` exited with code {}\n\tstdout: {}\n\tstderr: {}'.format(cmd_str, exit_code, stdout, stderr))
+        log.debug(f'`{cmd_str}` exited with code {exit_code}\n\tstdout: {stdout}\n\tstderr: {stderr}')
 
     if raise_nonzero and exit_code != 0:
         streams = {'stdout': stdout, 'stderr': stderr}
-        raise ExternalProcessException('`{}` exited with code {}'.format(cmd_str, exit_code), streams)
+        raise ExternalProcessException(f'`{cmd_str}` exited with code {exit_code}', streams)
     return exit_code, stdout, stderr
 
 
@@ -102,9 +86,9 @@ def exec_via_ssh(host, *args, no_host_check=False, **kwargs):
 
 def tee(in_pipe, *out_pipes):
     def _tee(in_pipe, *out_pipes):
-        for line in iter(in_pipe.readline, b''):
+        for line in iter(in_pipe.readline, ''):
             for p in out_pipes:
-                p.write(to_str(line))
+                p.write(line)
                 if (p is sys.stdout) or (p is sys.stderr):
                     p.flush()
         in_pipe.close()

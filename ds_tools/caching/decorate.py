@@ -277,7 +277,7 @@ def disk_cached(prefix='/var/tmp/script_cache/', ext=None, date_fmt='%Y-%m-%d', 
                 except OSError as e:
                     log.debug('Error deleting old cache file {}: [{}] {}'.format(file_path, type(e).__name__, e))
 
-            # Note: rb/wb and to_str/to_bytes are used below to handle reading/writing gzip files
+            # Note: rb/wb are used below to handle reading/writing gzip files
             if os.path.exists(cache_file):
                 with open_func(cache_file, 'rb') as f:
                     return json.loads(f.read().decode('utf-8'))

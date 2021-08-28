@@ -50,7 +50,7 @@ class PseudoJQ:
         keys = []
         for k in key_list[1:]:
             if '[' in k:
-                subkeys = re.split('[\[\]]', k)
+                subkeys = re.split(r'[\[\]]', k)
                 keys.append(subkeys.pop(0))
                 if subkeys == ['', '']:
                     keys.append(cls.ALL)

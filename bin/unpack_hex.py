@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 
 def parser():
     parser = ArgParser(description='View hex data as unpacked structs')
-    parser.add_argument('data', help='A hex string')
+    parser.add_argument('data', nargs='+', help='A hex string')
     parser.add_argument('--offset', '-o', type=int, default=0, help='Offset from the beginning of the data in bytes to start struct matching')
     parser.add_argument('--endian', '-e', choices=('big', 'little', 'native'), help='Interpret values with the given endianness')
     parser.include_common_args('verbosity')
@@ -29,7 +29,7 @@ def main():
     args = parser().parse_args()
     init_logging(args.verbose, log_path=None)
 
-    data = args.data
+    data = ''.join(args.data)
     if not len(data) % 2 == 0:
         raise ValueError('Invalid data - length must be divisible by 2')
 
