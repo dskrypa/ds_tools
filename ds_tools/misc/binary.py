@@ -57,7 +57,12 @@ FORMATS = {
 
 def view_unpacked(data: bytes, *, split: int = 4, sep: str = ' ', offset: int = 0, endian: Endian = None):
     endian = Endian(endian or '@')
-    unpacked = {'bin': sep.join(map('{:08b}'.format, data)), 'hex': data.hex(sep, split)}
+    unpacked = {
+        'bin': sep.join(map('{:08b}'.format, data)),
+        'hex': data.hex(sep, split),
+        # 'str': data.decode('ascii', errors='replace')
+        # 'str': data.decode('utf-8', errors='replace')
+    }
     for fc, (name, width) in FORMATS.items():
         fmt = endian.value + fc
         from_struct = []
