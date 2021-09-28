@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import signal
+from getpass import getuser
 from typing import Optional, MutableMapping, Any
 
 from gunicorn.app.base import Application
@@ -66,15 +67,16 @@ class GunicornServer(FlaskServer, Application):
         :param arbiter: The Arbiter for this application
         """
         self._arbiter = arbiter
+        init_msg_base = f'Starting Flask app={self._app.name!r} on port={self._port} as user={getuser()!r}'
         if self._debug:
             configs = {k: v.value for k, v in self.cfg.settings.items()}
             log.info(
-                f'Starting Flask app={self._app.name!r} on port={self._port} with gunicorn '
+                f'{init_msg_base} with gunicorn '
                 f'config={json.dumps(configs, indent=4, sort_keys=True, cls=PseudoJsonEncoder)}',
                 extra={'color': 'cyan'}
             )
         else:
-            log.info(f'Starting Flask app={self._app.name!r} on port={self._port}', extra={'color': 'cyan'})
+            log.info(init_msg_base, extra={'color': 'cyan'})
         if self.__on_starting is not None:
             self.__on_starting(arbiter)
 
