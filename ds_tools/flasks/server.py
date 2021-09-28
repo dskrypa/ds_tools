@@ -4,9 +4,11 @@ Utilities for running Flask servers
 :author: Doug Skrypa
 """
 
+import json
 import logging
 import os
 import time
+from itertools import chain
 from uuid import uuid4
 from typing import TYPE_CHECKING, Optional, Iterable
 
@@ -19,6 +21,8 @@ if TYPE_CHECKING:
 
 from ..logging import ENTRY_FMT_DETAILED_UID, ENTRY_FMT_DETAILED_PID_UID
 from ..logging import init_logging as _init_logging
+from ..output.printer import PseudoJsonEncoder
+from .patches import patch_http_exception
 from .serialization import SerializableException
 
 __all__ = ['FlaskServer', 'init_logging']
@@ -43,14 +47,32 @@ class FlaskServer:
         self._app = app
         self._port = port
         self._host = host or '0.0.0.0'
+        self._debug = debug
 
         blueprints = list(blueprints) if blueprints else []
         blueprints.insert(0, base)
         if debug:
             blueprints.append(debug_bp)
+            patch_http_exception()
+
         for bp in blueprints:
             log.debug(f'Registering blueprint={bp.name!r} pkg={bp.import_name!r} {bp.url_prefix=!r} {bp.subdomain=!r}')
             self._app.register_blueprint(bp)
+
+        if debug:
+            attrs = ('root_path', 'static_folder', 'template_folder')
+            paths = {
+                f'<{abp.__class__.__name__}: {abp.name}>': {attr: getattr(abp, attr) for attr in attrs}
+                for abp in chain((app,), app.blueprints.values())
+            }
+            log.info(
+                f'Initializing {self!r} with app'
+                f'config={json.dumps(self._app.config, indent=4, sort_keys=True, cls=PseudoJsonEncoder)}\n'
+                f'paths={json.dumps(paths, indent=4, cls=PseudoJsonEncoder)}'
+            )
+
+    def __repr__(self):
+        return f'<{self.__class__.__name__}[{self._host}:{self._port}, app={self._app}]>'
 
     def start_server(self):
         raise NotImplementedError
@@ -124,7 +146,8 @@ def before_requests():
     qs = env.get('QUERY_STRING')
     ip = request.remote_addr
     referrer = request.referrer
-    log.info(f'Beginning request for {ip=} {user=} {method=} {path=} {qs=!r} {referrer=!r}')
+    scheme = 'ws' if 'wsgi.websocket' in env else 'http'
+    log.info(f'Beginning request for {ip=} {user=} {scheme=} {method=} {path=} {qs=!r} {referrer=!r}')
 
 
 @base.after_app_request
@@ -135,7 +158,11 @@ def after_requests(response: Response):
     path = request.path
     code = response.status_code
     size = response.content_length
-    log.info(f'Returning {code=} {duration=:.3f} s {size=} for {user=} {method=} {path=}')
+    if 'wsgi.websocket' in request.environ:
+        log.info(f'Finished websocket request {duration=:.3f} s for {user=} {path=}')
+    else:
+        log.info(f'Returning {code=} {duration=:.3f} s {size=} for {user=} {method=} {path=}')
+
     release_local(wz_local)
     return response
 

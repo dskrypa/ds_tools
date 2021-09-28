@@ -10,21 +10,21 @@ shebang and any docstrings, but before any other imports)::\n
 :author: Doug Skrypa
 """
 
+import json
 import logging
 import os
 import signal
-import sys
-from traceback import format_exc
 from typing import Optional, MutableMapping, Any
 
-from gunicorn import debug, util
 from gunicorn.app.base import Application
 from gunicorn.arbiter import Arbiter
 
-from .server import FlaskServer
+from ..output.printer import PseudoJsonEncoder
+from .server import FlaskServer, init_logging
 
 __all__ = ['GunicornServer']
 log = logging.getLogger(__name__)
+ConfigDict = Optional[MutableMapping[str, Any]]
 
 
 class GunicornServer(FlaskServer, Application):
@@ -38,10 +38,15 @@ class GunicornServer(FlaskServer, Application):
         requests.
     """
 
-    def __init__(self, *args, gunicorn_cfg: Optional[MutableMapping[str, Any]] = None, **kwargs):
+    def __init__(self, *args, gunicorn_cfg: ConfigDict = None, log_cfg: ConfigDict = None, **kwargs):
+        self._log_cfg = log_cfg
         self._cfg = gunicorn_cfg or {}
         self._cfg.setdefault('worker_class', 'gevent')
         self._cfg.setdefault('workers', 1)
+        self.__on_starting = self._cfg.get('on_starting')
+        self._cfg['on_starting'] = self._on_starting
+        if log_cfg:
+            self._cfg['post_fork'] = self._init_logging
         FlaskServer.__init__(self, *args, **kwargs)
         Application.__init__(self)
         self._arbiter = None
@@ -51,44 +56,51 @@ class GunicornServer(FlaskServer, Application):
         for key, val in self._cfg.items():
             self.cfg.set(key.lower(), val)
 
+    def _on_starting(self, arbiter: Arbiter):
+        """
+        Called by :meth:`Arbiter.start` during server initialization.  Stores a reference to the :class:`Arbiter
+        <gunicorn.arbiter.Arbiter>` so it can be used to initiate graceful shutdown programmatically.
+
+        If another ``on_starting`` function was provided at init, then it is called here.
+
+        :param arbiter: The Arbiter for this application
+        """
+        self._arbiter = arbiter
+        if self._debug:
+            configs = {k: v.value for k, v in self.cfg.settings.items()}
+            log.info(
+                f'Starting Flask app={self._app.name!r} on port={self._port} with gunicorn '
+                f'config={json.dumps(configs, indent=4, sort_keys=True, cls=PseudoJsonEncoder)}',
+                extra={'color': 'cyan'}
+            )
+        else:
+            log.info(f'Starting Flask app={self._app.name!r} on port={self._port}', extra={'color': 'cyan'})
+        if self.__on_starting is not None:
+            self.__on_starting(arbiter)
+
     def init(self, parser, opts, args):
         pass
 
     def load(self):
         return self._app
 
-    def start_server(self):
+    def _init_logging(self, arbiter, worker):
         """
-        Combined + slightly cleaned up version of gunicorn.app.base.Application and gunicorn.app.base.BaseApplication.
-        This is only done so that a ref to the Arbiter used to run the application can be stored, which is needed to
-        programmatically initiate graceful shutdown.
-        """
-        if self.cfg.check_config:
-            try:
-                self.load()
-            except BaseException:  # gunicorn used a bare except:
-                print(f'\nError while loading the application:\n{format_exc()}', file=sys.stderr, flush=True)
-                sys.exit(1)
-            sys.exit(0)
-        if self.cfg.spew:
-            debug.spew()
-        if self.cfg.daemon:
-            util.daemonize(self.cfg.enable_stdio_inheritance)
-        # set python paths
-        if self.cfg.pythonpath:
-            paths = self.cfg.pythonpath.split(",")
-            for path in paths:
-                pythonpath = os.path.abspath(path)
-                if pythonpath not in sys.path:
-                    sys.path.insert(0, pythonpath)
+        Initializes logging.  Called by gunicorn as a post-fork function.
 
-        log.info(f'Starting Flask app={self._app.name!r} on port={self._port}', extra={'color': 14})
-        self._arbiter = Arbiter(self)
-        try:
-            self._arbiter.run()
-        except RuntimeError as e:
-            print(f'\nError: {e}', file=sys.stderr, flush=True)
-            sys.exit(1)
+        Because gunicorn workers are separate processes, file logging needs to be initialized after forkingto prevent
+        a race condition on file rotation.
+
+        If ``log_path`` in the ``log_cfg`` provided to init contains ``{pid}``, then it will be replaced by the current
+        process's pid.
+        """
+        log_cfg = self._log_cfg.copy()  # noqa
+        if log_path := log_cfg.get('log_path'):
+            log_cfg['log_path'] = log_path.format(pid=os.getpid())
+        init_logging(**log_cfg)
+
+    def start_server(self):
+        super().run()
 
     def stop_server(self):
         """
