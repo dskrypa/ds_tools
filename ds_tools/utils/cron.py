@@ -7,17 +7,17 @@ Utilities for parsing and interpreting crontab schedules
 import logging
 from datetime import datetime
 from functools import cached_property
-from typing import Optional, Dict, Union, Iterator, Iterable, Mapping
+from typing import Union, Iterator, Iterable, Mapping
 
 from bitarray import bitarray
 
 __all__ = ['CronSchedule']
 log = logging.getLogger(__name__)
-CronDict = Dict[Union[int, str], bool]
+CronDict = dict[Union[int, str], bool]
 
 
 class TimePart:
-    def __init__(self, cron: 'CronSchedule', name: str, intervals: int, min: int = 0, special: Optional[str] = None):
+    def __init__(self, cron: 'CronSchedule', name: str, intervals: int, min: int = 0, special: str = None):
         self.cron = cron
         self.name = name
         self.arr = bitarray(intervals)
@@ -208,7 +208,7 @@ class TimePart:
 
 
 class CronPart:
-    def __init__(self, intervals: int, min: int = 0, special: Optional[str] = None):
+    def __init__(self, intervals: int, min: int = 0, special: str = None):
         self.intervals = intervals
         self.min = min
         self.special = special
@@ -241,7 +241,7 @@ class CronSchedule:
     dow = CronPart(7)
     week = CronPart(6, min=1, special='L')
 
-    def __init__(self, start: Optional[datetime] = None):
+    def __init__(self, start: datetime = None):
         self._start = start
 
     def __str__(self):

@@ -4,8 +4,10 @@ Dict-like cache classes to be used with the :func:`cached<.caching.decorate.cach
 :author: Doug Skrypa
 """
 
+import json
 import logging
 from datetime import datetime
+from hashlib import sha256
 from pathlib import Path
 from urllib.parse import urlencode, quote as url_quote
 from typing import Union, Callable, Iterator, Any
@@ -60,12 +62,15 @@ class FSCache:
 
     @classmethod
     def _html_key_with_extras(cls, key, kwargs) -> str:
+        extras = {}
         for arg, name in (('params', 'query'), ('data', 'data'), ('json', 'json')):
-            value = kwargs.get(arg)
-            if value:
+            if value := kwargs.get(arg):
                 if hasattr(value, 'items'):
                     value = sorted(value.items())
-                key += '__{}__{}'.format(name, urlencode(value, True))
+                # key += '__{}__{}'.format(name, urlencode(value, True))
+                extras[name] = urlencode(value, True)
+        if extras:  # Without the below hash, the extras could result in filenames that were too large
+            key += '__' + sha256(json.dumps(extras, sort_keys=True).encode('utf-8')).hexdigest()
         return key
 
     @classmethod

@@ -6,8 +6,7 @@ Wrapper around argparse to provide some additional functionality / shortcuts
 
 import inspect
 import os
-# noinspection PyUnresolvedReferences
-from argparse import ArgumentParser, RawDescriptionHelpFormatter, _ArgumentGroup, Namespace
+from argparse import ArgumentParser, RawDescriptionHelpFormatter, Namespace, _ArgumentGroup  # noqa
 from pathlib import Path
 
 __all__ = ['ArgParser']
@@ -39,10 +38,21 @@ class ArgParser(ArgumentParser):
                 self._version = _version or ''
             else:
                 try:
-                    top_level_frame_info = inspect.stack()[-1]
+                    stack = inspect.stack()
+                    top_level_frame_info = stack[-1]
                     g = top_level_frame_info.frame.f_globals
+                    if installed_via_setup := 'load_entry_point' in g and 'main' not in g:
+                        top_level_frame_info = stack[-2]
+                        g = top_level_frame_info.frame.f_globals
+
                     _email, version, repo_url = g.get('__author_email__'), g.get('__version__'), g.get('__url__')
                     self._caller_path = Path(inspect.getsourcefile(top_level_frame_info[0]))
+                    if installed_via_setup and self._caller_path.name.endswith('-script.py'):
+                        import sys
+                        if sys.argv:
+                            self._caller_path = self._caller_path.with_name(sys.argv[0])
+                        else:
+                            self._caller_path = self._caller_path.with_name(self._caller_path.stem[:-7] + '.py')
                 except Exception:
                     self._caller_path = Path(__file__)
                     self._docs_url = docs_url
