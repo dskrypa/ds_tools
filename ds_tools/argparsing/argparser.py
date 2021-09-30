@@ -52,7 +52,7 @@ class ArgParser(ArgumentParser):
                     if installed_via_setup and self._caller_path.name.endswith('-script.py'):
                         import sys
                         if sys.argv:
-                            self._caller_path = self._caller_path.with_name(sys.argv[0])
+                            self._caller_path = self._caller_path.with_name(Path(sys.argv[0]).name)
                         else:
                             self._caller_path = self._caller_path.with_name(self._caller_path.stem[:-7] + '.py')
                 except Exception:
