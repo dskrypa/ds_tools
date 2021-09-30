@@ -42,7 +42,10 @@ class ArgParser(ArgumentParser):
                     top_level_frame_info = stack[-1]
                     g = top_level_frame_info.frame.f_globals
                     if installed_via_setup := 'load_entry_point' in g and 'main' not in g:
-                        g = stack[-2].frame.f_globals
+                        for level in reversed(stack[:-1]):
+                            g = level.frame.f_globals
+                            if any(k in g for k in ('__author_email__', '__version__', '__url__')):
+                                break
 
                     _email, version, repo_url = g.get('__author_email__'), g.get('__version__'), g.get('__url__')
                     self._caller_path = Path(inspect.getsourcefile(top_level_frame_info[0]))
