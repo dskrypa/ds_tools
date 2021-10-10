@@ -30,6 +30,7 @@ COMMON_ARGS = {
     'dry_run': ('add_common_sp_arg', Arg('--dry_run', '-D', action='store_true', help='Print the actions that would be taken instead of taking them')),
     'yes': ('add_common_sp_arg', Arg('--yes', '-y', action='store_true', help='Confirm all Yes/No prompts')),
 }   #: Common argparse arguments; defining them this way increases consistency between scripts
+COMMON_ARGS['verbose'] = COMMON_ARGS['verbosity']
 
 
 def update_subparser_constants(parser, parsed):
