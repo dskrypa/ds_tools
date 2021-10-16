@@ -17,7 +17,7 @@ from PIL import Image, ImageOps
 from imageio import imread
 from skimage.metrics import structural_similarity
 from skimage.util.dtype import dtype_range
-from scipy.linalg import norm
+# from scipy.linalg import norm
 
 if TYPE_CHECKING:
     from numpy.typing import ArrayLike
@@ -145,7 +145,9 @@ class ComparableImage:
         """
         _self, other = self.compatible_sizes(other)
         diff = _self.float_array - other.float_array
-        z_norm = norm(diff.ravel(), 0)  # Zero norm
+        # z_norm = norm(diff.ravel(), 0)  # Zero norm
+        # This should be equivalent to scipy.linalg.norm, and allows for dropping the scipy dependency:
+        z_norm = numpy.linalg.norm(numpy.asarray_chkfinite(diff.ravel()), ord=0)  # Zero norm
         return z_norm, z_norm / _self.float_array.size
 
     def normalized_root_mse(self, other: 'ComparableImage', normalization: str = 'euclidean') -> float:

@@ -32,8 +32,8 @@ optional_dependencies = {
         'imageio',
         'numpy',
         'pillow',
-        'scikit-image',
-        'scipy',
+        'scikit-image',  # package: skimage
+        # 'scipy',
     ],
     'J2R': ['pykakasi'],                                # ds_tools.unicode.languages
     'pdf': ['pypdf2'],                                  # bin/pdf_merge.py
