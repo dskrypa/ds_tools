@@ -15,8 +15,10 @@ from weakref import WeakKeyDictionary
 import numpy
 from PIL import Image, ImageOps
 from imageio import imread
-from skimage.metrics import structural_similarity
-from skimage.util.dtype import dtype_range
+try:
+    from skimage.metrics import structural_similarity
+except ImportError:
+    structural_similarity = None
 # from scipy.linalg import norm
 
 if TYPE_CHECKING:
@@ -131,6 +133,8 @@ class ComparableImage:
         :return: A number between 0 and 1.  Larger values indicate higher similarity.
         """
         _self, other = self.compatible_sizes(other)
+        if structural_similarity is None:
+            raise RuntimeError('Unable to calculate mean_structural_similarity - missing dependency: scikit-image')
         return structural_similarity(_self.imread_array, other.imread_array, multichannel=not self._gray)
 
     @comparison
@@ -200,7 +204,7 @@ class ComparableImage:
         if mse == 0:
             return float('inf')
         elif data_range is None:
-            dmin, dmax = dtype_range[_self.imread_array.dtype.type]
+            dmin, dmax = dtype_ranges()[_self.imread_array.dtype.type]
             true_min, true_max = numpy.min(_self.imread_array), numpy.max(_self.imread_array)
             if true_max > dmax or true_min < dmin:
                 raise ValueError(
@@ -271,3 +275,39 @@ def _normalize(img_arr: 'ArrayLike') -> 'ArrayLike':
     img_min = img_arr.min()
     img_range = (img_arr.max() - img_min) or 1
     return (img_arr - img_min) * 255 / img_range
+
+
+def dtype_ranges():
+    try:
+        from skimage.util.dtype import dtype_range
+    except ImportError:
+        pass
+    else:
+        return dtype_range
+
+    try:
+        return dtype_ranges._value
+    except AttributeError:
+        # Below was copied from scikit-image on 2021-10-16:
+        np = numpy
+        _integer_types = (
+            np.byte, np.ubyte,  # 8 bits
+            np.short, np.ushort,  # 16 bits
+            np.intc, np.uintc,  # 16 or 32 or 64 bits
+            int, np.int_, np.uint,  # 32 or 64 bits
+            np.longlong, np.ulonglong,  # 64 bits
+        )
+        _integer_ranges = {t: (np.iinfo(t).min, np.iinfo(t).max) for t in _integer_types}
+        dtype_range = {
+            bool: (False, True),
+            np.bool_: (False, True),
+            np.bool8: (False, True),
+            float: (-1, 1),
+            np.float_: (-1, 1),
+            np.float16: (-1, 1),
+            np.float32: (-1, 1),
+            np.float64: (-1, 1),
+        }
+        dtype_range.update(_integer_ranges)
+        dtype_ranges._value = dtype_range
+        return dtype_range
