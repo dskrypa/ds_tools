@@ -8,13 +8,13 @@ import logging
 import re
 import string
 from enum import Enum
-from typing import Union, Set, Optional, Tuple, Iterator, List, Iterable, Container
+from typing import Union, Optional, Iterator, Iterable, Container
 
 from cachetools import LRUCache
 try:
-    from pykakasi import kakasi
+    from pykakasi import Kakasi
 except ImportError:
-    kakasi = None
+    Kakasi = None
 
 from ..caching import cached
 from ..core.decorate import classproperty
@@ -48,17 +48,17 @@ class LangCat(Enum):
         return self.value < other.value
 
     @classproperty
-    def non_eng_cats(self) -> Tuple['LangCat', ...]:
+    def non_eng_cats(self) -> tuple['LangCat', ...]:
         return LangCat.UNK, LangCat.HAN, LangCat.JPN, LangCat.CJK, LangCat.THAI, LangCat.GRK, LangCat.CYR
 
     @classproperty
-    def asian_cats(self) -> Tuple['LangCat', ...]:
+    def asian_cats(self) -> tuple['LangCat', ...]:
         return LangCat.HAN, LangCat.JPN, LangCat.CJK, LangCat.THAI
 
     asian = asian_cats
 
     @classmethod
-    def _ranges(cls) -> Iterator[Tuple['LangCat', List[Tuple[int, int]]]]:
+    def _ranges(cls) -> Iterator[tuple['LangCat', list[tuple[int, int]]]]:
         yield cls.ENG, LATIN_RANGES
         yield cls.HAN, HANGUL_RANGES
         yield cls.JPN, JAPANESE_RANGES
@@ -69,7 +69,7 @@ class LangCat(Enum):
 
     @classmethod
     @cached(LRUCache(200), exc=True)
-    def categorize(cls, text: Optional[str], detailed=False) -> Union['LangCat', Set['LangCat']]:
+    def categorize(cls, text: Optional[str], detailed=False) -> Union['LangCat', set['LangCat']]:
         if not text:
             return {cls.NUL} if detailed else cls.NUL
         elif detailed:
@@ -91,7 +91,7 @@ class LangCat(Enum):
             return cls.NUL
 
     @classmethod
-    def categorize_all(cls, texts: Iterable[Optional[str]], detailed=False) -> Tuple['LangCat', ...]:
+    def categorize_all(cls, texts: Iterable[Optional[str]], detailed=False) -> tuple['LangCat', ...]:
         return tuple(cls.categorize(t, detailed) for t in texts)
 
     @classmethod
@@ -158,7 +158,7 @@ class LangCat(Enum):
         return cls.UNK
 
     @classmethod
-    def split(cls, text: str, strip=True) -> List[str]:
+    def split(cls, text: str, strip=True) -> list[str]:
         if strip:
             text = text.strip()
         if not text:
@@ -335,45 +335,32 @@ def contains_any_cjk(a_str: Union[str, Iterable[str]]) -> bool:
 
 
 class J2R:
-    __instances = {}
+    __instance = None
 
-    def __new__(cls, mode, include_space=False):
-        key = (mode, include_space)
-        if key not in cls.__instances:
-            obj = super().__new__(cls)
-            cls.__instances[key] = obj
-        return cls.__instances[key]
+    def __new__(cls):
+        if cls.__instance is None:
+            cls.__instance = super().__new__(cls)
+        return cls.__instance
 
-    def __init__(self, mode, include_space=False):
+    def __init__(self):
         if not getattr(self, '_J2R__initialized', False):
             try:
-                k = kakasi()
+                self.kakasi = Kakasi()
             except TypeError as e:
                 raise RuntimeError('Missing required package: pykakasi') from e
-            k._mode.update({'J': 'a', 'H': 'a', 'K': 'a'})
-            k.setMode('r', mode)
-            if include_space:
-                k.setMode('s', True)
-            self.converter = k.getConverter()
             self.__initialized = True
 
-    def romanize(self, text):
-        return self.converter.do(text)
-
-    @classmethod
-    def romanizers(cls, include_space=False):
-        try:
-            roman_vals = kakasi._roman_vals
-        except AttributeError as e:
-            raise RuntimeError('Missing required package: pykakasi') from e
-        for mode in roman_vals:
-            yield J2R(mode, include_space=include_space)
+    def romanize(self, text: str) -> Iterator[str]:
+        for convert_dict in self.kakasi.convert(text):
+            for conv_type, converted in convert_dict.items():
+                if converted and converted != text:
+                    yield converted
 
 
-def romanized_permutations(text: str, include_space=False) -> List[str]:
+def romanized_permutations(text: str, include_space: bool = False) -> list[str]:
     if contains_hangul(text):
         return hangul_romanized_permutations(text, include_space=include_space)
-    return [j2r.romanize(text) for j2r in J2R.romanizers(include_space)]
+    return list(J2R().romanize(text))
 
 
 def matches_permutation(eng: str, cjk: str) -> bool:
