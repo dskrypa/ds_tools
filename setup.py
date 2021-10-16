@@ -32,7 +32,7 @@ optional_dependencies = {
         'imageio',
         'numpy',
         'pillow',
-        'scikit-image; python_version < 3.10',  # package: skimage; required scipy, which breaks in python 3.10
+        'scikit-image; python_version < "3.10"',  # package: skimage; required scipy, which breaks in python 3.10
         # 'scipy',
     ],
     'J2R': ['pykakasi'],                                # ds_tools.unicode.languages
