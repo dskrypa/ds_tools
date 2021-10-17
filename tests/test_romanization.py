@@ -5,8 +5,8 @@ import sys
 from pathlib import Path
 
 sys.path.append(Path(__file__).parents[1].as_posix())
-from ds_tools.unicode.hangul import hangul_romanized_permutations_pattern
-from ds_tools.unicode.languages import romanized_permutations, matches_hangul_permutation
+from ds_tools.unicode.hangul import hangul_romanized_permutations_pattern, matches_hangul_permutation
+from ds_tools.unicode.languages import romanized_permutations
 from ds_tools.test_common import TestCaseBase, main
 
 log = logging.getLogger(__name__)
@@ -30,15 +30,8 @@ class RomanizeTest(TestCaseBase):
 
     def test_han_rom_match_1(self):
         ko = '내겐 너무 사랑스러운 그녀'
-        # rom_full = 'Naegen Neomu Sarangseureoun Geunyeo OST Part 1'
-        rom = 'Naegen Neomu Sarangseureoun Geunyeo'
-
-        # hangul_romanized_permutations_pattern('사랑스러운')
-        # Old -> re.compile(r'sa(?:|[rl])angseu(?:|[rl])(?:eo|[u])(?:|[w])(?:o{1,2}|[u])n', re.IGNORECASE|re.UNICODE)
-        # New -> re.compile(r'sa[rl]angseu[rl](?:eo|[u])[w](?:o{1,2}|[u])n', re.IGNORECASE|re.UNICODE)
-        # TODO: Fixing the bug in the generated pattern resulted in that `[w]` becoming required
-
-        # self.assertTrue(matches_hangul_permutation(rom, ko))
+        rom = 'Naegen Neomu Sarangseureoun Geunyeo'  # OST Part 1
+        self.assertTrue(matches_hangul_permutation(rom, ko))
         for k, r in zip(ko.split(), rom.split()):
             with self.subTest(han=k, rom=r):
                 self.assertTrue(matches_hangul_permutation(r, k))

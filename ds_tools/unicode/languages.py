@@ -372,10 +372,10 @@ class J2R:
             yield join_str.join(group)
 
 
-def romanized_permutations(text: str, include_space: bool = False) -> list[str]:
+def romanized_permutations(text: str, include_space: bool = False) -> set[str]:
     if contains_hangul(text):
         return hangul_romanized_permutations(text, include_space=include_space)
-    return list(J2R().romanize(text, include_space))
+    return set(J2R().romanize(text, include_space))
 
 
 def matches_permutation(eng: str, cjk: str) -> bool:
