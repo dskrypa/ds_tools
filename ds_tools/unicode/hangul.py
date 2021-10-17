@@ -6,6 +6,7 @@ Tools for working with hangul
 
 import re
 from itertools import chain, product
+from typing import Pattern
 
 from cachetools import LRUCache
 
@@ -28,6 +29,8 @@ JAMO_LEAD_OFFSETS = [1, 2, 4, 7, 8, 9, 17, 18, 19, 21, 22, 23, 24, 25, 26, 27, 2
 JAMO_END_OFFSETS = [i for i in range(31) if i not in (8, 19, 25)]
 SYLLABLES_START, SYLLABLES_END = HANGUL_RANGES[0]
 HANGUL_REGEX_CHAR_CLASS = '[{}]'.format(''.join(f'\\u{a:x}-\\u{b:x}' for a, b in HANGUL_RANGES))
+
+# region Romanization Character Constants
 
 ROMANIZED_LEAD_CONSONANTS = [
     'g', 'gg', 'n', 'd', 'dd', 'r', 'm', 'b', 'bb', 's', 'ss', '', 'j', 'jj', 'ch', 'k', 't', 'p', 'h'
@@ -114,8 +117,10 @@ COMBO_CHANGES = {
     'ㅂㄹ': 'ㅁㄴ'
 }
 
+# endregion
 
-def ambiguous_romanized():
+
+def ambiguous_romanized() -> set[str]:
     ambiguous = set()
     for final, initial in product(REVISED_END_CONSONANTS, REVISED_LEAD_CONSONANTS):
         first_hit = True
@@ -133,42 +138,48 @@ def ambiguous_romanized():
 AMBIGUOUS_ROMANIZED = ambiguous_romanized()
 
 
-def is_hangul_syllable(char):
+# region Character Classification
+
+def is_hangul_syllable(char: str) -> bool:
     if len(char) != 1:
         return False
     return SYLLABLES_START <= ord(char) <= SYLLABLES_END
 
 
-def is_jamo(char):
+def is_jamo(char: str) -> bool:
     if len(char) != 1:
         return False
     return JAMO_CONSONANTS_START < ord(char) <= JAMO_VOWELS_END
 
 
-def is_lead_jamo(char):
+def is_lead_jamo(char: str) -> bool:
     if len(char) != 1:
         return False
     return (ord(char) - JAMO_CONSONANTS_START) in JAMO_LEAD_OFFSETS
 
 
-def is_vowel_jamo(char):
+def is_vowel_jamo(char: str) -> bool:
     if len(char) != 1:
         return False
     return JAMO_VOWELS_START <= ord(char) <= JAMO_VOWELS_END
 
 
-def is_final_jamo(char):
+def is_final_jamo(char: str) -> bool:
     if len(char) != 1:
         return False
     return (ord(char) - JAMO_CONSONANTS_START) in JAMO_END_OFFSETS
 
+# endregion
 
-def decompose_syllable(syllable):
+# region Decompose / Compose Syllables
+
+
+def decompose_syllable(syllable: str) -> tuple[str, str, str]:
     """
     Formula from: https://en.wikipedia.org/wiki/Korean_language_and_computers#Hangul_Syllables_block
 
-    :param str syllable: A single character that is a hangul syllable
-    :return tuple: A 3-tuple of the jamo that composed the original syllable
+    :param syllable: A single character that is a hangul syllable
+    :return: A 3-tuple of the jamo that composed the original syllable
     """
     # syllable = 588 initial + 28 medial + final + 44032
     i, rem = divmod(ord(syllable) - 44032, 588)
@@ -181,21 +192,39 @@ def decompose_syllable(syllable):
     return jamo
 
 
-def decompose_syllables(a_str):
+def decomposed_syllable_str(syllable: str) -> str:
     """
     Formula from: https://en.wikipedia.org/wiki/Korean_language_and_computers#Hangul_Syllables_block
 
-    :param str a_str: A string
-    :return str: The provided string with all hangul syllables decomposed to jamo
+    :param syllable: A single character that is a hangul syllable
+    :return: A 2-3 character string containing the jamo that composed the original syllable
+    """
+    # syllable = 588 initial + 28 medial + final + 44032
+    i, rem = divmod(ord(syllable) - 44032, 588)
+    m, f = divmod(rem, 28)
+    a = chr(JAMO_CONSONANTS_START + JAMO_LEAD_OFFSETS[i])
+    b = chr(JAMO_VOWELS_START + m)
+    c = chr(JAMO_CONSONANTS_START + JAMO_END_OFFSETS[f]) if f > 0 else ''
+    return a + b + c
+
+
+def decompose_syllables(a_str: str) -> str:
+    """
+    Formula from: https://en.wikipedia.org/wiki/Korean_language_and_computers#Hangul_Syllables_block
+
+    :param a_str: A string
+    :return: The provided string with all hangul syllables decomposed to jamo
     """
     if len(a_str) > 1:
-        return ''.join(chain.from_iterable(decompose_syllable(c) for c in a_str))
+        # return ''.join(chain.from_iterable(decompose_syllable(c) for c in a_str))
+        return ''.join(map(decomposed_syllable_str, a_str))
     elif not is_hangul_syllable(a_str):                     # This also handles len<1 case
         return a_str
-    return ''.join(decompose_syllable(a_str))
+    # return ''.join(decompose_syllable(a_str))
+    return decomposed_syllable_str(a_str)
 
 
-def compose_syllable(lead, vowel, final_consonant=''):
+def compose_syllable(lead, vowel, final_consonant='') -> str:
     """
     Composing 2/3 jamo into a single composed syllable is easy; composing a series of jamo into syllables is more
     difficult since some consonants may be used in the first or last position depending on other jamo in the series.
@@ -210,8 +239,12 @@ def compose_syllable(lead, vowel, final_consonant=''):
     final = 0 if not final_consonant else JAMO_END_OFFSETS.index(ord(final_consonant) - JAMO_CONSONANTS_START)
     return chr(44032 + (initial * 588) + (medial * 28) + final)
 
+# endregion
 
-def romanize(text, name=False, space=False):
+# region Romanization
+
+
+def romanize(text: str, name: bool = False, space: bool = False) -> str:
     romanized = []
     for char in text:
         c_ord = ord(char)
@@ -233,7 +266,7 @@ def romanize(text, name=False, space=False):
     return ''.join(romanized).strip()
 
 
-def revised_romanize(text, name=False, space=False):
+def revised_romanize(text: str, name: bool = False, space: bool = False) -> str:
     romanized = []
     last_end = None
     for char in text:
@@ -269,7 +302,7 @@ def revised_romanize(text, name=False, space=False):
     return ''.join(romanized).strip()
 
 
-def romanize_plus(text, name=False, space=False):
+def romanize_plus(text: str, name: bool = False, space: bool = False) -> str:
     romanized = []
     last_end = None
     last_char = None
@@ -316,7 +349,8 @@ def romanize_plus(text, name=False, space=False):
     return ''.join(romanized).strip()
 
 
-def _hangul_romanized_permutations(text, include_space=False):
+def _hangul_romanized_permutations(text: str, include_space: bool = False) -> list[str]:
+    c_start, end_offsets, lead_offsets = JAMO_CONSONANTS_START, JAMO_END_OFFSETS, JAMO_LEAD_OFFSETS
     romanized = []
     last_char = None
     last_end = None
@@ -330,16 +364,16 @@ def _hangul_romanized_permutations(text, include_space=False):
                 m, f = divmod(rem, 28)
                 lead = LEAD_CONSONANT_PERMUTATIONS[i]
                 # log.debug('{!r} => {}({}) {}({}) {}({})'.format(
-                #     char, chr(JAMO_CONSONANTS_START + JAMO_LEAD_OFFSETS[i]), i, chr(m + JAMO_VOWELS_START), m,
-                #     chr(JAMO_CONSONANTS_START + JAMO_END_OFFSETS[f]) if f > 0 else '-', f
+                #     char, chr(c_start + lead_offsets[i]), i, chr(m + JAMO_VOWELS_START), m,
+                #     chr(c_start + end_offsets[f]) if f > 0 else '-', f
                 # ))
                 if last_end:
-                    _key = chr(JAMO_CONSONANTS_START + JAMO_END_OFFSETS[last_end]) + chr(JAMO_CONSONANTS_START + JAMO_LEAD_OFFSETS[i])
+                    _key = chr(c_start + end_offsets[last_end]) + chr(c_start + lead_offsets[i])
                     if _key in COMBO_CHANGES:
-                        # log.debug('({}, {})={!r} => {!r}'.format(last_end, i, _key, COMBO_CHANGES[_key]))
+                        # log.debug(f'({last_end}, {i})={_key!r} => {COMBO_CHANGES[_key]!r}')
                         a, b = map(ord, COMBO_CHANGES[_key])
-                        a = JAMO_END_OFFSETS.index(a - JAMO_CONSONANTS_START)
-                        b = JAMO_LEAD_OFFSETS.index(b - JAMO_CONSONANTS_START)
+                        a = end_offsets.index(a - c_start)
+                        b = lead_offsets.index(b - c_start)
                         idx = -2 if romanized[-1] == ' ' else -1
                         old = romanized[idx]
                         addl_end = END_CONSONANT_PERMUTATIONS[a]
@@ -353,8 +387,10 @@ def _hangul_romanized_permutations(text, include_space=False):
                             (lead,) if isinstance(lead, str) else lead,
                             (addl_lead,) if isinstance(addl_lead, str) else addl_lead
                         )))
-                        # fmt = '{!r}({}, {})=>{!r}({}, {}) =>> old={!r} => {!r}, lead={!r} => {!r}'
-                        # log.debug(fmt.format(_key, last_end, i, COMBO_CHANGES[_key], a, b, old, romanized[idx], orig_lead, lead))
+                        # log.debug(
+                        #     f'{_key!r}({last_end}, {i})=>{COMBO_CHANGES[_key]!r}({a}, {b}) =>>'
+                        #     f' {old=} => {romanized[idx]!r}, {orig_lead=} => {lead!r}'
+                        # )
 
                 vowel = VOWEL_PERMUTATIONS[m]
                 if f > 0:
@@ -370,7 +406,10 @@ def _hangul_romanized_permutations(text, include_space=False):
                     elif m == 13:   # ㅜ
                         lead = tuple(set((lead, 'w') if isinstance(lead, str) else chain(lead, ('w',))))
 
-            if 's' in lead and (vowel in SH_VOWELS or (isinstance(vowel, tuple) and any(v in SH_VOWELS for v in vowel))):
+            if (
+                's' in lead
+                and (vowel in SH_VOWELS or (isinstance(vowel, tuple) and any(v in SH_VOWELS for v in vowel)))
+            ):
                 lead = tuple(set((lead, 'sh') if isinstance(lead, str) else chain(lead, ('sh',))))
 
             romanized.append(lead)
@@ -403,10 +442,9 @@ def _hangul_romanized_permutations(text, include_space=False):
 
 
 @cached(LRUCache(300))
-def hangul_romanized_permutations_pattern(text, include_space=False):
-    combined_1 = _hangul_romanized_permutations(text, include_space)
+def hangul_romanized_permutations_pattern(text: str, include_space: bool = False) -> Pattern:
     pat = []
-    for chars in combined_1:
+    for chars in _hangul_romanized_permutations(text, include_space):
         if isinstance(chars, str):
             pat.append(chars)
         else:
@@ -418,21 +456,27 @@ def hangul_romanized_permutations_pattern(text, include_space=False):
                 else:
                     doubles.append(char)
 
-            doubles = (f'{d[0]}{{1,2}}' if d and d[0] == d[1] else d for d in doubles)
-            if singles and doubles:
-                single_str = '[{}]'.format(''.join(singles))
-                double_str = '(?:{}|{})'.format('|'.join(doubles), single_str)
-                pat.append(double_str)
-            elif singles:
-                single_str = '[{}]'.format(''.join(singles))
-                pat.append(single_str)
-            else:
-                double_str = '(?:{})'.format('|'.join(doubles))
-                pat.append(double_str)
+            # doubles = (f'{d[0]}{{1,2}}' if d and d[0] == d[1] else d for d in doubles)
+            single_str = '[{}]'.format(''.join(singles)) if singles else None
+            double_str = '|'.join(f'{d[0]}{{1,2}}' if d and d[0] == d[1] else d for d in doubles) if doubles else None
+            combined = (double_str + '|' + single_str) if single_str and double_str else single_str or double_str
+            pat.append('(?:{})'.format(combined) if double_str else combined)  # double always needs the group
+
+            # if singles and doubles:
+            #     single_str = '[{}]'.format(''.join(singles))
+            #     double_str = '(?:{}|{})'.format('|'.join(doubles), single_str)
+            #     pat.append(double_str)
+            # elif singles:
+            #     single_str = '[{}]'.format(''.join(singles))
+            #     pat.append(single_str)
+            # else:
+            #     double_str = '(?:{})'.format('|'.join(doubles))
+            #     pat.append(double_str)
+
     return re.compile(''.join(pat), re.IGNORECASE)
 
 
-def hangul_romanized_permutations(text, include_space=False):
+def hangul_romanized_permutations(text: str, include_space: bool = False) -> list[str]:
     combined_1 = _hangul_romanized_permutations(text, include_space)
     permutations = list(map(str.strip, combo_options(combined_1)))
     if text in ROMANIZED_MISC_NAMES:
@@ -442,11 +486,13 @@ def hangul_romanized_permutations(text, include_space=False):
 
 
 @cached(LRUCache(300))
-def matches_hangul_permutation(eng, han):
+def matches_hangul_permutation(eng: str, han: str) -> bool:
     lc_letters = set('abcdefghijklmnopqrstuvwxyz')
     lc_eng = ''.join(c for c in eng.lower() if c in lc_letters)
     return bool(hangul_romanized_permutations_pattern(han).match(lc_eng))
     # return lc_eng in {''.join(p.split()) for p in hangul_romanized_permutations(han, False)}
+
+# endregion
 
 
 def combo_options(list_with_opts, bases=None):
