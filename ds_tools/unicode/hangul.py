@@ -456,12 +456,14 @@ def hangul_romanized_permutations_pattern(text: str, include_space: bool = False
                 else:
                     doubles.append(char)
 
-            # doubles = (f'{d[0]}{{1,2}}' if d and d[0] == d[1] else d for d in doubles)
             single_str = '[{}]'.format(''.join(singles)) if singles else None
             double_str = '|'.join(f'{d[0]}{{1,2}}' if d and d[0] == d[1] else d for d in doubles) if doubles else None
             combined = (double_str + '|' + single_str) if single_str and double_str else single_str or double_str
             pat.append('(?:{})'.format(combined) if double_str else combined)  # double always needs the group
 
+            # TODO: The old code below has a subtle bug where `doubles` is always truthy, so it ends up hiding other
+            #  problems, like `우` -> `[w](?:o{1,2}|[u])` instead of letting the `w` be optional
+            # doubles = (f'{d[0]}{{1,2}}' if d and d[0] == d[1] else d for d in doubles)
             # if singles and doubles:
             #     single_str = '[{}]'.format(''.join(singles))
             #     double_str = '(?:{}|{})'.format('|'.join(doubles), single_str)
