@@ -2,7 +2,8 @@
 :author: Doug Skrypa
 """
 
-from enum import IntFlag
+import logging
+from enum import Flag
 from itertools import product
 from typing import Union, Optional, Iterator
 
@@ -10,11 +11,12 @@ from .constants import JAMO_START, MEDIAL_START, INITIAL_OFFSETS, FINAL_OFFSETS,
 from .constants import ROMANIZED_SHORT_NAMES, ROMANIZED_LONG_NAMES
 
 __all__ = ['JamoType', 'Jamo', 'Syllable', 'Word']
+log = logging.getLogger(__name__)
 
 _Jamo = Union[str, 'Jamo', None]
 
 
-class JamoType(IntFlag):
+class JamoType(Flag):
     INITIAL = 1  # Leading consonant
     MEDIAL = 2  # Vowel
     FINAL = 4  # Final consonant
@@ -78,50 +80,56 @@ class Jamo:
     def ord_final(self) -> int:
         return FINAL_OFFSETS.index(self.ord - JAMO_START)
 
-    def iter_romanizations(self, position: JamoType = JamoType.MEDIAL, medial: 'Jamo' = None) -> Iterator[str]:
+    def iter_romanizations(
+        self, position: JamoType = JamoType.MEDIAL, prev: 'Jamo' = None, next: 'Jamo' = None  # noqa
+    ) -> Iterator[str]:
+        # log.debug(f'{self!r}.iter_romanizations({position}, {prev=}, {next=})')
         romanizations = self.romanizations
         if position & JamoType.INITIAL:
-            if medial and medial.sh_vowel and (char := self.char) in {'ㅅ', 'ㅆ'}:
+            char = self.char
+            if prev and (chg := COMBO_CHANGES.get(prev.char + char)) and (rep := self.for_char(chg[1])) != self:  # noqa
+                # log.debug(f'Previous {prev.char}+{char} => {chg} - yielding romanizations for {rep}')
+                # yield from rep.iter_romanizations(position, prev=chg[0])  # not needed; would need to self.for_char
+                yield from rep.iter_romanizations(position)
+            elif next and next.sh_vowel and char in {'ㅅ', 'ㅆ'}:
                 yield from ('sh', 'ssh') if char == 'ㅆ' else ('sh',)
-            elif self.char == 'ㅇ':
+            elif char == 'ㅇ':
                 romanizations = ('',)
-        elif position & JamoType.FINAL and self.t_stop:
-            yield 't'
+        elif position & JamoType.FINAL:
+            if self.t_stop:
+                yield 't'
+
+            char = self.char
+            if next and (chg := COMBO_CHANGES.get(char + next.char)) and (rep := self.for_char(chg[0])) != self:  # noqa
+                # log.debug(f'Next {char}+{next.char} => {chg} - yielding romanizations for {rep}')
+                # yield from rep.iter_romanizations(position, next=chg[1])  # not needed; would need to self.for_char
+                yield from rep.iter_romanizations(position)
 
         yield from romanizations
 
-    def get_romanizations(self, position: JamoType = JamoType.MEDIAL, medial: 'Jamo' = None) -> set[str]:
-        return set(self.iter_romanizations(position, medial))
-        # if position & JamoType.INITIAL:
-        #     if medial and medial.sh_vowel and (char := self.char) in {'ㅅ', 'ㅆ'}:
-        #         romanizations = self.romanizations.copy()
-        #         romanizations.add('sh')
-        #         if char == 'ㅆ':
-        #             romanizations.add('ssh')
-        #     elif self.char == 'ㅇ':
-        #         romanizations = {''}
-        #     else:
-        #         romanizations = self.romanizations
-        # elif position & JamoType.FINAL and self.t_stop:
-        #     romanizations = self.romanizations.copy()
-        #     romanizations.add('t')
-        # else:
-        #     romanizations = self.romanizations
-        # return romanizations
+    def get_romanizations(
+        self, position: JamoType = JamoType.MEDIAL, prev: 'Jamo' = None, next: 'Jamo' = None  # noqa
+    ) -> set[str]:
+        return set(self.iter_romanizations(position, prev, next))
 
-    def get_romanization_pattern(self, position: JamoType = JamoType.MEDIAL, medial: 'Jamo' = None) -> str:
-        singles, doubles = [], []
-        for rom in self.iter_romanizations(position, medial):
+    def get_romanization_pattern(
+        self, position: JamoType = JamoType.MEDIAL, prev: 'Jamo' = None, next: 'Jamo' = None  # noqa
+    ) -> str:
+        singles, multiples = [], []
+        for rom in self.iter_romanizations(position, prev, next):
             if len(rom) == 1:
                 singles.append(rom)
             elif rom:
-                doubles.append(rom)
+                multiples.append(rom)
 
-        single_str = '[{}]'.format(''.join(singles)) if singles else ''
-        double_str = '|'.join(f'{d[0]}{{1,2}}' if d[0] == d[1] else d for d in doubles) if doubles else ''
-        combined = (double_str + '|' + single_str) if single_str and double_str else single_str or double_str
-        # print(f'{self!r}.get_romanization_pattern({position}, {medial=}) -> {single_str=} {double_str=} {combined=}')
-        return f'(?:{combined})' if double_str else combined  # double always needs the group
+        single_str = singles[0] if len(singles) == 1 else '[{}]'.format(''.join(singles)) if singles else ''
+        if multiples:
+            mult_str = '|'.join(f'{m[0]}{{1,2}}' if len(m) == 2 and m[0] == m[1] else m for m in multiples)
+        else:
+            mult_str = ''
+        combined = (mult_str + '|' + single_str) if single_str and mult_str else single_str or mult_str
+        # log.debug(f'{self!r}.get_romanization_pattern({position}, {prev=}, {next=}) -> {single_str=} {mult_str=} {combined=}')
+        return f'(?:{combined})' if mult_str else combined  # double always needs the group
 
 
 class Syllable:
@@ -209,25 +217,25 @@ class Syllable:
     def decompose(self) -> tuple[Optional[Jamo], Optional[Jamo], Optional[Jamo]]:
         return self.initial, self.medial, self.final
 
-    @property
-    def romanizations(self) -> set[str]:
+    def romanizations(self, prev: 'Syllable' = None, next: 'Syllable' = None) -> set[str]:  # noqa
         try:
             candidates = {ROMANIZED_SHORT_NAMES[self.composed]}
         except KeyError:
             candidates = set()
 
         medial = self.medial
-        initials = self.initial.get_romanizations(JamoType.INITIAL, medial)
-        finals = final.get_romanizations(JamoType.FINAL) if (final := self.final) else ('',)
+        initials = self.initial.get_romanizations(JamoType.INITIAL, prev=prev.final if prev else None, next=medial)
+        next_jamo = next.initial if next else None
+        finals = final.get_romanizations(JamoType.FINAL, next=next_jamo) if (final := self.final) else ('',)
         candidates.update(map(''.join, product(initials, medial.romanizations, finals)))
         return candidates
 
-    @property
-    def romanization_pattern(self) -> str:
+    def romanization_pattern(self, prev: 'Syllable' = None, next: 'Syllable' = None) -> str:  # noqa
         medial = self.medial
-        initial_str = self.initial.get_romanization_pattern(JamoType.INITIAL, medial)
+        initial_str = self.initial.get_romanization_pattern(JamoType.INITIAL, prev.final if prev else None, medial)
         medial_str = medial.get_romanization_pattern()
-        final_str = final.get_romanization_pattern(JamoType.FINAL) if (final := self.final) else ''
+        next_jamo = next.initial if next else None
+        final_str = final.get_romanization_pattern(JamoType.FINAL, next=next_jamo) if (final := self.final) else ''
         try:
             name = ROMANIZED_SHORT_NAMES[self.composed]
         except KeyError:
@@ -243,18 +251,35 @@ class Word:
         self.word = word
         self.syllables = tuple(Syllable.from_char(c) for c in word)
 
-    @property
-    def romanizations(self) -> set[str]:
+    def _iter_syllables(self, prev: 'Word' = None, next: 'Word' = None):  # noqa
+        last = len(self.syllables) - 1
+        prev_syl = prev.syllables[-1] if prev else None
+        for i, syllable in enumerate(self.syllables):
+            if i == last:
+                next_syl = next.syllables[0] if next else None
+            else:
+                next_syl = self.syllables[i + 1]
+            yield syllable, prev_syl, next_syl
+            prev_syl = syllable
+
+    def romanizations(self, prev: 'Word' = None, next: 'Word' = None) -> set[str]:  # noqa
         try:
             candidates = {ROMANIZED_LONG_NAMES[self.word]}
         except KeyError:
             candidates = set()
-        candidates.update(map(''.join, product(*(s.romanizations for s in self.syllables))))
+
+        romanizations = (
+            syllable.romanizations(prev=prev_syl, next=next_syl)
+            for syllable, prev_syl, next_syl in self._iter_syllables(prev, next)
+        )
+        candidates.update(map(''.join, product(*romanizations)))
         return candidates
 
-    @property
-    def romanization_pattern(self) -> str:
-        pattern = ''.join(s.romanization_pattern for s in self.syllables)
+    def romanization_pattern(self, prev: 'Word' = None, next: 'Word' = None) -> str:  # noqa
+        pattern = ''.join(
+            syllable.romanization_pattern(prev=prev_syl, next=next_syl)
+            for syllable, prev_syl, next_syl in self._iter_syllables(prev, next)
+        )
         try:
             name = ROMANIZED_LONG_NAMES[self.word]
         except KeyError:

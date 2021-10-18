@@ -13,6 +13,11 @@ log = logging.getLogger(__name__)
 
 
 class RomanizeTest(TestCaseBase):
+    def test_i_am_the_best(self):
+        rom = 'naega jeil jal laga'
+        pat = hangul_romanized_permutations_pattern('내가 제일 잘 나가')
+        self.assertRegex(''.join(rom.split()), pat)
+
     def test_romanize_snsd(self):
         with self.subTest(with_space=False):
             expected = {'shoujojidai', 'syoujozidai', 'shoujojidai'}
