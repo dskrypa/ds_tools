@@ -60,7 +60,10 @@ class Jamo:
         m, f = divmod(rem, 28)
         jamo = cls._for_ord
         js = JAMO_START
-        return jamo(js + INITIAL_OFFSETS[i]), jamo(MEDIAL_START + m), jamo(js + FINAL_OFFSETS[f]) if f > 0 else None
+        try:
+            return jamo(js + INITIAL_OFFSETS[i]), jamo(MEDIAL_START + m), jamo(js + FINAL_OFFSETS[f]) if f > 0 else None
+        except IndexError as e:
+            raise ValueError(f'Not a composed hangul {char=}') from e
 
     def __repr__(self) -> str:
         return f'<Jamo[{self.char!r}, type={self.type}]>'
@@ -249,7 +252,10 @@ class Word:
 
     def __init__(self, word: str):
         self.word = word
-        self.syllables = tuple(Syllable.from_char(c) for c in word)
+        try:
+            self.syllables = tuple(Syllable.from_char(c) for c in word)
+        except ValueError as e:
+            raise ValueError(f'Invalid {word=} - contains non-hangul characters: {e}') from e
 
     def _iter_syllables(self, prev: 'Word' = None, next: 'Word' = None):  # noqa
         last = len(self.syllables) - 1
