@@ -41,6 +41,11 @@ class RomanizeTest(TestCaseBase):
             with self.subTest(han=k, rom=r):
                 self.assertTrue(matches_hangul_permutation(r, k))
 
+    def test_rom_pat_from_mix(self):
+        rom = 'Naegen Neomu Sarangseureoun Geunyeo OST Part 1'
+        pat = hangul_romanized_permutations_pattern('내겐 너무 사랑스러운 그녀 OST Part 1')
+        self.assertRegex(''.join(rom.split()), pat)
+
 
 if __name__ == '__main__':
     main()

@@ -9,6 +9,7 @@ from typing import Union, Optional, Iterator
 
 from .constants import JAMO_START, MEDIAL_START, INITIAL_OFFSETS, FINAL_OFFSETS, COMBO_CHANGES
 from .constants import ROMANIZED_SHORT_NAMES, ROMANIZED_LONG_NAMES
+from .classification import is_hangul_syllable
 
 __all__ = ['JamoType', 'Jamo', 'Syllable', 'Word']
 log = logging.getLogger(__name__)
@@ -139,14 +140,19 @@ class Syllable:
     __slots__ = ('_initial', '_medial', '_final', '_composed')
 
     def __init__(self, initial: _Jamo, medial: _Jamo, final: _Jamo = None, composed: str = None):
+        self._composed = composed
         self.initial = initial
         self.medial = medial
         self.final = final
-        self._composed = composed
 
     @classmethod
     def from_char(cls, char: str) -> 'Syllable':
-        return cls(*Jamo.decompose(char), composed=char)
+        try:
+            return cls(*Jamo.decompose(char), composed=char)
+        except ValueError:
+            if is_hangul_syllable(char):
+                raise
+            return cls(None, None, None, composed=char)  # non-hangul
 
     # region Jamo Properties / Validation
 
@@ -156,7 +162,7 @@ class Syllable:
 
     @initial.setter
     def initial(self, value: _Jamo):
-        if not value:
+        if not value and (not self._composed or is_hangul_syllable(self._composed)):
             raise ValueError('An initial consonant jamo is required')
         self._initial = self._validate(value, JamoType.INITIAL)
 
@@ -166,7 +172,7 @@ class Syllable:
 
     @medial.setter
     def medial(self, value: _Jamo):
-        if not value:
+        if not value and (not self._composed or is_hangul_syllable(self._composed)):
             raise ValueError('A medial vowel jamo is required')
         self._medial = self._validate(value, JamoType.MEDIAL)
 
@@ -221,12 +227,13 @@ class Syllable:
         return self.initial, self.medial, self.final
 
     def romanizations(self, prev: 'Syllable' = None, next: 'Syllable' = None) -> set[str]:  # noqa
+        if not (medial := self.medial):
+            return {self.composed}
         try:
             candidates = {ROMANIZED_SHORT_NAMES[self.composed]}
         except KeyError:
             candidates = set()
 
-        medial = self.medial
         initials = self.initial.get_romanizations(JamoType.INITIAL, prev=prev.final if prev else None, next=medial)
         next_jamo = next.initial if next else None
         finals = final.get_romanizations(JamoType.FINAL, next=next_jamo) if (final := self.final) else ('',)
@@ -234,7 +241,8 @@ class Syllable:
         return candidates
 
     def romanization_pattern(self, prev: 'Syllable' = None, next: 'Syllable' = None) -> str:  # noqa
-        medial = self.medial
+        if not (medial := self.medial):
+            return self.composed
         initial_str = self.initial.get_romanization_pattern(JamoType.INITIAL, prev.final if prev else None, medial)
         medial_str = medial.get_romanization_pattern()
         next_jamo = next.initial if next else None
@@ -252,10 +260,7 @@ class Word:
 
     def __init__(self, word: str):
         self.word = word
-        try:
-            self.syllables = tuple(Syllable.from_char(c) for c in word)
-        except ValueError as e:
-            raise ValueError(f'Invalid {word=} - contains non-hangul characters: {e}') from e
+        self.syllables = tuple(Syllable.from_char(c) for c in word)
 
     def _iter_syllables(self, prev: 'Word' = None, next: 'Word' = None):  # noqa
         last = len(self.syllables) - 1
