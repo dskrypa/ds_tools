@@ -36,6 +36,7 @@ class SevenSegmentDisplay:
     ):
         self._bar = None
         self._bar_pct = None
+        self.height = 0
         self.resize(width, bar, gap, bar_pct)
         self.corners = corners
         self.fg = color_to_rgb(fg)
