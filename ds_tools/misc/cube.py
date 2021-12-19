@@ -6,17 +6,19 @@ Classes representing a Rubik's Cube
 
 import re
 import logging
+import math
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from enum import Flag, auto, _decompose
 from functools import cached_property, reduce
 from operator import xor, or_
 from random import Random
-from typing import Optional, Union, Iterator, Collection, Iterable
+from typing import Optional, Union, Iterator, Collection, Iterable, Any
 
 from ..output.color import colored
 
 log = logging.getLogger(__name__)
 
+Bool = Union[bool, Any]
 Pos = tuple[int, int, int]
 Faces = tuple['Color', 'Color', 'Color']
 Seed = Union[int, float, str, bytes, None]
@@ -253,6 +255,7 @@ class Cube:
         if pos_faces_iter is None:
             pos_faces_iter = ((pos, col.home_faces) for col, pos in HOMES.items())
         self.nodes = tuple(Node(self, pos, faces) for pos, faces in pos_faces_iter)
+        self._init_pct = self.percent_solved()
         self._pos_node_map = None
         self.history = []
 
@@ -278,12 +281,21 @@ class Cube:
     def from_random(cls, steps: int = 30, seed: Seed = None):
         self = cls()
         self.randomize(steps, seed)
+        self._init_pct = self.percent_solved()
         self.history = []
         return self
+
+    # region Internal Methods
 
     @cached_property
     def _color_node_map(self) -> dict[Color, Node]:
         return {node.color: node for node in self.nodes}
+
+    @property
+    def pos_node_map(self) -> dict[Pos, Node]:
+        if self._pos_node_map is None:
+            self._pos_node_map = {node.pos: node for node in self.nodes}
+        return self._pos_node_map
 
     def __getitem__(self, pos_or_color: Union[Pos, Color, str]) -> Node:
         if isinstance(pos_or_color, str):
@@ -294,7 +306,7 @@ class Cube:
 
     def __repr__(self) -> str:
         moves = len(self.history)
-        lines = [f'<Cube[{moves=}, nodes=[']
+        lines = [f'<Cube[{moves=}, solved={self.percent_solved():.2%}, nodes=[']
         pos_node_map = self.pos_node_map
         for z in (-1, 0, 1):
             if z != -1:
@@ -313,60 +325,78 @@ class Cube:
     def __hash__(self) -> int:
         return hash(self.__class__) ^ reduce(xor, map(hash, self.nodes))
 
-    @property
-    def pos_node_map(self) -> dict[Pos, Node]:
-        if self._pos_node_map is None:
-            self._pos_node_map = {node.pos: node for node in self.nodes}
-        return self._pos_node_map
+    def copy(self) -> 'Cube':
+        cls = self.__class__
+        clone = cls.__new__(cls)
+        clone.nodes = tuple(map(Node.copy, self.nodes))
+        clone._init_pct = self._init_pct
+        clone._pos_node_map = None
+        history = self.history
+        clone.history = history.copy() if history else []
+        return clone
+
+    # endregion
 
     def solved(self) -> bool:
         return all(map(Node.is_home, self.nodes))
 
+    def percent_solved(self) -> float:
+        return sum(map(Node.is_home, self.nodes)) / 27
+
     # region Rotation Methods
 
-    def rotate(self, axis: str, plane: int, clockwise: bool = True):
-        self._axis_to_rotate_method[axis](self, plane, clockwise)
+    def rotate(self, axis: str, plane: int, clockwise: Bool = True) -> float:
+        return self._axis_to_rotate_method[axis](self, plane, clockwise)
 
-    def _record_rotation(self, axis: str, plane: int, clockwise: bool):
-        self.history.append((axis, plane, clockwise))
+    def _record_rotation(self, axis: str, plane: int, clockwise: Bool) -> float:
         self._node_dict = None
+        pct_solved = self.percent_solved()
+        self.history.append((axis, plane, clockwise, pct_solved))
+        return pct_solved
 
-    def rotate_x(self, x_plane: int, clockwise: bool = True):
+    def rotate_x(self, x_plane: int, clockwise: Bool = True) -> float:
         """Rotate around the x axis"""
-        self._record_rotation('x', x_plane, clockwise)
         for node in self.nodes:
-            if node.x == x_plane:
+            # if node.x == x_plane:
+            if node.pos[0] == x_plane:
                 node.rotate_x(clockwise)
+        return self._record_rotation('x', x_plane, clockwise)
 
-    def rotate_y(self, y_plane: int, clockwise: bool = True):
+    def rotate_y(self, y_plane: int, clockwise: Bool = True) -> float:
         """Rotate around the y axis"""
-        self._record_rotation('y', y_plane, clockwise)
         for node in self.nodes:
-            if node.y == y_plane:
+            # if node.y == y_plane:
+            if node.pos[1] == y_plane:
                 node.rotate_y(clockwise)
+        return self._record_rotation('y', y_plane, clockwise)
 
-    def rotate_z(self, z_plane: int, clockwise: bool = True):
+    def rotate_z(self, z_plane: int, clockwise: Bool = True) -> float:
         """Rotate around the z axis"""
-        self._record_rotation('z', z_plane, clockwise)
         for node in self.nodes:
-            if node.z == z_plane:
+            # if node.z == z_plane:
+            if node.pos[2] == z_plane:
                 node.rotate_z(clockwise)
+        return self._record_rotation('z', z_plane, clockwise)
 
     _axis_to_rotate_method = {'x': rotate_x, 'y': rotate_y, 'z': rotate_z}
 
     # endregion
 
     def randomize(self, steps: int, seed: Seed = None):
-        random = Random(seed)
+        randbelow = Random(seed)._randbelow  # noqa
+        # axes[randbelow(3)] == choice(axes); randbelow(2) == randint(0, 1); randbelow(3) - 1 == randrange(-1, 2)
         axes = ('x', 'y', 'z')
-        bools = (True, False)
+        axis_to_rotate_method = self._axis_to_rotate_method
         for _ in range(steps):
-            self.rotate(random.choice(axes), random.randrange(-1, 2), random.choice(bools))
+            axis_to_rotate_method[axes[randbelow(3)]](self, randbelow(3) - 1, randbelow(2))
+            # self.rotate(axes[randbelow(3)], randbelow(3) - 1, randbelow(2))
 
     def format_history(self) -> Iterator[str]:
-        for axis, plane, clockwise in self.history:
+        last_pct = self._init_pct
+        for axis, plane, clockwise, pct_solved in self.history:
             cw_str = 'CW' if clockwise else 'CCW'
-            yield f'Rotate {axis}={plane} {cw_str} around {axis=!s}'
+            yield f'Rotate {axis}={plane} {cw_str} around {axis=!s} [solved: {last_pct:.2%} \u001a {pct_solved:.2%}]'
+            last_pct = pct_solved
 
     def print_history(self):
         for line in self.format_history():
@@ -396,20 +426,12 @@ class Cube:
             if not compact or i not in {2, 3, 5, 6}:
                 print(''.join(row))
 
-    def copy(self) -> 'Cube':
-        cls = self.__class__
-        clone = cls.__new__(cls)
-        clone.nodes = tuple(map(Node.copy, self.nodes))
-        clone._pos_node_map = None
-        history = self.history
-        clone.history = history.copy() if history else []
-        return clone
-
-    def find_random_solution(self, max_moves: int = 20, max_attempts: int = 100_000_000, workers: int = 14):
-        w_attempts = max_attempts // workers
+    def find_random_solution(self, max_moves: int = 80, max_attempts: int = 1_000_000, workers: int = 14):
+        # w_attempts = max_attempts // workers
         with ProcessPoolExecutor(max_workers=workers) as executor:
             futures = (
-                executor.submit(self.copy()._find_random_solution, max_moves, w_attempts) for _ in range(workers)
+                executor.submit(self.copy()._find_random_solution, max_moves, max_attempts, use_print=True)
+                for _ in range(workers)
             )
             for i, future in enumerate(as_completed(futures)):
                 try:
@@ -424,38 +446,39 @@ class Cube:
 
         raise NoSolutionFound(f'No random solution was found with {max_moves=} in {max_attempts=} with {workers=}')
 
-    def _find_random_solution(self, max_moves: int = 20, max_attempts: int = 100_000_000, seed: Seed = None) -> 'Cube':
+    def _find_random_solution(
+        self, max_moves: int = 80, max_attempts: int = 1_000_000, seed: Seed = None, use_print: bool = False
+    ) -> 'Cube':
         cube = self.copy()
-        orig_nodes = tuple(map(Node.copy, cube.nodes))
         copy_node = Node.copy
+        orig_nodes = tuple(map(copy_node, cube.nodes))
         # make_copy = self.copy
-        random = Random(seed)
         axes = ('x', 'y', 'z')
-        getrandbits = random.getrandbits
+        getrandbits = Random(seed).getrandbits  # See Cube.randomize() for additional notes
 
-        def rand_2_or_3(n):
+        def rand_2_or_3(n: int) -> int:  # Equivalent to random._randbelow for n=2..3; used by both choice & randrange
             r = getrandbits(2)
             while r >= n:
                 r = getrandbits(2)
             return r
 
-        # choice = random.choice
-        # randrange = random.randrange
-        report_interval = max_attempts / (1000 if max_attempts > 10_000_000 else 100)
+        report_func = print if use_print else log.info
+        axis_to_rotate_method = cube._axis_to_rotate_method
+        report_interval = _report_interval(max_attempts)
         for attempt in range(1, max_attempts + 1):
             if attempt % report_interval == 0:
-                # log.info(f'Beginning random solution {attempt=:,d}')
-                print(f'Beginning random solution {attempt=:,d}')
+                report_func(f'Beginning random solution {attempt=:,d}')
             # cube = make_copy()
             cube.nodes = tuple(map(copy_node, orig_nodes))
             cube.history = []
 
             for _ in range(max_moves):
-                # cube.rotate(choice(axes), randrange(-1, 2), randrange(0, 2))
-                cube.rotate(axes[rand_2_or_3(3)], rand_2_or_3(3) - 1, rand_2_or_3(2))  # noqa
-                if cube.solved():
-                    # log.info(f'Found random solution with moves={len(cube.history)} on {attempt=}')
-                    print(f'Found random solution with moves={len(cube.history)} on {attempt=}')
+                # solved_pct = cube.rotate(axes[rand_2_or_3(3)], rand_2_or_3(3) - 1, rand_2_or_3(2))
+                solved_pct = axis_to_rotate_method[axes[rand_2_or_3(3)]](cube, rand_2_or_3(3) - 1, rand_2_or_3(2))
+                # cube.rotate(axes[rand_2_or_3(3)], rand_2_or_3(3) - 1, True)
+                if solved_pct == 1:
+                # if cube.solved():
+                    report_func(f'Found random solution with moves={len(cube.history)} on {attempt=}')
                     cube.print_history()
                     return cube
 
@@ -479,6 +502,10 @@ class Cube:
     #                 if active.solved():
     #                     return active
     #                 # else:
+
+
+def _report_interval(attempts: int) -> int:
+    return 100_000 if attempts >= 1_000_000 else round(attempts, -int(math.log(attempts, 10))) / 10
 
 
 class NoSolutionFound(Exception):
