@@ -86,6 +86,9 @@ class ArgParser(ArgumentParser):
 
     @property
     def subparsers(self):
+        return self.get_subparsers()
+
+    def get_subparsers(self):
         try:
             return {sp.dest: sp for sp in self._subparsers._group_actions}
         except AttributeError:
@@ -148,10 +151,10 @@ class ArgParser(ArgumentParser):
             formatter.add_arguments(action_group._group_actions)
             formatter.end_section()
 
-        if self.subparsers:
-            for sp_dest, sp in self.subparsers.items():
+        if subparsers := self.get_subparsers():
+            for sp_dest, sp in subparsers.items():
                 for choice_name, sp_choice in sp.choices.items():
-                    formatter.start_section('{} {}'.format(sp_dest, choice_name))
+                    formatter.start_section(f'{sp_dest} {choice_name}')
                     formatter.add_text(sp_choice.full_help(True, False))
                     formatter.end_section()
 
@@ -193,19 +196,24 @@ class ArgParser(ArgumentParser):
     def add_constant(self, key, value):
         self.__constants[key] = value
 
+    def _add_arg_to_subparsers(self, args, kwargs, subparsers=None):
+        if subparsers is None:
+            subparsers = self.get_subparsers()
+        for subparser in {val for sp in subparsers.values() for val in sp.choices.values()}:
+            subparser.add_common_arg(*args, **kwargs)
+
     def add_common_sp_arg(self, *args, **kwargs):
         """Add an argument with the given parameters to every subparser in this ArgParser, or itself if it has none"""
-        if self.subparsers:
-            for subparser in {val for sp in self.subparsers.values() for val in sp.choices.values()}:
-                subparser.add_common_arg(*args, **kwargs)
+        if subparsers := self.get_subparsers():
+            self._add_arg_to_subparsers(args, kwargs, subparsers)
         else:
             self.add_argument(*args, **kwargs)
 
     def add_common_arg(self, *args, **kwargs):
         """Add an argument with the given parameters to this ArgParser and every subparser in it"""
         self.add_argument(*args, **kwargs)
-        if self.subparsers:
-            self.add_common_sp_arg(*args, **kwargs)
+        if subparsers := self.get_subparsers():
+            self._add_arg_to_subparsers(args, kwargs, subparsers)
 
     def include_common_args(self, *args, **kwargs):
         """
