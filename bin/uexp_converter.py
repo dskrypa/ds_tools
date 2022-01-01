@@ -70,6 +70,7 @@ def validate_dir(path: Optional[str], arg_info: str) -> Optional[Path]:
 def wav_to_flac(src_path: Path, out_dir: Path = None) -> Optional[Path]:
     out_base = out_dir or src_path.parent
     out_path = out_base.joinpath(src_path.with_suffix('.flac').name)
+    log.debug(f'Converting to FLAC: {src_path.as_posix()}')
     try:
         check_output(['ffmpeg', '-i', src_path.as_posix(), out_path.as_posix()], stderr=PIPE)
     except CalledProcessError as e:
@@ -100,19 +101,21 @@ def xab_to_wav(src_path: Path, out_dir: Path = None) -> list[Path]:
 
     out_base = out_dir or src_path.parent
     cmd.append('-o')
-    cmd.append(out_base.resolve().as_posix() + '/?n.wav')
+    cmd.append(out_base.resolve().as_posix() + f'/{src_path.stem}#?s#?n.wav')
+
     try:
         stdout = check_output(cmd, encoding='utf-8')
     except CalledProcessError as e:
         log.error(f'Error converting {src_path.as_posix()} to WAV: {e}')
         return []
     else:
-        paths = []
-        for line in stdout.splitlines():
-            if line.startswith('stream name:'):
-                stream_name = line.split(':', 1)[1].replace('/', '_').strip()
-                paths.append(out_base.joinpath(f'{stream_name}.wav'))
-        return paths
+        stream_names = [
+            line.split(':', 1)[1].replace('/', '_').strip()
+            for line in stdout.splitlines()
+            if line.startswith('stream name:')
+        ]
+        name = src_path.stem
+        return [out_base.joinpath(f'{name}#{n}#{stream_name}.wav') for n, stream_name in enumerate(stream_names, 1)]
 
 
 def uexp_to_audio(src_path: Path, out_dir: Path = None) -> Optional[Path]:
