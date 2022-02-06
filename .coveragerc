@@ -1,2 +1,7 @@
 [run]
 source = ds_tools
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
