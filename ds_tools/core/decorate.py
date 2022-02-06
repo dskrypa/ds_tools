@@ -7,9 +7,10 @@ import logging
 import time
 import traceback
 from collections import OrderedDict
-from functools import wraps
+from functools import wraps, update_wrapper, partial
 from operator import attrgetter
 from threading import Lock
+from typing import Callable
 
 from .itertools import partitioned
 
@@ -280,3 +281,30 @@ def retry_on_exception(retries=0, delay=0, *exception_classes, warn=True):
                         raise e
         return wrapper
     return decorator
+
+
+class flex_method:
+    """
+    A decorator for a method that can be used as either a classmethod or a normal method.
+
+    An explicit alternate handler can be registered to be used when called as a class/normal method.  By default, the
+    same method is used for both.
+    """
+
+    def __init__(self, func: Callable):
+        self.inst_func = self.cls_func = func
+        update_wrapper(self, func)
+
+    def __get__(self, instance, cls):
+        if instance is None:
+            return partial(self.cls_func, cls)
+        else:
+            return partial(self.inst_func, instance)
+
+    def classmethod(self, func: Callable):
+        self.cls_func = func
+        return self
+
+    def method(self, func: Callable):
+        self.inst_func = func
+        return self

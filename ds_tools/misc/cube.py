@@ -216,36 +216,42 @@ class Node:
 
     # region Rotation Methods
 
-    def rotate_x(self, clockwise: bool):
+    def rotate_x(self, clockwise: Bool):
         x, y, z = self.pos
         self.pos = (x, z, -y) if clockwise else (x, -z, y)
         fx, fy, fz = self.faces
         self.faces = (fx, fz, fy)
 
-    def rotate_y(self, clockwise: bool):
+    def rotate_y(self, clockwise: Bool):
         x, y, z = self.pos
         self.pos = (z, y, -x) if clockwise else (-z, y, x)
         fx, fy, fz = self.faces
         self.faces = (fz, fy, fx)
 
-    def rotate_z(self, clockwise: bool):
+    def rotate_z(self, clockwise: Bool):
         x, y, z = self.pos
         self.pos = (-y, x, z) if clockwise else (y, -x, z)
         fx, fy, fz = self.faces
         self.faces = (fy, fx, fz)
 
-    def rotate(self, axis: str, clockwise: bool):
+    def rotate(self, axis: str, clockwise: Bool):
         self._axis_to_rotate_method[axis](self, clockwise)
 
     _axis_to_rotate_method = {'x': rotate_x, 'y': rotate_y, 'z': rotate_z}
 
-    def maybe_rotate(self, axis: str, clockwise: bool, plane: int):
+    def maybe_rotate(self, axis: str, clockwise: Bool, plane: int):
         if getattr(self, axis) == plane:
             self.rotate(axis, clockwise)
 
-    def rotate_cube(self, axis: str, clockwise: bool):
+    def rotate_cube(self, axis: str, clockwise: Bool):
         plane = getattr(self, axis)
         self.cube.rotate(axis, plane, clockwise)
+
+    def solve(self, seed: Seed = None):
+        randbelow = Random(seed)._randbelow  # noqa
+        axes = ('x', 'y', 'z')
+        while not self.is_home():
+            self.rotate_cube(axes[randbelow(3)], randbelow(2))
 
     # endregion
 
@@ -483,6 +489,26 @@ class Cube:
                     return cube
 
         raise NoSolutionFound(f'No random solution was found with {max_moves=} in {max_attempts=}')
+
+    def find_semi_random_solution(self, seed: Seed = None):
+        cube = self.copy()
+        while not cube.solved():
+            node = next(n for n in cube.nodes if not n.is_home())
+            node.solve(seed)
+        return cube
+
+    def find_semi_random_solution_2(self, seed: Seed = None):
+        cube = self.copy()
+        while not cube.solved():
+            unsolved_colors = tuple(n.color for n in cube.nodes if not n.is_home())
+            copies = [cube.copy() for color in unsolved_colors]
+            for color, _cube in zip(unsolved_colors, copies):
+                _cube[color].solve(seed)
+
+            cube = max(copies, key=lambda c: c.percent_solved() / len(c.history))
+            # cube = min(copies, key=lambda c: len(c.history))
+
+        return cube
 
     # def find_solution(self, max_moves: int = 20) -> 'Cube':
     #     """
