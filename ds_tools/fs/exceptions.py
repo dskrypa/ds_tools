@@ -4,9 +4,10 @@ Exceptions for the ds_tools.fs package
 :author: Doug Skrypa
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 if TYPE_CHECKING:
+    from pathlib import Path
     from .archives import ArchiveFile
 
 
@@ -33,3 +34,9 @@ class InvalidPassword(Exception):
 
 class UnknownArchiveType(ValueError):
     """Exception to be raised when a given archive has an unexpected file extension"""
+    def __init__(self, ext: str, path: Union[str, 'Path']):
+        self.ext = ext
+        self.path = path
+
+    def __str__(self) -> str:
+        return f'Unknown archive extension={self.ext!r} for path={self.path!r}'

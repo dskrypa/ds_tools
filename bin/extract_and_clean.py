@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 import sys
 from pathlib import Path
@@ -21,6 +21,7 @@ from ds_tools.logging import init_logging
 from ds_tools.shell import exec_local
 
 log = logging.getLogger(__name__)
+IGNORE_EXTS = {'flac', 'mp3', 'm4p', 'm4a', 'jpeg', 'jpg', 'png', 'ogg'}
 
 
 def parser():
@@ -53,20 +54,16 @@ def extract_albums(src_dir: Path, zip_dir: Path):
     for artist in src_dir.iterdir():
         if artist.is_dir():
             zip_dest = zip_dir.joinpath(artist.stem)
-            if not zip_dest.exists():
-                zip_dest.mkdir(parents=True)
-
             for f in artist.iterdir():
                 if f.is_file():
                     try:
                         extracted_path = ArchiveFile(f).extract_all(artist)
                     except UnknownArchiveType as e:
-                        log.warning(f'Skipping {f.as_posix()} due to error: {e}')
+                        level = logging.DEBUG if any(e.ext.endswith(x) for x in IGNORE_EXTS) else logging.WARNING
+                        log.log(level, f'Skipping {f.as_posix()} due to error: {e}')
                     else:
                         log.info(f'Extracted {f} to {extracted_path}')
-                        new_path = zip_dest.joinpath(f.name)
-                        log.info(f'Renaming {f} to {new_path}')
-                        f.rename(new_path)
+                        move_archive(f, zip_dest)
         else:
             try:
                 extracted_path = ArchiveFile(artist).extract_all(src_dir)
@@ -74,9 +71,15 @@ def extract_albums(src_dir: Path, zip_dir: Path):
                 log.warning(f'Skipping {artist.as_posix()} due to error: {e}')
             else:
                 log.info(f'Extracted {artist} to {extracted_path}')
-                new_path = zip_dir.joinpath(artist.name)
-                log.info(f'Renaming {artist} to {new_path}')
-                artist.rename(new_path)
+                move_archive(artist, zip_dir)
+
+
+def move_archive(f: Path, dest_dir: Path):
+    if not dest_dir.exists():
+        dest_dir.mkdir(parents=True)
+    new_path = dest_dir.joinpath(f.name)
+    log.info(f'Renaming {f} to {new_path}')
+    f.rename(new_path)
 
 
 def old_extract_albums(src_dir: Path, zip_dir: Path):

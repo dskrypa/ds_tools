@@ -42,12 +42,10 @@ class ArchiveFile(ABC):
     _exts: tuple[str, ...] = None
     _cls: Type = None
 
-    # noinspection PyMethodOverriding
     def __init_subclass__(cls: ArchiveFileType, fcls: Type = None, ext: str = None, exts: Iterable[str] = None):
-        is_abc_sub_cls = cls.__name__ == '_SingleArchiveFile' and cls.__module__ == ArchiveFile.__module__
-        if fcls is None and not is_abc_sub_cls:
+        if fcls is None and ABC not in cls.__bases__:
             raise ValueError(f'ArchiveFile subclass {cls.__name__} must specify fcls')
-        elif ((not ext and not exts) or (ext and exts)) and not is_abc_sub_cls:
+        elif ((not ext and not exts) or (ext and exts)) and ABC not in cls.__bases__:
             raise ValueError(f'ArchiveFile subclass {cls.__name__} must specify either ext or exts, not both')
         elif ext:
             cls._exts = (ext,)
@@ -61,16 +59,7 @@ class ArchiveFile(ABC):
 
     def __new__(cls, path: Union[str, Path]) -> ArchiveFileType:
         if cls is ArchiveFile:
-            ext = full_ext = ''.join(Path(path).suffixes)[1:].lower()
-            while not (sub_cls := cls._ext_cls_map.get(ext)):
-                if '.' in ext:
-                    ext = ext.split('.', 1)[1]
-                else:
-                    break
-            if sub_cls is None:
-                raise UnknownArchiveType(f'Unknown archive extension={full_ext!r} for {path=!r}') from None
-            cls = sub_cls
-
+            cls = cls.class_for(path)
         return super().__new__(cls)
 
     def __init__(self, path: Union[str, Path], use_arc_name: bool = False):
@@ -81,42 +70,66 @@ class ArchiveFile(ABC):
         self.stem = self.path.name[:-len(self.ext)] if self.ext else self.path.name
         self._finalizer = finalize(self, self._close)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f'<{self.__class__.__name__}({self.path.as_posix()!r})>'
 
-    def extract_all(self, dst_root: Union[str, Path] = None):
+    @classmethod
+    def class_for(cls, path: Union[str, Path]) -> Type[ArchiveFileType]:
+        ext = full_ext = ''.join(Path(path).suffixes)[1:].lower()
+        while not (sub_cls := cls._ext_cls_map.get(ext)):
+            if '.' in ext:
+                ext = ext.split('.', 1)[1]
+            else:
+                break
+        if sub_cls is None:
+            raise UnknownArchiveType(full_ext, path) from None
+        return sub_cls
+
+    @classmethod
+    def is_archive(cls, path: Union[str, Path]) -> bool:
+        try:
+            cls.class_for(path)
+        except UnknownArchiveType:
+            return False
+        else:
+            return True
+
+    def extract_all(self, dst_root: Union[str, Path] = None) -> Optional[Path]:
         dst_root = _prepare_destination(dst_root)
         if self.needs_password:
-            passwords = Passwords()
-            log.debug(f'Extracting {self.path.as_posix()} - trying {len(passwords)} known passwords...')
-            for i, password in enumerate(passwords):
-                try:
-                    result = self._try_extract(dst_root, password, i, len(passwords))
-                except InvalidPassword:
-                    pass
-                else:
-                    log.debug(f'Successfully extracted {self.path.as_posix()} using {password=!r}')
-                    return result
-            else:
-                log.debug(f'Extracting {self.path.as_posix()} - requesting new password(s)...')
-                while password := passwords.get_new(f'Enter new password for {self.path.as_posix()}:'):
-                    try:
-                        result = self._try_extract(dst_root, password)
-                    except InvalidPassword:
-                        passwords.remove(password)
-                    else:
-                        log.debug(f'Successfully extracted {self.path.as_posix()} using {password=!r}')
-                        passwords.add(password)  # .add will prompt to save or not
-                        return result
+            return self._extract_all_with_pw(dst_root)
         else:
             log.debug(f'Extracting {self.path.as_posix()} with no password...')
             result = self._try_extract(dst_root)
             log.debug(f'Successfully extracted {self.path.as_posix()} with no password')
             return result
 
+    def _extract_all_with_pw(self, dst_root: Path) -> Optional[Path]:
+        passwords = Passwords()
+        log.debug(f'Extracting {self.path.as_posix()} - trying {len(passwords)} known passwords...')
+        for i, password in enumerate(passwords):
+            try:
+                result = self._try_extract(dst_root, password, i, len(passwords))
+            except InvalidPassword:
+                pass
+            else:
+                log.debug(f'Successfully extracted {self.path.as_posix()} using {password=!r}')
+                return result
+        else:
+            log.debug(f'Extracting {self.path.as_posix()} - requesting new password(s)...')
+            while password := passwords.get_new(f'Enter new password for {self.path.as_posix()}:'):
+                try:
+                    result = self._try_extract(dst_root, password)
+                except InvalidPassword:
+                    passwords.remove(password)
+                else:
+                    log.debug(f'Successfully extracted {self.path.as_posix()} using {password=!r}')
+                    passwords.add(password)  # .add will prompt to save or not
+                    return result
+
         return None
 
-    def _try_extract(self, dst_root: Path, password: str = None, pw_n: int = None, pw_count: int = None):
+    def _try_extract(self, dst_root: Path, password: str = None, pw_n: int = None, pw_count: int = None) -> Path:
         with TemporaryDirectory(dir=dst_root) as tmp_dir:
             log.debug(f'Trying to extract {self.path.as_posix()} to tmp={tmp_dir}')
             try:
@@ -157,12 +170,15 @@ class ArchiveFile(ABC):
 
     @abstractmethod
     def _extract_all(self, path: Union[Path, str], password: str = None, pw_n: int = None, pw_count: int = None):
-        return NotImplemented
+        raise NotImplementedError
 
     @property
     @abstractmethod
     def needs_password(self):
-        return NotImplemented
+        raise NotImplementedError
+
+
+# region Multi-File Archives
 
 
 class RarArchiveFile(ArchiveFile, fcls=RarFile, ext='rar'):
@@ -248,6 +264,11 @@ class ZipArchiveFile(ArchiveFile, fcls=ZipFile, ext='zip'):
             raise
 
 
+# endregion
+
+# region Single-File Archives
+
+
 class _SingleArchiveFile(ArchiveFile, ABC):
     @property
     def needs_password(self):
@@ -274,6 +295,9 @@ class GzipArchiveFile(_SingleArchiveFile, fcls=GzipFile, ext='gz'):
 
 class BZ2ArchiveFile(_SingleArchiveFile, fcls=BZ2File, ext='bz2'):
     pass
+
+
+# endregion
 
 
 class Passwords:
