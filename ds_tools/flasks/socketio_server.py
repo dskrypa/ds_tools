@@ -5,7 +5,7 @@ Utilities for running Flask servers with SocketIO
 """
 
 import logging
-from typing import Optional, Iterable
+from typing import Optional, Iterable, Union, NoReturn
 from uuid import uuid4
 
 import requests
@@ -33,10 +33,10 @@ class SocketIOServer(FlaskServer):
         self._socketio = SocketIO(self._app, async_mode=async_mode)
         return self._socketio.run(self._app, host=self._host, port=self._port)
 
-    def _shutdown_server(self):
+    def _shutdown_server(self) -> Union[NoReturn, Response]:
         try:
             pw = request.get_json().get('password')
-        except Exception:
+        except Exception:  # noqa
             pw = None
         if request.remote_addr == '127.0.0.1' and pw == self.__shutdown_pw:
             log.info('Stopping REST server')
@@ -50,7 +50,7 @@ class SocketIOServer(FlaskServer):
             resp = requests.post(
                 f'http://localhost:{self._port}/shutdown', json={'password': self.__shutdown_pw}, timeout=0.1
             )
-        except Exception:
+        except Exception:  # noqa
             log.debug('Shutdown request timed out (expected)')
         else:
             log.debug(f'Unexpected shutdown response: {resp} - {resp.text}')

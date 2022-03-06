@@ -28,13 +28,17 @@ def main():
     parser.add_argument('--use_hostname', '-u', action='store_true', help='Use hostname instead of localhost/127.0.0.1')
     parser.add_argument('--port', '-p', type=int, default=10000, help='Port to use')
     parser.add_argument('--verbose', '-v', action='count', help='Print more verbose log info (may be specified multiple times to increase verbosity)')
+    parser.add_argument('--werkzeug', '-w', action='store_true', help='Use the werkzeug WSGI server instead of gunicorn/socketio')
     args = parser.parse_args()
     init_logging(None, args.verbose)
 
-    if platform.system() == 'Windows':
-        from ds_tools.flasks.socketio_server import SocketIOServer as Server
+    if args.werkzeug:
+        from ds_tools.flasks.server import FlaskServer as Server
     else:
-        from ds_tools.flasks.gunicorn_server import GunicornServer as Server
+        if platform.system() == 'Windows':
+            from ds_tools.flasks.socketio_server import SocketIOServer as Server
+        else:
+            from ds_tools.flasks.gunicorn_server import GunicornServer as Server
 
     host = socket.gethostname() if args.use_hostname else None
     server = Server(app, args.port, host, debug=True)

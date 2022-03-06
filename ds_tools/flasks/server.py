@@ -74,11 +74,40 @@ class FlaskServer:
     def __repr__(self):
         return f'<{self.__class__.__name__}[{self._host}:{self._port}, app={self._app}]>'
 
-    def start_server(self):
-        raise NotImplementedError
+    def start_server(self, **options):
+        import socket
+        from flask.cli import show_server_banner
+        from werkzeug.serving import make_server
+
+        app = self._app
+        app.debug = bool(self._debug)
+        show_server_banner(app.env, app.debug, app.name, False)
+        log.warning(
+            'Using werkzeug.serving.make_server instead of Flask.run, so behavior may be slightly different'
+            ' - use a production WSGI server instead of the built-in development server!',
+            extra={'color': 11},
+        )
+
+        options.setdefault('threaded', True)
+        self._server = srv = make_server(self._host, self._port, app, **options)  # noqa
+
+        try:
+            unix_socket = srv.socket.family == socket.AF_UNIX
+        except AttributeError:
+            unix_socket = False
+        host = self._host if self._host not in ('', '*') else 'localhost'
+        if unix_socket:
+            log.info(f' * Running on {host} (Press CTRL+C to quit)')
+        else:
+            if ':' in host:
+                host = f'[{host}]'
+            scheme = 'http' if options.get('ssl_context') is None else 'https'
+            log.info(f' * Running on {scheme}://{host}:{srv.socket.getsockname()[1]}/ (Press CTRL+C to quit)')
+
+        srv.serve_forever()
 
     def stop_server(self):
-        raise NotImplementedError
+        self._server.shutdown()
 
 
 def _patch_log_record():
@@ -88,7 +117,7 @@ def _patch_log_record():
     ``return self._fmt % record.__dict__`` without first attempting to access the value as a property, so it doesn't
     have a chance to be stored lazily.
     """
-    original_init = logging.LogRecord.__init__
+    original_init = logging.LogRecord.__init__  # noqa
 
     def init(self, *args, **kwargs):
         self.uid = getattr(wz_local, 'uid', '-')
