@@ -1,14 +1,16 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import grp  # noqa
 # import os
 import pwd  # noqa
+import sys
 from argparse import ArgumentParser
 from pathlib import Path
 from shutil import unpack_archive
 from subprocess import check_call, check_output, SubprocessError
 from tempfile import TemporaryDirectory
 
+sys.path.insert(0, Path(__file__).resolve().parents[1].as_posix())
 from ds_tools.installer.apps.grafana import Promtail
 
 # GH_OWNER = 'grafana'
