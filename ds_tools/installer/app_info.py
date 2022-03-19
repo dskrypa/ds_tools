@@ -6,7 +6,14 @@ Base app info template
 
 import platform
 from dataclasses import dataclass, field, fields
-from typing import Sequence, Literal, Optional
+try:
+    from typing import Sequence, Literal, Optional
+except ImportError:
+    from typing import Sequence, Optional
+
+    class Literal:
+        def __class_getitem__(cls, item):
+            return None
 
 
 @dataclass
