@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.8
+#!/usr/bin/env python
 
 import grp  # noqa
 # import os
@@ -34,6 +34,9 @@ def main():
     cfg_group.add_argument('--pos_path', default='/tmp/positions.yaml', help='Path to store log tail positions')
     cfg_group.add_argument('--loki_scheme', default='http', choices=('http', 'https'), help='Scheme for Loki push client')
     cfg_group.add_argument('--loki_netloc', '-L', default='localhost:3100', help='Host and port for Loki push client')
+
+    log_group = parser.add_argument_group('Log Scrape Config')
+    log_group.add_argument('--logs', metavar='JOB:PATH_PATTERN', nargs='+', help='One or more paths to monitor')
 
     args = parser.parse_args()
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from shutil import unpack_archive
 from subprocess import check_output, SubprocessError
 from tempfile import TemporaryDirectory
-from typing import Optional
+from typing import Optional, Iterable
 
 from ..app import Application
 from ..app_info import AppInfo
@@ -102,6 +102,7 @@ class Promtail(GrafanaApp, app_name='promtail', repo='loki'):
         loki_scheme: str = 'http',
         loki_netloc: str = 'localhost:3100',
         config_path: str = None,
+        logs: Iterable[str] = None,
     ):
         super().__init__(name=name, user=user, group=group, version=version, bin_path=bin_path)
         self.http_port = http_port
@@ -110,21 +111,41 @@ class Promtail(GrafanaApp, app_name='promtail', repo='loki'):
         self.loki_scheme = loki_scheme
         self.loki_netloc = loki_netloc
         self.config_path = config_path or f'/usr/local/etc/{self.name}/{self.name}.yaml'
+        if logs:
+            log_configs = {}
+            for entry in logs:
+                try:
+                    job, path_pattern = entry.split(':', 1)
+                except ValueError as e:
+                    raise ValueError(f'Invalid --logs entry={entry!r} - expected JOB:PATH_PATTERN') from e
+                else:
+                    log_configs[job] = path_pattern
+            self.log_configs = log_configs
+        else:
+            self.log_configs = None
 
     def create_config_file(self):
         config = f"""
-        server:
-          http_listen_port: {self.http_port}
-          grpc_listen_port: {self.grpc_port}
-        positions:
-          filename: {self.pos_path}
-        clients:
-          - url: {self.loki_scheme}://{self.loki_netloc}/loki/api/v1/push
-        #scrape_configs:
-        #- job_name: example
-        #  static_configs:
-        #  - labels: {{job: example, __path__: /var/log/*log}}
+server:
+  http_listen_port: {self.http_port}
+  grpc_listen_port: {self.grpc_port}
+positions:
+  filename: {self.pos_path}
+clients:
+  - url: {self.loki_scheme}://{self.loki_netloc}/loki/api/v1/push
         """.lstrip()
+        if self.log_configs:
+            parts = [config, 'scrape_configs:', '- job_name: local_logs', '  static_configs:']
+            for job, path_pattern in self.log_configs.items():
+                parts.append(f'  - labels: {{job: {job!r}, __path__: {path_pattern!r}}}')
+            config = '\n'.join(parts)
+        else:
+            config += (
+                '#scrape_configs:\n'
+                '#- job_name: example\n'
+                '#  static_configs:\n'
+                '#  - labels: {{job: example, __path__: /var/log/*log}}\n'
+            )
 
         path = Path(self.config_path)
         if not path.parent.exists():
@@ -141,10 +162,3 @@ class Loki(GrafanaApp, app_name='loki', repo='loki'):
 
 class Grafana(GrafanaApp, app_name='grafana', repo='grafana'):  # Source only
     pass
-
-
-
-
-
-
-
