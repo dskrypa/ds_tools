@@ -48,7 +48,7 @@ class Service(ABC):
     def get_service_config_path(self) -> Path:
         raise NotImplementedError
 
-    def write_service_config(self, permissions: int = 0o755, overwrite: bool = False, **kwargs):
+    def write_service_config(self, permissions: int = 0o755, overwrite: bool = True, **kwargs):
         path = self.get_service_config_path()
         if path.exists():
             warning = f'Service config path={path.as_posix()} already exists'

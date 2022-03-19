@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import grp  # noqa
-# import os
+import logging
 import pwd  # noqa
 import sys
 from argparse import ArgumentParser
@@ -26,8 +26,8 @@ def main():
     parser.add_argument('--name', '-n', default=PROGRAM, help='The name of the service to create')
     parser.add_argument('--user', '-u', default=PROGRAM, help=f'The user that should be configured to run {PROGRAM}')
     parser.add_argument('--group', '-g', default=PROGRAM, help='The group that the specified user should be added to')
-    parser.add_argument('--install_path', '-i', default=f'/usr/local/bin/{PROGRAM}-freebsd-amd64', help=f'The path to install the {PROGRAM} binary')
-    parser.add_argument('--config_path', '-c', default=f'/usr/local/etc/{PROGRAM}/{PROGRAM}.yaml', help=f'The path to install the {PROGRAM} config file')
+    parser.add_argument('--install_path', '-i', help=f'The path to install the {PROGRAM} binary')
+    parser.add_argument('--config_path', '-c', help=f'The path to install the {PROGRAM} config file')
     parser.add_argument('--version', '-V', help=f'The version of {PROGRAM} to install (default: latest)')
 
     cfg_group = parser.add_argument_group('Promtail Config')
@@ -40,7 +40,11 @@ def main():
     log_group = parser.add_argument_group('Log Scrape Config')
     log_group.add_argument('--logs', metavar='JOB:PATH_PATTERN', nargs='+', help='One or more paths to monitor')
 
+    parser.add_argument('--verbose', '-v', action='count', default=0, help='Increase logging verbosity (can specify multiple times)')
     args = parser.parse_args()
+
+    log_fmt = '%(asctime)s %(levelname)s %(name)s %(lineno)d %(message)s' if args.verbose > 1 else '%(message)s'
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format=log_fmt)
 
     promtail = Promtail(
         name=args.name,
