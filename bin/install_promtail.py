@@ -57,6 +57,7 @@ def main():
         loki_scheme=args.loki_scheme,
         loki_netloc=args.loki_netloc,
         config_path=args.config_path,
+        logs=args.logs,
     )
     promtail.download_and_install()
 

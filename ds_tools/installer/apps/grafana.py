@@ -111,6 +111,7 @@ class Promtail(GrafanaApp, app_name='promtail', repo='loki'):
         self.loki_scheme = loki_scheme
         self.loki_netloc = loki_netloc
         self.config_path = config_path or f'/usr/local/etc/{self.name}/{self.name}.yaml'
+        self.app.cmd_args = f'-config.file {self.config_path}'
         if logs:
             log_configs = {}
             for entry in logs:
@@ -133,7 +134,7 @@ positions:
   filename: {self.pos_path}
 clients:
   - url: {self.loki_scheme}://{self.loki_netloc}/loki/api/v1/push
-        """.lstrip()
+""".lstrip()
         if self.log_configs:
             parts = [config, 'scrape_configs:', '- job_name: local_logs', '  static_configs:']
             for job, path_pattern in self.log_configs.items():
