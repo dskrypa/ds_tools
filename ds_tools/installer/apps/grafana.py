@@ -80,31 +80,34 @@ class GrafanaApp(Application):
         self.validate_install_dependencies()
         self._download(version)
 
-    def get_download_url_and_file(self, version: str):
-        zip_name = self.bin_path.name + '.zip'
-        return f'https://github.com/grafana/{self.repo}/releases/download/{version}/{zip_name}', zip_name
+    @property
+    def zip_name(self) -> str:
+        return self.bin_path.name + '.zip'
 
     def _download(self, version: str):
-        download_url, zip_name = self.get_download_url(version)
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            zip_path = tmp_path.joinpath(zip_name)  # type: Path
-            self._save_file(tmp_path, zip_path, download_url, version)
-            self._prepare_binaries(zip_path, tmp_path, tmp_dir)
-            self._finalize_install(zip_path, tmp_path, tmp_dir)
+            self._save_file(tmp_path, version)
+            self._prepare_binaries(tmp_path, tmp_dir)
+            self._finalize_install(tmp_path)
 
     def validate_install_dependencies(self):
         return
 
-    def _save_file(self, tmp_path: Path, zip_path: Path, download_url: str, version: str):
+    def _save_file(self, tmp_path: Path, version: str):
+        zip_name = self.zip_name
+        zip_path = tmp_path.joinpath(zip_name)
+        download_url = f'https://github.com/grafana/{self.repo}/releases/download/{version}/{zip_name}'
         log.info(f'Downloading {self.name} version={version!r}')
         save_file(download_url, ('--location',), save_path=zip_path)
 
-    def _prepare_binaries(self, zip_path: Path, tmp_path: Path, tmp_dir: str):
+    def _prepare_binaries(self, tmp_path: Path, tmp_dir: str):
+        zip_path = tmp_path.joinpath(self.zip_name)
         log.info(f'Unpacking {zip_path.name}')
         unpack_archive(zip_path.as_posix(), tmp_dir)
 
-    def _finalize_install(self, zip_path: Path, tmp_path: Path, tmp_dir: str):
+    def _finalize_install(self, tmp_path: Path):
+        zip_path = tmp_path.joinpath(self.zip_name)
         tmp_bin_path = next((p for p in tmp_path.iterdir() if p != zip_path))  # type: Path
         if self.bin_path.exists():
             log.info(f'Removing old {self.bin_path.as_posix()}')
@@ -262,18 +265,18 @@ class Tempo(GrafanaApp, app_name='tempo', repo='tempo'):
             pkg_str = ' '.join(missing)
             raise RuntimeError(f'Missing dependencies - please run `{cmd} install {pkg_str}`')
 
-    def _save_file(self, tmp_path: Path, zip_path: Path, download_url: str, version: str):
+    def _save_file(self, tmp_path: Path, version: str):
         log.info(f'Cloning the git repo for {self.name}')
         os.chdir(tmp_path)
         check_call(['git', 'clone', 'https://github.com/grafana/tempo.git'])
 
-    def _prepare_binaries(self, zip_path: Path, tmp_path: Path, tmp_dir: str):
+    def _prepare_binaries(self, tmp_path: Path, tmp_dir: str):
         os.chdir(tmp_path.joinpath('tempo'))
         bsd = platform.system().lower() == 'freebsd'
         log.info(f'Compiling {self.name}')
         check_call(['gmake' if bsd else 'make', 'tempo'])
 
-    def _finalize_install(self, zip_path: Path, tmp_path: Path, tmp_dir: str):
+    def _finalize_install(self, tmp_path: Path):
         bin_dir = next(tmp_path.joinpath('tempo', 'bin').iterdir())
         tmp_bin_path = next(bin_dir.iterdir())
         if self.bin_path.exists():
