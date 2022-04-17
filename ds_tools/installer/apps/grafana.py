@@ -291,6 +291,13 @@ class Tempo(GrafanaApp, app_name='tempo', repo='tempo'):
         """
         The config for Tempo.  Example mostly copied from:
         https://github.com/grafana/tempo/blob/main/example/docker-compose/local/tempo-local.yaml
+        Ports:
+            - Open Telemetry: 55680
+            - Jaeger - Thrift Compact: 6831
+            - Jaeger - Thrift Binary: 6832
+            - Jaeger - Thrift HTTP: 14268
+            - Jaeger - GRPC: 14250
+            - Zipkin: 9411
         """
         config = f"""
 server:

@@ -13,10 +13,7 @@ log = logging.getLogger(__name__)
 
 class IntervalCoverageTestCase(TestCase):
     def test_non_overlapping(self):
-        intervals = [[1, 3], [3, 6]]
-        arr = IntervalCoverage(8)
-        for start, stop in intervals:
-            arr.add(start, stop)
+        arr = IntervalCoverage(8, intervals=[(1, 3), (3, 6)])
         self.assertEqual(arr.filled(), 5)
         self.assertIn((1, 3), arr)
         self.assertIn((1, 2), arr)
@@ -33,10 +30,7 @@ class IntervalCoverageTestCase(TestCase):
         self.assertFalse(arr[arr.max + 1])
 
     def test_overlapping(self):
-        intervals = [[10, 14], [4, 18], [19, 20], [19, 20], [13, 20]]
-        arr = IntervalCoverage(8)
-        for start, stop in intervals:
-            arr.add(start, stop)
+        arr = IntervalCoverage(8, intervals=[(10, 14), (4, 18), (19, 20), (19, 20), (13, 20)])
         self.assertEqual(arr.filled(), 16)
         # arr.pprint()
         self.assertEqual(arr.min, 4)
@@ -44,10 +38,7 @@ class IntervalCoverageTestCase(TestCase):
         self.assertFalse(arr[arr.max + 1])
 
     def test_high_value(self):
-        intervals = [[1, 3], [200, (1 << 32) - 1]]
-        arr = IntervalCoverage(64)
-        for start, stop in intervals:
-            arr.add(start, stop)
+        arr = IntervalCoverage(64, intervals=[(1, 3), (200, (1 << 32) - 1)])
         self.assertEqual(arr.filled(), (1 << 32) - 199)
         self.assertIn((2, 3), arr)
         self.assertIn((200, 1000), arr)
