@@ -9,9 +9,13 @@ import math
 import re
 from collections import OrderedDict
 from struct import calcsize, unpack_from, error as StructError
-from typing import Union, Mapping, Sized, Iterable, Container, Iterator
+from typing import TYPE_CHECKING, Union, Mapping, Sized, Iterable, Container, Iterator, Collection, Any, Callable
 
 from .color import colored
+
+if TYPE_CHECKING:
+    from datetime import timedelta
+    from ..core.typing import Bool
 
 __all__ = [
     'format_output',
@@ -24,11 +28,20 @@ __all__ = [
     'to_hex_and_str',
     'collapsed_ranges_str',
     'collapse_ranges',
+    'format_duration',
+    'timedelta_to_str',
 ]
 log = logging.getLogger(__name__)
 
 
-def short_repr(obj, when_gt=100, parts=45, sep='...', func=repr, containers_only=True):
+def short_repr(
+    obj: Any,
+    when_gt: int = 100,
+    parts: int = 45,
+    sep: str = '...',
+    func: Callable[[Any], str] = repr,
+    containers_only: 'Bool' = True,
+) -> str:
     obj_repr = func(obj)
     if containers_only and not isinstance(obj, Container):
         return obj_repr
@@ -37,28 +50,50 @@ def short_repr(obj, when_gt=100, parts=45, sep='...', func=repr, containers_only
     return obj_repr
 
 
-def readable_bytes(size: Union[float, int], dec_places: int = None, dec_by_unit: Mapping[str, int] = None):
+def readable_bytes(
+    size: Union[float, int],
+    dec_places: int = None,
+    dec_by_unit: Mapping[str, int] = None,
+    si: 'Bool' = False,
+    bits: 'Bool' = False,
+    i: 'Bool' = False,
+    rate: Union[bool, str] = False,
+) -> str:
     """
     :param size: The number of bytes to render as a human-readable string
     :param dec_places: Number of decimal places to include (overridden by dec_by_unit if specified)
     :param dec_by_unit: Mapping of {unit: number of decimal places to include}
-    :return:
+    :param si: Use the International System of Units (SI) definition (base-10) instead of base-2 (default: base-2)
+    :param bits: Use lower-case ``b`` instead of ``B``
+    :param i: Include the ``i`` before ``B`` to indicate that this suffix is based on the base-2 value (this only
+      affects the unit in the string - use ``si=True`` to use base-10)
+    :param rate: Whether the unit is a rate or not.  If True, ``/s`` will be appended to the unit.  If a string is
+      provided, that string will be appended instead.
     """
-    units = list(zip(['B ', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'], [0, 2, 2, 2, 2, 2, 2, 2, 2]))
+    units = ('B ', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB')  # len=9 @ YB -> max exp = 8
+    kilo = 1000 if si else 1024
     try:
-        exp = min(int(math.log(abs(size), 1024)), len(units) - 1) if abs(size) > 0 else 0
+        exp = min(int(math.log(abs(size), kilo)), 8) if abs(size) > 0 else 0  # update 8 to len-1 if units are added
     except TypeError as e:
         raise ValueError(f'Invalid {size=}') from e
-    unit, dec = units[exp]
+    unit = units[exp]
     if dec_places is not None:
         dec = dec_places
-    if isinstance(dec_by_unit, dict):
+    elif dec_by_unit and isinstance(dec_by_unit, dict):
         dec = dec_by_unit.get(unit, 2)
-    return '{{:,.{}f}} {}'.format(dec, unit).format(size / 1024 ** exp)
+    else:
+        dec = 2 if exp else 0
+    if bits:
+        unit = unit.replace('B', 'b')
+    if i and exp and not si:  # no `i` is necessary for B/b
+        unit = unit[0] + 'i' + unit[1]
+    if rate:
+        unit = unit.strip() + ('/s' if rate is True else rate) + ('' if exp else ' ')  # noqa
+    return f'{size / kilo ** exp:,.{dec}f} {unit}'
 
 
-def format_percent(num, div):
-    return '{:,.2%}'.format(num, div) if div > 0 else '--.--%'
+def format_percent(num: Union[float, int], div: Union[float, int]) -> str:
+    return f'{num / div:,.2%}' if div > 0 else '--.--%'
 
 
 def format_output(text, should_color, color_str, width=None, justify=None):
@@ -167,7 +202,7 @@ def pseudo_yaml(obj, indent=4):
     return lines
 
 
-def bullet_list(data, bullet='-', indent=2, sort=True):
+def bullet_list(data: Collection[Any], bullet: str = '-', indent: int = 2, sort: bool = True):
     data = sorted(data) if sort else data
     fmt = '{}{} {{}}'.format(' ' * indent, bullet)
     return '\n'.join(fmt.format(line) for line in data)
@@ -284,3 +319,30 @@ def _collapse_ranges(values: dict[str, int]) -> Iterator[tuple[str, str]]:
 
     if start is not None:
         yield start, end
+
+
+def format_duration(seconds: float) -> str:
+    """
+    Formats time in seconds as (Dd)HH:MM:SS (time.stfrtime() is not useful for formatting durations).
+
+    :param seconds: Number of seconds to format
+    :return: Given number of seconds as (Dd)HH:MM:SS
+    """
+    x = '-' if seconds < 0 else ''
+    m, s = divmod(abs(seconds), 60)
+    h, m = divmod(int(m), 60)
+    d, h = divmod(h, 24)
+    x = f'{x}{d}d' if d > 0 else x
+
+    if isinstance(s, int):
+        return f'{x}{h:02d}:{m:02d}:{s:02d}'
+    return f'{x}{h:02d}:{m:02d}:{s:05.2f}'
+
+
+def timedelta_to_str(delta: 'timedelta') -> str:
+    m, s = divmod(delta.seconds, 60)
+    h, m = divmod(m, 60)
+    td_str = f'{h:d}:{m:02d}:{s:02d}'
+    if delta.days != 0:
+        td_str = f'{delta.days:d}d, {td_str}'
+    return td_str

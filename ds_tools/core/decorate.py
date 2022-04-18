@@ -45,19 +45,18 @@ class cached_property_or_err:
         return self.result
 
 
-class cached_classproperty:
-    def __init__(self, func):
+class cached_classproperty(classmethod):
+    def __init__(self, func: Callable):
+        super().__init__(property(func))  # noqa  # makes Sphinx handle it better than if this was not done
         self.__doc__ = func.__doc__
-        if not isinstance(func, (classmethod, staticmethod)):
-            func = classmethod(func)
         self.func = func
         self.values = {}
 
-    def __get__(self, obj, cls):
+    def __get__(self, obj: None, cls):  # noqa
         try:
             return self.values[cls]
         except KeyError:
-            self.values[cls] = value = self.func.__get__(obj, cls)()  # noqa
+            self.values[cls] = value = self.func(cls)
             return value
 
 
