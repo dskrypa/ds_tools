@@ -76,7 +76,7 @@ class Encoder(ABC):
         if new_res := self.options.get('resolution'):
             if isinstance(new_res, str):
                 width, height = NAME_RESOLUTION_MAP[new_res]
-                aspect_ratio = self.v_stream.aspect_ratio
+                aspect_ratio = self.v_stream.aspect_ratio.as_integer_ratio()
                 if aspect_ratio != (16, 9):
                     height = width * aspect_ratio[1] // aspect_ratio[0]
             else:

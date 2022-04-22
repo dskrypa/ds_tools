@@ -49,9 +49,10 @@ def run_ffmpeg_cmd(
     file: Union[str, Path] = None,
     cmd: str = 'ffmpeg',
     capture: bool = False,
+    decode: bool = True,
     kwargs: dict[str, Any] = None,
     log_level: int = logging.DEBUG,
-) -> Optional[str]:
+) -> Optional[Union[str, bytes]]:
     command = [FFMPEG_DIR.joinpath(cmd).as_posix() if FFMPEG_DIR is not None else cmd]
     if args:
         command.extend(args)
@@ -65,8 +66,10 @@ def run_ffmpeg_cmd(
         results = run(command, capture_output=capture, check=True)
     except CalledProcessError as e:
         raise FfmpegError(command, 'Command did not complete successfully') from e
-    else:
-        return results.stdout.decode('utf-8') if capture else None
+
+    if not capture:
+        return None
+    return results.stdout.decode('utf-8') if decode else results.stdout
 
 
 def kwargs_to_cli_args(kwargs: dict[str, Any]) -> list[str]:

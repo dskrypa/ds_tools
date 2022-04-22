@@ -18,13 +18,16 @@ https://trac.ffmpeg.org/wiki/HWAccelIntro
 
 import json
 import logging
+from collections import defaultdict
+from fractions import Fraction
 from functools import cached_property
+from itertools import count
 from operator import truediv
 from pathlib import Path
 from shutil import get_terminal_size
 from typing import Union, Any, Type, Iterable
 
-from ..caching.mixins import DictAttrProperty
+from ..caching.mixins import DictAttrProperty, DictAttrFieldNotFoundError
 from ..output.formatting import readable_bytes, format_duration
 from ..output.printer import Printer
 from .constants import PIXEL_FORMATS_8_BIT, PIXEL_FORMATS_10_BIT
@@ -47,7 +50,8 @@ class Video:
 
     @cached_property
     def info(self) -> dict[str, Any]:
-        cmd = ['-show_format', '-show_streams', '-of', 'json']
+        # cmd = ['-show_format', '-show_streams', '-of', 'json']
+        cmd = ['-show_error', '-find_stream_info', '-show_format', '-show_streams', '-of', 'json']
         output = run_ffmpeg_cmd(cmd, self.path.as_posix(), cmd='ffprobe', capture=True)
         return json.loads(output)
 
@@ -56,7 +60,12 @@ class Video:
 
     @cached_property
     def streams(self) -> list[StreamType]:
-        return [Stream.from_dict(stream, n) for n, stream in enumerate(self.info['streams'])]
+        streams = []
+        type_counters = defaultdict(count)
+        for index, stream_info in enumerate(self.info['streams']):
+            type_index = next(type_counters[stream_info['codec_type']])
+            streams.append(Stream.from_dict(stream_info, self, index, type_index))
+        return streams
 
     @cached_property
     def typed_streams(self) -> dict[str, list[StreamType]]:
@@ -65,13 +74,13 @@ class Video:
             typed.setdefault(stream.type, []).append(stream)
         return typed
 
-    def print_info(self, format: str = None, full: bool = False):  # noqa
+    def print_info(self, format: str = None, full: bool = False, options: dict[str, bool] = None):  # noqa
         if format:
             Printer(format).pprint(self.info if full else self.filtered_info())
             return
 
         sections = {'File': self.get_info()}
-        sections |= {f'Stream #{i} ({s.type})': s.get_info() for i, s in enumerate(self.streams)}
+        sections |= {f'Stream #{i} ({s.type})': s.get_info(options) for i, s in enumerate(self.streams)}
 
         keys = {k for header, info in sections.items() for k in info}
         max_width = max(map(len, keys)) + 1
@@ -104,12 +113,14 @@ class Stream:
         cls.type = codec_type
         cls._type_cls_map[codec_type] = cls
 
-    def __init__(self, info: dict[str, Any], n: int = None):
-        self.n = n
+    def __init__(self, info: dict[str, Any], container: 'Video', index: int, type_index: int):
+        self.container = container
         self.info = info
+        self.index = index
+        self.type_index = type_index
 
     @classmethod
-    def from_dict(cls, stream: dict[str, Any], n: int = None) -> StreamType:
+    def from_dict(cls, stream: dict[str, Any], container: 'Video', index: int, type_index: int) -> StreamType:
         codec_type = stream['codec_type']
         try:
             stream_cls = cls._type_cls_map[codec_type]
@@ -125,9 +136,9 @@ class Stream:
                         stream_cls = cls._type_cls_map['subtitle']
 
             if stream_cls is None:
-                raise ValueError(f'Unexpected {codec_type=} for stream #{n}')
+                raise ValueError(f'Unexpected {codec_type=} for stream #{index}')
 
-        return stream_cls(stream, n)
+        return stream_cls(stream, container, index, type_index)
 
     def filtered_info(self) -> dict[str, Any]:
         info = self.info.copy()
@@ -148,14 +159,21 @@ class Stream:
     def byte_rate(self) -> int:
         return self.bit_rate // 8
 
-    def get_info(self) -> dict[str, Any]:
+    def get_info(self, options: dict[str, bool] = None) -> dict[str, Any]:
         return {'Codec': f'{self.codec} ({self.info["codec_long_name"]})', 'Bit Rate': _rate_str(self.bit_rate)}
 
 
 class VideoStream(Stream, codec_type='video'):
     pixel_format: str = DictAttrProperty('info', 'pix_fmt')
-    aspect_ratio: tuple[int, int] = DictAttrProperty('info', 'display_aspect_ratio', lambda v: tuple(_ints(v, ':')))
+    _aspect_ratio: Fraction = DictAttrProperty('info', 'display_aspect_ratio', lambda v: Fraction(*_ints(v, ':')))
     fps: float = DictAttrProperty('info', 'avg_frame_rate', lambda v: truediv(*_ints(v, '/')))
+
+    @cached_property
+    def aspect_ratio(self) -> Fraction:
+        try:
+            return self._aspect_ratio
+        except DictAttrFieldNotFoundError:
+            return Fraction(*self.resolution)
 
     @cached_property
     def resolution(self) -> tuple[int, int]:
@@ -174,12 +192,36 @@ class VideoStream(Stream, codec_type='video'):
         else:
             raise ValueError(f'Unexpected pixel_format={self.pixel_format!r}')
 
-    def get_info(self) -> dict[str, Any]:
-        info = super().get_info()
+    @cached_property
+    def keyframe_interval_info(self) -> tuple[float, float, float]:
+        cmd = [
+            '-select_streams', f'v:{self.type_index}',
+            '-show_entries', 'packet=pts_time,flags',
+            '-of', 'csv=print_section=0',
+        ]
+        output = run_ffmpeg_cmd(cmd, self.container.path.as_posix(), cmd='ffprobe', capture=True, decode=False)
+        times = list(map(float, (line.split(b',', 1)[0] for line in output.splitlines() if b'K' in line)))
+        intervals = []
+        last = times[0]
+        for t in times[1:]:
+            intervals.append(t - last)
+            last = t
+        avg = (sum(intervals) / len(intervals)) if intervals else 0
+        return min(intervals), avg, max(intervals)
+
+    def get_info(self, options: dict[str, bool] = None) -> dict[str, Any]:
+        info = super().get_info(options)
         info['Bit Depth'] = f'{self.bit_depth} ({self.pixel_format})'
-        info['Aspect Ratio'] = self.info['display_aspect_ratio']
+        info['Aspect Ratio'] = '{}:{}'.format(*self.aspect_ratio.as_integer_ratio())
         info['Resolution'] = '{} x {} (buffer: {} x {})'.format(*self.resolution, *self.buffer_dimensions)
         info['FPS'] = f'{self.fps:,.2f}'
+        if options and options.get('keyframe_interval'):
+            min_int, avg_int, max_int = self.keyframe_interval_info
+            min_f = min_int * self.fps
+            avg_f = avg_int * self.fps
+            max_f = max_int * self.fps
+            info['Keyframe Intervals (s)'] = f'min={min_int:.3f} ~ avg={avg_int:.3f} ~ max={max_int:.3f} (seconds)'
+            info['Keyframe Intervals (f)'] = f'min={min_f:.3f} ~ avg={avg_f:.3f} ~ max={max_f:.3f} (frames)'
         return info
 
 
@@ -187,8 +229,8 @@ class AudioStream(Stream, codec_type='audio'):
     channels: int = DictAttrProperty('info', 'channels', type=int)
     sample_rate: int = DictAttrProperty('info', 'sample_rate', type=int)
 
-    def get_info(self) -> dict[str, Any]:
-        info = super().get_info()
+    def get_info(self, options: dict[str, bool] = None) -> dict[str, Any]:
+        info = super().get_info(options)
         try:
             channel_layout = f' ({self.info["channel_layout"]})'
         except KeyError:
@@ -200,8 +242,8 @@ class AudioStream(Stream, codec_type='audio'):
 
 
 class SubtitleStream(Stream, codec_type='subtitle'):
-    def get_info(self) -> dict[str, Any]:
-        info = super().get_info()
+    def get_info(self, options: dict[str, bool] = None) -> dict[str, Any]:
+        info = super().get_info(options)
         tags = self.info.get('tags', {})
         found = 0
         for key in ('title', 'language'):

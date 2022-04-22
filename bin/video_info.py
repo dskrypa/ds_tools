@@ -19,6 +19,7 @@ def parser():
     parser = ArgParser(description='View video metadata (requires ffmpeg)')
     parser.add_argument('path', help='Path to a video file')
     parser.add_argument('--format', '-f', choices=PRINTER_FORMATS, help='Output format for raw output (default: pre-selected fields)')
+    parser.add_argument('--keyframe_interval', '-ki', action='store_true', help='Calculate and display keyframe interval for video streams')
     parser.include_common_args('verbosity')
     return parser
 
@@ -33,8 +34,10 @@ def main():
     from ds_tools.media.ffmpeg import load_config
     from ds_tools.media.videos import Video
 
+    options = {'keyframe_interval': args.keyframe_interval}
+
     load_config()
-    Video(args.path).print_info(args.format)
+    Video(args.path).print_info(args.format, options=options)
 
 
 if __name__ == '__main__':
