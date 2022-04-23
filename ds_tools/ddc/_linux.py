@@ -11,7 +11,8 @@ import time
 from functools import cached_property, wraps, reduce
 from operator import xor
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, Callable, Any
+from weakref import finalize
 
 if sys.platform.startswith('linux'):
     import fcntl
@@ -38,9 +39,9 @@ DELAY = 0.05
 # fmt: on
 
 
-def rate_limited(method):
+def rate_limited(method: Callable[..., Any]) -> Callable[..., Any]:
     @wraps(method)
-    def wrapper(self, *args, **kwargs):
+    def wrapper(self: 'LinuxVCP', *args, **kwargs):
         delay = self.last_write + DELAY - time.monotonic()  # Must wait at least 50 ms between messages
         if delay > 0:
             log.debug(f'Sleeping for {delay=} seconds')
@@ -75,7 +76,7 @@ Capabilities = VcpRequest('capabilities', 0xF3, 0xE3)
 Identity = VcpRequest('identity', 0xF1, 0xE1)
 
 
-class LinuxVCP(VCP):
+class LinuxVCP(VCP, close_attr='_fd'):
     _monitors = []
 
     def __init__(self, n: int, path: str, ignore_checksum_errors: bool = True):
@@ -214,7 +215,7 @@ class LinuxVCP(VCP):
         return cls._monitors
 
     @cached_property
-    def _fd(self):
+    def _fd(self) -> int:
         try:
             fd = os.open(self.path, os.O_RDWR)
             # I2C bus address, DDC-CI command address on the I2C bus
@@ -227,21 +228,15 @@ class LinuxVCP(VCP):
             os.read(fd, 1)
         except OSError as e:
             raise VCPIOError('Unable to read from I2C bus') from e
+        self._finalizer = finalize(self, self._close, fd, self.path)
         return fd
 
-    def _close(self):
+    @classmethod
+    def _close(cls, fd: int, path: str):
         try:
-            fd = self.__dict__['_fd']
-        except KeyError:
-            pass
-        else:
-            log.debug(f'Closing {self}')
-            try:
-                os.close(fd)
-            except OSError as e:
-                raise VCPIOError(f'Unable to close {self.path}') from e
-
-            del self.__dict__['_fd']
+            os.close(fd)
+        except OSError as e:
+            raise VCPIOError(f'Unable to close {path}') from e
 
     def set_feature_value(self, feature: Union[str, int, Feature], value: int):
         feature = self.get_feature(feature)
@@ -251,7 +246,7 @@ class LinuxVCP(VCP):
         feature = self.get_feature(feature)
         return self.request(0x01, feature.code)
 
-    def get_raw(self):
+    def get_raw(self) -> bytes:
         time.sleep(0.04)  # Must wait at least 40 ms
 
         header = self._read_bytes(2)

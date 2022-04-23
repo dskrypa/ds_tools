@@ -27,22 +27,26 @@ from zipfile import ZipFile
 from py7zr import SevenZipFile, PasswordRequired
 from rarfile import RarFile, BadRarFile, ToolSetup
 
+from ..core.mixins import Finalizable
 from ..input.prompts import get_input
 from .exceptions import InvalidPassword, UnknownArchiveType
 
 __all__ = ['ArchiveFile']
 log = logging.getLogger(__name__)
 ArchiveFileType = TypeVar('ArchiveFileType', bound='ArchiveFile')
+RawArchiveFile = Union[RarFile, SevenZipFile, TarFile, ZipFile, LZMAFile, GzipFile, BZ2File]
 
 _WINDOWS = os.name == 'nt'
 
 
-class ArchiveFile(ABC):
+class ArchiveFile(ABC, Finalizable, close_attr='file'):
     _ext_cls_map: dict[str, ArchiveFileType] = {}
     _exts: tuple[str, ...] = None
-    _cls: Type = None
+    _cls: Type[RawArchiveFile] = None
 
-    def __init_subclass__(cls: ArchiveFileType, fcls: Type = None, ext: str = None, exts: Iterable[str] = None):
+    def __init_subclass__(
+        cls: ArchiveFileType, fcls: Type[RawArchiveFile] = None, ext: str = None, exts: Iterable[str] = None
+    ):
         if fcls is None and ABC not in cls.__bases__:
             raise ValueError(f'ArchiveFile subclass {cls.__name__} must specify fcls')
         elif ((not ext and not exts) or (ext and exts)) and ABC not in cls.__bases__:
@@ -68,7 +72,6 @@ class ArchiveFile(ABC):
         lc_name = self.path.name.lower()
         self.ext = next(('.' + ext for ext in self._exts if lc_name.endswith(ext)), None)
         self.stem = self.path.name[:-len(self.ext)] if self.ext else self.path.name
-        self._finalizer = finalize(self, self._close)
 
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__}({self.path.as_posix()!r})>'
@@ -156,17 +159,14 @@ class ArchiveFile(ABC):
                 return dst_path
 
     @cached_property
-    def file(self):
-        return self._cls(self.path)
+    def file(self) -> RawArchiveFile:
+        file = self._cls(self.path)
+        self._finalizer = finalize(self, self._close, file)
+        return file
 
-    def _close(self):
-        if 'file' in self.__dict__ and (file := self.file) is not None:
-            file.close()  # noqa
-            self.__dict__['file'] = None
-
-    def close(self):
-        if self._finalizer.detach():
-            self._close()
+    @classmethod
+    def _close(cls, file: RawArchiveFile):
+        file.close()
 
     @abstractmethod
     def _extract_all(self, path: Union[Path, str], password: str = None, pw_n: int = None, pw_count: int = None):

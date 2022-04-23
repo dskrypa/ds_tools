@@ -17,6 +17,7 @@ import logging
 import sys
 from functools import cached_property
 from typing import Optional, Union
+from weakref import finalize
 
 if sys.platform == 'win32':
     from ctypes.wintypes import DWORD, RECT, BOOL, HMONITOR, HDC, LPARAM, HANDLE, BYTE
@@ -32,7 +33,7 @@ __all__ = ['WindowsVCP']
 log = logging.getLogger(__name__)
 
 
-class WindowsVCP(VCP):
+class WindowsVCP(VCP, close_attr='_monitor'):
     """
     Windows API access to a monitor's virtual control panel.
 
@@ -105,19 +106,13 @@ class WindowsVCP(VCP):
 
         return list(cls._monitors.values())
 
-    def _close(self):
+    @classmethod
+    def _close(cls, monitor: 'PhysicalMonitor'):
         """Close the handle, if it exists"""
         try:
-            monitor = self.__dict__['_monitor']
-        except KeyError:
-            pass
-        else:
-            log.debug(f'Closing {self}')
-            try:
-                ctypes.windll.dxva2.DestroyPhysicalMonitor(monitor.handle)
-            except OSError as e:
-                raise VCPError('Failed to close handle') from e
-            del self.__dict__['_monitor']
+            ctypes.windll.dxva2.DestroyPhysicalMonitor(monitor.handle)
+        except OSError as e:
+            raise VCPError('Failed to close handle') from e
 
     @cached_property
     def _monitor(self) -> 'PhysicalMonitor':
@@ -143,7 +138,9 @@ class WindowsVCP(VCP):
         except OSError as e:
             raise VCPError('Failed to open physical monitor handle') from e
 
-        return physical_monitors[0]
+        monitor = physical_monitors[0]
+        self._finalizer = finalize(self, self._close, monitor)
+        return monitor
 
     @property
     def handle(self):

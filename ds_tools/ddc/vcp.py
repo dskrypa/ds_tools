@@ -9,8 +9,8 @@ import re
 from abc import ABC, abstractmethod
 from functools import cached_property
 from typing import Optional, Union, MutableSet, Collection
-from weakref import finalize
 
+from ..core.mixins import Finalizable
 from ..core.patterns import FnMatcher
 from ..output.color import colored
 from .exceptions import VCPError
@@ -33,12 +33,11 @@ class VcpFeature:
         instance.set_feature_value(self.code, value)
 
 
-class VCP(ABC):
+class VCP(ABC, Finalizable):
     input = VcpFeature(0x60)
 
     def __init__(self, n: int):
         self.n = n
-        self.__finalizer = finalize(self, self._close)
 
     def __repr__(self):
         return f'<{self.__class__.__name__}[{self.description}]>'
@@ -88,27 +87,10 @@ class VCP(ABC):
     def _get_monitors(cls) -> list['VCP']:
         return NotImplemented
 
-    def close(self):
-        try:
-            finalizer = self.__finalizer
-        except AttributeError:
-            pass  # This happens if an exception was raised in __init__
-        else:
-            if finalizer.detach():
-                self._close()
-
-    def __del__(self):
-        self.close()
-
+    @classmethod
     @abstractmethod
-    def _close(self):
+    def _close(cls, *args):
         return NotImplemented
-
-    def __enter__(self) -> 'VCP':
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
 
     def __getitem__(self, feature: Union[str, int, Feature]):
         return self.get_feature_value(feature)
