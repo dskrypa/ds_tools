@@ -5,9 +5,7 @@ from pathlib import Path
 from setuptools import setup, find_packages
 
 project_root = Path(__file__).resolve().parent
-
-with project_root.joinpath('readme.rst').open('r', encoding='utf-8') as f:
-    long_description = f.read()
+long_description = project_root.joinpath('readme.rst').read_text('utf-8')
 
 about = {}
 with project_root.joinpath('ds_tools', '__version__.py').open('r', encoding='utf-8') as f:
@@ -45,9 +43,9 @@ optional_dependencies = {
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
 
 requirements = [
-    'db_cache@ git+git://github.com/dskrypa/db_cache',
-    'requests_client@ git+git://github.com/dskrypa/requests_client',
-    'tz_aware_dt@ git+git://github.com/dskrypa/tz_aware_dt',
+    'db_cache@ git+https://github.com/dskrypa/db_cache',
+    'requests_client@ git+https://github.com/dskrypa/requests_client',
+    'tz_aware_dt@ git+https://github.com/dskrypa/tz_aware_dt',
     'beautifulsoup4',
     'bitarray',
     'cachetools',
@@ -75,6 +73,7 @@ setup(
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
     ],
     python_requires='~=3.8',
     install_requires=requirements,
