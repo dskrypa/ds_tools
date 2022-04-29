@@ -166,7 +166,14 @@ class Stream:
 class VideoStream(Stream, codec_type='video'):
     pixel_format: str = DictAttrProperty('info', 'pix_fmt')
     _aspect_ratio: Fraction = DictAttrProperty('info', 'display_aspect_ratio', lambda v: Fraction(*_ints(v, ':')))
-    fps: float = DictAttrProperty('info', 'avg_frame_rate', lambda v: truediv(*_ints(v, '/')))
+
+    @cached_property
+    def fps(self) -> float:
+        a, b = _ints(self.info['avg_frame_rate'], '/')
+        try:
+            return a // b
+        except ZeroDivisionError:
+            return 0
 
     @cached_property
     def aspect_ratio(self) -> Fraction:
@@ -228,6 +235,7 @@ class VideoStream(Stream, codec_type='video'):
 class AudioStream(Stream, codec_type='audio'):
     channels: int = DictAttrProperty('info', 'channels', type=int)
     sample_rate: int = DictAttrProperty('info', 'sample_rate', type=int)
+    bits_per_raw_sample: int = DictAttrProperty('info', 'bits_per_raw_sample', type=int)
 
     def get_info(self, options: dict[str, bool] = None) -> dict[str, Any]:
         info = super().get_info(options)
@@ -238,6 +246,7 @@ class AudioStream(Stream, codec_type='audio'):
 
         info['Channels'] = f'{self.channels}{channel_layout}'
         info['Sample Rate'] = f'{self.sample_rate:,d} Hz'
+        info['Bits/Sample (raw)'] = self.bits_per_raw_sample
         return info
 
 
