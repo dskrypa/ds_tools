@@ -7,6 +7,12 @@ from argparse import ArgumentParser
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
+from subprocess import Popen, PIPE
+
+try:
+    import tqdm
+except ImportError:
+    tqdm = None
 
 log = logging.getLogger(__name__)
 
@@ -46,9 +52,37 @@ def backup_plex(source: Path, dest: Path, mode: str, level: int):
         log.info(f'Saving backup to {dest} with compression={mode}')
         mode = f'w:{mode}'
 
+    skip_dirs = {'Cache', 'Logs', 'Diagnostics'}
+
+    try:
+        # prog_bar = tqdm.tqdm(desc='', total=count_files(source, db_backup_match, skip_dirs), unit='file')
+        prog_bar = tqdm.tqdm(desc='', total=get_size(source, db_backup_match, skip_dirs), unit='bytes')
+        update_progress = prog_bar.update
+    except AttributeError:
+        update_progress = lambda: None  # noqa
+
+    from builtins import open as bltn_open
+
     with tarfile.open(dest, mode=mode, compresslevel=level) as archive:  # type: tarfile.TarFile
+        add_file = archive.addfile
+        make_tar_info = archive.gettarinfo
+
+        def add_path(src_path: Path, arc_path: str):
+            tarinfo = make_tar_info(src_path, arc_path)  # noqa
+            if tarinfo.isreg():
+                with bltn_open(src_path, 'rb') as f:
+                    add_file(tarinfo, f)
+            elif tarinfo.isdir():
+                add_file(tarinfo)
+                for p in sorted(src_path.iterdir()):
+                    add_path(p, f'{arc_path}/{p.name}')
+            else:
+                add_file(tarinfo)
+
+            update_progress(tarinfo.size)
+
         for path in sorted(source.iterdir()):
-            if path.name in ('Cache', 'Logs', 'Diagnostics'):
+            if path.name in skip_dirs:
                 log.log(19, f'Skipping: {path}')
             elif path.name == 'Plug-in Support':
                 for sub_path in sorted(path.iterdir()):
@@ -60,13 +94,79 @@ def backup_plex(source: Path, dest: Path, mode: str, level: int):
                                 log.log(19, f'Skipping: {db_path}')
                             else:
                                 log.log(19, f'Adding: {db_path}')
-                                archive.add(db_path, f'Plex Media Server/Plug-in Support/Databases/{db_path.name}')
+                                add_path(db_path, f'Plex Media Server/Plug-in Support/Databases/{db_path.name}')
+                                # archive.add(db_path, f'Plex Media Server/Plug-in Support/Databases/{db_path.name}')
+                                # update_progress()
                     else:
                         log.log(19, f'Adding: {sub_path}')
-                        archive.add(sub_path, f'Plex Media Server/Plug-in Support/{sub_path.name}')
+                        add_path(sub_path, f'Plex Media Server/Plug-in Support/{sub_path.name}')
+                        # archive.add(sub_path, f'Plex Media Server/Plug-in Support/{sub_path.name}')
+                        # update_progress()
             else:
                 log.log(19, f'Adding: {path}')
-                archive.add(path, f'Plex Media Server/{path.name}')
+                add_path(path, f'Plex Media Server/{path.name}')
+                # archive.add(path, f'Plex Media Server/{path.name}')
+                # update_progress()
+
+    try:
+        prog_bar.close()  # noqa
+    except (AttributeError, NameError):
+        pass
+
+
+def get_size(source: Path, db_backup_match, skip_dirs) -> int:
+    size = 0
+    for path in source.iterdir():
+        if path.name == 'Plug-in Support':
+            for sub_path in path.iterdir():
+                if sub_path.name == 'Databases':
+                    for db_path in sub_path.iterdir():
+                        if not db_backup_match(db_path.suffix):
+                            size += _get_size(db_path)
+                elif sub_path.name != 'Caches':
+                    size += _get_size(sub_path)
+        elif path.name not in skip_dirs:
+            size += _get_size(path)
+
+    return size
+
+
+def _get_size(path: Path) -> int:
+    if path.is_file():
+        return path.lstat().st_size
+
+    proc = Popen(['du', '-s', path.as_posix()], stdout=PIPE)
+    proc.wait()
+    stdout, stderr = proc.communicate()
+    return int(stdout.split()[0])
+
+
+def count_files(source: Path, db_backup_match, skip_dirs) -> int:
+    n = 0
+    for path in source.iterdir():
+        if path.name == 'Plug-in Support':
+            for sub_path in path.iterdir():
+                if sub_path.name == 'Databases':
+                    for db_path in sub_path.iterdir():
+                        if not db_backup_match(db_path.suffix):
+                            n += _count_files(db_path)
+                elif sub_path.name != 'Caches':
+                    n += _count_files(sub_path)
+        elif path.name not in skip_dirs:
+            n += _count_files(path)
+
+    return n
+
+
+def _count_files(path: Path) -> int:
+    if path.is_file():
+        return 1
+
+    find_proc = Popen(['find', path.as_posix()], stdout=PIPE)
+    wc_proc = Popen(['wc', '-l'], stdin=find_proc.stdout, stdout=PIPE)
+    wc_proc.wait()
+    stdout, stderr = wc_proc.communicate()
+    return int(stdout.strip())
 
 
 def normalize_source(source_str: str) -> Path:
