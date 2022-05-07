@@ -99,7 +99,7 @@ class GrafanaApp(Application):
         zip_path = tmp_path.joinpath(zip_name)
         download_url = f'https://github.com/grafana/{self.repo}/releases/download/{version}/{zip_name}'
         log.info(f'Downloading {self.name} version={version!r}')
-        save_file(download_url, ('--location',), save_path=zip_path)
+        save_file(download_url, curl_args=('--location',), save_path=zip_path)
 
     def _prepare_binaries(self, tmp_path: Path, tmp_dir: str):
         zip_path = tmp_path.joinpath(self.zip_name)

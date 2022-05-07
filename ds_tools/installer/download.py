@@ -12,13 +12,13 @@ __all__ = ['get_json', 'save_file']
 
 
 def _download_func(req_func, curl_func):
-    def download_func(url: str, curl_args=(), *args, **kwargs):
+    def download_func(url: str, *args, curl_args=(), **kwargs):
         try:
             return req_func(url, *args, **kwargs)
         except ImportError:
             pass
         try:
-            return curl_func(url, curl_args, *args, **kwargs)
+            return curl_func(url, *args, args=curl_args, **kwargs)
         except SubprocessError:
             pass
         missing_dependencies(url)

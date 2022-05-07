@@ -29,11 +29,13 @@ class Sqlite3Database:
     None -> NULL, int -> INTEGER, long -> INTEGER, float -> REAL, str -> TEXT, unicode -> TEXT, buffer -> BLOB
     """
     def __init__(self, db_path=None):
-        self.db_path = os.path.expanduser(db_path if db_path is not None else ':memory:')
-        if self.db_path != ':memory:':
-            db_dir = os.path.dirname(self.db_path)
-            if not os.path.exists(db_dir):
-                os.makedirs(db_dir)
+        db_path = db_path or ':memory:'
+        if db_path != ':memory:':
+            db_path = Path(db_path).expanduser().resolve()
+            if not db_path.parent.exists():
+                db_path.parent.mkdir(parents=True)
+            db_path = db_path.as_posix()
+        self.db_path = db_path
         self.db = sqlite3.connect(self.db_path)
         self._tables = {}
 
