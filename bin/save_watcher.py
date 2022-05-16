@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 
 
 def parser():
-    parser = ArgParser(description='Nier Replicant ver.1.22474487139... Save File Watcher')
+    parser = ArgParser(description='Game Save File Watcher')
     parser.add_argument('--path', '-p', help='Save file path to watch')
     parser.add_argument('--backups', '-b', metavar='PATH', help='Path to the directory in which backups should be saved (default: same dir as save files)')
     parser.include_common_args('verbosity')
