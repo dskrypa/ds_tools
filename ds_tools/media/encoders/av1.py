@@ -29,4 +29,6 @@ class Av1Encoder(Encoder, codec='av1', default_encoder='libsvtav1'):
             crf = 24 if height <= 1440 else 15 if height <= 2160 else 5
 
         args += [CRF_ARG, str(crf), '-preset', str(preset)]
+        # fast-decode: technically 1-3/4; higher = easier to decode, but ffmpeg only supports 0-1
+        args += ['-svtav1-params', 'fast-decode=1']
         return args
