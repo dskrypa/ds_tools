@@ -39,6 +39,17 @@ def main():
     load_config()
     Video(args.path).print_info(args.format, options=options)
 
+    # https://github.com/PyAV-Org/PyAV
+    # import av
+    # import av.datasets
+    # # from av.container import Container, OutputContainer, InputContainer
+    #
+    # with av.open(args.path, 'r') as container:
+    #     container
+
+
+
+
 
 if __name__ == '__main__':
     main()
