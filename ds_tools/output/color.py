@@ -4,10 +4,13 @@ ANSI Color Handling (originally based on the 'colored' module)
 :author: Doug Skrypa
 """
 
+from typing import Union
+
+
 __all__ = ['colored', 'InvalidAnsiCode']
 
 
-def colored(text: str, color=None, bg_color=None, attrs=None, reset=True, *, prefix: str = None):
+def colored(text: str, color=None, bg_color=None, attrs=None, reset=True, *, prefix: Union[str, int] = None):
     parts = (
         f'\x1b[{prefix}m' if prefix else '',
         fg_color_code(color) if color is not None else '',

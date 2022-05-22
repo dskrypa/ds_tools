@@ -36,18 +36,14 @@ class AnsiColorTest(Command, description='Tool for testing ANSI colors'):
 
     def main(self):
         if self.basic:
-            nums = []
-            for i in range(self.limit):
-                nums.append(colored('{:3d}'.format(i), prefix=i))  # noqa
-                if i % 16 == 15:
-                    print(' '.join(nums))
-                    nums = []
+            for row in range(0, self.limit, 16):
+                print(' '.join(colored(f'{i:3d}', prefix=i) for i in range(row, row + 16)))
         elif self.hex:
             from ds_tools.output._colors import HEX_COLORS_REVERSE
             hexs, nums = [], []
             for i, (hex, num) in enumerate(sorted(HEX_COLORS_REVERSE.items())):
                 hexs.append(colored(hex, hex))
-                nums.append(colored('{:>3}'.format(num), num))
+                nums.append(colored(f'{num:>3}', num))
                 if i % 16 == 15:
                     print(' '.join(hexs), '|', ' '.join(nums))
                     hexs, nums = [], []
@@ -61,44 +57,28 @@ class AnsiColorTest(Command, description='Tool for testing ANSI colors'):
                 for i in range(self.limit):
                     print(colored(f'{i:3d}: {self.text}', self.color, i, self.attr))
             else:
-                nums = []
-                for i in range(self.limit):
-                    nums.append(colored(f'{i:3d}', self.color, i, self.attr))
-                    if i % 16 == 15:
-                        print(' '.join(nums))
-                        nums = []
+                for row in range(0, self.limit, 16):
+                    print(' '.join(colored(f'{i:3d}', self.color, i, self.attr) for i in range(row, row + 16)))
         elif self.background:
             if self.text:
                 for i in range(self.limit):
                     print(colored(f'{i:3d}: {self.text}', i, self.background, self.attr))
             else:
-                nums = []
-                for i in range(self.limit):
-                    nums.append(colored(f'{i:3d}', i, self.background, self.attr))
-                    if i % 16 == 15:
-                        print(' '.join(nums))
-                        nums = []
+                for row in range(0, self.limit, 16):
+                    print(' '.join(colored(f'{i:3d}', i, self.background, self.attr) for i in range(row, row + 16)))
         elif self.all:
             if self.text:
                 for c in range(self.limit):
                     for b in range(self.limit):
                         print(colored(f'{c:3d},{b:3d}: {self.text}', c, b, self.attr))
             else:
-                nums = []
                 for c in range(self.limit):
-                    for b in range(self.limit):
-                        nums.append(colored(f'{c:3d},{b:3d}', c, b, self.attr))
-                        if b % 16 == 15:
-                            print(' '.join(nums))
-                            nums = []
+                    for row in range(0, self.limit, 16):
+                        print(' '.join(colored(f'{c:3d},{b:3d}', c, b, self.attr) for b in range(row, row + 16)))
                     print()
         else:
-            nums = []
-            for i in range(self.limit):
-                nums.append(colored(f'{i:3d}', i, None, self.attr))
-                if i % 16 == 15:
-                    print(' '.join(nums))
-                    nums = []
+            for row in range(0, self.limit, 16):
+                print(' '.join(colored(f'{i:3d}', i, None, self.attr) for i in range(row, row + 16)))
 
 
 if __name__ == '__main__':
