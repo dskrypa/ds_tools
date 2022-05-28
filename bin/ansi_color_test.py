@@ -25,14 +25,12 @@ class AnsiColorTest(Command, description='Tool for testing ANSI colors'):
     limit: int = Option('-L', default=256, help='Range limit')
 
     with ParamGroup(mutually_exclusive=True):
-        all = Flag('-A', help='Show all foreground and background colors (only when no color/background is specified)')
+        basic = Flag('-B', help='Display colors without the 38;5; prefix (cannot be combined with other args)')
+        hex = Flag('-H', help='Display colors by hex value (cannot be combined with other args)')
+        all = Flag('-A', help='Show all foreground and background colors (only when no color/bg is specified)')
         with ParamGroup():  # Both of these can be provided, but neither can be combined with --all / -A
             color = Option('-c', help='Text color to use (default: cycle through 0-256)')
             background = Option('-b', help='Background color to use (default: None)')
-
-    with ParamGroup(mutually_exclusive=True):
-        basic = Flag('-B', help='Display colors without the 38;5; prefix (cannot be combined with other args)')
-        hex = Flag('-H', help='Display colors by hex value (cannot be combined with other args)')
 
     def main(self):
         if self.basic:
