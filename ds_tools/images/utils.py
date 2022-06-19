@@ -14,6 +14,7 @@ from typing import Union, Any
 
 from PIL import Image
 from PIL.Image import Image as PILImage
+from PIL.JpegImagePlugin import RAWMODE
 
 from ..core.serialization import PermissiveJSONEncoder
 
@@ -55,7 +56,7 @@ def image_to_bytes(image: ImageType, format: str = None, size: Size = None, **kw
         image = scale_image(image, *size, **kwargs)
     if not (save_fmt := format or image.format):
         save_fmt = 'png' if image.mode == 'RGBA' else 'jpeg'
-    if save_fmt == 'jpeg' and image.mode == 'RGBA':
+    if save_fmt == 'jpeg' and image.mode not in RAWMODE:
         image = image.convert('RGB')
 
     bio = BytesIO()
