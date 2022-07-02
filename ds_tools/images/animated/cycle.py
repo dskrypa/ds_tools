@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from tkinter import PhotoImage
-from typing import Iterator, Iterable, Callable, Union
+from typing import Iterator, Iterable, Callable, Union, TypeVar, Generic
 
 from PIL.Image import Image as PILImage
 from PIL.ImageSequence import Iterator as FrameIterator
@@ -19,14 +19,16 @@ from ..utils import as_image
 __all__ = ['FrameCycle', 'PhotoImageCycle']
 log = logging.getLogger(__name__)
 
+T_co = TypeVar('T_co', covariant=True)
 
-class FrameCycle:
+
+class FrameCycle(Generic[T_co]):
     __slots__ = ('n', '_frames', '_wrapper', '_duration', '_default_duration', '_frames_and_durations', 'first_delay')
 
     def __init__(
         self,
         frames: Iterable[PILImage],
-        wrapper: Callable = None,
+        wrapper: Callable[[PILImage], T_co] = None,
         duration: int = None,
         default_duration: int = 100,
     ):
@@ -49,10 +51,10 @@ class FrameCycle:
     def __len__(self) -> int:
         return len(self._frames_and_durations)
 
-    def __iter__(self) -> Iterator[tuple[PILImage, int]]:
+    def __iter__(self) -> Iterator[tuple[T_co, int]]:
         return self
 
-    def __next__(self) -> tuple[PILImage, int]:
+    def __next__(self) -> tuple[T_co, int]:
         self.n += 1
         try:
             return self._frames_and_durations[self.n]
@@ -62,19 +64,19 @@ class FrameCycle:
 
     next = __next__
 
-    def back(self) -> tuple[PILImage, int]:
+    def back(self) -> tuple[T_co, int]:
         self.n -= 1
         if self.n < 0:
             self.n = len(self._frames_and_durations) - 1
         return self._frames_and_durations[self.n]
 
     @property
-    def current_image(self) -> PILImage:
+    def current_image(self) -> T_co:
         if self._frames is not None:
             return self._frames[self.n]
         return self._frames_and_durations[self.n][0]
 
-    def resized(self, width: int, height: int) -> FrameCycle:
+    def resized(self, width: int, height: int) -> FrameCycle[T_co]:
         size = (width, height)
         if image := getattr(self, '_src_image', None):
             image = image.resize(size)
