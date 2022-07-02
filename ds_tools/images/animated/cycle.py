@@ -138,7 +138,10 @@ def iter_independent_frames(frames: Iterable[GifImageFile], mode: str) -> Iterat
     yield first
     for frame in frames:
         if not frame.getpalette():
-            frame.putpalette(p)
+            try:
+                frame.putpalette(p)
+            except ValueError:
+                pass
 
         new_frame = new_image('RGBA', frame.size)
         if mode == 'partial':
