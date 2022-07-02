@@ -34,7 +34,7 @@ class FrameCycle(Generic[T_co]):
         default_duration: int = 100,
     ):
         self.n = 0
-        self._frames = tuple(frames) if wrapper is not None else None
+        self._frames = tuple(frames)
         self._wrapper = wrapper
         self._duration = duration
         self._default_duration = default_duration
@@ -72,24 +72,26 @@ class FrameCycle(Generic[T_co]):
         return self._frames_and_durations[self.n]
 
     @property
-    def current_image(self) -> T_co:
-        if self._frames is not None:
-            return self._frames[self.n]
+    def current_image(self) -> PILImage:
+        return self._frames[self.n]
+
+    @property
+    def current_frame(self) -> T_co:
         return self._frames_and_durations[self.n][0]
 
-    def resized(self, width: int, height: int) -> FrameCycle[T_co]:
+    def resized(self, width: int, height: int) -> FrameCycle[PilPhotoImage]:
         size = (width, height)
-        frames = [frame.copy().resize(size) for frame, _ in self._frames_and_durations]
-        return FrameCycle(frames, self._wrapper, self._duration, self._default_duration)
+        frames = [frame.copy().resize(size) for frame in self._frames]
+        return FrameCycle(frames, PilPhotoImage, self._duration, self._default_duration)
 
 
-class PhotoImageCycle(FrameCycle):
-    __slots__ = ('path', '_src_image', '_pi_frames')
+class PhotoImageCycle(FrameCycle[PhotoImage]):
+    __slots__ = ('path', '_pi_frames')
 
     def __init__(self, path: Union[Path, str], duration: int = None, default_duration: int = 100):  # noqa
         self.path = Path(path).expanduser()
         self.n = 0
-        self._src_image = image = as_image(self.path)
+        image = as_image(self.path)
         self._pi_frames = tuple(
             PhotoImage(file=path.as_posix(), format=f'gif -index {n}') for n in range(image.n_frames)
         )
@@ -103,13 +105,3 @@ class PhotoImageCycle(FrameCycle):
 
         self._frames_and_durations = tuple((pi, get_duration(f)) for pi, f in zip(self._pi_frames, self._frames))
         self.first_delay = self._frames_and_durations[0][1]
-
-    @property
-    def current_image(self) -> PILImage:
-        return self._frames[self.n]
-
-    def resized(self, width: int, height: int) -> FrameCycle[PilPhotoImage]:
-        image = self._src_image
-        image = image.resize((width, height))
-        frames = [frame.copy() for frame in FrameIterator(image)]
-        return FrameCycle(frames, PilPhotoImage, self._duration, self._default_duration)
