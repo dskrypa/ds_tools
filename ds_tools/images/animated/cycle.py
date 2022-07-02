@@ -13,6 +13,7 @@ from typing import Iterator, Iterable, Callable, Union, TypeVar, Generic
 
 from PIL.Image import Image as PILImage
 from PIL.ImageSequence import Iterator as FrameIterator
+from PIL.ImageTk import PhotoImage as PilPhotoImage
 
 from ..utils import as_image
 
@@ -78,13 +79,7 @@ class FrameCycle(Generic[T_co]):
 
     def resized(self, width: int, height: int) -> FrameCycle[T_co]:
         size = (width, height)
-        if image := getattr(self, '_src_image', None):
-            image = image.resize(size)
-            # frames = tuple(FrameIterator(image))
-            frames = [frame.copy() for frame in FrameIterator(image)]
-        else:
-            frames = [frame.copy().resize(size) for frame, _ in self._frames_and_durations]
-
+        frames = [frame.copy().resize(size) for frame, _ in self._frames_and_durations]
         return FrameCycle(frames, self._wrapper, self._duration, self._default_duration)
 
 
@@ -112,3 +107,9 @@ class PhotoImageCycle(FrameCycle):
     @property
     def current_image(self) -> PILImage:
         return self._frames[self.n]
+
+    def resized(self, width: int, height: int) -> FrameCycle[PilPhotoImage]:
+        image = self._src_image
+        image = image.resize((width, height))
+        frames = [frame.copy() for frame in FrameIterator(image)]
+        return FrameCycle(frames, PilPhotoImage, self._duration, self._default_duration)
