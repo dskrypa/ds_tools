@@ -80,9 +80,10 @@ class FrameCycle(Generic[T_co]):
         size = (width, height)
         if image := getattr(self, '_src_image', None):
             image = image.resize(size)
-            frames = tuple(FrameIterator(image))
+            # frames = tuple(FrameIterator(image))
+            frames = [frame.copy() for frame in FrameIterator(image)]
         else:
-            frames = [frame.resize(size) for frame, _ in self._frames_and_durations]
+            frames = [frame.copy().resize(size) for frame, _ in self._frames_and_durations]
 
         return FrameCycle(frames, self._wrapper, self._duration, self._default_duration)
 
