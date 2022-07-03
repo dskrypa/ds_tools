@@ -8,22 +8,25 @@ Image frames from the Spinner may be used directly.
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import logging
 from functools import cached_property
 from math import pi, cos, sin
 from operator import xor
 from pathlib import Path
-from typing import Union, Iterator, Callable
+from typing import TYPE_CHECKING, Union, Iterator, Callable
 
-from PIL import Image
-from PIL.Image import Image as PILImage
+from PIL.Image import Image as PILImage, new as new_image
 from PIL.ImageDraw import ImageDraw, Draw
 
 from ..colors import color_to_rgb, find_unused_color
-from ..utils import Size, FloatBox
 from .cycle import FrameCycle
 from .gif import AnimatedGif
 from .utils import prepare_dir
+
+if TYPE_CHECKING:
+    from ..utils import Size, FloatBox
 
 __all__ = ['Spinner']
 log = logging.getLogger(__name__)
@@ -45,9 +48,7 @@ class Spinner:
         clockwise: bool = True,
     ):
         self.rgb = color_to_rgb(color)
-        self.size = (size, size) if isinstance(size, int) else size  # width, height
-        self.inner_radius = int(min(self.size) / 2 * 0.7)
-        self.spoke_radius = self.inner_radius // 3
+        self.size = size  # width, height
         self.bg = color_to_rgb(bg) if bg else (*find_unused_color([self.rgb]), 0)
         self.spokes = spokes
         self.size_min_pct = size_min_pct
@@ -57,6 +58,19 @@ class Spinner:
         self.frame_fade_pct = frame_fade_pct
         self.reverse = reverse
         self.clockwise = clockwise
+
+    @property
+    def size(self) -> Size:
+        """The (width, height) of this Spinner"""
+        return self._size
+
+    @size.setter
+    def size(self, value: Union[Size, int]):
+        if isinstance(value, int):
+            value = (value, value)
+        self._size = value
+        self.inner_radius = int(min(self.size) / 2 * 0.7)
+        self.spoke_radius = self.inner_radius // 3
 
     def __len__(self) -> int:
         return self.spokes * self.frames_per_spoke
@@ -77,7 +91,7 @@ class Spinner:
             yield i, r, (x - r, y - r, x + r, y + r)
 
     def create_frame(self, spoke: int = 0, spoke_frame: int = 0) -> PILImage:
-        image = Image.new('RGBA', self.size, self.bg)
+        image = new_image('RGBA', self.size, self.bg)
         draw = Draw(image, 'RGBA')  # type: ImageDraw
         opacity_step_pct = (1 - self.opacity_min_pct) / self.spokes
         a_offset = int(255 * (spoke_frame * self.frame_fade_pct))
@@ -107,7 +121,7 @@ class Spinner:
         self.size = (size, size) if isinstance(size, int) else size
         return self
 
-    def cycle(self, wrapper: Callable = None, duration: int = None, default_duration: int = 100) -> 'FrameCycle':
+    def cycle(self, wrapper: Callable = None, duration: int = None, default_duration: int = 100) -> FrameCycle:
         return FrameCycle(self.frames(), wrapper, duration, default_duration)
 
     @cached_property

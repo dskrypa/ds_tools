@@ -34,6 +34,7 @@ def print_tiered(obj):
 
 
 class Printer:
+    __slots__ = ('output_format',)
     formats = PRINTER_FORMATS
 
     def __init__(self, output_format):

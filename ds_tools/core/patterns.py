@@ -37,6 +37,7 @@ def any_fnmatches(iterable, pat, ignore_case=False):
 
 
 class FnMatcher:
+    __slots__ = ('patterns',)
     _use_normcase = normcase is not posix_normcase
 
     def __init__(self, patterns: Union[str, Iterable[str]], ignore_case=False):
@@ -73,6 +74,8 @@ class FnMatcher:
 
 
 class ReMatcher:
+    __slots__ = ('patterns',)
+
     def __init__(self, patterns: Union[str, Iterable[str]], ignore_case=False):
         if isinstance(patterns, str):
             patterns = (patterns,)

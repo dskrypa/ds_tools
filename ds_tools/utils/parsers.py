@@ -18,6 +18,8 @@ log = logging.getLogger(__name__)
 
 
 class Token:
+    __slots__ = ('type', 'value')
+
     def __init__(self, tok_type, value):
         self.type = tok_type
         self.value = value

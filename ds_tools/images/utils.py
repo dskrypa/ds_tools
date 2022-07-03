@@ -5,15 +5,13 @@ Utilities for working with images
 """
 
 import json
-import logging
 from copy import deepcopy
 from io import BytesIO, StringIO
 from math import floor, ceil
 from pathlib import Path
 from typing import Union, Any
 
-from PIL import Image
-from PIL.Image import Image as PILImage
+from PIL.Image import Image as PILImage, open as open_image, MIME
 from PIL.JpegImagePlugin import RAWMODE
 
 from ..core.serialization import PermissiveJSONEncoder
@@ -29,7 +27,7 @@ __all__ = [
     'scale_image',
     'get_image_info',
 ]
-log = logging.getLogger(__name__)
+
 ImageType = Union[PILImage, bytes, Path, str, None]
 Size = tuple[int, int]
 Box = tuple[int, int, int, int]
@@ -40,12 +38,12 @@ def as_image(image: ImageType) -> PILImage:
     if image is None or isinstance(image, PILImage):
         return image
     elif isinstance(image, bytes):
-        return Image.open(BytesIO(image))
+        return open_image(BytesIO(image))
     elif isinstance(image, (Path, str)):
         path = Path(image).expanduser()
         if not path.is_file():
             raise ValueError(f'Invalid image path={path.as_posix()!r} - it is not a file')
-        return Image.open(path)
+        return open_image(path)
     else:
         raise TypeError(f'Image must be bytes, None, Path, str, or a PIL.Image.Image - found {type(image)}')
 
@@ -71,7 +69,7 @@ def scale_image(image: PILImage, width, height, **kwargs) -> PILImage:
 
 def calculate_resize(src_w, src_h, new_w, new_h):
     """Copied logic from :meth:`PIL.Image.Image.thumbnail`"""
-    x, y = map(floor, (new_w, new_h))
+    x, y = floor(new_w), floor(new_h)
     aspect = src_w / src_h
     if x / y >= aspect:
         x = _round_aspect(y * aspect, key=lambda n: abs(aspect - n / y))
@@ -81,7 +79,8 @@ def calculate_resize(src_w, src_h, new_w, new_h):
 
 
 def _round_aspect(number, key):
-    return max(min(floor(number), ceil(number), key=key), 1)
+    rounded = min(floor(number), ceil(number), key=key)
+    return rounded if rounded > 1 else 1
 
 
 def get_image_info(image: ImageType, as_str: bool = False, identifier: str = None) -> Union[dict[str, Any], str]:
@@ -92,7 +91,7 @@ def get_image_info(image: ImageType, as_str: bool = False, identifier: str = Non
     info['class'] = image.__class__.__qualname__
     if fmt := image.format:
         info['format'] = image.format
-        info['mime_type'] = Image.MIME[fmt]
+        info['mime_type'] = MIME[fmt]
         if fmt == 'GIF':
             attrs = ('disposal_method', 'disposal', 'dispose_extent', 'tile')
             info.update((attr, getattr(image, attr, None)) for attr in attrs)
@@ -102,11 +101,11 @@ def get_image_info(image: ImageType, as_str: bool = False, identifier: str = Non
     if as_str:
         if identifier is None:
             try:
-                identifier = Path(image.filename).as_posix()
-            except Exception:
+                identifier = Path(image.filename).as_posix()  # noqa
+            except Exception:  # noqa
                 try:
-                    identifier = Path(image.fp.name).as_posix()
-                except Exception:
+                    identifier = Path(image.fp.name).as_posix()  # noqa
+                except Exception:  # noqa
                     identifier = str(image)
 
         sio = StringIO()

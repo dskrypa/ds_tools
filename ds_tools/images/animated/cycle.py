@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from tkinter import PhotoImage
-from typing import Iterator, Iterable, Callable, Union, TypeVar, Generic, Optional, Sequence
+from typing import Iterator, Iterable, Callable, Union, TypeVar, Generic, Optional
 
 from PIL.GifImagePlugin import GifImageFile
 from PIL.Image import Image as PILImage, new as new_image

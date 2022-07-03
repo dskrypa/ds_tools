@@ -4,20 +4,25 @@ Utilities for parsing and interpreting crontab schedules
 :author: Doug Skrypa
 """
 
-import logging
+from __future__ import annotations
+
+# import logging
 from datetime import datetime
 from functools import cached_property
-from typing import Union, Iterator, Iterable, Mapping
+from typing import Any, Union, Optional, Type, Iterator, Iterable, Mapping
 
 from bitarray import bitarray
 
 __all__ = ['CronSchedule']
-log = logging.getLogger(__name__)
+# log = logging.getLogger(__name__)
+
 CronDict = dict[Union[int, str], bool]
 
 
 class TimePart:
-    def __init__(self, cron: 'CronSchedule', name: str, intervals: int, min: int = 0, special: str = None):
+    __slots__ = ('cron', 'name', 'arr', 'min', 'special_keys', 'special_vals')
+
+    def __init__(self, cron: CronSchedule, name: str, intervals: int, min: int = 0, special: str = None):  # noqa
         self.cron = cron
         self.name = name
         self.arr = bitarray(intervals)
@@ -52,7 +57,7 @@ class TimePart:
                     return self.special_vals[index]
             return False
         elif isinstance(key, int):
-            return self.arr[self._offset(key)]
+            return self.arr[self._offset(key)]  # noqa
         raise TypeError(f'Unexpected type={key.__class__.__name__} for {key=}')
 
     def __setitem__(self, key: Union[str, int], value: bool):
@@ -208,27 +213,29 @@ class TimePart:
 
 
 class CronPart:
-    def __init__(self, intervals: int, min: int = 0, special: str = None):
+    __slots__ = ('intervals', 'min', 'special', 'name')
+
+    def __init__(self, intervals: int, min: int = 0, special: str = None):  # noqa
         self.intervals = intervals
         self.min = min
         self.special = special
 
-    def __set_name__(self, owner, name):
+    def __set_name__(self, owner: Type[CronSchedule], name: str):
         self.name = name
 
-    def _get(self, instance) -> TimePart:
+    def _get(self, instance: CronSchedule) -> TimePart:
         try:
             return instance.__dict__[self.name]
         except KeyError:
             instance.__dict__[self.name] = tp = TimePart(instance, self.name, self.intervals, self.min, self.special)
             return tp
 
-    def __get__(self, instance, owner):
+    def __get__(self, instance: Optional[CronSchedule], owner: Type[CronSchedule]) -> Union[CronPart, TimePart]:
         if instance is None:
             return self
         return self._get(instance)
 
-    def __set__(self, instance, value):
+    def __set__(self, instance: CronSchedule, value: Any):
         raise TypeError(f'{self.__class__.__name__} objects do not allow assignment')
 
 
@@ -257,7 +264,7 @@ class CronSchedule:
             self.hour.replace(dt_obj.hour, True)
 
     @classmethod
-    def from_cron(cls, cron_str: str) -> 'CronSchedule':
+    def from_cron(cls, cron_str: str) -> CronSchedule:
         self = cls()
         attrs = (self.second, self.minute, self.hour, self.day, self.month, self.dow)
         for attr, value in zip(attrs, cron_str.split()):

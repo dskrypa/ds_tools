@@ -4,23 +4,22 @@ LCD Clock numbers
 :author: Doug Skrypa
 """
 
-import logging
 from datetime import datetime
 from math import ceil
 from typing import Iterator, Optional
 
-from PIL import Image
-from PIL.Image import Image as PILImage
+from PIL.Image import Image as PILImage, new as new_image
 from PIL.ImageDraw import ImageDraw, Draw
 
 from .colors import color_to_rgb, find_unused_color
 
 __all__ = ['SevenSegmentDisplay']
-log = logging.getLogger(__name__)
+
 PolygonPoints = tuple[tuple[float, float], ...]
 
 
 class SevenSegmentDisplay:
+    __slots__ = ('_bar', '_bar_pct', 'height', 'corners', 'fg', 'bg', 'seg_height')
     _nums = (0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f)    # 0-9 with bit order: gfedcba
 
     def __init__(
@@ -139,10 +138,10 @@ class SevenSegmentDisplay:
 
     def draw_time(self, dt: datetime = None, seconds: bool = True) -> PILImage:
         dt = dt or datetime.now()
-        image = Image.new('RGBA', self.time_size(seconds), self.bg)
+        image = new_image('RGBA', self.time_size(seconds), self.bg)
         draw = Draw(image, 'RGBA')  # type: ImageDraw
-        ink, fill = draw._getink(None, self.fg)
-        draw_polygon = draw.draw.draw_polygon
+        ink, fill = draw._getink(None, self.fg)  # noqa
+        draw_polygon = draw.draw.draw_polygon  # noqa
         colon_offset = self._bar * 2
         num_offset = self._width + self._bar
         x_offset = 0
@@ -161,7 +160,7 @@ class SevenSegmentDisplay:
         return image
 
     def draw_num(self, num: int) -> PILImage:
-        image = Image.new('RGBA', (self._width, self.height), self.bg)
+        image = new_image('RGBA', (self._width, self.height), self.bg)
         self._draw_num(num, Draw(image, 'RGBA'))
         return image
 

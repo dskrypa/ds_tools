@@ -4,10 +4,7 @@ Utilities to provide grammatically correct output.
 :author: Doug Skrypa
 """
 
-import logging
-
 __all__ = ['a_or_an']
-log = logging.getLogger(__name__)
 
 
 def a_or_an(noun: str) -> str:

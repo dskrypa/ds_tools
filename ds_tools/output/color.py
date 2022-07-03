@@ -9,8 +9,14 @@ from typing import Union
 
 __all__ = ['colored', 'InvalidAnsiCode']
 
+C = Union[str, int]
 
-def colored(text: str, color=None, bg_color=None, attrs=None, reset=True, *, prefix: Union[str, int] = None):
+
+def colored(
+    text: str, color: C = None, bg_color: C = None, attrs: C = None, reset: bool = True, *, prefix: C = None
+) -> str:
+    if color is bg_color is attrs is prefix is None:
+        return text
     parts = (
         f'\x1b[{prefix}m' if prefix else '',
         fg_color_code(color) if color is not None else '',
@@ -22,7 +28,7 @@ def colored(text: str, color=None, bg_color=None, attrs=None, reset=True, *, pre
     return ''.join(parts)
 
 
-def attr_code(attr) -> str:
+def attr_code(attr: C) -> str:
     try:
         attrs = attr_code._attrs
     except AttributeError:
@@ -56,15 +62,15 @@ def attr_code(attr) -> str:
             raise InvalidAnsiCode(attr) from e
 
 
-def fg_color_code(color) -> str:
+def fg_color_code(color: C) -> str:
     return ansi_color_code(color, '38;5;')
 
 
-def bg_color_code(color) -> str:
+def bg_color_code(color: C) -> str:
     return ansi_color_code(color, '48;5;')
 
 
-def ansi_color_code(color, base) -> str:
+def ansi_color_code(color: C, base: C) -> str:
     color = str(color)
     code = '\x1b[' + base
     try:

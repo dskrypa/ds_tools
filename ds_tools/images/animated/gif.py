@@ -4,14 +4,16 @@ Utilities for working with animated gif images
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import logging
 from functools import cached_property
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Union, Iterator, Iterable, Sequence, Callable
 
-from PIL import Image, ImageShow
-from PIL.Image import Image as PILImage
+from PIL import ImageShow
+from PIL.Image import Image as PILImage, Resampling  # noqa
 from PIL.ImagePalette import ImagePalette
 from PIL.ImageSequence import Iterator as FrameIterator
 
@@ -29,6 +31,7 @@ class AnimatedGif:
     Notes:
         tile = (decoder, (x0, y0, x1, y1), frame_byte_offset, (bits, interlace, transparency))
     """
+
     def __init__(self, image: Union[ImageType, Iterable[ImageType]]):
         self._path = Path(image) if isinstance(image, (str, Path)) else None
         try:
@@ -51,7 +54,7 @@ class AnimatedGif:
         return len(self._frames) if self._frames is not None else self._image.n_frames
 
     @classmethod
-    def from_images(cls, images: Union[Iterable[ImageType], str, Path]) -> 'AnimatedGif':
+    def from_images(cls, images: Union[Iterable[ImageType], str, Path]) -> AnimatedGif:
         if isinstance(images, (str, Path)):
             path = Path(images).expanduser()
             if not path.is_dir():
@@ -79,17 +82,17 @@ class AnimatedGif:
         else:
             yield from frame_iter
 
-    def color_to_alpha(self, color: str) -> 'AnimatedGif':
+    def color_to_alpha(self, color: str) -> AnimatedGif:
         return self.__class__((color_to_alpha(frame, color) for frame in self.frames(True)))
 
-    def resize(self, size: Size, resample: int = Image.ANTIALIAS, box: Box = None, reducing_gap: float = None):
+    def resize(self, size: Size, resample: int = Resampling.LANCZOS, box: Box = None, reducing_gap: float = None):
         frames = (
             frame.resize(size, resample=resample, box=box, reducing_gap=reducing_gap)
             for frame in self.frames(True)
         )
         return self.__class__(frames)
 
-    def cycle(self, wrapper: Callable = None, duration: int = None, default_duration: int = 100) -> 'FrameCycle':
+    def cycle(self, wrapper: Callable = None, duration: int = None, default_duration: int = 100) -> FrameCycle:
         return FrameCycle(self.frames(), wrapper, duration, default_duration)
 
     def get_info(self, frames: Union[bool, int] = False):
@@ -177,7 +180,7 @@ class AnimatedGif:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir).joinpath(name)
             self.save(tmp_path, **kwargs)
-            for viewer in ImageShow._viewers:
+            for viewer in ImageShow._viewers:  # noqa
                 if viewer.show_file(tmp_path.as_posix()):
                     return True
         return False

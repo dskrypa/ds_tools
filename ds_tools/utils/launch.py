@@ -13,6 +13,7 @@ from typing import Union
 
 __all__ = ['launch', 'explore']
 log = logging.getLogger(__name__)
+
 ON_WINDOWS = sys.platform.startswith('win')
 OPEN_CMD = 'xdg-open' if sys.platform.startswith('linux') else 'open'  # open is for OSX
 

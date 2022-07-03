@@ -1,26 +1,29 @@
 """
 Library for reading rows from an SQLite3 DB in a generic dict-like fashion.
 
-All input is assumed to be trusted.  There is nothing here that would prevent SQL injection attacks.
+.. warning::
+    All input is assumed to be trusted.  There is nothing here that would prevent SQL injection attacks.
 
-This can be somewhat useful for viewing the contents of an unfamiliar SQLite3 DB, but I do not recommend using it for
+This can be somewhat useful for viewing the contents of an unfamiliar SQLite3 DB, but I do *not* recommend using it for
 creating anything new or writing to an SQLite3 DB.  I would recommend using SQLAlchemy for that.
 
 :author: Doug Skrypa
 """
 
-import os
+from __future__ import annotations
+
 import sqlite3
 import logging
 from operator import itemgetter
 from pathlib import Path
-from typing import Iterator, Optional, List, Union
+from typing import Iterator, Optional, Union
 
 from ..core.itertools import itemfinder
 from ..output import Table, Printer
 
 __all__ = ['Sqlite3Database']
 log = logging.getLogger(__name__)
+
 OperationalError = sqlite3.OperationalError
 
 
@@ -28,6 +31,8 @@ class Sqlite3Database:
     """
     None -> NULL, int -> INTEGER, long -> INTEGER, float -> REAL, str -> TEXT, unicode -> TEXT, buffer -> BLOB
     """
+    __slots__ = ('db_path', 'db', '_tables')
+
     def __init__(self, db_path=None):
         db_path = db_path or ':memory:'
         if db_path != ':memory:':
@@ -76,7 +81,7 @@ class Sqlite3Database:
             return True
         return item in self.get_table_names()
 
-    def __getitem__(self, item) -> 'DBTable':
+    def __getitem__(self, item) -> DBTable:
         if item not in self._tables:
             if item not in self:
                 raise KeyError('Table {!r} does not exist in this DB'.format(item))
@@ -90,7 +95,7 @@ class Sqlite3Database:
         else:
             raise KeyError(key)
 
-    def __iter__(self) -> Iterator['DBTable']:
+    def __iter__(self) -> Iterator[DBTable]:
         for table in sorted(self.get_table_names()):
             try:
                 yield self[table]
@@ -142,7 +147,7 @@ class Sqlite3Database:
             suffix += f' LIMIT {limit}'
         return self.query('SELECT {} FROM "{}"{};'.format(cols, table, suffix), tuple(where_list))
 
-    def get_table_names(self) -> List[str]:
+    def get_table_names(self) -> list[str]:
         """
         :return list: Names of tables in this DB
         """
@@ -186,6 +191,8 @@ class Sqlite3Database:
 
 
 class DBRow(dict):
+    __slots__ = ('table', 'pk')
+
     def __init__(self, db_table, *args, **kwargs):
         """
         :param DBTable db_table: DBTable in which this row resides
@@ -225,9 +232,11 @@ class DBRow(dict):
 
 
 class DBTable:
-    def __init__(self, parent_db, name, columns=None, pk=None):
+    __slots__ = ('db', 'name', '_rows', 'col_names', 'col_types', 'columns', 'pk', 'pk_pos')
+
+    def __init__(self, parent_db: Sqlite3Database, name: str, columns=None, pk=None):
         """
-        :param AbstractDB parent_db: DB in which this table resides
+        :param parent_db: DB in which this table resides
         :param name: Name of the table
         :param list columns: Column names
         :param pk: Primary key (defaults to the table's PK or the first column if not defined for the table)
@@ -251,7 +260,7 @@ class DBTable:
 
         if columns is not None:
             if not isinstance(columns, (list, tuple)):
-                raise TypeError('Columns must be provided as a list or tuple, not {}'.format(type(columns)))
+                raise TypeError(f'Columns must be provided as a list or tuple, not {type(columns)}')
             elif (current_names is not None) and (len(current_names) != len(columns)):
                 raise ValueError('The number of columns provided does not match the existing ones')
 
@@ -271,7 +280,10 @@ class DBTable:
                     ct = current_types[i]
                     nt = self.col_types[i]
                     if (ct != nt) and ((ct != '') or (nt != '')):
-                        raise ValueError('The provided type for column {!r} ({}) did not match the existing one ({})'.format(self.col_names[i], ct, nt))
+                        raise ValueError(
+                            f'The provided type for column {self.col_names[i]!r} ({ct})'
+                            f' did not match the existing one ({nt})'
+                        )
         else:
             self.col_names = current_names
             self.col_types = current_types
@@ -280,7 +292,7 @@ class DBTable:
 
         if pk is not None:
             if pk not in self.col_names:
-                raise ValueError('The provided PK {!r} is not a column in this table'.format(pk))
+                raise ValueError(f'The provided PK {pk!r} is not a column in this table')
             self.pk = pk
         else:
             self.pk = current_pk if current_pk is not None else self.col_names[0]
@@ -293,7 +305,7 @@ class DBTable:
         assert self.col_names[self.pk_pos] == self.pk
 
         if not table_exists:
-            col_strs = ['{} {}'.format(cname, ctype) if ctype else cname for cname, ctype in self.columns.items()]
+            col_strs = [f'{cname} {ctype}' if ctype else cname for cname, ctype in self.columns.items()]
             if pk is not None:
                 col_strs[self.pk_pos] += ' PRIMARY KEY'
             self.db.execute('CREATE TABLE "{}" ({});'.format(self.name, ', '.join(col_strs)))

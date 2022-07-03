@@ -8,8 +8,8 @@ from random import randrange
 from typing import Union, Collection
 
 import numpy
-from PIL import Image, ImageColor
-from PIL.Image import Image as PILImage
+from PIL.Image import Image as PILImage, fromarray as image_from_array
+from PIL.ImageColor import getrgb
 from PIL.ImagePalette import ImagePalette
 
 from .utils import ImageType, as_image
@@ -25,6 +25,7 @@ __all__ = [
     'Color',
     'replace_color',
 ]
+
 RGB = tuple[int, int, int]
 RGBA = tuple[int, int, int, int]
 Color = Union[str, RGB, RGBA]
@@ -34,10 +35,10 @@ def color_to_rgb(color: Color) -> Union[RGB, RGBA]:
     if isinstance(color, tuple):
         return color
     try:
-        return ImageColor.getrgb(color)
+        return getrgb(color)
     except ValueError:
         if isinstance(color, str) and len(color) in (3, 4, 6, 8):
-            return ImageColor.getrgb(f'#{color}')
+            return getrgb(f'#{color}')
         raise
 
 
@@ -97,7 +98,7 @@ def replace_color(image: ImageType, old_color: Color, new_color: Color) -> PILIm
     r, g, b, a = data.T
     to_replace = (r == old_r) & (g == old_g) & (b == old_b)
     data[..., :-1][to_replace.T] = new_color  # noqa
-    updated = Image.fromarray(data)
+    updated = image_from_array(data)
     if orig_mode != 'RGBA':
         updated = updated.convert(orig_mode)
     return updated

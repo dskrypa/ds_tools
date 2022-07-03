@@ -84,10 +84,8 @@ from collections.abc import Iterable, Container
 from urllib.parse import urlparse
 
 try:
-    # noinspection PyUnresolvedReferences
-    from bs4 import BeautifulSoup, DEFAULT_OUTPUT_ENCODING
-    # noinspection PyUnresolvedReferences
-    from bs4.element import AttributeValueWithCharsetSubstitution, NavigableString, Tag, PageElement
+    from bs4 import BeautifulSoup, DEFAULT_OUTPUT_ENCODING  # noqa
+    from bs4.element import AttributeValueWithCharsetSubstitution, NavigableString, Tag, PageElement  # noqa
 except ImportError:
     bs4_available = False
 else:
@@ -105,7 +103,7 @@ log = logging.getLogger(__name__)
 _regex_pattern_type = type(re.compile(''))
 
 
-def soupify(html, mode='lxml', *args, **kwargs) -> BeautifulSoup:
+def soupify(html, mode: str = 'lxml', *args, **kwargs) -> BeautifulSoup:
     if not isinstance(html, str):
         try:
             html = html.text
@@ -126,20 +124,29 @@ def fix_html_prettify():
 
 
 def _should_skip(content, match_value):
-    if (match_value and not content) or (content and not match_value):
-        return True
-    elif isinstance(match_value, str) and (content != match_value):
-        return True
-    elif isinstance(match_value, _regex_pattern_type) and not match_value.match(content):
-        return True
-    elif isinstance(match_value, (Iterable, Container)) and (content not in match_value):
-        return True
-    elif isinstance(match_value, Callable) and not match_value(content):
-        return True
-    return False
+    return (
+        (match_value and not content) or (content and not match_value)
+        or isinstance(match_value, str) and (content != match_value)
+        or isinstance(match_value, _regex_pattern_type) and not match_value.match(content)
+        or isinstance(match_value, (Iterable, Container)) and (content not in match_value)
+        or isinstance(match_value, Callable) and not match_value(content)
+    )
+    # if (match_value and not content) or (content and not match_value):
+    #     return True
+    # elif isinstance(match_value, str) and (content != match_value):
+    #     return True
+    # elif isinstance(match_value, _regex_pattern_type) and not match_value.match(content):
+    #     return True
+    # elif isinstance(match_value, (Iterable, Container)) and (content not in match_value):
+    #     return True
+    # elif isinstance(match_value, Callable) and not match_value(content):
+    #     return True
+    # return False
 
 
 class HtmlSoup:
+    __slots__ = ('soup',)
+
     def __init__(self, content, mode='html.parser'):
         if not isinstance(content, (BeautifulSoup, str)) and hasattr(content, 'text'):  # requests.Response
             content = content.text
@@ -148,7 +155,7 @@ class HtmlSoup:
         if not isinstance(content, BeautifulSoup):
             raise TypeError('Unexpected HTML content type: {}'.format(type(content).__name__))
 
-        self.soup = content                                                                     # type: BeautifulSoup
+        self.soup: BeautifulSoup = content
 
     def links(self, href=None, scheme=None, host=None, path=None, query=None, fragment=None, text=None):
         """
@@ -167,8 +174,8 @@ class HtmlSoup:
             elif any(val is not None for val in filters.values()):
                 try:
                     url = urlparse(a_href)
-                except Exception as e:
-                    log.error('Unable to parse URL from href in anchor: {}'.format(a))
+                except Exception:  # noqa
+                    log.error(f'Unable to parse URL from href in anchor: {a}')
                     continue
 
                 skip = False

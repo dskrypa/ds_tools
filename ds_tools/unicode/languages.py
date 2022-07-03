@@ -346,6 +346,7 @@ def contains_any_cjk(a_str: Union[str, Iterable[str]]) -> bool:
 
 
 class J2R:
+    __slots__ = ('kakasi',)
     __instance = None
 
     def __new__(cls):

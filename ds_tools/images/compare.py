@@ -4,6 +4,8 @@ Utilities for comparing images
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import logging
 from collections import defaultdict
 from functools import cached_property, partialmethod, wraps
@@ -13,8 +15,9 @@ from typing import TYPE_CHECKING, Union
 from weakref import WeakKeyDictionary
 
 import numpy
-from PIL import Image, ImageOps
-from imageio import imread
+from PIL.Image import Image as PILImage, open as open_image
+from PIL.ImageOps import grayscale
+from imageio.v2 import imread
 try:
     from skimage.metrics import structural_similarity
 except ImportError:
@@ -44,21 +47,21 @@ def comparison(func):
 class ComparableImage:
     def __init__(
         self,
-        image: Union[Image.Image, str, Path],
+        image: Union[PILImage, str, Path],
         gray: bool = True,
         normalize: bool = True,
         max_width: int = None,
         max_height: int = None,
         compare_as: str = None,
-        _sizes: dict['Size', 'ComparableImage'] = None,
+        _sizes: dict[Size, ComparableImage] = None,
     ):
-        self.image = image if isinstance(image, Image.Image) else Image.open(image)
+        self.image = image if isinstance(image, PILImage) else open_image(image)
         self._gray = gray
         self._normalize = normalize
         self._max_width = max_width
         self._max_height = max_height
         self._compare_as = compare_as  # If one image is jpeg, both should use jpeg. Only use png if both are webp/png
-        self._as_size: dict['Size', 'ComparableImage'] = _sizes or {}
+        self._as_size: dict[Size, ComparableImage] = _sizes or {}
         self._as_size[self.image.size] = self
         self._computed = defaultdict(WeakKeyDictionary)
 
@@ -68,7 +71,7 @@ class ComparableImage:
             f'max_width={self._max_width}, max_height={self._max_height}, compare_as={self._compare_as!r})>'
         )
 
-    def is_same_as(self, other: 'ComparableImage', taxi: float = 2, mse: float = 20, mssim: float = 0.975) -> bool:
+    def is_same_as(self, other: ComparableImage, taxi: float = 2, mse: float = 20, mssim: float = 0.975) -> bool:
         """
         :param other: The ComparableImage with which this image should be compared
         :param taxi: Maximum threshold for taxicab distance (per pixel)
@@ -85,7 +88,7 @@ class ComparableImage:
             return False
         return True
 
-    def is_similar_to(self, other: 'ComparableImage', taxi: float = 10, mse: float = 300, mssim: float = 0.8) -> bool:
+    def is_similar_to(self, other: ComparableImage, taxi: float = 10, mse: float = 300, mssim: float = 0.8) -> bool:
         """
         :param other: The ComparableImage with which this image should be compared
         :param taxi: Maximum threshold for taxicab distance (per pixel)
@@ -103,7 +106,7 @@ class ComparableImage:
         return True
 
     @comparison
-    def taxicab_distance(self, other: 'ComparableImage') -> tuple[float, float]:
+    def taxicab_distance(self, other: ComparableImage) -> tuple[float, float]:
         """
         Based on: https://gist.github.com/astanin/626356
 
@@ -117,7 +120,7 @@ class ComparableImage:
         return m_norm, m_norm / _self.float_array.size
 
     @comparison
-    def mean_squared_error(self, other: 'ComparableImage') -> float:
+    def mean_squared_error(self, other: ComparableImage) -> float:
         """
         :param other: The ComparableImage with which this image should be compared
         :return float: Lower values indicate higher similarity
@@ -127,7 +130,7 @@ class ComparableImage:
         return numpy.mean((_self.float_array - other.float_array) ** 2, dtype=numpy.float64)
 
     @comparison
-    def mean_structural_similarity(self, other: 'ComparableImage') -> float:
+    def mean_structural_similarity(self, other: ComparableImage) -> float:
         """
         :param other: The ComparableImage with which this image should be compared
         :return: A number between 0 and 1.  Larger values indicate higher similarity.
@@ -138,7 +141,7 @@ class ComparableImage:
         return structural_similarity(_self.imread_array, other.imread_array, multichannel=not self._gray)
 
     @comparison
-    def zero_norm(self, other: 'ComparableImage') -> tuple[float, float]:
+    def zero_norm(self, other: ComparableImage) -> tuple[float, float]:
         """
         Based on: https://gist.github.com/astanin/626356
 
@@ -154,7 +157,7 @@ class ComparableImage:
         z_norm = numpy.linalg.norm(numpy.asarray_chkfinite(diff.ravel()), ord=0)  # Zero norm
         return z_norm, z_norm / _self.float_array.size
 
-    def normalized_root_mse(self, other: 'ComparableImage', normalization: str = 'euclidean') -> float:
+    def normalized_root_mse(self, other: ComparableImage, normalization: str = 'euclidean') -> float:
         """
         Based on :func:`skimage.metrics.normalized_root_mse`.
 
@@ -182,7 +185,7 @@ class ComparableImage:
     mean_root_mse = partialmethod(normalized_root_mse, normalization='mean')
 
     @comparison
-    def peak_signal_noise_ratio(self, other: 'ComparableImage', data_range=None) -> float:
+    def peak_signal_noise_ratio(self, other: ComparableImage, data_range=None) -> float:
         """
         The ratio between the maxiumum possible power of a signal and the power of corrupting noise that affects the
         fidelity of its representation.
@@ -219,20 +222,20 @@ class ComparableImage:
         return 10 * numpy.log10((data_range ** 2) / mse)
 
     @cached_property
-    def imread_array(self) -> 'ArrayLike':
-        image = ImageOps.grayscale(self.image) if self._gray else self.image
+    def imread_array(self) -> ArrayLike:
+        image = grayscale(self.image) if self._gray else self.image
         bio = BytesIO()
         image.save(bio, self._compare_as or 'jpeg')
         return imread(bio.getvalue())
 
     @cached_property
-    def float_array(self) -> 'ArrayLike':
+    def float_array(self) -> ArrayLike:
         arr = self.imread_array.astype(float)
         if self._normalize:
             arr = _normalize(arr)
         return arr
 
-    def as_compatible_size(self, other: 'ComparableImage') -> 'ComparableImage':
+    def as_compatible_size(self, other: ComparableImage) -> ComparableImage:
         max_widths = list(filter(None, (img._max_width for img in (self, other))))
         max_heights = list(filter(None, (img._max_height for img in (self, other))))
         if self.image.size == other.image.size and not max_widths and not max_heights:
@@ -249,13 +252,13 @@ class ComparableImage:
             )
         return self._as_size[min_size]
 
-    def compatible_sizes(self, other: 'ComparableImage') -> tuple['ComparableImage', 'ComparableImage']:
+    def compatible_sizes(self, other: ComparableImage) -> tuple[ComparableImage, ComparableImage]:
         _self = self.as_compatible_size(other)
         other = other.as_compatible_size(self)
         return _self, other
 
 
-def _resize(img: Image.Image, new_width: int) -> Image.Image:
+def _resize(img: PILImage, new_width: int) -> PILImage:
     if img.width > new_width:
         new_height = int(round(new_width * img.height / img.width))
         log.debug(f'Resizing {img} to {new_width}x{new_height}')
@@ -263,14 +266,14 @@ def _resize(img: Image.Image, new_width: int) -> Image.Image:
     return img
 
 
-def _crop(img: Image.Image, width: int, height: int) -> Image.Image:
+def _crop(img: PILImage, width: int, height: int) -> PILImage:
     if img.width > width or img.height > height:
         log.debug(f'Cropping {img} from {img.width}x{img.height} to {width}x{height}')
         return img.crop((0, 0, width, height))
     return img
 
 
-def _normalize(img_arr: 'ArrayLike') -> 'ArrayLike':
+def _normalize(img_arr: ArrayLike) -> ArrayLike:
     # Compensate for exposure difference
     img_min = img_arr.min()
     img_range = (img_arr.max() - img_min) or 1
