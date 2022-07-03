@@ -29,7 +29,7 @@ class FrameCycle(Generic[T_co]):
 
     def __init__(
         self,
-        frames: Sequence[Union[PILImage, tuple[PILImage, Optional[int]]]],
+        frames: Iterable[Union[PILImage, tuple[PILImage, Optional[int]]]],
         wrapper: Callable[[PILImage], T_co] = None,
         duration: int = None,
         default_duration: int = 100,
@@ -39,14 +39,13 @@ class FrameCycle(Generic[T_co]):
         self._duration = duration
         self._default_duration = default_duration
 
+        self._frames = frames = tuple(frames)
         if isinstance(frames[0], tuple):
             self._frames = tuple(f[0] for f in frames)
             self._frames_and_durations = tuple(
                 (f, duration if duration else (default_duration if d is None else d)) for f, d in frames
             )
         else:
-            self._frames = tuple(frames)
-
             def get_duration(f):
                 return duration if duration is not None else f.info.get('duration', default_duration)
 
