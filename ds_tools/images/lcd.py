@@ -19,7 +19,7 @@ PolygonPoints = tuple[tuple[float, float], ...]
 
 
 class SevenSegmentDisplay:
-    __slots__ = ('_bar', '_bar_pct', 'height', 'corners', 'fg', 'bg', 'seg_height')
+    __slots__ = ('_bar', '_bar_pct', '_width', '_gap', 'height', 'corners', 'fg', 'bg', 'seg_height')
     _nums = (0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f)    # 0-9 with bit order: gfedcba
 
     def __init__(
