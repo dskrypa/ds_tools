@@ -72,9 +72,10 @@ class CachedPropertyTest(unittest.TestCase):
         self.assertEqual(ExampleClass.d3.name, 'Descriptor3#2')
 
     def test_dict_attr_property_doc(self):
-        expected = """
-        A :class:`DictAttrProperty<ds_tools.caching.mixins.DictAttrProperty>` that references this {}
-        instance's {}{}""".format(ExampleClass.__name__, 'bar', ''.join('[{!r}]'.format(p) for p in ['baz']))
+        expected = (
+            'A :class:`DictAttrProperty<ds_tools.caching.mixins.DictAttrProperty>` that references this ExampleClass'
+            " instance's bar['baz']"
+        )
         self.assertEqual(ExampleClass.foo.__doc__, expected)
 
     def test_dict_attr_property_cached(self):

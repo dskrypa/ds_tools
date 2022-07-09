@@ -6,6 +6,7 @@ Mixins
 
 from abc import ABC
 from functools import cached_property
+from typing import Collection, Callable, Any
 
 __all__ = ['ClearableCachedPropertyMixin', 'DictAttrProperty', 'DictAttrFieldNotFoundError', 'ClearableCachedProperty']
 _NotSet = object()
@@ -14,18 +15,17 @@ _NotSet = object()
 class ClearableCachedProperty(ABC):
     _set_name = False
 
-    def __set_name__(self, owner, name):
+    def __set_name__(self, owner: type, name: str):
         if self._set_name:
             self.name = name
 
 
-# noinspection PyUnresolvedReferences
-ClearableCachedProperty.register(cached_property)
+ClearableCachedProperty.register(cached_property)  # noqa
 
 
 class ClearableCachedPropertyMixin:
     @classmethod
-    def _cached_properties(cls):
+    def _cached_properties(cls) -> dict[str, ClearableCachedProperty]:
         cached_properties = {}
         for clz in cls.mro():
             if clz == cls:
@@ -40,16 +40,30 @@ class ClearableCachedPropertyMixin:
                     pass
         return cached_properties
 
-    def clear_cached_properties(self):
-        for prop in self._cached_properties():
+    def clear_cached_properties(self, *names: str, skip: Collection[str] = None):
+        if not names:
+            names = self._cached_properties()
+        if skip:
+            names = (name for name in names if name not in skip)
+        for name in names:
             try:
-                del self.__dict__[prop]
+                del self.__dict__[name]
             except KeyError:
                 pass
 
 
 class DictAttrProperty(ClearableCachedProperty):
-    def __init__(self, attr, path, type=_NotSet, default=_NotSet, default_factory=_NotSet, delim='.'):
+    __slots__ = ('path', 'path_repr', 'attr', 'type', 'name', 'default', 'default_factory')
+
+    def __init__(
+        self,
+        attr: str,
+        path: str,
+        type: Callable = _NotSet,  # noqa
+        default: Any = _NotSet,
+        default_factory: Callable = _NotSet,
+        delim: str = '.',
+    ):
         """
         Descriptor that acts as a cached property for retrieving values nested in a dict stored in an attribute of the
         object that this :class:`DictAttrProperty` is a member of.  The value is not accessed or stored until the first
@@ -81,15 +95,17 @@ class DictAttrProperty(ClearableCachedProperty):
         self.path_repr = delim.join(self.path)
         self.attr = attr
         self.type = type
-        self.name = '_{}#{}'.format(self.__class__.__name__, self.path_repr)
+        self.name = f'_{self.__class__.__name__}#{self.path_repr}'
         self.default = default
         self.default_factory = default_factory
 
-    def __set_name__(self, owner, name):
+    def __set_name__(self, owner: type, name: str):
         self.name = name
-        self.__doc__ = """
-        A :class:`DictAttrProperty<ds_tools.caching.mixins.DictAttrProperty>` that references this {}
-        instance's {}{}""".format(owner.__name__, self.attr, ''.join('[{!r}]'.format(p) for p in self.path))
+        nested_loc = ''.join(f'[{p!r}]' for p in self.path)
+        self.__doc__ = (
+            'A :class:`DictAttrProperty<ds_tools.caching.mixins.DictAttrProperty>` that references this'
+            f' {owner.__name__} instance\'s {self.attr}{nested_loc}'
+        )
 
     def __get__(self, obj, cls):
         if obj is None:
@@ -109,7 +125,6 @@ class DictAttrProperty(ClearableCachedProperty):
                 raise DictAttrFieldNotFoundError(obj, self.name, self.attr, self.path_repr)
 
         if self.type is not _NotSet:
-            # noinspection PyArgumentList
             value = self.type(value)
         if '#' not in self.name:
             obj.__dict__[self.name] = value
@@ -117,12 +132,12 @@ class DictAttrProperty(ClearableCachedProperty):
 
 
 class DictAttrFieldNotFoundError(Exception):
-    def __init__(self, obj, prop_name, attr, path_repr):
+    def __init__(self, obj, prop_name: str, attr: str, path_repr: str):
         self.obj = obj
         self.prop_name = prop_name
         self.attr = attr
         self.path_repr = path_repr
 
-    def __str__(self):
+    def __str__(self) -> str:
         fmt = '{!r} object has no attribute {!r} ({} not found in {!r}.{})'
         return fmt.format(type(self.obj).__name__, self.prop_name, self.path_repr, self.obj, self.attr)

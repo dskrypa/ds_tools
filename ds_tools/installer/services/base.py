@@ -4,11 +4,14 @@ Install a service on FreeBSD via rc.d
 :author: Doug Skrypa
 """
 
-import grp  # noqa
 import logging
-import pwd  # noqa
 from abc import ABC, abstractmethod
 from pathlib import Path
+try:
+    import grp  # noqa
+    import pwd  # noqa
+except ImportError:
+    grp = pwd = None
 
 from ..app_info import AppInfo
 
@@ -17,7 +20,9 @@ log = logging.getLogger(__name__)
 
 
 class AppProperty:
-    def __set_name__(self, owner, name):
+    __slots__ = ('name',)
+
+    def __set_name__(self, owner, name: str):
         self.name = name
 
     def __get__(self, obj, cls):
@@ -99,6 +104,10 @@ class Service(ABC):
             pwd_user = pwd.getpwnam(self.user)
         except KeyError:
             pass
+        except AttributeError as e:
+            if pwd is None:
+                raise RuntimeError('Missing pwd import - only linux-like OSes are supported') from e
+            raise
         else:
             log.info(f'User={self.user!r} already exists')
             return
@@ -106,9 +115,16 @@ class Service(ABC):
         self.create_user()
 
     def ensure_user_is_in_group(self):
-        user_struct = pwd.getpwnam(self.user)
+        try:
+            user_struct = pwd.getpwnam(self.user)
+        except AttributeError as e:
+            if pwd is None:
+                raise RuntimeError('Missing pwd import - only linux-like OSes are supported') from e
+            raise
+
         gid = user_struct.pw_gid
         group_struct = grp.getgrgid(gid)
+
         if group_struct.gr_name == self.group:
             log.info(f'User={self.user!r} is already in group={self.group!r}')
             return

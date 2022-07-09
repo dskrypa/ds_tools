@@ -1,12 +1,11 @@
 #!/usr/bin/env python
 
-import locale
 import logging
 import os
 import sys
 from argparse import ArgumentParser, REMAINDER
-from contextlib import contextmanager
-from io import BytesIO
+from contextlib import contextmanager, redirect_stderr
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -54,13 +53,13 @@ class ArgCompletionTest(TestCaseBase):
             del os.environ[key]
 
     def _get_completions(self, parser, vanilla=False):
-        bio = BytesIO()
-        with mute_stderr():
+        sio = StringIO()
+        with redirect_stderr(StringIO()):
             if vanilla:
-                CompletionFinder()(parser, exit_method=lambda x: None, output_stream=bio)
+                CompletionFinder()(parser, exit_method=lambda x: None, output_stream=sio)
             else:
-                ArgCompletionFinder()(parser, exit_method=lambda x: None, output_stream=bio)
-        return bio.getvalue().decode(locale.getpreferredencoding()).split(IFS)
+                ArgCompletionFinder()(parser, exit_method=lambda x: None, output_stream=sio)
+        return sio.getvalue().split(IFS)
 
     def test_vanilla_parser_with_choices_then_remainder(self):
         parser = vanilla_parser_with_choices_then_remainder()
@@ -215,17 +214,6 @@ def argcomplete_env(comp_line, comp_point=None):
     finally:
         for key in ('COMP_LINE', 'COMP_POINT'):
             del os.environ[key]
-
-
-@contextmanager
-def mute_stderr():
-    stderr = sys.stderr
-    sys.stderr = open(os.devnull, 'w')
-    try:
-        yield
-    finally:
-        sys.stderr.close()
-        sys.stderr = stderr
 
 
 if __name__ == '__main__':
