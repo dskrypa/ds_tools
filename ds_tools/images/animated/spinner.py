@@ -11,9 +11,7 @@ Image frames from the Spinner may be used directly.
 from __future__ import annotations
 
 import logging
-from functools import cached_property
 from math import pi, cos, sin
-from operator import xor
 from pathlib import Path
 from typing import TYPE_CHECKING, Union, Iterator, Callable
 
@@ -36,7 +34,7 @@ class Spinner:
     def __init__(
         self,
         size: Union[Size, int],
-        color: str = '#204274',
+        color: str = '#204274',  # sort of a slate blue
         spokes: int = 8,
         bg: str = None,
         size_min_pct: float = 0.5,
@@ -110,7 +108,7 @@ class Spinner:
         return self.create_frame(spoke, spoke_frame)
 
     def __iter__(self) -> Iterator[PILImage]:
-        spoke_nums = range(self.spokes) if xor(self.clockwise, not self.reverse) else range(self.spokes - 1, -1, -1)
+        spoke_nums = range(self.spokes) if self.clockwise ^ (not self.reverse) else range(self.spokes - 1, -1, -1)
         for spoke in spoke_nums:
             for spoke_frame in range(self.frames_per_spoke):
                 yield self.create_frame(spoke, spoke_frame)
@@ -124,15 +122,14 @@ class Spinner:
     def cycle(self, wrapper: Callable = None, duration: int = None, default_duration: int = 100) -> FrameCycle:
         return FrameCycle(self.frames(), wrapper, duration, default_duration)
 
-    @cached_property
-    def gif(self) -> AnimatedGif:
+    def as_gif(self) -> AnimatedGif:
         return AnimatedGif(self.frames())
 
     def show(self, **kwargs):
         kwargs.setdefault('disposal', 2)
         kwargs.setdefault('transparency', 0)
         kwargs.setdefault('duration', self.frame_duration_ms)
-        self.gif.show(**kwargs)
+        self.as_gif().show(**kwargs)
 
     def save(self, path: Union[Path, str], lib: str = 'PIL', **kwargs):
         if lib == 'PIL':
@@ -157,7 +154,7 @@ class Spinner:
         kwargs.setdefault('disposal', 2)
         kwargs.setdefault('transparency', 0)
         kwargs.setdefault('duration', self.frame_duration_ms)
-        self.gif.save(path, **kwargs)
+        self.as_gif().save(path, **kwargs)
 
     def save_frames(self, path: Union[Path, str], prefix: str = 'frame_', format: str = 'PNG', mode: str = None):  # noqa
         path = prepare_dir(path)

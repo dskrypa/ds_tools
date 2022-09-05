@@ -23,6 +23,7 @@ optional_dependencies = {
         'ipython',
         'pre-commit',                                   # run `pre-commit install` to install hooks
     ],
+    'docs': ['sphinx'],
     'exif': ['exifread'],                               # bin/exif_sort.py
     'flask': ['flask', 'jinja2', 'werkzeug'],           # flasks package
     'gunicorn': ['gevent', 'gunicorn'],                 # flasks package with gunicorn
