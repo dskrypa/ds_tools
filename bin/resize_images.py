@@ -1,7 +1,6 @@
 #!/usr/bin/env python
-"""
-:author: Doug Skrypa
-"""
+
+from __future__ import annotations
 
 import sys
 from pathlib import Path
@@ -14,12 +13,11 @@ import logging
 from functools import cached_property
 from typing import Optional, Union, Tuple
 
-from PIL import Image
+from cli_command_parser import Command, Option, Counter, Positional, SubCommand, ParamGroup, Flag, inputs, main
+from PIL.Image import Image as PILImage, Resampling, open as image_open  # noqa
 
 sys.path.append(PROJECT_ROOT.as_posix())
 from ds_tools.__version__ import __author_email__, __version__
-from ds_tools.argparsing import ArgParser
-from ds_tools.core.main import wrap_main
 from ds_tools.fs.paths import iter_files, relative_path
 from ds_tools.logging import init_logging
 
@@ -27,92 +25,107 @@ log = logging.getLogger(__name__)
 Size = Union[float, Tuple[int, int]]
 
 RESAMPLE_FILTERS = {
-    'nearest': Image.NEAREST,
-    'box': Image.BOX,
-    'linear': Image.BILINEAR,
-    'hamming': Image.HAMMING,
-    'cubic': Image.BICUBIC,
-    'lanczos': Image.LANCZOS,
+    'box': Resampling.BOX,
+    'cubic': Resampling.BICUBIC,
+    'hamming': Resampling.HAMMING,
+    'lanczos': Resampling.LANCZOS,
+    'linear': Resampling.BILINEAR,
+    'nearest': Resampling.NEAREST,
 }
 
 
-def parser():
-    filters = sorted(RESAMPLE_FILTERS.keys())
-    all_filters = ['ALL'] + filters
+class Resizer(Command, description='Resize Images'):
+    sub_cmd = SubCommand()
+    verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
+    output: Path = Option(
+        '-o', type=inputs.Path(type='dir', resolve=True), required=True, help='Output directory to store modified files'
+    )
+    # dry_run = Flag('-D', help='Print the actions that would be taken instead of taking them')
 
-    parser = ArgParser(description='Resize Images')
-
-    simple_parser = parser.add_subparser('action', 'simple', 'Apply a simple resize operation to a batch of files')
-    simple_parser.add_argument('path', nargs='+', help='The path(s) to the image file(s) that should be resized')
-    simple_parser.add_argument('--output', '-o', metavar='PATH', help='Output directory to store modified files', required=True)
-    opt_group = simple_parser.add_argument_group('Options')
-    opt_group.add_argument('--rename', '-R', action='store_true', help='Rename files that have their resolution in the file name')
-    opt_group.add_argument('--filter', '-f', choices=all_filters, default='nearest', help='Resample the image using the specified filter (default: %(default)s)')
-    size_group = opt_group.add_argument_group('Size Options').add_mutually_exclusive_group()
-    size_group.add_argument('--multiplier', '-m', type=float, help='Scale both dimensions by the given amount')
-    size_group.add_argument('--size', '-s', metavar='WIDTH HEIGHT', type=int, nargs=2, help='The width and height to use')
-
-    ud_parser = parser.add_subparser('action', 'updown', 'Enlarge and then shrink images using different filters')
-    ud_parser.add_argument('path', nargs='+', help='The path(s) to the image file(s) that should be resized')
-    ud_parser.add_argument('--output', '-o', metavar='PATH', help='Output directory to store modified files', required=True)
-    ud_opt_group = ud_parser.add_argument_group('Options')
-    ud_opt_group.add_argument('--rename', '-R', action='store_true', help='Rename files that have their resolution in the file name')
-    ud_opt_group.add_argument('--filter_1', '-f1', choices=filters, default='nearest', help='Resample the image using the specified filter (default: %(default)s)')
-    ud_opt_group.add_argument('--filter_2', '-f2', choices=filters, default='nearest', help='Resample the image using the specified filter (default: %(default)s)')
-    size_group_1 = ud_opt_group.add_argument_group('Size 1 Options').add_mutually_exclusive_group()
-    size_group_1.add_argument('--multiplier_1', '-m1', type=float, help='Scale both dimensions by the given amount')
-    size_group_1.add_argument('--size_1', '-s1', metavar='WIDTH HEIGHT', type=int, nargs=2, help='The width and height to use')
-    size_group_2 = ud_opt_group.add_argument_group('Size 2 Options').add_mutually_exclusive_group()
-    size_group_2.add_argument('--multiplier_2', '-m2', type=float, help='Scale both dimensions by the given amount')
-    size_group_2.add_argument('--size_2', '-s2', metavar='WIDTH HEIGHT', type=int, nargs=2, help='The width and height to use')
-
-    parser.include_common_args('verbosity')
-    return parser
+    def _init_command_(self):
+        init_logging(self.verbose, log_path=None)
+        if not self.output.exists():
+            self.output.mkdir(parents=True)
 
 
-@wrap_main
-def main():
-    args = parser().parse_args(req_subparser_value=True)
-    init_logging(args.verbose, log_path=None)
+class Simple(Resizer):
+    paths = Positional(nargs='+', help='The path(s) to the image file(s) that should be resized')
 
-    action = args.action
-    if action == 'simple':
-        resize_simple(args.path, args.output, args.size or args.multiplier, args.filter, args.rename)
-    elif action == 'updown':
-        resize_up_down(
-            args.path,
-            args.output,
-            args.size_1 or args.multiplier_1,
-            args.size_2 or args.multiplier_2,
-            args.filter_1,
-            args.filter_2,
-            args.rename,
-        )
-    else:
-        raise ValueError(f'Unexpected {action=!r}')
+    with ParamGroup('Options'):
+        rename = Flag('-R', help='Rename files that have their resolution in the file name')
+        filter = Option('-f', choices=['ALL', *RESAMPLE_FILTERS], default='lanczos', help='Resample the image using the specified filter')
+    with ParamGroup('Size Options', mutually_exclusive=True):
+        multiplier: float = Option('-m', help='Scale both dimensions by the given amount')
+        size: tuple[int, int] = Option('-s', nargs=2, metavar='WIDTH HEIGHT', help='The width and height to use')
+
+    def main(self):
+        if self.filter == 'ALL':
+            out_dirs = {(name, f): self.output.joinpath(name) for name, f in RESAMPLE_FILTERS.items()}
+            for out_dir in out_dirs:
+                if not out_dir.exists():
+                    out_dir.mkdir(parents=True)
+        else:
+            out_dirs = {(self.filter, RESAMPLE_FILTERS[self.filter]): self.output}
+
+        size = self.size or self.multiplier
+        log.info(f'Using {size=}')
+        for path in iter_files(self.paths):
+            img = ImageFile(path)
+            for (name, resample_filter), out_dir in out_dirs.items():
+                img.resize(size, resample_filter).save(out_dir, self.rename)
+
+
+class Updown(Resizer):
+    paths = Positional(nargs='+', help='The path(s) to the image file(s) that should be resized')
+    with ParamGroup('Options'):
+        rename = Flag('-R', help='Rename files that have their resolution in the file name')
+        filter_1 = Option('-f1', choices=RESAMPLE_FILTERS, default='lanczos', help='Resample the image using the specified filter')
+        filter_2 = Option('-f2', choices=RESAMPLE_FILTERS, default='lanczos', help='Resample the image using the specified filter')
+    with ParamGroup('Size 1 Options', mutually_exclusive=True):
+        multiplier_1: float = Option('-m1', help='Scale both dimensions by the given amount')
+        size_1: tuple[int] = Option('-s1', nargs=2, metavar='WIDTH HEIGHT', help='The width and height to use')
+    with ParamGroup('Size 2 Options', mutually_exclusive=True):
+        multiplier_2: float = Option('-m2', help='Scale both dimensions by the given amount')
+        size_2: tuple[int] = Option('-s2', nargs=2, metavar='WIDTH HEIGHT', help='The width and height to use')
+
+    def main(self):
+        filter_1 = RESAMPLE_FILTERS[self.filter_1]
+        filter_2 = RESAMPLE_FILTERS[self.filter_2]
+
+        size_1 = self.size_1 or self.multiplier_1
+        size_2 = self.size_2 or self.multiplier_2
+
+        for path in iter_files(self.paths):
+            img = ImageFile(path)
+            img.resize(size_1, filter_1).resize(size_2, filter_2).save(self.output, self.rename)
 
 
 class ImageFile:
-    def __init__(self, path: Path, image: Optional[Image.Image] = None, original: Optional['ImageFile'] =None):
+    def __init__(self, path: Path, image: Optional[PILImage] = None, original: Optional[ImageFile] = None):
         self.path = path
-        self.image = image or Image.open(path)      # type: Image.Image
+        self.image = image or image_open(path)      # type: PILImage
         self._original = original                   # type: Optional['ImageFile']
+
+    def __repr__(self) -> str:
+        w, h = self.image.size
+        return f'<ImageFile({self.rel_path!r})[{w}x{h}]>'
 
     @cached_property
     def rel_path(self) -> str:
         return relative_path(self.path)
 
     @cached_property
-    def original(self) -> 'ImageFile':
+    def original(self) -> ImageFile:
         if self._original:
             return self._original.original
         return self
 
     def resize(self, size: Size, resample=None):
         old_w, old_h = self.image.size
-        if isinstance(size, tuple):
+        log.debug(f'Resizing from {(old_w, old_h)} to {size=}')
+        try:
             new_w, new_h = size
-        else:
+        except (TypeError, ValueError):
             new_w = int(round(old_w * size))
             new_h = int(round(old_h * size))
 
@@ -120,7 +133,7 @@ class ImageFile:
             log.info(f'Skipping {self.rel_path} - it is already {old_w}x{old_h}')
             return self
         else:
-            log.info(f'Resizing {self.rel_path} from {old_w}x{old_h} to {new_w}x{new_h}')
+            log.info(f'Resizing {self.rel_path} from {old_w}x{old_h} to {new_w}x{new_h} with {resample=}')
             resized = self.image.resize((new_w, new_h), resample)
             return self.__class__(self.path, resized, self)
 
@@ -135,42 +148,6 @@ class ImageFile:
         log.info(f'Saving {self.rel_path} as {relative_path(dest_path)}')
         self.image.save(dest_path)
         self.path = dest_path
-
-
-def resize_simple(paths, output_dir: str, size: Size, filter_name: str, rename=False):
-    output_dir = validate_dir(Path(output_dir).expanduser().resolve())
-    all_filters = filter_name == 'ALL'
-    if all_filters:
-        for name in RESAMPLE_FILTERS:
-            validate_dir(output_dir.joinpath(name))
-
-    resample_filter = None if all_filters else RESAMPLE_FILTERS[filter_name]
-
-    for path in iter_files(paths):
-        img = ImageFile(path)
-        if all_filters:
-            for name, resample_filter in RESAMPLE_FILTERS.items():
-                img.resize(size, resample_filter).save(output_dir.joinpath(name), rename)
-        else:
-            img.resize(size, resample_filter).save(output_dir, rename)
-
-
-def resize_up_down(paths, output_dir: str, size_1: Size, size_2: Size, filter_1: str, filter_2: str, rename=False):
-    output_dir = validate_dir(Path(output_dir).expanduser().resolve())
-    filter_1 = RESAMPLE_FILTERS[filter_1]
-    filter_2 = RESAMPLE_FILTERS[filter_2]
-
-    for path in iter_files(paths):
-        img = ImageFile(path)
-        img.resize(size_1, filter_1).resize(size_2, filter_2).save(output_dir, rename)
-
-
-def validate_dir(path: Path):
-    if path.is_file():
-        raise ValueError(f'--output / -o must be a directory - {path} is a file')
-    elif not path.exists():
-        path.mkdir(parents=True)
-    return path
 
 
 if __name__ == '__main__':

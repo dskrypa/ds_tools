@@ -44,7 +44,7 @@ optional_dependencies = {
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
 
 requirements = [
-    'cli_command_parser',
+    'cli_command_parser>=2022.9.11',
     'db_cache@ git+https://github.com/dskrypa/db_cache',
     'requests_client@ git+https://github.com/dskrypa/requests_client',
     'tz_aware_dt@ git+https://github.com/dskrypa/tz_aware_dt',
@@ -77,7 +77,7 @@ setup(
         'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
     ],
-    python_requires='~=3.8',
+    python_requires='>=3.8',
     install_requires=requirements,
     extras_require=optional_dependencies,
     # scripts=scripts,
