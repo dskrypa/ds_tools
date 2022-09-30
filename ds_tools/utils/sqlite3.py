@@ -12,11 +12,12 @@ creating anything new or writing to an SQLite3 DB.  I would recommend using SQLA
 
 from __future__ import annotations
 
-import sqlite3
 import logging
+from functools import cached_property
 from operator import itemgetter
 from pathlib import Path
-from typing import Iterator, Optional, Union
+from sqlite3 import Row, OperationalError, connect
+from typing import Iterator, Optional, Union, Mapping, Any, Collection, Iterable
 
 from ..core.itertools import itemfinder
 from ..output import Table, Printer
@@ -24,16 +25,13 @@ from ..output import Table, Printer
 __all__ = ['Sqlite3Database']
 log = logging.getLogger(__name__)
 
-OperationalError = sqlite3.OperationalError
-
 
 class Sqlite3Database:
     """
     None -> NULL, int -> INTEGER, long -> INTEGER, float -> REAL, str -> TEXT, unicode -> TEXT, buffer -> BLOB
     """
-    __slots__ = ('db_path', 'db', '_tables')
 
-    def __init__(self, db_path=None):
+    def __init__(self, db_path: Union[str, Path] = None, execute_log_level: int = 9):
         db_path = db_path or ':memory:'
         if db_path != ':memory:':
             db_path = Path(db_path).expanduser().resolve()
@@ -41,8 +39,10 @@ class Sqlite3Database:
                 db_path.parent.mkdir(parents=True)
             db_path = db_path.as_posix()
         self.db_path = db_path
-        self.db = sqlite3.connect(self.db_path)
+        self.db = connect(self.db_path)
+        self.db.row_factory = Row
         self._tables = {}
+        self.execute_log_level = execute_log_level
 
     def execute(self, *args, **kwargs):
         """
@@ -50,10 +50,10 @@ class Sqlite3Database:
         :return Cursor: Sqlite3 cursor
         """
         with self.db:
-            log.log(9, 'Executing SQL: {}'.format(', '.join(map('"{}"'.format, args))))
+            log.log(self.execute_log_level, 'Executing SQL: {}'.format(', '.join(map('"{}"'.format, args))))
             return self.db.execute(*args, **kwargs)
 
-    def create_table(self, name, *args, **kwargs):
+    def create_table(self, name: str, *args, **kwargs):
         """
         :param name: Name of the table to create
         :param args: DBTable positional args
@@ -61,57 +61,56 @@ class Sqlite3Database:
         :return DBTable: DBTable object that represents the created table
         """
         if name in self:
-            raise KeyError('{} already exists'.format(name))
-        self._tables[name] = DBTable(self, name, *args, **kwargs)
-        return self._tables[name]
+            raise KeyError(f'Table {name!r} already exists')
+        self._tables[name] = table = DBTable(self, name, *args, **kwargs)
+        return table
 
-    def drop_table(self, name, vacuum=True):
+    def drop_table(self, name: str, vacuum: bool = True):
         """
         Drop the given table from this DB, optionally performing VACUUM to reconstruct the DB, recovering the space that
         was used by the table that was dropped
         :param name: Name of the table to be dropped
-        :param bool vacuum: Perform VACUUM after dropping the table
+        :param vacuum: Perform VACUUM after dropping the table
         """
         del self[name]
         if vacuum:
             self.execute('VACUUM;')
 
-    def __contains__(self, item):
-        if item in self._tables:
-            return True
-        return item in self.get_table_names()
+    def __contains__(self, name: str) -> bool:
+        return name in self._tables or name in self.table_names
 
-    def __getitem__(self, item) -> DBTable:
-        if item not in self._tables:
-            if item not in self:
-                raise KeyError('Table {!r} does not exist in this DB'.format(item))
-            self._tables[item] = DBTable(self, item)
-        return self._tables[item]
+    def __getitem__(self, name: str) -> DBTable:
+        try:
+            return self._tables[name]
+        except KeyError:
+            pass
+        if name not in self.table_names:
+            raise KeyError(f'Table {name!r} does not exist in this DB')
+        self._tables[name] = table = DBTable(self, name)
+        return table
 
-    def __delitem__(self, key):
-        if key in self:
-            self.execute('DROP TABLE "{}";'.format(key))
-            del self._tables[key]
-        else:
-            raise KeyError(key)
+    def __delitem__(self, name: str):
+        if name not in self:
+            raise KeyError(name)
+        self.execute(f'DROP TABLE "{name}";')
+        del self._tables[name]
 
     def __iter__(self) -> Iterator[DBTable]:
-        for table in sorted(self.get_table_names()):
+        for table in self.table_names:
             try:
                 yield self[table]
             except OperationalError as e:
-                log.error(f'Error constructing DBTable wrapper for {table=!r}: {e}')
+                log.error(f'Error constructing DBTable wrapper for {table=}: {e}')
 
-    def query(self, query, *args, **kwargs):
+    def query(self, query, *args, **kwargs) -> list[dict[str, Any]]:
         """
         :param query: Query string
-        :return list: Result rows as dicts (key order is guaranteed in Python 3.7+)
+        :return: Result rows as dicts (key order is guaranteed in Python 3.7+)
         """
         results = self.execute(query, *args, **kwargs)
         if results.description is None:
             raise OperationalError('No Results.')
-        headers = [fields[0] for fields in results.description]
-        return [dict(zip(headers, row)) for row in results]
+        return [dict(row) for row in results]
 
     def iterquery(self, query, *args, **kwargs):
         results = self.execute(query, *args, **kwargs)
@@ -121,7 +120,14 @@ class Sqlite3Database:
         for row in results:
             yield dict(zip(headers, row))
 
-    def select(self, columns, table, where_mode='AND', limit: Optional[int] = None, **where_args):
+    def select(
+        self,
+        columns: Union[str, Collection[str]],
+        table: str,
+        where_mode: str = 'AND',
+        limit: Optional[int] = None,
+        **where_args,
+    ):
         """
         SELECT $columns FROM $table (WHERE $where);
         :param columns: Column name(s)
@@ -131,32 +137,26 @@ class Sqlite3Database:
         :param where_args: key=value pairs that need to be matched for data to be returned
         :return list: Result rows
         """
-        if table not in self:
-            raise KeyError(table)
-        elif where_mode not in ('AND', 'OR'):
-            raise ValueError('Invalid where mode: {}'.format(where_mode))
-        cols = ', '.join(columns) if isinstance(columns, (list, tuple)) else columns
-        where_clip = (len(where_mode) + 2) * -1
-        where = ('? = ? {} '.format(where_mode) * len(where_args))[:where_clip] if len(where_args) > 0 else ''
-        where_list = []
-        for k, v in where_args.items():
-            where_list.append(k)
-            where_list.append(v)
-        suffix = ' WHERE ' + where if where else ''
-        if limit and isinstance(limit, int):
-            suffix += f' LIMIT {limit}'
-        return self.query('SELECT {} FROM "{}"{};'.format(cols, table, suffix), tuple(where_list))
+        table_obj = self[table]
+        return table_obj.select(columns, where_mode, limit=limit, **where_args)
+
+    @cached_property
+    def table_names(self) -> tuple[str]:
+        return tuple(self.get_table_names())
+
+    def _table_metadata(self) -> Iterable[Row]:
+        return self.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;")
 
     def get_table_names(self) -> list[str]:
         """
         :return list: Names of tables in this DB
         """
-        return [row['name'] for row in self.query('SELECT name FROM sqlite_master WHERE type=\'table\';')]
+        return [row['name'] for row in self._table_metadata()]
 
     def get_table_info(self):
-        return {row['name']: row for row in self.query('SELECT * FROM sqlite_master WHERE type=\'table\';')}
+        return {row['name']: dict(row) for row in self._table_metadata()}
 
-    def print_all_tables_info(self, only_with_rows=True):
+    def print_all_tables_info(self, only_with_rows: bool = True):
         bar = '=' * 20
         tables = [(table, len(table)) for table in self]
         if only_with_rows:
@@ -311,13 +311,44 @@ class DBTable:
             self.db.execute('CREATE TABLE "{}" ({});'.format(self.name, ', '.join(col_strs)))
 
     def info(self):
-        return self.db.query('pragma table_info("{}")'.format(self.name))
+        return self.db.query(f'pragma table_info("{self.name}")')
 
     def print_info(self):
         Table.auto_print_rows(self.info())
 
-    def select(self, columns, where_mode='AND', limit=None, **where_args):
-        return self.db.select(columns, self.name, where_mode, limit=limit, **where_args)
+    def _prepare_select_where(self, where_map: Mapping[str, Any], mode: str = 'AND') -> tuple[str, list[str]]:
+        if mode not in ('AND', 'OR'):
+            raise ValueError(f'Unexpected WHERE {mode=}')
+        keys, vals = [], []
+        for key, val in where_map.items():
+            if key not in self.col_names:
+                raise ValueError(f'Invalid WHERE clause: {key!r}={val!r} - invalid column name')
+            keys.append(f'{_quote(key)}=?')
+            vals.append(val)
+
+        where = f' {mode} '.join(keys)
+        return where, vals
+
+    def _prepare_select_what(self, columns: Union[str, Collection[str]]) -> str:
+        if isinstance(columns, str):
+            if columns == '*':
+                return columns
+            columns = (columns,)
+        if bad := ', '.join(map(repr, (c for c in columns if c not in self.col_names))):
+            raise ValueError(f'Invalid columns: {bad}')
+        return ', '.join(f'{_quote(c)}' for c in columns)
+
+    def select(
+        self, columns: Union[str, Collection[str]] = '*', where_mode: str = 'AND', limit: int = None, **where_args
+    ):
+        what = self._prepare_select_what(columns)
+        where, params = self._prepare_select_where(where_args, where_mode)
+        query = f'SELECT {what} FROM {_quote(self.name)}'
+        if where:
+            query += f' WHERE {where}'
+        if limit is not None and isinstance(limit, int):
+            query += f' LIMIT {limit}'
+        return self.db.query(query, params)
 
     def print_rows(self, limit=3, out_fmt='table'):
         rows = self.select('*', limit=limit)
@@ -334,37 +365,40 @@ class DBTable:
     def __len__(self):
         return next(self.db.execute(f'SELECT COUNT(*) FROM "{self.name}"'))[0]
 
-    def __contains__(self, item):
+    def __contains__(self, item) -> bool:
         if item in self._rows:
             return True
-        return bool(self.select('*', **{self.pk: item}))
+        where, params = self._prepare_select_where({self.pk: item})
+        c = self.db.execute(f'SELECT COUNT(*) AS count FROM "{self.name}" WHERE {where}', params)
+        return bool(next(c)['count'])
 
-    def rows(self):
-        return [row for row in iter(self)]
+    def rows(self) -> list[DBRow]:
+        return [row for row in self]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[DBRow]:
         for row in self.select('*'):
             pk = row[self.pk]
-            if pk not in self._rows:
-                self._rows[pk] = DBRow(self, row)
-            yield self._rows[pk]
+            self._rows[pk] = db_row = DBRow(self, row)
+            yield db_row
 
     iterrows = __iter__
 
-    def __getitem__(self, item):
-        if item not in self._rows:
-            results = self.select('*', **{self.pk: item})
-            if not results:
-                raise KeyError(item)
-            self._rows[item] = DBRow(self, results[0])
-        return self._rows[item]
+    def __getitem__(self, item) -> DBRow:
+        try:
+            return self._rows[item]
+        except KeyError:
+            pass
+        results = self.select('*', **{self.pk: item})
+        if not results:
+            raise KeyError(item)
+        self._rows[item] = row = DBRow(self, results[0])
+        return row
 
     def __delitem__(self, key):
-        if key in self:
-            self.db.execute('DELETE FROM "{}" WHERE "{}" = ?;'.format(self.name, self.pk), (key,))
-            del self._rows[key]
-        else:
+        if key not in self:
             raise KeyError(key)
+        self.db.execute(f'DELETE FROM "{self.name}" WHERE "{self.pk}" = ?;', (key,))
+        del self._rows[key]
 
     def __setitem__(self, key, value):
         """
@@ -404,3 +438,9 @@ class DBTable:
                 if len(value) != col_count:
                     row.insert(self.pk_pos, key)
             self.insert(row)
+
+
+def _quote(name: str) -> str:
+    if ' ' in name:
+        return f'"{name}"'
+    return name
