@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from winreg import HKEY_LOCAL_MACHINE
 
-from .base import Key, NamedAttribute, Node, NodeAttribute
+from .base import Node, NodeAttribute
 from .enums import DeviceState
 
 __all__ = ['AudioDevice']
@@ -12,7 +12,6 @@ log = logging.getLogger(__name__)
 OUTPUT_DEVICES_DIR = r'SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render'
 
 
-# class AudioDevice(Key):
 class AudioDevice(Node):
     device_state: DeviceState = NodeAttribute('DeviceState', type=DeviceState)
     device_name: str = NodeAttribute('{a45c254e-df1c-4efd-8020-67d146a850e0},2', 'Properties')
@@ -24,10 +23,8 @@ class AudioDevice(Node):
 
     @classmethod
     def find_all(cls) -> list[AudioDevice]:
-        return [cls(guid) for guid in Key(HKEY_LOCAL_MACHINE, OUTPUT_DEVICES_DIR).key_names]
+        return [cls(guid) for guid in Node(HKEY_LOCAL_MACHINE, OUTPUT_DEVICES_DIR)._key_names]
 
-    # def as_dict(self, root: bool = True, recursive: bool = True):
-        # data = super().as_dict(root, recursive)
     def as_dict(self, recursive: bool = True, children: bool = True):
         data = super().as_dict(recursive, children)
         data['audio_device_info'] = {

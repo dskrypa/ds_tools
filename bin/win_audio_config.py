@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import typing as t
 
 from cli_command_parser import Command, Positional, Option, Flag, Counter, ParamGroup, SubCommand, main
 
@@ -13,20 +12,13 @@ log = logging.getLogger(__name__)
 
 
 class AudioConfig(Command, description='Manage Windows audio configuration'):
-    sub_cmd = SubCommand(required=False)
+    sub_cmd = SubCommand()
     verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
-    # dry_run = Flag('-D', help='Print the actions that would be taken instead of taking them')
 
     def _init_command_(self):
         from ds_tools.logging import init_logging
 
         init_logging(self.verbose, names=None, millis=True)
-
-    def main(self):
-        from ds_tools.windows.registry.base import HKEY_KV_MAP
-        from ds_tools.output.repr import print_rich_repr
-
-        print_rich_repr(HKEY_KV_MAP)
 
 
 class View(AudioConfig, help='View and audio device and its properties'):
