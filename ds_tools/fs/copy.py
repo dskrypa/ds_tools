@@ -1,6 +1,13 @@
 """
 Utilities for copying files with a progress indicator
 
+Note: The simplest way to copy data between 2 file-like objects:
+
+    with input_obj as f_in:
+        with output_obj as f_out:
+            shutil.copyfileobj(f_in, f_out)
+
+
 :author: Doug Skrypa
 """
 

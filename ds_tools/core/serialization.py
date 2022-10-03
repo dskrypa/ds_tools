@@ -41,6 +41,8 @@ class PermissiveJSONEncoder(json.JSONEncoder):
             return o.__to_json__()
         elif hasattr(o, '__serializable__'):
             return o.__serializable__()
+        elif o is ...:
+            return '...'
         return super().default(o)
 
 
@@ -73,11 +75,13 @@ def prep_for_yaml(obj):
         return str(obj)
     elif hasattr(obj, '__serializable__'):
         return obj.__serializable__()
+    elif obj is ...:
+        return '...'
     else:
         return obj
 
 
-def yaml_dump(data, force_single_yaml=False, indent_nested_lists=False, default_flow_style=None, **kwargs):
+def yaml_dump(data, force_single_yaml=False, indent_nested_lists=False, default_flow_style=None, split_list_eles=False, **kwargs):
     """
     Serialize the given data as YAML
 
@@ -97,9 +101,17 @@ def yaml_dump(data, force_single_yaml=False, indent_nested_lists=False, default_
     if isinstance(content, (dict, str)) or force_single_yaml:
         kwargs.setdefault('default_flow_style', False if default_flow_style is None else default_flow_style)
         formatted = yaml.dump(content, **kwargs)
+    elif split_list_eles:
+        kwargs.setdefault('default_flow_style', False if default_flow_style is None else default_flow_style)
+        formatted = '\n'.join(_clean_end(yaml.dump(c, **kwargs)) for c in content)
     else:
         kwargs.setdefault('default_flow_style', True if default_flow_style is None else default_flow_style)
         formatted = yaml.dump_all(content, **kwargs)
+
+    return _clean_end(formatted)
+
+
+def _clean_end(formatted: str) -> str:
     if formatted.endswith('...\n'):
         formatted = formatted[:-4]
     if formatted.endswith('\n'):
