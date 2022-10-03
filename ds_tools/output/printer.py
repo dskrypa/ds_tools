@@ -83,7 +83,8 @@ class Printer:
         elif self.output_format == 'rich':
             print_rich_repr(content)
         else:
-            uprint(self.pformat(content, *args, **kwargs))
+            print_func = uprint if self.uprint else print
+            print_func(self.pformat(content, *args, **kwargs))
 
     @staticmethod
     @format_handler('json-compact')
