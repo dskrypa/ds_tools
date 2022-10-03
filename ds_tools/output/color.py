@@ -15,6 +15,8 @@ C = Union[str, int]
 def colored(
     text: str, color: C = None, bg_color: C = None, attrs: C = None, reset: bool = True, *, prefix: C = None
 ) -> str:
+    if not text:
+        return ''
     if color is bg_color is attrs is prefix is None:
         return text
     parts = (

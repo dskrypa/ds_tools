@@ -21,11 +21,14 @@ except ImportError:
 from ..core.serialization import PermissiveJSONEncoder, yaml_dump
 from .constants import PRINTER_FORMATS
 from .formatting import format_tiered, pseudo_yaml
+from .repr import print_rich_repr, rich_repr
 from .table import Table
 from .terminal import uprint
 
 __all__ = ['Printer']
 log = logging.getLogger(__name__)
+
+_FORMAT_HANDLERS = {}
 
 
 def print_tiered(obj):
@@ -33,79 +36,34 @@ def print_tiered(obj):
         uprint(line)
 
 
+def format_handler(name: str):
+    def register_format_handler(func):
+        _FORMAT_HANDLERS[name] = func
+        return func
+    return register_format_handler
+
+
 class Printer:
-    __slots__ = ('output_format',)
+    __slots__ = ('output_format', 'uprint')
+    handlers = _FORMAT_HANDLERS
     formats = PRINTER_FORMATS
 
-    def __init__(self, output_format):
+    def __init__(self, output_format: str, uprint: bool = False):  # noqa
         if output_format is None or output_format in Printer.formats:
             self.output_format = output_format
+            self.uprint = uprint
         else:
-            raise ValueError('Invalid output format: {} (valid options: {})'.format(output_format, Printer.formats))
-
-    @staticmethod
-    def jsonc(content):
-        return json.dumps(content, separators=(',', ':'), cls=PermissiveJSONEncoder, ensure_ascii=False)
-
-    @staticmethod
-    def json(content):
-        return json.dumps(content, cls=PermissiveJSONEncoder, ensure_ascii=False)
-
-    @staticmethod
-    def jsonp(content):
-        return json.dumps(content, sort_keys=True, indent=4, cls=PermissiveJSONEncoder, ensure_ascii=False)
+            raise ValueError(f'Invalid output format={output_format!r} (valid options: {self.formats})')
 
     def pformat(self, content, *args, **kwargs):
         if isinstance(content, types.GeneratorType):
             return '\n'.join(self.pformat(c, *args, **kwargs) for c in content)
-        elif self.output_format == 'json':
-            return json.dumps(content, cls=PermissiveJSONEncoder, ensure_ascii=False)
-        elif self.output_format == 'pseudo-json':
-            return json.dumps(content, sort_keys=True, indent=4, cls=PseudoJsonEncoder, ensure_ascii=False)
-        elif self.output_format == 'json-pretty':
-            return json.dumps(content, sort_keys=True, indent=4, cls=PermissiveJSONEncoder, ensure_ascii=False)
-        elif self.output_format == 'json-compact':
-            return json.dumps(content, separators=(',', ':'), cls=PermissiveJSONEncoder, ensure_ascii=False)
-        elif self.output_format == 'json-lines':
-            if not isinstance(content, (list, set)):
-                raise TypeError('Expected list or set; found {}'.format(type(content).__name__))
-            lines = ['[']
-            last = len(content) - 1
-            for i, val in enumerate(content):
-                suffix = ',' if i < last else ''
-                lines.append(json.dumps(val, cls=PermissiveJSONEncoder, ensure_ascii=False) + suffix)
-            lines.append(']\n')
-            return '\n'.join(lines)
-        elif self.output_format == 'text':
-            return '\n'.join(format_tiered(content))
-        elif self.output_format == 'plain':
-            if isinstance(content, str):
-                return content
-            elif isinstance(content, Mapping):
-                return '\n'.join('{}: {}'.format(k, v) for k, v in sorted(content.items()))
-            elif all(isinstance(content, abc_type) for abc_type in (Sized, Iterable, Container)):
-                return '\n'.join(sorted(map(str, content)))
-            else:
-                return str(content)
-        elif self.output_format == 'pseudo-yaml':
-            return '\n'.join(pseudo_yaml(content))
-        elif self.output_format == 'yaml':
-            return yaml_dump(
-                content,
-                kwargs.pop('force_single_yaml', False),
-                kwargs.pop('indent_nested_lists', True),
-                sort_keys=kwargs.pop('sort_keys', True),
-            )
-        elif self.output_format == 'pprint':
-            return pprint.pformat(content)
-        elif self.output_format in ('csv', 'table'):
-            kwargs['mode'] = self.output_format
-            try:
-                return Table.auto_format_rows(content, *args, **kwargs)
-            except AttributeError:
-                raise ValueError('Invalid content format to be formatted as a {}'.format(self.output_format))
-        else:
+        try:
+            handler = self.handlers[self.output_format]
+        except KeyError:
             return content
+        else:
+            return handler(content)
 
     def pprint(self, content, *args, gen_empty_error=None, **kwargs):
         if isinstance(content, types.GeneratorType):
@@ -121,9 +79,87 @@ class Printer:
             try:
                 Table.auto_print_rows(content, *args, **kwargs)
             except AttributeError:
-                raise ValueError('Invalid content format to be formatted as a {}'.format(self.output_format))
+                raise ValueError(f'Invalid content format to be formatted as a {self.output_format}')
+        elif self.output_format == 'rich':
+            print_rich_repr(content)
         else:
             uprint(self.pformat(content, *args, **kwargs))
+
+    @staticmethod
+    @format_handler('json-compact')
+    def jsonc(content, *args, **kwargs):
+        return json.dumps(content, separators=(',', ':'), cls=PermissiveJSONEncoder, ensure_ascii=False)
+
+    @staticmethod
+    @format_handler('json')
+    def json(content, *args, **kwargs):
+        return json.dumps(content, cls=PermissiveJSONEncoder, ensure_ascii=False)
+
+    @staticmethod
+    @format_handler('json-pretty')
+    def jsonp(content, *args, **kwargs):
+        return json.dumps(content, sort_keys=True, indent=4, cls=PermissiveJSONEncoder, ensure_ascii=False)
+
+    @format_handler('pseudo-json')
+    def pseudo_json(self, content, *args, **kwargs):
+        return json.dumps(content, sort_keys=True, indent=4, cls=PseudoJsonEncoder, ensure_ascii=False)
+
+    @format_handler('json-lines')
+    def json_lines(self, content, *args, **kwargs):
+        if not isinstance(content, (list, set)):
+            raise TypeError('Expected list or set; found {}'.format(type(content).__name__))
+        lines = ['[']
+        last = len(content) - 1
+        for i, val in enumerate(content):
+            suffix = ',' if i < last else ''
+            lines.append(json.dumps(val, cls=PermissiveJSONEncoder, ensure_ascii=False) + suffix)
+        lines.append(']\n')
+        return '\n'.join(lines)
+
+    @format_handler('text')
+    def text(self, content, *args, **kwargs):
+        return '\n'.join(format_tiered(content))
+
+    @format_handler('plain')
+    def plain(self, content, *args, **kwargs):
+        if isinstance(content, str):
+            return content
+        elif isinstance(content, Mapping):
+            return '\n'.join(f'{k}: {v}' for k, v in sorted(content.items()))
+        elif all(isinstance(content, abc_type) for abc_type in (Sized, Iterable, Container)):
+            return '\n'.join(sorted(map(str, content)))
+        else:
+            return str(content)
+
+    @format_handler('pseudo-yaml')
+    def pseudo_yaml(self, content, *args, **kwargs):
+        return '\n'.join(pseudo_yaml(content))
+
+    @format_handler('yaml')
+    def yaml(self, content, *args, **kwargs):
+        return yaml_dump(
+            content,
+            kwargs.pop('force_single_yaml', False),
+            kwargs.pop('indent_nested_lists', True),
+            sort_keys=kwargs.pop('sort_keys', True),
+        )
+
+    @format_handler('pprint')
+    def pprint_format(self, content, *args, **kwargs):
+        return pprint.pformat(content)
+
+    @format_handler('csv')
+    @format_handler('table')
+    def tabular(self, content, *args, **kwargs):
+        kwargs['mode'] = self.output_format
+        try:
+            return Table.auto_format_rows(content, *args, **kwargs)
+        except AttributeError:
+            raise ValueError(f'Invalid content format to be formatted as a {self.output_format}')
+
+    @format_handler('rich')
+    def rich(self, content, *args, **kwargs):
+        return rich_repr(content)
 
 
 class PseudoJsonEncoder(PermissiveJSONEncoder):
@@ -136,3 +172,6 @@ class PseudoJsonEncoder(PermissiveJSONEncoder):
             return repr(o)
         except UnicodeDecodeError:
             return o.decode('utf-8', 'replace')
+
+
+del _FORMAT_HANDLERS

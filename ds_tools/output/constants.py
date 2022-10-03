@@ -12,4 +12,5 @@ PRINTER_FORMATS = [
     'json-lines',
     'plain',
     'pseudo-json',
+    'rich',
 ]
