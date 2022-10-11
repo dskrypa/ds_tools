@@ -38,7 +38,7 @@ def print_tiered(obj):
 
 def format_handler(name: str):
     def register_format_handler(func):
-        _FORMAT_HANDLERS[name] = func
+        _FORMAT_HANDLERS[name] = func.__name__
         return func
     return register_format_handler
 
@@ -59,10 +59,11 @@ class Printer:
         if isinstance(content, types.GeneratorType):
             return '\n'.join(self.pformat(c, *args, **kwargs) for c in content)
         try:
-            handler = self.handlers[self.output_format]
+            handler_name = self.handlers[self.output_format]
         except KeyError:
             return content
         else:
+            handler = getattr(self, handler_name)
             return handler(content)
 
     def pprint(self, content, *args, gen_empty_error=None, **kwargs):
