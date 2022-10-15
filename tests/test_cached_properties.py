@@ -14,6 +14,10 @@ from ds_tools.caching.decorators import get_cached_property_names, CachedPropert
 SLEEP_TIME = 0.05
 
 
+class TestError(Exception):
+    pass
+
+
 class ConcurrentAccessBase(ABC):
     def __init__(self, sleep_time: float):
         self.counter = count()
@@ -47,7 +51,12 @@ def init_and_get_call_times(cls, num_calls: int = 3) -> list[tuple[float, float]
 def get_call_times(func, num_calls: int = 3) -> list[tuple[float, float]]:
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = [executor.submit(func) for _ in range(num_calls)]
-        times = [future.result() for future in as_completed(futures)]
+        times = []
+        for future in as_completed(futures):
+            try:
+                times.append(future.result())
+            except TestError:
+                pass
 
     return times
 
@@ -266,6 +275,20 @@ class CachedPropertyTest(TestCase):
         foo.clear_cached_properties(skip=['baz'])
         self.assertEqual(2, foo.bar)
         self.assertEqual(1, foo.baz)
+
+    def test_error_on_first_call(self):
+        class Foo(ConcurrentAccessBase):
+            @cached_property
+            def bar(self):
+                if not next(self.counter):
+                    raise TestError
+                return self.sleep()
+
+        foo = Foo(SLEEP_TIME)
+        times = get_call_times(foo.get_bar)
+        self.assertEqual(2, len(times))
+        self.assertEqual(1, len(set(times)))
+        self.assertEqual(2, foo.last)
 
 
 if __name__ == '__main__':
