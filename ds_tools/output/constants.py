@@ -1,3 +1,6 @@
+"""
+Constants for the output package.
+"""
 
 PRINTER_FORMATS = [
     'json',

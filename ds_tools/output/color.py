@@ -4,16 +4,19 @@ ANSI Color Handling (originally based on the 'colored' module)
 :author: Doug Skrypa
 """
 
-from typing import Union
+from typing import Union, Any, Iterable
 
+from ._colors import ANSI_COLORS, ANSI_COLORS_REVERSE, HEX_COLORS_REVERSE, ANSI_ATTRS, FG_PREFIX, BG_PREFIX
 
 __all__ = ['colored', 'InvalidAnsiCode']
 
 C = Union[str, int]
+Attrs = Union[C, Iterable[C]]
+Bool = Union[bool, Any]
 
 
 def colored(
-    text: str, color: C = None, bg_color: C = None, attrs: C = None, reset: bool = True, *, prefix: C = None
+    text: Any, color: C = None, bg_color: C = None, attrs: Attrs = None, reset: Bool = True, *, prefix: C = None
 ) -> str:
     if not text:
         return ''
@@ -21,76 +24,48 @@ def colored(
         return text
     parts = (
         f'\x1b[{prefix}m' if prefix else '',
-        fg_color_code(color) if color is not None else '',
-        bg_color_code(bg_color) if bg_color is not None else '',
+        ansi_color_code(color, FG_PREFIX) if color is not None else '',
+        ansi_color_code(bg_color, BG_PREFIX) if bg_color is not None else '',
         attr_code(attrs) if attrs is not None else '',
-        text,
+        str(text) if not isinstance(text, str) else text,
         '\x1b[0m' if reset else ''
     )
     return ''.join(parts)
 
 
-def attr_code(attr: C) -> str:
-    try:
-        attrs = attr_code._attrs
-    except AttributeError:
-        # fmt: off
-        attrs = attr_code._attrs = {
-            'bold': '\x1b[1m',              1: '\x1b[1m',
-            'dim': '\x1b[2m',               2: '\x1b[2m',
-            'underlined': '\x1b[4m',        4: '\x1b[4m',
-            'blink': '\x1b[5m',             5: '\x1b[5m',
-            'reverse': '\x1b[7m',           7: '\x1b[7m',
-            'hidden': '\x1b[8m',            8: '\x1b[8m',
-            'reset': '\x1b[0m',             0: '\x1b[0m',
-            'res_bold': '\x1b[21m',         21: '\x1b[21m',
-            'res_dim': '\x1b[22m',          22: '\x1b[22m',
-            'res_underlined': '\x1b[24m',   24: '\x1b[24m',
-            'res_blink': '\x1b[25m',        25: '\x1b[25m',
-            'res_reverse': '\x1b[27m',      27: '\x1b[27m',
-            'res_hidden': '\x1b[28m',       28: '\x1b[28m',
-        }
-        # fmt: on
-
+def attr_code(attr: Attrs) -> str:
     if isinstance(attr, (str, int)):
         try:
-            return attrs[attr]
+            return ANSI_ATTRS[attr]
         except KeyError as e:
             raise InvalidAnsiCode(attr) from e
     else:
         try:
-            return ''.join(attrs[a] for a in attr)
+            return ''.join(ANSI_ATTRS[a] for a in attr)
         except Exception as e:
             raise InvalidAnsiCode(attr) from e
 
 
 def fg_color_code(color: C) -> str:
-    return ansi_color_code(color, '38;5;')
+    return ansi_color_code(color, FG_PREFIX)
 
 
 def bg_color_code(color: C) -> str:
-    return ansi_color_code(color, '48;5;')
+    return ansi_color_code(color, BG_PREFIX)
 
 
 def ansi_color_code(color: C, base: C) -> str:
     color = str(color)
-    code = '\x1b[' + base
-    try:
-        ansi_codes, ansi_rev, hex_rev = ansi_color_code._codes
-    except AttributeError:
-        from ._colors import ANSI_COLORS, ANSI_COLORS_REVERSE, HEX_COLORS_REVERSE
-        ansi_codes, ansi_rev, hex_rev = ansi_color_code._codes = ANSI_COLORS, ANSI_COLORS_REVERSE, HEX_COLORS_REVERSE
+    if color in ANSI_COLORS_REVERSE:
+        return f'\x1b[{base}{color}m'
 
+    color_map = HEX_COLORS_REVERSE if color.startswith('#') else ANSI_COLORS
     try:
-        if color.isdigit():
-            color = ansi_rev[color]
-            return code + ansi_codes[color] + 'm'
-        elif color.startswith('#'):
-            return code + hex_rev[color.lower()] + 'm'
-        else:
-            return code + ansi_codes[color] + 'm'
+        color_num = color_map[color.lower()]
     except KeyError as e:
         raise InvalidAnsiCode(color) from e
+    else:
+        return f'\x1b[{base}{color_num}m'
 
 
 class InvalidAnsiCode(ValueError):

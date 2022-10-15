@@ -1,3 +1,9 @@
+"""
+ANSI color code constants
+"""
+
+FG_PREFIX = '38;5;'
+BG_PREFIX = '48;5;'
 
 ANSI_COLORS = {
     'black': '0',
@@ -258,7 +264,7 @@ ANSI_COLORS = {
     'grey_93': '255',
 }
 
-ANSI_COLORS_REVERSE = dict(zip(ANSI_COLORS.values(), ANSI_COLORS.keys()))
+ANSI_COLORS_REVERSE = {v: k for k, v in ANSI_COLORS.items()}
 
 HEX_COLORS = {
     '0': '#000000',
@@ -519,4 +525,22 @@ HEX_COLORS = {
     '255': '#eeeeee'
 }
 
-HEX_COLORS_REVERSE = dict(zip(HEX_COLORS.values(), HEX_COLORS.keys()))
+HEX_COLORS_REVERSE = {v: k for k, v in HEX_COLORS.items()}
+
+# fmt: off
+ANSI_ATTRS = {
+    'bold': '\x1b[1m',              1: '\x1b[1m',
+    'dim': '\x1b[2m',               2: '\x1b[2m',
+    'underlined': '\x1b[4m',        4: '\x1b[4m',
+    'blink': '\x1b[5m',             5: '\x1b[5m',
+    'reverse': '\x1b[7m',           7: '\x1b[7m',
+    'hidden': '\x1b[8m',            8: '\x1b[8m',
+    'reset': '\x1b[0m',             0: '\x1b[0m',
+    'res_bold': '\x1b[21m',         21: '\x1b[21m',
+    'res_dim': '\x1b[22m',          22: '\x1b[22m',
+    'res_underlined': '\x1b[24m',   24: '\x1b[24m',
+    'res_blink': '\x1b[25m',        25: '\x1b[25m',
+    'res_reverse': '\x1b[27m',      27: '\x1b[27m',
+    'res_hidden': '\x1b[28m',       28: '\x1b[28m',
+}
+# fmt: on
