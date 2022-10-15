@@ -2,14 +2,8 @@
 :author: Doug Skrypa
 """
 
-import logging
-from typing import Callable, Sequence, Any, Optional, Union, Collection
-
-try:
-    from prompt_toolkit import ANSI, prompt as input  # Having prompt_toolkit installed seems to break stdlib input
-except ImportError:
-    def ANSI(text):
-        return text
+from sys import stderr
+from typing import Callable, Sequence, Any, Optional, Union, Collection, TypeVar
 
 from ..output.color import colored
 from ..output.terminal import uprint
@@ -17,43 +11,47 @@ from .exceptions import InputValidationException
 from .parsers import parse_yes_no, parse_int
 
 __all__ = ['get_input', 'choose_item']
-log = logging.getLogger(__name__)
+
 _NotSet = object()
+
 Color = Union[int, str, None]
+T = TypeVar('T')
+PV = TypeVar('PV')
+DV = TypeVar('DV')
 
 
 def get_input(
     prompt: str,
-    skip=False,
+    skip: bool = False,
     retry: int = 0,
-    parser: Callable = parse_yes_no,
+    parser: Callable[[str], PV] = parse_yes_no,
     *,
-    default=_NotSet,
-    input_func: Callable = input,
-):
+    default: DV = _NotSet,
+    input_func: Callable[[str], str] = input,
+) -> Union[PV, DV]:
     """
     Prompt the user for input, and parse the results.  May be skipped by providing a default value and setting ``skip``
     to True.
 
-    :param str prompt: The prompt for user input
-    :param bool skip: If True, the ``default`` parameter is required and will be returned without prompting the user
-    :param int retry: Number of attempts to allow users to retry providing input when validation fails
+    :param prompt: The prompt for user input
+    :param skip: If True, the ``default`` parameter is required and will be returned without prompting the user
+    :param retry: Number of attempts to allow users to retry providing input when validation fails
     :param parser: A function that takes a single positional argument and returns the value that should be used, or
-      raises a :class:`InputValidationException` when given incorrect input (default: :func:`parse_yes_no`)
+      raises a :class:`.InputValidationException` when given incorrect input (default: :func:`.parse_yes_no`)
     :param default: The default value to return when ``skip`` is True
-    :param input_func: The callable to use to receive user input.  Defaults to :func:`prompt<prompt_toolkit.prompt>`
-      when prompt_toolkit is installed, otherwise :func:`input`
+    :param input_func: The callable to use to receive user input.  Defaults to :func:`python:input`
     :return: The value from the given ``parser`` function
     """
     if skip:
         if default is _NotSet:
-            raise ValueError('Unable to skip user prompt without a default value: {!r}'.format(prompt))
+            raise ValueError(f'Unable to skip user prompt without a default value: {prompt!r}')
         return default
     suffix = ' ' if not prompt.endswith(' ') else ''
+    prompt = prompt + suffix
 
     while retry >= 0:
         try:
-            user_input = input_func(ANSI(prompt + suffix))
+            user_input = input_func(prompt)
         except EOFError as e:
             raise InputValidationException('Unable to read stdin (this is often caused by piped input)') from e
 
@@ -63,12 +61,13 @@ def get_input(
             retry -= 1
             if retry < 0:
                 raise
-            log.error(e)
+            print(str(e), file=stderr)
+
     raise InputValidationException('Unable to get user input')
 
 
 def choose_item(
-    items: Collection[Any],
+    items: Collection[T],
     name: str = 'value',
     source: Any = '',
     *,
@@ -77,22 +76,22 @@ def choose_item(
     before_color: Color = None,
     prompt_color: Color = 14,
     error_color: Color = 9,
-    repr_func: Callable = repr,
-) -> Any:
+    repr_func: Callable[[Any], str] = repr,
+) -> T:
     """
     Given a list of items from which only one value can be used, prompt the user to choose an item.  If only one item
     exists in the provided sequence, then that item is returned with no prompt.
 
-    :param Collection items: A sequence or sortable collection of items to choose from
-    :param str name: The name of the item to use in messages/prompts
+    :param items: A sequence or sortable collection of items to choose from
+    :param name: The name of the item to use in messages/prompts
     :param source: Where the items came from
-    :param str before: A message to be printed before listing the items to choose from (default: automatically generated
+    :param before: A message to be printed before listing the items to choose from (default: automatically generated
       using the provided name and source)
-    :param str|int|None before_color: The ANSI color to use for the before text
-    :param str|int|None prompt_color: The ANSI color to use for the user prompt
-    :param str|int|None error_color: The ANSI color to use for the error if an invalid index is chosen
-    :param Callable repr_func: The function to use to generate a string representation of each item
-    :param int retry: Number of attempts to allow users to retry providing input when validation fails
+    :param before_color: The ANSI color to use for the before text
+    :param prompt_color: The ANSI color to use for the user prompt
+    :param error_color: The ANSI color to use for the error if an invalid index is chosen
+    :param repr_func: The function to use to generate a string representation of each item
+    :param retry: Number of attempts to allow users to retry providing input when validation fails
     :return: The selected item
     """
     if not isinstance(items, Sequence):
