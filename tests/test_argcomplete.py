@@ -1,23 +1,18 @@
 #!/usr/bin/env python
 
-import logging
 import os
-import sys
 from argparse import ArgumentParser, REMAINDER
 from contextlib import contextmanager, redirect_stderr
 from io import StringIO
-from pathlib import Path
 from unittest.mock import patch
 
 from argcomplete import CompletionFinder
 
-sys.path.append(Path(__file__).parents[1].as_posix())
 from ds_tools.test_common import TestCaseBase, main
 from ds_tools.argparsing.argparser import ArgParser
 from ds_tools.argparsing.argcompleter import ArgCompletionFinder
 from ds_tools.output.constants import PRINTER_FORMATS
 
-log = logging.getLogger(__name__)
 IFS = '\u000b'
 
 

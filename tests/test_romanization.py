@@ -1,15 +1,8 @@
 #!/usr/bin/env python
 
-import logging
-import sys
-from pathlib import Path
-
-sys.path.append(Path(__file__).parents[1].as_posix())
 from ds_tools.unicode.hangul import hangul_romanized_permutations_pattern, matches_hangul_permutation
 from ds_tools.unicode.languages import romanized_permutations
 from ds_tools.test_common import TestCaseBase, main
-
-log = logging.getLogger(__name__)
 
 
 class RomanizeTest(TestCaseBase):

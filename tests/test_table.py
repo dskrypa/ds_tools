@@ -1,14 +1,7 @@
 #!/usr/bin/env python
 
-import logging
-import sys
-from pathlib import Path
-
-sys.path.append(Path(__file__).parents[1].as_posix())
 from ds_tools.test_common import TestCaseBase, main
 from ds_tools.output.table import SimpleColumn, Table
-
-log = logging.getLogger(__name__)
 
 
 class TableTest(TestCaseBase):

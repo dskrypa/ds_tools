@@ -1,16 +1,10 @@
 #!/usr/bin/env python
 
-import logging
-import sys
 from argparse import REMAINDER
-from pathlib import Path
 from unittest.mock import patch
 
-sys.path.append(Path(__file__).parents[1].as_posix())
 from ds_tools.test_common import TestCaseBase, main
 from ds_tools.argparsing import ArgParser
-
-log = logging.getLogger(__name__)
 
 
 class TestException(Exception):

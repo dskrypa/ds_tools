@@ -1,11 +1,9 @@
 #!/usr/bin/env python
 
-import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-sys.path.append(Path(__file__).parents[1].as_posix())
 from ds_tools.fs.archives import ArchiveFile, Passwords
 from ds_tools.test_common import TestCaseBase, main
 

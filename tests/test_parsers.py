@@ -1,11 +1,7 @@
 #!/usr/bin/env python
 
 import logging
-import sys
-from pathlib import Path
 
-sys.path.append(Path(__file__).parents[1].as_posix())
-from ds_tools.logging import init_logging
 from ds_tools.input.parsers import parse_bytes
 from ds_tools.test_common import TestCaseBase, main
 

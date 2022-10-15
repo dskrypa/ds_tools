@@ -2,15 +2,11 @@
 
 import inspect
 import logging
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.append(Path(__file__).parents[1].as_posix())
 from ds_tools.logging import init_logging
-
-log = logging.getLogger(__name__)
 
 
 class LoggingInitTest(unittest.TestCase):

@@ -1,18 +1,11 @@
 #!/usr/bin/env python
 
-import logging
-import sys
 from datetime import datetime
-from pathlib import Path
 from unittest.mock import MagicMock
 
-sys.path.append(Path(__file__).parents[1].as_posix())
-from ds_tools.logging import init_logging
 from ds_tools.test_common import TestCaseBase, main
 from ds_tools.utils.cron import CronSchedule
 from ds_tools.windows.scheduler.win_cron import WinCronSchedule
-
-log = logging.getLogger(__name__)
 
 
 class WinCronTest(TestCaseBase):
