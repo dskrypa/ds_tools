@@ -153,6 +153,8 @@ class ClearableCachedProperty(ABC):
 
 
 class ClearableCachedPropertyMixin:
+    __slots__ = ()
+
     def clear_cached_properties(self, *names: str, skip: Collection[str] = None):
         clear_cached_properties(self, *names, skip=skip)
 
