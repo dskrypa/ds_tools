@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 _NotSet = object()
 _lock = RLock()
 _stream_refs = set()
+ON_WINDOWS = os.name == 'nt'
 COLOR_CODED_THREADS = os.environ.get('DS_TOOLS_COLOR_CODED_THREAD_LOGS', '0') == '1'
 DEFAULT_LOG_DIR = '/var/tmp/{user}/script_logs'
 ENTRY_FMT_DETAILED = '%(asctime)s %(levelname)s %(threadName)s %(name)s %(lineno)d %(message)s'
@@ -141,7 +142,7 @@ def init_logging(
         import signal
         try:
             signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # Prevent error when piping output
-        except AttributeError as e:
+        except AttributeError:
             pass                                            # Does not work in Windows
     if patch_emit:
         logging.StreamHandler.emit = _stream_handler_emit_quiet if patch_emit == 'quiet' else _stream_handler_emit
@@ -269,11 +270,20 @@ def _choose_log_path(file_dir: Union[str, Path], filename_fmt: str, cleanup_old:
     import time
     from getpass import getuser
     from itertools import count
-    log_dir = Path(file_dir if file_dir else DEFAULT_LOG_DIR.format(user=getuser()))
+
+    if file_dir or not ON_WINDOWS:
+        log_dir = Path(file_dir if file_dir else DEFAULT_LOG_DIR.format(user=getuser()))
+    else:
+        log_str = DEFAULT_LOG_DIR.format(user=getuser())
+        log_dir = Path(log_str)
+        if log_str.startswith('/var/tmp') and log_dir.resolve().drive != 'C:' and Path(f'C:{log_str}').exists():
+            log_dir = Path(f'C:{log_str}')
+
     try:
         prog = Path(inspect.getsourcefile(inspect.stack()[-1][0])).stem
     except (TypeError, AttributeError):
         prog = '{}_interactive'.format(Path(__file__).stem)
+
     name_parts = {'prog': prog, 'user': getuser(), 'time': int(time.time()), 'uniq': '', 'pid': os.getpid()}
     log_path = log_dir.joinpath(filename_fmt.format(**name_parts))
     if log_path.exists() and '{uniq}' in filename_fmt:
@@ -284,8 +294,8 @@ def _choose_log_path(file_dir: Union[str, Path], filename_fmt: str, cleanup_old:
 
     if cleanup_old and '{time}' in filename_fmt and log_dir.exists():
         cleanup_old = 14 if cleanup_old is True else cleanup_old
-        name_parts['time'] = '(\d+)'
-        name_parts['uniq'] = '\-?\d*'
+        name_parts['time'] = r'(\d+)'
+        name_parts['uniq'] = r'\-?\d*'
         escaped_fmt = re.escape(filename_fmt).replace('\\{', '{').replace('\\}', '}')
         old_match = re.compile(escaped_fmt.format(**name_parts)).match
         _now = int(time.time())
@@ -311,6 +321,7 @@ def _add_file_handler(
     file_perm: int,
 ):
     from logging.handlers import TimedRotatingFileHandler
+
     log_path = log_path.as_posix()
     prep_log_dir(log_path)
     file_handler_opts = file_handler_opts or {'when': 'midnight', 'backupCount': 7, 'encoding': 'utf-8'}
@@ -324,7 +335,7 @@ def _add_file_handler(
     file_handler.name = log_path
     for logger in loggers:
         logger.addHandler(file_handler)
-    log.log(19, 'Logging to {}'.format(log_path))
+    log.log(19, f'Logging to {log_path}')
 
 
 def _get_logger_names(
@@ -376,7 +387,7 @@ def _capture_warnings(warnings: Optional[Collection[str]] = _NotSet, additional:
         def filter(self, record):
             try:
                 return not any(w in record.args[0] for w in warnings)
-            except Exception:
+            except Exception:  # noqa
                 return True
 
     logging.getLogger('py.warnings').addFilter(WarningFilter())
@@ -384,16 +395,15 @@ def _capture_warnings(warnings: Optional[Collection[str]] = _NotSet, additional:
 
 def _configure_level_names(lvl_names: Mapping[int, str] = _NotSet, lvl_names_add: Mapping[int, str] = None):
     if lvl_names is _NotSet:
-        lvl_names = {lvl: 'DBG_{}'.format(lvl) for lvl in range(1, 10)}
-        lvl_names.update({lvl: 'Lv_{}'.format(lvl) for lvl in range(11, 19)})
+        lvl_names = {lvl: f'DBG_{lvl}' for lvl in range(1, 10)}
+        lvl_names.update({lvl: f'Lv_{lvl}' for lvl in range(11, 19)})
         lvl_names[19] = 'VERBOSE'
     if lvl_names_add:
         lvl_names = lvl_names or {}
         lvl_names.update(lvl_names_add)
     if lvl_names:
         for lvl, name in lvl_names.items():
-            # noinspection PyUnresolvedReferences
-            if (name not in logging._nameToLevel) and (lvl not in logging._levelToName):
+            if (name not in logging._nameToLevel) and (lvl not in logging._levelToName):  # noqa
                 logging.addLevelName(lvl, name)
 
 
@@ -440,7 +450,7 @@ class DatetimeFormatter(logging.Formatter):
     """Enables use of ``%f`` (micro/milliseconds) in datetime formats."""
     _local_tz = get_localzone()
 
-    def formatTime(self, record, datefmt=None):
+    def formatTime(self, record, datefmt: str = None):
         dt = datetime.fromtimestamp(record.created, self._local_tz)
         if datefmt:
             return dt.strftime(datefmt)
@@ -464,7 +474,7 @@ class ColorLogFormatter(DatetimeFormatter):
             elif isinstance(color, dict):
                 formatted = colored(formatted, **color)
             else:
-                formatted = colored(formatted, *color)
+                formatted = colored(formatted, *color)  # noqa
         return formatted
 
 
@@ -473,11 +483,11 @@ class ColorThreadFormatter(ColorLogFormatter):
     def format(self, record):
         formatted = super().format(record)
         try:
-            threadno = int(record.threadName.split('-')[1])
-        except Exception:
+            thread_no = int(record.threadName.split('-')[1])
+        except Exception:  # noqa
             pass
         else:
-            color_num = threadno % 256
+            color_num = thread_no % 256
             while color_num in (0, 16, 17, 18, 19, 232, 233, 234, 235, 236, 237):
                 color_num += 51
                 if color_num > 255:
@@ -498,14 +508,14 @@ def prep_log_dir(log_path: Union[str, Path], perm_change_prefix: str = '/var/tmp
     log_dir = Path(log_path).parent
     if log_dir.exists():
         if not log_dir.is_dir():
-            raise ValueError('Invalid log path - {} is not a directory'.format(log_dir))
+            raise ValueError(f'Invalid log path - {log_dir} is not a directory')
     else:
         log_dir.mkdir(parents=True)
         if log_dir.as_posix().startswith(perm_change_prefix) and new_dir_permissions is not None:
             try:
                 log_dir.chmod(new_dir_permissions)
             except OSError as e:
-                log.error('Error changing permissions for {} to 0o{:o}: {}'.format(log_dir, new_dir_permissions, e))
+                log.error(f'Error changing permissions for {log_dir} to 0o{new_dir_permissions:o}: {e}')
 
 
 def add_context_filter(filter_instance: logging.Filter, name: str = None):
@@ -514,7 +524,6 @@ def add_context_filter(filter_instance: logging.Filter, name: str = None):
     :param name: None to add to all loggers, or a string that is the prefix of all loggers that should use the given
       filter
     """
-    # noinspection PyUnresolvedReferences
     for lname, logger in logging.Logger.manager.loggerDict.items():
         if (name is None) or (isinstance(lname, str) and lname.startswith(name)):
             try:
@@ -560,8 +569,8 @@ def update_level(name: str, level: int, verbosity: str = 'set', handlers: bool =
 
 def get_logger_info(only_with_handlers: bool = False, non_null_handlers_only: bool = False, test_filters: bool = False):
     from collections import ChainMap
+
     loggers = {}
-    # noinspection PyUnresolvedReferences
     for lname, logger in ChainMap(logging.Logger.manager.loggerDict, {None: logging.getLogger()}).items():
         entry = {'type': type(logger).__qualname__}
         try:
@@ -594,7 +603,6 @@ def get_logger_info(only_with_handlers: bool = False, non_null_handlers_only: bo
                     }
                 if handler.filters:
                     if test_filters:
-                        # noinspection PyTypeChecker
                         record = logging.LogRecord(lname, 0, 'test', 1, 'test', None, None)
                         filter_info = []
                         for f in handler.filters:
@@ -671,7 +679,7 @@ def _stream_handler_emit(self, record):
         raise
     except (BrokenPipeError, OSError):  # Occurs when using |head
         raise
-    except Exception:
+    except Exception:  # noqa
         self.handleError(record)
 
 
@@ -687,7 +695,7 @@ def _stream_handler_emit_quiet(self, record):
         raise
     except (BrokenPipeError, OSError):  # Occurs when using |head
         pass
-    except Exception:
+    except Exception:  # noqa
         self.handleError(record)
 
 
