@@ -4,6 +4,8 @@ Tools for identifying the languages used in text.
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import logging
 import re
 import string
@@ -45,21 +47,21 @@ class LangCat(Enum):
     GRK = 7
     CYR = 8
 
-    def __lt__(self, other: 'LangCat') -> bool:
+    def __lt__(self, other: LangCat) -> bool:
         return self.value < other.value
 
     @classproperty
-    def non_eng_cats(self) -> tuple['LangCat', ...]:
+    def non_eng_cats(self) -> tuple[LangCat, ...]:
         return LangCat.UNK, LangCat.HAN, LangCat.JPN, LangCat.CJK, LangCat.THAI, LangCat.GRK, LangCat.CYR
 
     @classproperty
-    def asian_cats(self) -> tuple['LangCat', ...]:
+    def asian_cats(self) -> tuple[LangCat, ...]:
         return LangCat.HAN, LangCat.JPN, LangCat.CJK, LangCat.THAI
 
     asian = asian_cats
 
     @classmethod
-    def _ranges(cls) -> Iterator[tuple['LangCat', list[tuple[int, int]]]]:
+    def _ranges(cls) -> Iterator[tuple[LangCat, list[tuple[int, int]]]]:
         yield cls.ENG, LATIN_RANGES
         yield cls.HAN, HANGUL_RANGES
         yield cls.JPN, JAPANESE_RANGES
@@ -70,34 +72,36 @@ class LangCat(Enum):
 
     @classmethod
     @cached(LRUCache(200), exc=True)
-    def categorize(cls, text: Optional[str], detailed: bool = False) -> Union['LangCat', set['LangCat']]:
+    def categorize(cls, text: Optional[str], detailed: bool = False) -> Union[LangCat, set[LangCat]]:
         if not text:
             return {cls.NUL} if detailed else cls.NUL
         elif detailed:
-            text = _strip_non_word_chars(text)
-            return set(cls.categorize(c) for c in text) if text else {cls.NUL}
+            if text := _strip_non_word_chars(text):
+                return {cls.categorize(c) for c in text}
+            else:
+                return {cls.NUL}
         elif len(text) == 1:
             dec = ord(text)
             for cat, ranges in cls._ranges():
                 if any(a <= dec <= b for a, b in ranges):
                     return cat
             return cls.UNK
+        elif text := _strip_non_word_chars(text):
+            cat = cls.categorize(text[0])
+            for c in text[1:]:
+                if cls.categorize(c) != cat:
+                    return cls.MIX
+            return cat
         else:
-            if text := _strip_non_word_chars(text):
-                cat = cls.categorize(text[0])
-                for c in text[1:]:
-                    if cls.categorize(c) != cat:
-                        return cls.MIX
-                return cat
             return cls.NUL
 
     @classmethod
-    def categorize_all(cls, texts: Iterable[Optional[str]], detailed: bool = False) -> tuple['LangCat', ...]:
+    def categorize_all(cls, texts: Iterable[Optional[str]], detailed: bool = False) -> tuple[LangCat, ...]:
         return tuple(cls.categorize(t, detailed) for t in texts)
 
     @classmethod
     @cached(LRUCache(200), exc=True)
-    def matches(cls, text: Optional[str], *cats: 'LangCat', detailed: bool = False) -> bool:
+    def matches(cls, text: Optional[str], *cats: LangCat, detailed: bool = False) -> bool:
         if detailed:
             text_cats = cls.categorize(text, True)
             return len(text_cats.intersection(cats)) == len(text_cats) == len(cats)
@@ -107,7 +111,7 @@ class LangCat(Enum):
             return cls.categorize(text) == cats[0]
 
     @classmethod
-    def contains_any(cls, text: str, cat: Union['LangCat', Container['LangCat']]) -> bool:
+    def contains_any(cls, text: str, cat: Union[LangCat, Container[LangCat]]) -> bool:
         """
         :param text: Text to examine
         :param cat: One or more :class:`LangCat` language categories
@@ -116,10 +120,9 @@ class LangCat(Enum):
         cats = [cat] if isinstance(cat, cls) else cat
         if cls.MIX in cats:
             return cls.categorize(text) == cls.MIX
-        elif len(text) > 1:
+        if len(text) > 1:
             text = _strip_non_word_chars(text)
-
-        if len(text) == 0:
+        if not text:
             return cls.NUL in cats
         for c in text:
             if cls.categorize(c) in cats:
@@ -127,12 +130,12 @@ class LangCat(Enum):
         return False
 
     @classmethod
-    def contains_any_not(cls, text: str, cat: 'LangCat') -> bool:
+    def contains_any_not(cls, text: str, cat: LangCat) -> bool:
         if cat == cls.MIX:
             raise ValueError(f'{cat!r} is not supported for {cls.__name__}.contains_any_not()')
-        elif len(text) > 1:
+        if len(text) > 1:
             text = _strip_non_word_chars(text)
-        if len(text) == 0:
+        if not text:
             return cat != cls.NUL
         for c in text:
             if cls.categorize(c) != cat:
@@ -140,7 +143,7 @@ class LangCat(Enum):
         return False
 
     @classmethod
-    def for_name(cls, language: str) -> 'LangCat':
+    def for_name(cls, language: str) -> LangCat:
         lang = language.lower().strip()
         if lang in {'english', 'eng', 'en', 'spanish'}:     # A better enum value would have been latin, since this is
             return cls.ENG                                  # more about unicode than actual language
@@ -216,7 +219,7 @@ class LangCat(Enum):
 
     @property
     def full_name(self) -> str:
-        return LANG_CAT_NAMES[self.value]
+        return LANG_CAT_NAMES[self.value]  # noqa
 
 
 def _is_punc_or_symbol(char: str) -> bool:
@@ -230,13 +233,14 @@ def _is_punc_or_symbol(char: str) -> bool:
 def _strip_non_word_chars(text: str) -> str:
     if not text:
         return text
+    # original = text
+    text = ''.join(set(text))
     try:
         sub = _strip_non_word_chars._sub
         table = _strip_non_word_chars._table
     except AttributeError:
         sub = _strip_non_word_chars._sub = re.compile(r'[\d\s]+').sub
         table = _strip_non_word_chars._table = str.maketrans({c: '' for c in chars_by_category(prefix=('P', 'S'))})
-    # original = text
     text = sub('', text).translate(table)
     # log.debug(b'_strip_non_word_chars({original!r}) => {text!r}')
     return text
@@ -256,7 +260,7 @@ def is_hangul(a_str: str) -> bool:
         a_str = strip_punctuation(a_str)
         if len(a_str) < 1:
             return False
-        return all(is_hangul(c) for c in a_str)
+        return all(is_hangul(c) for c in set(a_str))
 
     as_dec = ord(a_str)
     return any(a <= as_dec <= b for a, b in HANGUL_RANGES)
@@ -269,7 +273,7 @@ def is_japanese(a_str: str) -> bool:
         a_str = strip_punctuation(a_str)
         if len(a_str) < 1:
             return False
-        return all(is_japanese(c) for c in a_str)
+        return all(is_japanese(c) for c in set(a_str))
 
     as_dec = ord(a_str)
     return any(a <= as_dec <= b for a, b in JAPANESE_RANGES)
@@ -282,7 +286,7 @@ def is_cjk(a_str: str) -> bool:
         a_str = strip_punctuation(a_str)
         if len(a_str) < 1:
             return False
-        return all(is_cjk(c) for c in a_str)
+        return all(is_cjk(c) for c in set(a_str))
 
     as_dec = ord(a_str)
     return any(a <= as_dec <= b for a, b in CJK_RANGES)
@@ -298,48 +302,49 @@ def is_any_cjk(a_str: str, strip_punc: bool = True, strip_nums: bool = True) -> 
     """
     if (str_len := len(a_str)) < 1:
         return False
-    elif str_len > 1:
-        if strip_punc:
-            a_str = strip_punctuation(a_str)
-        else:
-            try:
-                sub = is_any_cjk._sub
-            except AttributeError:
-                sub = is_any_cjk._sub = re.compile(r'\s+').sub
-            a_str = sub('', a_str)  # strip_punctuation also strips spaces
+    elif str_len == 1:
+        as_dec = ord(a_str)
+        return any(a <= as_dec <= b for a, b in NON_ENG_RANGES)
 
-        if strip_nums:
-            try:
-                table = is_any_cjk._table
-            except AttributeError:
-                table = is_any_cjk._table = str.maketrans({c: '' for c in '0123456789'})
-            a_str = a_str.translate(table)
+    a_str = ''.join(set(a_str))
+    if strip_punc:
+        a_str = strip_punctuation(a_str)
+    else:
+        try:
+            sub = is_any_cjk._sub
+        except AttributeError:
+            sub = is_any_cjk._sub = re.compile(r'\s+').sub
+        a_str = sub('', a_str)  # strip_punctuation also strips spaces
 
-        if len(a_str) < 1:
-            return False
-        return all(is_any_cjk(c) for c in a_str)
+    if strip_nums:
+        try:
+            table = is_any_cjk._table
+        except AttributeError:
+            table = is_any_cjk._table = str.maketrans({c: '' for c in '0123456789'})
+        a_str = a_str.translate(table)
 
-    as_dec = ord(a_str)
-    return any(a <= as_dec <= b for a, b in NON_ENG_RANGES)
+    if len(a_str) < 1:
+        return False
+    return all(is_any_cjk(c) for c in a_str)
 
 
 def contains_hangul(a_str: Optional[str]) -> bool:
     try:
-        return any(is_hangul(c) for c in a_str)
+        return any(is_hangul(c) for c in set(a_str))
     except TypeError:   # likely NoneType is not iterable
         return False
 
 
 def contains_japanese(a_str: Union[str, Iterable[str]]) -> bool:
-    return any(is_japanese(c) for c in a_str)
+    return any(is_japanese(c) for c in set(a_str))
 
 
 def contains_cjk(a_str: Union[str, Iterable[str]]) -> bool:
-    return any(is_cjk(c) for c in a_str)
+    return any(is_cjk(c) for c in set(a_str))
 
 
 def contains_any_cjk(a_str: Union[str, Iterable[str]]) -> bool:
-    return any(is_any_cjk(c) for c in a_str)
+    return any(is_any_cjk(c) for c in set(a_str))
 
 
 # endregion
