@@ -64,17 +64,6 @@ class CachedProperty(Generic[T]):
 
         return name, cache
 
-    def call_and_store(self, cache: Cache, instance: Obj) -> T:
-        val = self.func(instance)
-        try:
-            cache[self.name] = val
-        except TypeError:
-            cls = instance.__class__.__name__
-            raise TypeError(
-                f'Unable to cache {cls}.{self.name} because {cls}.__dict__ does not support item assignment'
-            ) from None
-        return val
-
     def _get_instance_lock(self, key) -> RLock:
         with self.lock:
             try:
@@ -120,9 +109,24 @@ class CachedProperty(Generic[T]):
                 with self.instance_lock(instance, owner):
                     # check if another thread filled the cache while we waited for the lock
                     if (val := cache.get(name, _NOT_FOUND)) is _NOT_FOUND:
-                        val = self.call_and_store(cache, instance)
+                        val = self.func(instance)
+                        try:
+                            cache[self.name] = val
+                        except TypeError:
+                            cls = instance.__class__.__name__
+                            raise TypeError(
+                                f'Unable to cache {cls}.{self.name} because {cls}.__dict__'
+                                ' does not support item assignment'
+                            ) from None
             else:
-                val = self.call_and_store(cache, instance)
+                val = self.func(instance)
+                try:
+                    cache[self.name] = val
+                except TypeError:
+                    cls = instance.__class__.__name__
+                    raise TypeError(
+                        f'Unable to cache {cls}.{self.name} because {cls}.__dict__ does not support item assignment'
+                    ) from None
 
         return val
 
