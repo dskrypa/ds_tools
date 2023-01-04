@@ -79,8 +79,8 @@ wrap / unwrap
 
 import logging
 import re
-from collections import Callable, OrderedDict
-from collections.abc import Iterable, Container
+from collections import OrderedDict
+from collections.abc import Iterable, Container, Callable
 from urllib.parse import urlparse
 
 try:
