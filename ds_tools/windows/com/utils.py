@@ -5,12 +5,10 @@ Utilities for loading and working with Windows libraries using win32com.
 """
 
 from itertools import chain
-from typing import Set, Mapping, Any, Optional
+from typing import Mapping, Any, Optional
 
-# noinspection PyUnresolvedReferences
-from pythoncom import LoadTypeLib, DISPATCH_METHOD, DISPATCH_PROPERTYGET, DISPID_NEWENUM, IID_IEnumVARIANT
-# noinspection PyUnresolvedReferences
-from pywintypes import com_error
+from pythoncom import LoadTypeLib, DISPATCH_METHOD, DISPATCH_PROPERTYGET, DISPID_NEWENUM, IID_IEnumVARIANT  # noqa
+from pywintypes import com_error  # noqa
 from win32com.client import Dispatch, DispatchBaseClass, _get_good_object_
 from win32com.client.gencache import GetModuleForTypelib
 from win32com.client.makepy import GenerateFromTypeLibSpec
@@ -19,7 +17,7 @@ from ...output.formatting import short_repr
 from ..com.enums import ComClassEnum
 from .exceptions import ComClassCreationException, IterationNotSupported
 
-__all__ = ['com_iter', 'create_entry', 'com_repr', 'load_module']
+__all__ = ['com_iter', 'create_entry', 'com_repr', 'load_module', 'load_module_iid']
 
 
 def load_module(dll_name: str):
@@ -28,14 +26,29 @@ def load_module(dll_name: str):
     ``~/AppData/Local/Temp/gen_py/``.  Automatically generates the module if it was not already generated.  The method
     of Generation is roughly the same as what is done when running ``win32com/client/makepy.py``.
 
-    :param str dll_name: A DLL file name (e.g., ``taskschd.dll``)
+    :param dll_name: A DLL file name (e.g., ``taskschd.dll``)
     :return: The loaded module
     """
     lib = LoadTypeLib(dll_name)
     iid = str(lib.GetLibAttr()[0])
+    return load_module_iid(iid, dll_name)
+
+
+def load_module_iid(iid: str, dll_name: str = None):
+    """
+    Loads a generated Python module for the given dll.  Generated modules are located in
+    ``~/AppData/Local/Temp/gen_py/``.  Automatically generates the module if it was not already generated.  The method
+    of Generation is roughly the same as what is done when running ``win32com/client/makepy.py``.
+
+    :param iid: The IID of the library to load
+    :param dll_name: A DLL file name (e.g., ``taskschd.dll``)
+    :return: The loaded module
+    """
     try:
         return GetModuleForTypelib(iid, 0, 1, 0)
     except ModuleNotFoundError:
+        if not dll_name:
+            raise
         GenerateFromTypeLibSpec(dll_name, None, verboseLevel=0, bForDemand=0, bBuildHidden=1)
         return GetModuleForTypelib(iid, 0, 1, 0)
 
@@ -46,7 +59,7 @@ def create_entry(collection: DispatchBaseClass, _type: int, lcid=0):
     of the generic/base type, instead of the generic/base type that the gen_py generated code returns.
 
     :param collection: A win32com-generated Collection class (e.g., ``ITriggerCollection`` or ``IActionCollection``)
-    :param int _type: The type enum representing the type of entry to create (e.g.,
+    :param _type: The type enum representing the type of entry to create (e.g.,
       ``taskschd.constants.TASK_ACTION_EXEC`` or ``taskschd.constants.TASK_TRIGGER_TIME``)
     :param lcid: The LCID for the library
     :return: The created entry
@@ -100,7 +113,7 @@ def com_repr(obj, is_trigger=False) -> str:
         return short_repr(obj, 30, 12)
 
 
-def _com_repr(obj: DispatchBaseClass, skip: Set[str], extra: Optional[Mapping[str, Any]] = None) -> str:
+def _com_repr(obj: DispatchBaseClass, skip: set[str], extra: Optional[Mapping[str, Any]] = None) -> str:
     attr_names = obj._prop_map_get_
     attrs = ((k, com_repr(getattr(obj, k))) for k in attr_names if k not in skip)
     if extra:

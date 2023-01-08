@@ -9,8 +9,7 @@ from functools import cached_property
 from typing import Literal, Union
 
 import pythoncom
-# noinspection PyUnresolvedReferences
-from pywintypes import com_error
+from pywintypes import com_error  # noqa
 from win32com.client import Dispatch
 from win32comext.taskscheduler import taskscheduler
 
