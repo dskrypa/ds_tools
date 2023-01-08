@@ -79,7 +79,6 @@ wrap / unwrap
 
 import logging
 import re
-from collections import OrderedDict
 from collections.abc import Iterable, Container, Callable
 from urllib.parse import urlparse
 
@@ -103,7 +102,8 @@ log = logging.getLogger(__name__)
 _regex_pattern_type = type(re.compile(''))
 
 
-def soupify(html, mode: str = 'lxml', *args, **kwargs) -> BeautifulSoup:
+def soupify(html, mode: str = 'html.parser', *args, **kwargs) -> BeautifulSoup:
+    """Note: ``html5lib`` has significantly better handling of poorly written HTML than ``html.parser`` or ``lxml``."""
     if not isinstance(html, str):
         try:
             html = html.text
@@ -117,8 +117,10 @@ def fix_html_prettify():
     Monkey-patch key components of BeautifulSoup 4 to cause ``soup.prettify(formatter='html')`` to produce better
     results
     """
+    # Note: It seems that PageElement no longer has (or never had?) these methods
     PageElement.decode = decode
     PageElement.decode_contents = decode_contents
+    # It's not obvious what changes were made to the vanilla Tag methods, and it should be compared/tested/documented...
     Tag.decode = decode
     Tag.decode_contents = decode_contents
 
@@ -131,23 +133,12 @@ def _should_skip(content, match_value):
         or isinstance(match_value, (Iterable, Container)) and (content not in match_value)
         or isinstance(match_value, Callable) and not match_value(content)
     )
-    # if (match_value and not content) or (content and not match_value):
-    #     return True
-    # elif isinstance(match_value, str) and (content != match_value):
-    #     return True
-    # elif isinstance(match_value, _regex_pattern_type) and not match_value.match(content):
-    #     return True
-    # elif isinstance(match_value, (Iterable, Container)) and (content not in match_value):
-    #     return True
-    # elif isinstance(match_value, Callable) and not match_value(content):
-    #     return True
-    # return False
 
 
 class HtmlSoup:
     __slots__ = ('soup',)
 
-    def __init__(self, content, mode='html.parser'):
+    def __init__(self, content, mode: str = 'html.parser'):
         if not isinstance(content, (BeautifulSoup, str)) and hasattr(content, 'text'):  # requests.Response
             content = content.text
         if isinstance(content, str):
@@ -163,9 +154,7 @@ class HtmlSoup:
 
         All filter values may be provided as a bool / str / compiled regex pattern / iterable / container / callable.
         """
-        filters = OrderedDict((
-            ('scheme', scheme), ('hostname', host), ('path', path), ('query', query), ('fragment', fragment)
-        ))
+        filters = {'scheme': scheme, 'hostname': host, 'path': path, 'query': query, 'fragment': fragment}
 
         for a in self.soup.find_all('a'):
             a_href = a.get('href')
@@ -326,7 +315,7 @@ def decode_contents(self, indent_level=None, eventual_encoding=DEFAULT_OUTPUT_EN
 
 if not bs4_available:
     def _missing_dependency(*args, **kwargs):
-        raise RuntimeError('Please install beautifulsoup4 to use this function')
+        raise RuntimeError('Please `pip install bs4` (BeautifulSoup) to use this function')
 
     soupify = _missing_dependency
     fix_html_prettify = _missing_dependency

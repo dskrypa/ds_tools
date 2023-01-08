@@ -8,23 +8,33 @@ import functools
 import re
 import sys
 from typing import Iterable
+from warnings import warn
 
 __all__ = [
     'num_suffix', 'PseudoJQ', 'bracket_dict_to_list', 'longest_repeating_subsequence', 'diamond', 'IntervalCoverage'
 ]
 
 
-def num_suffix(num):
-    if 3 < num < 21:
+def num_suffix(num: int) -> str:
+    """
+    Returns the ordinal suffix (st, nd, rd, th) that should be used for the given base-10 integer.
+    Handles both positive and negative integers.
+    Correctly handles values such as 111th - 113rd with any value in the hundreds place.
+    """
+    warn('num_suffix is deprecated - use ds_tools.output.formatting.ordinal_suffix instead', DeprecationWarning)
+    # While it may be slightly cleaner to use `num = abs(num)` and to store `tens = num % 100` before the if/elif
+    # block, profiling revealed the below approach to be the fastest compared to approaches using those alternatives.
+    if num < 0:
+        num = -num
+    ones = num % 10
+    if not ones or ones > 3:
         return 'th'
-    ones_place = str(num)[-1:]
-    if ones_place == '1':
-        return 'st'
-    elif ones_place == '2':
-        return 'nd'
-    elif ones_place == '3':
-        return 'rd'
-    return 'th'
+    elif ones == 1:
+        return 'th' if num % 100 == 11 else 'st'
+    elif ones == 2:
+        return 'th' if num % 100 == 12 else 'nd'
+    else:  # ones == 3
+        return 'th' if num % 100 == 13 else 'rd'
 
 
 class PseudoJQ:

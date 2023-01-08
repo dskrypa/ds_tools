@@ -4,10 +4,12 @@ Output formatting functions
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import logging
-import math
 import re
-from collections import OrderedDict
+from math import log as math_log
+
 from struct import calcsize, unpack_from, error as StructError
 from typing import TYPE_CHECKING, Union, Mapping, Sized, Iterable, Container, Iterator, Collection, Any, Callable
 
@@ -30,6 +32,7 @@ __all__ = [
     'collapse_ranges',
     'format_duration',
     'timedelta_to_str',
+    'ordinal_suffix',
 ]
 log = logging.getLogger(__name__)
 
@@ -40,7 +43,7 @@ def short_repr(
     parts: int = 45,
     sep: str = '...',
     func: Callable[[Any], str] = repr,
-    containers_only: 'Bool' = True,
+    containers_only: Bool = True,
 ) -> str:
     obj_repr = func(obj)
     if containers_only and not isinstance(obj, Container):
@@ -54,9 +57,9 @@ def readable_bytes(
     size: Union[float, int],
     dec_places: int = None,
     dec_by_unit: Mapping[str, int] = None,
-    si: 'Bool' = False,
-    bits: 'Bool' = False,
-    i: 'Bool' = False,
+    si: Bool = False,
+    bits: Bool = False,
+    i: Bool = False,
     rate: Union[bool, str] = False,
 ) -> str:
     """
@@ -72,10 +75,12 @@ def readable_bytes(
     """
     units = ('B ', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB')  # len=9 @ YB -> max exp = 8
     kilo = 1000 if si else 1024
+    abs_size = abs(size)
     try:
-        exp = min(int(math.log(abs(size), kilo)), 8) if abs(size) > 0 else 0  # update 8 to len-1 if units are added
+        exp = min(int(math_log(abs_size, kilo)), 8) if abs_size > 0 else 0  # update 8 to len-1 if units are added
     except TypeError as e:
         raise ValueError(f'Invalid {size=}') from e
+
     unit = units[exp]
     if dec_places is not None:
         dec = dec_places
@@ -83,6 +88,7 @@ def readable_bytes(
         dec = dec_by_unit.get(unit, 2)
     else:
         dec = 2 if exp else 0
+
     if bits:
         unit = unit.replace('B', 'b')
     if i and exp and not si:  # no `i` is necessary for B/b
@@ -116,84 +122,67 @@ def format_output(text, should_color, color_str, width=None, justify=None):
     return text
 
 
-def format_tiered(obj):
+def format_tiered(obj, sort_keys: Bool = True) -> list[str]:
     lines = []
     if isinstance(obj, dict):
         if len(obj) < 1:
             return format_tiered('{}')
         kw = max(len(k) for k in obj)
         pad = ' ' * kw
-
-        key_list = obj.keys() if isinstance(obj, OrderedDict) else sorted(obj.keys())
-        for k in key_list:
-            fk = k.ljust(kw)
-            sub_objs = format_tiered(obj[k])
-            for i in range(len(sub_objs)):
-                if i == 0:
-                    lines.append('{}:  {}'.format(fk, sub_objs[i]))
-                else:
-                    lines.append('{}   {}'.format(pad, sub_objs[i]))
+        items = sorted(obj.items()) if sort_keys else obj.items()
+        for key, val in items:
+            fk = key.ljust(kw)
+            for i, sub_obj in enumerate(format_tiered(val)):
+                lines.append(f'{fk}:  {sub_obj}' if not i else f'{pad}   {sub_obj}')
     elif isinstance(obj, list):
         if len(obj) < 1:
             return format_tiered('[]')
         kw = len(str(len(obj)))
         pad = ' ' * kw
         fmt = '[{{:>{}}}]:  {{}}'.format(kw)
-        for i in range(len(obj)):
-            sub_objs = format_tiered(obj[i])
-            for j in range(len(sub_objs)):
-                if j == 0:
-                    lines.append(fmt.format(i, sub_objs[j]))
-                else:
-                    lines.append(' {}    {}'.format(pad, sub_objs[j]))
+        for i, item in enumerate(obj):
+            for j, sub_obj in enumerate(format_tiered(item)):
+                lines.append(fmt.format(i, sub_obj) if not j else f' {pad}    {sub_obj}')
     else:
         try:
             lines.append(str(obj))
-        except Exception as e:
+        except Exception:  # noqa
             lines.append(obj)
     return lines
 
 
-def pseudo_yaml(obj, indent=4):
+def pseudo_yaml(obj, indent: int = 4, sort_keys: Bool = True) -> list[str]:
     lines = []
     if isinstance(obj, Mapping):
         if len(obj) < 1:
             return pseudo_yaml('{}', indent)
         pad = ' ' * indent
-        key_list = obj.keys() if isinstance(obj, OrderedDict) else sorted(obj.keys())
-        for k in key_list:
-            fk = k.ljust(indent)
-            val = obj[k]
-            if isinstance(val, (Mapping, Sized, Iterable, Container)):
-                if isinstance(val, str):
-                    if '\n' in val:
-                        lines.append('{}:'.format(fk))
-                        for line in val.splitlines():
-                            lines.append('{}{}'.format(pad, line))
-                    else:
-                        lines.append('{}: {}'.format(fk, val))
+        items = sorted(obj.items()) if sort_keys else obj.items()
+        for key, val in items:
+            fk = key.ljust(indent)
+            if isinstance(val, str):
+                if '\n' in val:
+                    lines.append(f'{fk}:')
+                    lines.extend(f'{pad}{line}' for line in val.splitlines())
                 else:
-                    lines.append('{}:'.format(fk))
-                    for sub_obj in pseudo_yaml(val, indent):
-                        lines.append('{}{}'.format(pad, sub_obj))
+                    lines.append(f'{fk}: {val}')
+            elif isinstance(val, (Mapping, Sized, Iterable, Container)):
+                lines.append(f'{fk}:')
+                lines.extend(f'{pad}{sub_obj}' for sub_obj in pseudo_yaml(val, indent))
             else:
-                lines.append('{}: {}'.format(fk, val))
+                lines.append(f'{fk}: {val}')
     elif all(isinstance(obj, abc_type) for abc_type in (Sized, Iterable, Container)):
         if len(obj) < 1:
             return pseudo_yaml('[]', indent)
         pad = ' ' * indent
-        fmtA = '{}- {{}}'.format(pad)
-        fmtB = '{}  {{}}'.format(pad)
+        fmt_a = f'{pad}- {{}}'
+        fmt_b = f'{pad}  {{}}'
         for val in obj:
             if isinstance(val, (Mapping, Sized, Iterable, Container)):
                 sub_objs = val.splitlines() if isinstance(val, str) else pseudo_yaml(val, indent)
-                for j, sub_obj in enumerate(sub_objs):
-                    if j == 0:
-                        lines.append(fmtA.format(sub_obj))
-                    else:
-                        lines.append(fmtB.format(sub_obj))
+                lines += [fmt_b.format(sub_obj) if j else fmt_a.format(sub_obj) for j, sub_obj in enumerate(sub_objs)]
             else:
-                lines.append(fmtA.format(val))
+                lines.append(fmt_a.format(val))
     else:
         try:
             lines.append(str(obj))
@@ -339,10 +328,31 @@ def format_duration(seconds: float) -> str:
     return f'{x}{h:02d}:{m:02d}:{s:05.2f}'
 
 
-def timedelta_to_str(delta: 'timedelta') -> str:
+def timedelta_to_str(delta: timedelta) -> str:
     m, s = divmod(delta.seconds, 60)
     h, m = divmod(m, 60)
     td_str = f'{h:d}:{m:02d}:{s:02d}'
     if delta.days != 0:
         td_str = f'{delta.days:d}d, {td_str}'
     return td_str
+
+
+def ordinal_suffix(num: int) -> str:
+    """
+    Returns the ordinal suffix (st, nd, rd, th) that should be used for the given base-10 integer.
+    Handles both positive and negative integers.
+    Correctly handles values such as 111th - 113rd with any value in the hundreds place.
+    """
+    # While it may be slightly cleaner to use `num = abs(num)` and to store `tens = num % 100` before the if/elif
+    # block, profiling revealed the below approach to be the fastest compared to approaches using those alternatives.
+    if num < 0:
+        num = -num
+    ones = num % 10
+    if not ones or ones > 3:
+        return 'th'
+    elif ones == 1:
+        return 'th' if num % 100 == 11 else 'st'
+    elif ones == 2:
+        return 'th' if num % 100 == 12 else 'nd'
+    else:  # ones == 3
+        return 'th' if num % 100 == 13 else 'rd'
