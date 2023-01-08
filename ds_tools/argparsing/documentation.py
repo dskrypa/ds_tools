@@ -4,7 +4,7 @@ Utilities for generating documentation from argparse.ArgumentParser objects
 :author: Doug Skrypa
 """
 
-from collections import defaultdict, OrderedDict
+from collections import defaultdict
 
 __all__ = ['help_as_rst']
 
@@ -69,7 +69,7 @@ def help_as_rst(parser, description=True, epilog=True, as_list=False):
     if subparsers:
         lines += ['', 'Sub-Commands', '=' * 12, '']
         for sp_dest, sp in subparsers.items():
-            sp_unique = OrderedDict()
+            sp_unique = {}
             aliases = defaultdict(set)
             for choice_name, sp_choice in sp.choices.items():
                 primary = sp_choice.prog.split()[-1]

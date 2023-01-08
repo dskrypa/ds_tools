@@ -7,9 +7,11 @@ Functions that expand upon those in the built-in itertools module.
 from collections.abc import Mapping, MutableMapping
 from copy import deepcopy
 from itertools import chain, zip_longest
-from typing import Iterable, Iterator
+from typing import Iterable, Iterator, TypeVar
 
 __all__ = ['chunked', 'flatten_mapping', 'itemfinder', 'kwmerge', 'merge', 'partitioned']
+
+T = TypeVar('T')
 
 
 def itemfinder(iterable, func):
@@ -34,7 +36,7 @@ def chunked(seq, n):
         i = j
 
 
-def partitioned(iterable: Iterable, n: int) -> Iterator[tuple]:
+def partitioned(iterable: Iterable[T], n: int) -> Iterator[tuple[T, ...]]:
     """
     :param iterable: An iterable object
     :param n: The maximum number of elements in a given partition

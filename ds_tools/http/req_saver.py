@@ -7,19 +7,17 @@ SQLite3 DB cache for Requests response objects based on the HTTP method and URL 
 import json
 import logging
 import os
-from collections import OrderedDict
 from urllib import parse as urllib_parse
 
 from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, PickleType
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, scoped_session
-from sqlalchemy.orm.exc import NoResultFound, MultipleResultsFound
-from sqlalchemy.exc import NoSuchTableError, OperationalError
+from sqlalchemy.exc import NoSuchTableError, OperationalError, NoResultFound, MultipleResultsFound
 
 __all__ = ['RequestSaver']
 log = logging.getLogger(__name__)
 
-METHODS = ['get', 'head', 'post', 'put', 'patch', 'delete']
+METHODS = ('get', 'head', 'post', 'put', 'patch', 'delete')
 
 Base = declarative_base()
 
@@ -89,8 +87,9 @@ class RequestSaver:
     def request(self, method, url, *args, **kwargs):
         params = kwargs.get('params', {})
         if params:
-            params = OrderedDict([(k, params[k]) for k in sorted(params.keys())])
-        qs = urllib_parse.urlencode(params, 1)
+            params = {k: v for k, v in sorted(params.items())}
+
+        qs = urllib_parse.urlencode(params, True)
 
         data_key = json.dumps({k: kwargs.get(k, None) for k in ('data', 'json')}, sort_keys=True)
         req_args = {'method': method, 'url': url, 'qs': qs, 'data_key': data_key}

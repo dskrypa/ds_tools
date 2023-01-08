@@ -2,15 +2,13 @@
 :author: Doug Skrypa
 """
 
-import functools
 import logging
 import time
 import traceback
-from collections import OrderedDict
 from functools import wraps, update_wrapper, partial
 from operator import attrgetter
 from threading import Lock
-from typing import Callable
+from typing import Callable, Union
 
 from .itertools import partitioned
 
@@ -73,6 +71,9 @@ class classproperty:
         return self.func.__get__(obj, cls)()
 
 
+# region Coroutines
+
+
 def primed_coroutine(func):
     """Primes the wrapped coroutine so users do not need to manually send None or call next() on it."""
     @wraps(func)
@@ -93,7 +94,10 @@ def basic_coroutine(func):
     return _basic_coroutine
 
 
-def partitioned_exec(n, container_factory, merge_fn=None, pos=0):
+# endregion
+
+
+def partitioned_exec(n: Union[int, str, attrgetter], container_factory, merge_fn=None, pos: Union[int, str] = 0):
     """
     Decorator that partitions the sequence at args[pos] into groups of length n, and merges results of executing the
     decorated function/method for each partition of the sequence.
@@ -107,7 +111,7 @@ def partitioned_exec(n, container_factory, merge_fn=None, pos=0):
     def list_example(self, fn, seq):
         return [fn(i) for i in seq]
 
-    :param int n: Maximum partition length
+    :param n: Maximum partition length
     :param container_factory: Callable similar to defaultdict's default_factory
     :param merge_fn: Function used to merge results
     :param pos: Position of the sequence to partition in args if an int is provided, or kwargs if a str is provided
@@ -117,21 +121,22 @@ def partitioned_exec(n, container_factory, merge_fn=None, pos=0):
         n = attrgetter(n) if isinstance(n, str) else n
     if merge_fn is None:
         if issubclass(container_factory, (dict, set)):
-            merge_fn = lambda a, b: a.update(b)
+            merge_fn = lambda a, b: a.update(b)  # noqa
         elif issubclass(container_factory, list):
-            merge_fn = lambda a, b: a.extend(b)
+            merge_fn = lambda a, b: a.extend(b)  # noqa
         else:
             raise ValueError('partitioned_exec only provides merge_fn defaults for dict, set, and list types')
 
+    use_kw = isinstance(pos, str)
+
     def decorator(func):
         if isinstance(n, attrgetter):
-            @functools.wraps(func)
+            @wraps(func)
             def wrapper(*args, **kwargs):
                 args = list(args)           # necessary to replace the value at a given index
                 self = args[0]
-                psize = n(self)
+                psize: int = n(self)  # noqa
                 merged = container_factory()
-                use_kw = isinstance(pos, str)
                 for partition in partitioned(kwargs[pos] if use_kw else args[pos], psize):
                     if use_kw:
                         kwargs[pos] = partition
@@ -140,11 +145,10 @@ def partitioned_exec(n, container_factory, merge_fn=None, pos=0):
                     merge_fn(merged, func(*args, **kwargs))
                 return merged
         else:
-            @functools.wraps(func)
+            @wraps(func)
             def wrapper(*args, **kwargs):
                 args = list(args)
                 merged = container_factory()
-                use_kw = isinstance(pos, str)
                 for partition in partitioned(kwargs[pos] if use_kw else args[pos], n):
                     if use_kw:
                         kwargs[pos] = partition
@@ -156,8 +160,11 @@ def partitioned_exec(n, container_factory, merge_fn=None, pos=0):
     return decorator
 
 
+# region Tracing
+
+
 def trace_entry(func):
-    @functools.wraps(func)
+    @wraps(func)
     def wrapper(*args, **kwargs):
         arg_str = ', '.join(repr(v) if isinstance(v, str) else str(v) for v in args)
         kwarg_str = ', '.join('{}={}'.format(k, repr(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
@@ -167,7 +174,7 @@ def trace_entry(func):
 
 
 def trace_entry_and_exit(func):
-    @functools.wraps(func)
+    @wraps(func)
     def wrapper(*args, **kwargs):
         arg_str = ', '.join(repr(v) if isinstance(v, str) else str(v) for v in args)
         kwarg_str = ', '.join('{}={}'.format(k, repr(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
@@ -179,7 +186,7 @@ def trace_entry_and_exit(func):
 
 
 def trace_exit(func):
-    @functools.wraps(func)
+    @wraps(func)
     def wrapper(*args, **kwargs):
         arg_str = ', '.join(repr(v) if isinstance(v, str) else str(v) for v in args)
         kwarg_str = ', '.join('{}={}'.format(k, repr(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
@@ -190,7 +197,7 @@ def trace_exit(func):
 
 
 def trace_entry_and_dump_stack(func):
-    @functools.wraps(func)
+    @wraps(func)
     def wrapper(*args, **kwargs):
         arg_str = ', '.join(repr(v) if isinstance(v, str) else str(v) for v in args)
         kwarg_str = ', '.join('{}={}'.format(k, repr(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
@@ -201,21 +208,24 @@ def trace_entry_and_dump_stack(func):
     return wrapper
 
 
+# endregion
+
+
 def timed(func):
-    @functools.wraps(func)
+    @wraps(func)
     def wrapper(*args, **kwargs):
-        start = time.time()
+        start = time.monotonic()
         r = func(*args, **kwargs)
-        end = time.time()
-        print('{} ran in {} s'.format(func.__name__, end - start))
+        end = time.monotonic()
+        print(f'{func.__name__} ran in {end - start} s')
         return r
     return wrapper
 
 
-def rate_limited(interval=0, log_lvl=logging.DEBUG):
+def rate_limited(interval: Union[float, str, attrgetter] = 0, log_lvl: int = logging.DEBUG):
     """
-    :param float interval: Interval between allowed invocations in seconds
-    :param int log_lvl: The log level that should be used to indicate that the wrapped function is being delayed
+    :param interval: Interval between allowed invocations in seconds
+    :param log_lvl: The log level that should be used to indicate that the wrapped function is being delayed
     """
     is_attrgetter = isinstance(interval, (attrgetter, str))
     if is_attrgetter:
@@ -227,7 +237,8 @@ def rate_limited(interval=0, log_lvl=logging.DEBUG):
         log_fmt = 'Rate limited {} {!r} is being delayed {{:,.3f}} seconds'.format(
             'method' if is_attrgetter else 'function', func.__name__
         )
-        @functools.wraps(func)
+
+        @wraps(func)
         def wrapper(*args, **kwargs):
             nonlocal last_call, lock
             obj_interval = interval(args[0]) if is_attrgetter else interval
@@ -254,28 +265,24 @@ def retry_on_exception(retries=0, delay=0, *exception_classes, warn=True):
     :return: Decorator function that returns the wrapped/decorated function
     """
     def decorator(func):
-        @functools.wraps(func)
+        @wraps(func)
         def wrapper(*args, **kwargs):
             nonlocal retries, delay, warn, exception_classes
             last_action = 0
             while retries >= 0:
                 retries -= 1
-                remaining = delay - (time.time() - last_action)
+                remaining = delay - (time.monotonic() - last_action)
                 if remaining > 0:
                     time.sleep(remaining)
-                last_action = time.time()
+                last_action = time.monotonic()
                 try:
                     return func(*args, **kwargs)
                 except exception_classes as e:
                     if retries >= 0:
                         if warn:
-                            fn_args = ', '.join(map(str, args)) if args else ''
-                            if kwargs:
-                                if fn_args:
-                                    fn_args += ', '
-                                fn_args += ', '.join('{}={}'.format(k, v) for k, v in OrderedDict(kwargs).items())
-                            fn_str = '{}({}'.format(func.__name__, fn_args)
-                            log.warning('Error calling {}: {}; retrying in {}s'.format(fn_str, e, delay))
+                            groups = (map(repr, args), (f'{k}={v!r}' for k, v in kwargs.items()))
+                            fn_args = ', '.join(arg for group in groups for arg in group)
+                            log.warning(f'Error calling {func.__name__}({fn_args}): {e}; retrying in {delay}s')
                     else:
                         raise e
         return wrapper

@@ -5,15 +5,14 @@ Introspection utilities that build upon the built-in introspection module.
 """
 
 import re
-from collections import OrderedDict
 from contextlib import suppress
-from inspect import Signature, Parameter, _empty, stack, getsourcefile
+from inspect import Signature, Parameter, _empty, stack, getsourcefile  # noqa
 from pathlib import Path
 
 __all__ = ['arg_vals_with_defaults', 'split_arg_vals_with_defaults', 'insert_kwonly_arg', 'get_caller_script']
 
 
-def arg_vals_with_defaults(sig, *args, **kwargs):
+def arg_vals_with_defaults(sig: Signature, *args, **kwargs):
     """
     Assigns *args and **kwargs parameters to named variables based on the given signature.  Applies default values for
     parameters that were not given a value.
@@ -24,13 +23,13 @@ def arg_vals_with_defaults(sig, *args, **kwargs):
     For variable-positional arguments (*args), the default is an empty tuple.
     For variable-keyword arguments (**kwargs), the default is an empty dict.
 
-    :param Signature sig: The signature of the function the given args are for
+    :param sig: The signature of the function the given args are for
     :param args: Positional arguments explicitly provided for the function
     :param kwargs: Keyword args explicitly provided for the function
-    :return OrderedDict: Mapping of arg:value, including defaults from sig
+    :return: Mapping of arg:value, including defaults from sig
     """
     vals = sig.bind(*args, **kwargs).arguments
-    new_args = OrderedDict()
+    new_args = {}
     for name, param in sig.parameters.items():
         try:
             new_args[name] = vals[name]
@@ -58,7 +57,7 @@ def split_arg_vals_with_defaults(sig, *args, **kwargs):
     """
     vals = sig.bind(*args, **kwargs).arguments
     args_out = []
-    kwargs_out = OrderedDict()
+    kwargs_out = {}
     for name, param in sig.parameters.items():
         if param.kind == Parameter.VAR_KEYWORD:
             with suppress(KeyError):

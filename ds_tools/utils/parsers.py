@@ -6,12 +6,15 @@ Some old attempts at recursive descent parsers.
 
 import logging
 import re
-from collections import OrderedDict
 
 from .text_processing import chars_by_category
 
 __all__ = [
-    'Token', 'RecursiveDescentParser', 'UnexpectedTokenError', 'ParentheticalParser', 'ListBasedRecursiveDescentParser',
+    'Token',
+    'RecursiveDescentParser',
+    'UnexpectedTokenError',
+    'ParentheticalParser',
+    'ListBasedRecursiveDescentParser',
     'ParentheticalListParser',
 ]
 log = logging.getLogger(__name__)
@@ -25,8 +28,8 @@ class Token:
         self.value = value
         # log.debug('Found {!r}'.format(self))
 
-    def __repr__(self):
-        return '<{}({!r}:{!r})>'.format(type(self).__name__, self.type, self.value)
+    def __repr__(self) -> str:
+        return f'<{self.__class__.__name__}({self.type!r}:{self.value!r})>'
 
 
 class RecursiveDescentParser:
@@ -215,17 +218,17 @@ class ParentheticalListParser(RecursiveDescentParser):
     _nested_fmts = {'LPAREN': '({})', 'LBPAREN': '({})', 'LBRKT': '[{}]'}
     _content_tokens = ['TEXT', 'WS'] + [v for k, v in _opener2closer.items() if k != v]
     _req_preceders = ['WS'] + list(_opener2closer.values())
-    TOKENS = OrderedDict([
-        ('LPAREN', '\('),
-        ('RPAREN', '\)'),
-        ('LBPAREN', '（'),
-        ('RBPAREN', '）'),
-        ('LBRKT', '\['),
-        ('RBRKT', '\]'),
-        ('DELIM', '[,;]'),
-        ('WS', '\s+'),
-        ('TEXT', '[^,;()（）\[\]{}]+'.format(_all_whitespace())),
-    ])
+    TOKENS = {
+        'LPAREN': r'\(',
+        'RPAREN': r'\)',
+        'LBPAREN': '（',
+        'RBPAREN': '）',
+        'LBRKT': r'\[',
+        'RBRKT': r'\]',
+        'DELIM': '[,;]',
+        'WS': r'\s+',
+        'TEXT': fr'[^,;()（）\[\]{_all_whitespace()}]+',
+    }
 
     def __init__(self, require_preceder=True):
         self._require_preceder = require_preceder
@@ -304,18 +307,18 @@ class ParentheticalParser(RecursiveDescentParser):
     _content_tokens = ['TEXT', 'WS'] + [v for k, v in _opener2closer.items() if k != v]
     _req_preceders = ['WS'] + list(_opener2closer.values())
     _qmarks = '\"“'
-    TOKENS = OrderedDict([
-        ('QUOTE', '[{}]'.format(_qmarks)),
-        ('LPAREN', '\('),
-        ('RPAREN', '\)'),
-        ('LBPAREN', '（'),
-        ('RBPAREN', '）'),
-        ('LBRKT', '\['),
-        ('RBRKT', '\]'),
-        ('WS', '\s+'),
-        ('DASH', '[{}]'.format(chars_by_category('Pd') + '~')),
-        ('TEXT', '[^{}{}()（）\[\]{}]+'.format(chars_by_category('Pd') + '~', _qmarks, _all_whitespace())),
-    ])
+    TOKENS = {
+        'QUOTE': f'[{_qmarks}]',
+        'LPAREN': r'\(',
+        'RPAREN': r'\)',
+        'LBPAREN': '（',
+        'RBPAREN': '）',
+        'LBRKT': r'\[',
+        'RBRKT': r'\]',
+        'WS': r'\s+',
+        'DASH': '[{}]'.format(chars_by_category('Pd') + '~'),
+        'TEXT': r'[^{}{}()（）\[\]{}]+'.format(chars_by_category('Pd') + '~', _qmarks, _all_whitespace()),
+    }
 
     def __init__(self, selective_recombine=True, require_preceder=True):
         self._selective_recombine = selective_recombine
