@@ -4,8 +4,9 @@ Dry/normal run verb prefixes for user-facing log messages.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from enum import Enum
-from typing import Optional, Type, Union
+from typing import Optional, Type, Union, ContextManager
 
 __all__ = ['LoggingPrefix', 'Verb']
 
@@ -99,6 +100,21 @@ class LoggingPrefix:
             return getattr(self, verb)
         except AttributeError:
             raise KeyError(verb) from None
+
+    @contextmanager
+    def _temp_tense(self, tense: Tense) -> ContextManager[LoggingPrefix]:
+        old = self._tense
+        try:
+            self._tense = tense
+            yield self
+        finally:
+            self._tense = old
+
+    def past_tense(self) -> ContextManager[LoggingPrefix]:
+        return self._temp_tense(Tense.PAST)
+
+    def present_tense(self) -> ContextManager[LoggingPrefix]:
+        return self._temp_tense(Tense.PRESENT)
 
     add = Verb()
     create = Verb(drop_last=True)
