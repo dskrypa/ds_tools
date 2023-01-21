@@ -193,6 +193,7 @@ def get_user_temp_dir(*sub_dirs, mode: int = 0o777) -> Path:
     """
     On Windows, returns `~/AppData/Local/Temp` or a sub-directory named after the current user of another temporary
     directory.  On Linux, returns a sub-directory named after the current user in `/tmp`, `/var/tmp`, or `/usr/tmp`.
+
     :param sub_dirs: Child directories of the chosen directory to include/create
     :param mode: Permissions to set if the directory needs to be created (0o777 by default, which matches the default
       for :meth:`pathlib.Path.mkdir`)
@@ -203,7 +204,7 @@ def get_user_temp_dir(*sub_dirs, mode: int = 0o777) -> Path:
     if sub_dirs:
         path = path.joinpath(*sub_dirs)
     if not path.exists():
-        path.mkdir(mode=mode, parents=True)
+        path.mkdir(mode=mode, parents=True, exist_ok=True)
     return path
 
 

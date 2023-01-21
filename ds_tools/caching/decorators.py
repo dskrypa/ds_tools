@@ -1,5 +1,9 @@
 """
-An implementation of ``cached_property`` that
+This module contains an implementation of ``cached_property`` for which the default behavior is to not block concurrent
+access to the decorated method for separate instances of the class in which the method was defined.  The implementation
+in the stdlib ``functools`` module behaves the way this implementation does when ``block_all`` is True.
+
+Additional helpers are defined here for clearing the cached values so that they may be re-computed.
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ from threading import RLock
 from types import GenericAlias
 from typing import TypeVar, Union, Callable, Generic, MutableMapping, Collection, overload
 
-__all__ = ['CachedProperty', 'cached_property']
+__all__ = ['CachedProperty', 'cached_property', 'ClearableCachedProperty', 'ClearableCachedPropertyMixin']
 
 _NOT_FOUND = object()
 
@@ -149,6 +153,10 @@ def cached_property(
 
 
 class ClearableCachedProperty(ABC):
+    """
+    Intended to be extended by descriptors that cache their computed value in the object instance's ``__dict__`` when
+    that cached value can be safely deleted to trigger re-execution of the code that computes that value.
+    """
     __slots__ = ()
 
     @abstractmethod
@@ -157,13 +165,27 @@ class ClearableCachedProperty(ABC):
 
 
 class ClearableCachedPropertyMixin:
+    """
+    Mixin for classes containing :class:`ClearableCachedProperty` descriptors and/or methods decorated with
+    ``cached_property``.  Adds the :meth:`.clear_cached_properties` method to facilitate clearing all or specific
+    cached values.
+    """
+
     __slots__ = ()
 
     def clear_cached_properties(self, *names: str, skip: Collection[str] = None):
+        """
+        Purge the cached values for the cached properties with the specified names, or all cached properties that are
+        present in this class if no names are specified.  Properties that did not have a cached value are ignored.
+
+        :param names: The names of the cached properties to be cleared
+        :param skip: A collection of names of cached properties that should NOT be cleared
+        """
         clear_cached_properties(self, *names, skip=skip)
 
 
 def get_cached_property_names(obj) -> set[str]:
+    """Get the names of all cached properties that exist in the given object or class."""
     try:
         mro = type.mro(obj)
     except TypeError:
@@ -183,6 +205,14 @@ def _get_cached_property_names(obj, mro) -> set[str]:
 
 
 def clear_cached_properties(instance, *names: str, skip: Collection[str] = None):
+    """
+    Purge the cached values for the cached properties with the specified names, or all cached properties that are
+    present in the given object if no names are specified.  Properties that did not have a cached value are ignored.
+
+    :param instance: An object that contains cached properties
+    :param names: The names of the cached properties to be cleared
+    :param skip: A collection of names of cached properties that should NOT be cleared
+    """
     if not names:
         names = get_cached_property_names(instance.__class__)
     if skip:
