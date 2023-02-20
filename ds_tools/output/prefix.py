@@ -124,3 +124,4 @@ class LoggingPrefix:
     reset = Verb(double_last=True, past_participle='reset')
     run = Verb(double_last=True, past_participle='ran')
     save = Verb(drop_last=True)
+    update = Verb(drop_last=True)
