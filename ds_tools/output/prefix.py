@@ -120,6 +120,7 @@ class LoggingPrefix:
     create = Verb(drop_last=True)
     delete = Verb(drop_last=True)
     move = Verb(drop_last=True)
+    remove = Verb(drop_last=True)
     reset = Verb(double_last=True, past_participle='reset')
     run = Verb(double_last=True, past_participle='ran')
     save = Verb(drop_last=True)
