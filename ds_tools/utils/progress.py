@@ -5,17 +5,16 @@
 from itertools import cycle
 from time import monotonic
 
-from tz_aware_dt import format_duration
 from ..core.decorate import basic_coroutine
-from ..output import readable_bytes
+from ..output.formatting import readable_bytes, format_duration
 
 __all__ = ['progress_coroutine']
 
 
 @basic_coroutine
-def progress_coroutine(total, name, unit='parts', interval=0.3):
+def progress_coroutine(total: float, name: str, unit: str = 'parts', interval: float = 0.3):
     """Display progress"""
-    fmt = '\r{{:8}} {{:,.03f}} {}/s {{:>9}}/s {{:6.2%}} [{{:10}}] [{}] {}'.format(unit, total, name)
+    fmt = f'\r{{:8}} {{:,.03f}} {unit}/s {{:>9}}/s {{:6.2%}} [{{:10}}] [{total}] {name}'
     spinner = cycle('|/-\\')
     last_time, elapsed, item_rate, byte_rate, pct, total_bytes = 0, 0, 0, 0, 0, 0
     end = ''

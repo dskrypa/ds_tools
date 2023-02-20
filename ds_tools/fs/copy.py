@@ -22,8 +22,7 @@ from threading import Event
 from time import monotonic
 from typing import Union, BinaryIO, Optional
 
-from tz_aware_dt.utils import format_duration
-from ..output.formatting import readable_bytes
+from ..output.formatting import readable_bytes, format_duration
 from .hash import sha512sum
 from .paths import is_on_local_device, get_disk_partition
 

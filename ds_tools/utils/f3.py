@@ -16,13 +16,13 @@ from typing import Union, Iterator
 
 import cffi
 
-from tz_aware_dt import format_duration
-from ..output import readable_bytes, colored
+from ..output.color import colored
+from ..output.formatting import readable_bytes, format_duration
 
 __all__ = ['DEFAULT_CHUNK_SIZE', 'GB_BYTES', 'F3Data', 'F3Mode']
 log = logging.getLogger(__name__)
 
-GB_BYTES = 1073741824
+GB_BYTES = 1_073_741_824
 DEFAULT_CHUNK_SIZE = 1 << 21    # 2MB
 # DEFAULT_CHUNK_SIZE = DEFAULT_BUFFER_SIZE * 1024  # 8 MB  # 8MB seemed slower than 2MB
 
@@ -75,7 +75,7 @@ class F3Data:
         self.view = memoryview(self.buf)
         self.buffering = buffering
 
-    def iter_data(self, num: int) -> Iterator[memoryview]:
+    def iter_data(self, num: int) -> Iterator[bytearray]:
         size, chunk_size = self.size, self.chunk_size
         view, buf = self.view, self.buf
         offset = (num - 1) * size
