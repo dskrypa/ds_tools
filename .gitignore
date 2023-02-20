@@ -2,6 +2,8 @@ venv*/
 .idea/
 .vscode/
 __pycache__/
+out/
+temp/
 *.pyc
 *.egg-info
 .coverage
