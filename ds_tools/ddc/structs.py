@@ -6,16 +6,16 @@ Structs for VCP
 
 from __future__ import annotations
 
-import ctypes
-import sys
+from ctypes import Structure, sizeof, byref
 from enum import IntFlag
 from functools import cached_property
 from typing import TYPE_CHECKING
 
-if sys.platform == 'win32':
+try:
+    from ctypes import WinError, windll
     from ctypes.wintypes import DWORD, HANDLE, WCHAR, RECT
-else:
-    DWORD = HANDLE = WCHAR = RECT = None
+except ImportError:  # Not on Windows
+    DWORD = HANDLE = WCHAR = RECT = windll = WinError = None
 
 if TYPE_CHECKING:
     from ._windows import Adapter
@@ -23,17 +23,17 @@ if TYPE_CHECKING:
 __all__ = ['PhysicalMonitor', 'MC_VCP_CODE_TYPE', 'DisplayDevice', 'AdapterState', 'MonitorState', 'MonitorInfo']
 
 
-class PhysicalMonitor(ctypes.Structure):
+class PhysicalMonitor(Structure):
     _fields_ = [('handle', HANDLE), ('description', WCHAR * 128)]
     handle: HANDLE
     description: str
 
 
-class MC_VCP_CODE_TYPE(ctypes.Structure):
+class MC_VCP_CODE_TYPE(Structure):
     _fields_ = [('MC_MOMENTARY', DWORD), ('MC_SET_PARAMETER', DWORD)]
 
 
-class DisplayDevice(ctypes.Structure):
+class DisplayDevice(Structure):
     # Info source: https://docs.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-display_devicea
     adapter: Adapter | None
     _fields_ = [
@@ -47,7 +47,7 @@ class DisplayDevice(ctypes.Structure):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._struct_size = ctypes.sizeof(self)
+        self._struct_size = sizeof(self)
         self.adapter = None
 
     def __repr__(self) -> str:
@@ -63,7 +63,7 @@ class DisplayDevice(ctypes.Structure):
         return AdapterState(self.state_flags) if self.type == 'adapter' else MonitorState(self.state_flags)
 
 
-class MonitorInfo(ctypes.Structure):
+class MonitorInfo(Structure):
     """Technically a MONITORINFOEX structure due to the inclusion of the ``name`` field."""
     # Info source: https://docs.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-monitorinfo
     _fields_ = [
@@ -77,14 +77,14 @@ class MonitorInfo(ctypes.Structure):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._struct_size = ctypes.sizeof(self)
+        self._struct_size = sizeof(self)
         self.flags = 0x01  # MONITORINFOF_PRIMARY
 
     @classmethod
     def for_handle(cls, handle) -> MonitorInfo:
         self = cls()
-        if not ctypes.windll.user32.GetMonitorInfoW(handle, ctypes.byref(self)):
-            raise ctypes.WinError()
+        if not windll.user32.GetMonitorInfoW(handle, byref(self)):
+            raise WinError()
         return self
 
     def __repr__(self) -> str:
