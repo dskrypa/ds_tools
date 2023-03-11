@@ -2,26 +2,29 @@
 Originally based on `monitorcontrol.vcp.vcp_linux <https://github.com/newAM/monitorcontrol>`_
 """
 
-import ctypes
+from __future__ import annotations
+
 import logging
 import os
-import struct
-import sys
-import time
+from ctypes import Structure, addressof, create_string_buffer, c_ushort, c_uint, c_char_p, c_void_p
 from functools import cached_property, wraps, reduce
 from operator import xor
 from pathlib import Path
-from typing import Optional, Union, Callable, Any
+from struct import Struct, pack, unpack
+from time import sleep, monotonic
+from typing import TYPE_CHECKING, Optional, Callable, TypeVar, ParamSpec
 from weakref import finalize
 
-if sys.platform.startswith('linux'):
+try:
     import fcntl
-else:
+except ImportError:
     fcntl = None
 
 from .exceptions import VCPPermissionError, VCPIOError
-from .features import Feature
 from .vcp import VCP
+
+if TYPE_CHECKING:
+    from .features import FeatureOrId
 
 __all__ = ['LinuxVCP']
 log = logging.getLogger(__name__)
@@ -38,34 +41,34 @@ DDCCI_CHECK = 0x6E  # = 110 = DDCCI_ADDR << 1
 DELAY = 0.05
 # fmt: on
 
+T = TypeVar('T')
+P = ParamSpec('P')
 
-def rate_limited(method: Callable[..., Any]) -> Callable[..., Any]:
+
+def rate_limited(method: Callable[P, T]) -> Callable[P, T]:
     @wraps(method)
-    def wrapper(self: 'LinuxVCP', *args, **kwargs):
-        delay = self.last_write + DELAY - time.monotonic()  # Must wait at least 50 ms between messages
+    def wrapper(self: LinuxVCP, *args, **kwargs):
+        delay = self.last_write + DELAY - monotonic()  # Must wait at least 50 ms between messages
         if delay > 0:
             log.debug(f'Sleeping for {delay=} seconds')
-            time.sleep(delay)
+            sleep(delay)
 
         return method(self, *args, **kwargs)
 
     return wrapper
 
 
-class i2c_msg(ctypes.Structure):
-    _fields_ = [
-        ('addr', ctypes.c_ushort),
-        ('flags', ctypes.c_ushort),
-        ('len', ctypes.c_ushort),
-        ('buf', ctypes.c_char_p),
-    ]
+class i2c_msg(Structure):
+    _fields_ = [('addr', c_ushort), ('flags', c_ushort), ('len', c_ushort), ('buf', c_char_p)]
 
 
-class ioctl_data(ctypes.Structure):
-    _fields_ = [('msgs', ctypes.c_void_p), ('nmsgs', ctypes.c_uint)]
+class ioctl_data(Structure):
+    _fields_ = [('msgs', c_void_p), ('nmsgs', c_uint)]
 
 
 class VcpRequest:
+    __slots__ = ('name', 'req_code', 'resp_code')
+
     def __init__(self, name: str, req_code: int, resp_code: int):
         self.name = name
         self.req_code = req_code
@@ -85,14 +88,33 @@ class LinuxVCP(VCP, close_attr='_fd'):
         self.last_write = 0
         self.ignore_checksum_errors = ignore_checksum_errors
 
+    # region Initializers / Class Methods
+
     @classmethod
-    def for_id(cls, monitor_id: str) -> 'LinuxVCP':
+    def for_id(cls, monitor_id: str) -> LinuxVCP:
         raise NotImplementedError
+
+    @classmethod
+    def _get_monitors(cls, ignore_checksum_errors: bool = True) -> list[LinuxVCP]:
+        if not cls._monitors:
+            for path in Path('/dev').glob('i2c-*'):
+                vcp = cls(int(path.name.rsplit('-', 1)[1]), path.as_posix(), ignore_checksum_errors)
+                try:
+                    vcp._fd  # noqa
+                except (OSError, VCPIOError):
+                    pass
+                else:
+                    cls._monitors.append(vcp)
+        return cls._monitors
+
+    # endregion
+
+    # region Low-Level I2C Read/Write Methods
 
     @rate_limited
     def _i2c(self, buf, action: int, addr: int = DDCCI_ADDR):
-        msg = i2c_msg(addr, action, len(buf), ctypes.addressof(buf))
-        data = ioctl_data(ctypes.addressof(msg), 1)
+        msg = i2c_msg(addr, action, len(buf), addressof(buf))
+        data = ioctl_data(addressof(msg), 1)
         act_str = 'read' if action else 'write'
         log.debug(f'Sending I2C {act_str} request with {buf.raw=}')
         if action:
@@ -108,15 +130,15 @@ class LinuxVCP(VCP, close_attr='_fd'):
 
     def i2c_write(self, buf, addr: int = DDCCI_ADDR):
         self._i2c(buf, 0x00, addr)
-        self.last_write = time.monotonic()
+        self.last_write = monotonic()
 
     def i2c_read(self, length, addr: int = DDCCI_ADDR) -> bytes:
-        buf = ctypes.create_string_buffer(length)
+        buf = create_string_buffer(length)
         self._i2c(buf, 0x01, addr)
         return buf.raw
 
     def write(self, msg: bytes):
-        buf = ctypes.create_string_buffer(len(msg) + 3)
+        buf = create_string_buffer(len(msg) + 3)
         buf[0] = MAGIC_1
         buf[1] = MAGIC_2 | len(msg)
         buf[2:-1] = msg
@@ -135,14 +157,18 @@ class LinuxVCP(VCP, close_attr='_fd'):
             raise IOError(f'Checksum error for I2C response ({checksum=:02X}, full {resp=})')
         return resp[2:data_len + 2]
 
+    # endregion
+
+    # region Higher-Level I2C Methods
+
     def request(self, op: int, ctrl: int = 0x00, value: Optional[int] = None) -> Optional[tuple[int, int]]:
-        req = bytearray(struct.pack('BB', op, ctrl))
+        req = bytearray(pack('BB', op, ctrl))
         if value is not None:
-            req.extend(reversed(struct.pack('H', value)))
+            req.extend(reversed(pack('H', value)))
         self.write(req)
         if value is None:
             resp = self.read(8)
-            resp_code, result, resp_ctrl, vcp_type, max_value, current = struct.unpack(f'>BBBBHH', resp)
+            resp_code, result, resp_ctrl, vcp_type, max_value, current = unpack(f'>BBBBHH', resp)
             log.debug(f'Response: {locals()}')
             if resp_code != 0x02:
                 raise VCPIOError(f'Received unexpected response code: {resp_code}')
@@ -154,7 +180,7 @@ class LinuxVCP(VCP, close_attr='_fd'):
 
     def _get_str(self, req: VcpRequest, offset: int) -> bytes:
         log.debug(f'Requesting {req.name} with {offset=}')
-        header = struct.Struct('>BH')
+        header = Struct('>BH')
         self.write(header.pack(req.req_code, offset))
         resp = self.read(64)
         log.debug(f'Read {len(resp)} bytes: {resp}')
@@ -190,6 +216,8 @@ class LinuxVCP(VCP, close_attr='_fd'):
         result = buf.decode('utf-8')
         return result.rstrip('\x00')
 
+    # endregion
+
     @cached_property
     def capabilities(self) -> Optional[str]:
         return self.get_str(Capabilities)
@@ -198,21 +226,15 @@ class LinuxVCP(VCP, close_attr='_fd'):
     def description(self):
         return None
 
-    def save_settings(self):
-        pass
+    def set_feature_value(self, feature: FeatureOrId, value: int):
+        feature = self.get_feature(feature)
+        return self.request(0x03, feature.code, value)
 
-    @classmethod
-    def _get_monitors(cls, ignore_checksum_errors: bool = True) -> list['LinuxVCP']:
-        if not cls._monitors:
-            for path in Path('/dev').glob('i2c-*'):
-                vcp = cls(int(path.name.rsplit('-', 1)[1]), path.as_posix(), ignore_checksum_errors)
-                try:
-                    vcp._fd  # noqa
-                except (OSError, VCPIOError):
-                    pass
-                else:
-                    cls._monitors.append(vcp)
-        return cls._monitors
+    def get_feature_value(self, feature: FeatureOrId) -> tuple[int, int]:
+        feature = self.get_feature(feature)
+        return self.request(0x01, feature.code)
+
+    # region Low-Level Direct Read/Write Methods
 
     @cached_property
     def _fd(self) -> int:
@@ -238,31 +260,23 @@ class LinuxVCP(VCP, close_attr='_fd'):
         except OSError as e:
             raise VCPIOError(f'Unable to close {path}') from e
 
-    def set_feature_value(self, feature: Union[str, int, Feature], value: int):
-        feature = self.get_feature(feature)
-        return self.request(0x03, feature.code, value)
-
-    def get_feature_value(self, feature: Union[str, int, Feature]) -> tuple[int, int]:
-        feature = self.get_feature(feature)
-        return self.request(0x01, feature.code)
-
     def get_raw(self) -> bytes:
-        time.sleep(0.04)  # Must wait at least 40 ms
+        sleep(0.04)  # Must wait at least 40 ms
 
         header = self._read_bytes(2)
-        source, length = struct.unpack('BB', header)
+        source, length = unpack('BB', header)
         length &= ~0x80  # clear protocol flag
         return self._read_bytes(length + 1)
 
     def get_checked(self) -> bytes:
         header = self._read_bytes(2)
-        source, length = struct.unpack('BB', header)
+        source, length = unpack('BB', header)
         length &= ~0x80  # clear protocol flag
         log.debug(f'Received {header=} -> {source=:02X} {length=}')
         payload = self._read_bytes(length + 1)
         log.debug(f'Received {len(payload)} bytes in raw {payload=}')
 
-        payload, checksum = struct.unpack(f'{length}sB', payload)
+        payload, checksum = unpack(f'{length}sB', payload)
         if checksum_xor := checksum ^ get_checksum(header + payload):
             if self.ignore_checksum_errors:
                 log.warning(f'Checksum does not match: {checksum_xor}')
@@ -285,6 +299,11 @@ class LinuxVCP(VCP, close_attr='_fd'):
             os.write(self._fd, data)
         except OSError as e:
             raise VCPIOError('Unable write to I2C bus') from e
+
+    # endregion
+
+    def save_settings(self):
+        pass
 
 
 def get_checksum(data: bytes) -> int:
