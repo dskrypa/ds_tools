@@ -4,32 +4,37 @@ API for accessing / controlling a monitor's VCP (Virtual Control Panel).
 Originally based on `monitorcontrol <https://github.com/newAM/monitorcontrol>`_
 """
 
+from __future__ import annotations
+
 import logging
 import re
 from abc import ABC, abstractmethod
 from functools import cached_property
-from typing import Optional, Union, MutableSet, Collection
+from typing import Optional, Union, MutableSet, Collection, Type
 
 from ..core.mixins import Finalizable
 from ..core.patterns import FnMatcher
 from ..output.color import colored
 from .exceptions import VCPError
-from .features import Feature
+from .features import Feature, FeatureOrId
 
+__all__ = ['VCP']
 log = logging.getLogger(__name__)
 
 
 class VcpFeature:
+    __slots__ = ('code', 'name')
+
     def __init__(self, code: int):
         self.code = code
 
-    def __set_name__(self, owner, name):
+    def __set_name__(self, owner: Type[VCP], name: str):
         self.name = name
 
-    def __get__(self, instance: 'VCP', owner):
+    def __get__(self, instance: VCP, owner: Type[VCP]):
         return instance.get_feature_value(self.code)
 
-    def __set__(self, instance: 'VCP', value: int):
+    def __set__(self, instance: VCP, value: int):
         instance.set_feature_value(self.code, value)
 
 
@@ -39,11 +44,13 @@ class VCP(ABC, Finalizable):
     def __init__(self, n: int):
         self.n = n
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self.description}]>'
 
+    # region Class Methods
+
     @classmethod
-    def get_monitor(cls, monitor_id: Union[str, int]) -> 'VCP':
+    def get_monitor(cls, monitor_id: Union[str, int]) -> VCP:
         if isinstance(monitor_id, str) and monitor_id.isdigit():
             monitor_id = int(monitor_id)
         if isinstance(monitor_id, int):
@@ -51,7 +58,7 @@ class VCP(ABC, Finalizable):
         return cls.for_id(monitor_id)
 
     @classmethod
-    def get_monitors(cls, *id_patterns: Union[str, int, None]) -> set['VCP']:
+    def get_monitors(cls, *id_patterns: Union[str, int, None]) -> set[VCP]:
         all_monitors = cls._get_monitors()
         id_patterns = {i for i in id_patterns if i is not None}
         str_patterns = {i for i in id_patterns if isinstance(i, str)}
@@ -79,32 +86,36 @@ class VCP(ABC, Finalizable):
 
     @classmethod
     @abstractmethod
-    def for_id(cls, monitor_id: str) -> 'VCP':
-        return NotImplemented
+    def for_id(cls, monitor_id: str) -> VCP:
+        raise NotImplementedError
 
     @classmethod
     @abstractmethod
-    def _get_monitors(cls) -> list['VCP']:
-        return NotImplemented
+    def _get_monitors(cls) -> list[VCP]:
+        raise NotImplementedError
 
     @classmethod
     @abstractmethod
     def _close(cls, *args):
-        return NotImplemented
+        raise NotImplementedError
 
-    def __getitem__(self, feature: Union[str, int, Feature]):
+    # endregion
+
+    def __getitem__(self, feature: FeatureOrId):
         return self.get_feature_value(feature)
 
-    def __setitem__(self, feature: Union[str, int, Feature], value: int):
+    def __setitem__(self, feature: FeatureOrId, value: int):
         return self.set_feature_value(feature, value)
+
+    # region Informational Properties
 
     @property
     @abstractmethod
     def description(self):
-        return NotImplemented
+        raise NotImplementedError
 
+    @property
     @abstractmethod
-    @cached_property
     def capabilities(self) -> Optional[str]:
         """
         Example:
@@ -120,30 +131,34 @@ class VCP(ABC, Finalizable):
             mswhql(1)
         )
         """
-        return NotImplemented
+        raise NotImplementedError
 
     @cached_property
-    def info(self):
+    def info(self) -> dict[str, str]:
+        if not (capabilities := self.capabilities):
+            return {}
+
         info = {}
-        if self.capabilities:
-            for m in re.finditer(r'(([a-z_]+)\(([a-zA-Z0-9.]+|[0-9A-F(). ]+)\)|[A-Z]+)', self.capabilities):
-                brand, token, value = m.groups()
-                if not token and not value:
-                    info['brand'] = brand
-                else:
-                    info[token] = value
+        for m in re.finditer(r'(([a-z_]+)\(([a-zA-Z0-9.]+|[0-9A-F(). ]+)\)|[A-Z]+)', capabilities):
+            brand, token, value = m.groups()
+            if not token and not value:
+                info['brand'] = brand
+            else:
+                info[token] = value
 
         return info
 
     @cached_property
-    def type(self):
+    def type(self) -> Optional[str]:
         return self.info.get('type')
 
     @cached_property
-    def model(self):
+    def model(self) -> Optional[str]:
         return self.info.get('model')
 
-    def get_feature(self, feature: Union[str, int, Feature]) -> Feature:
+    # endregion
+
+    def get_feature(self, feature: FeatureOrId) -> Feature:
         if isinstance(feature, Feature):
             return feature
         elif isinstance(feature, int):
@@ -156,13 +171,13 @@ class VCP(ABC, Finalizable):
             except ValueError:
                 raise ValueError(f'Invalid VCP feature: {feature!r}')
 
-    def get_feature_value_name(self, feature: Union[str, int, Feature], value: int, default: Optional[str] = None):
+    def get_feature_value_name(self, feature: FeatureOrId, value: int, default: Optional[str] = None):
         try:
             return self.get_feature(feature).value_names.get(value, default)
         except KeyError:
             return default
 
-    def normalize_feature_value(self, feature: Union[str, int, Feature], value: Union[str, int]) -> int:
+    def normalize_feature_value(self, feature: FeatureOrId, value: Union[str, int]) -> int:
         try:
             return int(value, 16)
         except ValueError:
@@ -185,13 +200,7 @@ class VCP(ABC, Finalizable):
 
         return supported
 
-    def feature_value_map(self, feature: Union[str, int, Feature]):
-        try:
-            return self.get_feature(feature).value_names
-        except (KeyError, ValueError):
-            return {}
-
-    def get_supported_values(self, feature: Union[str, int, Feature]) -> dict[str, str]:
+    def get_supported_values(self, feature: FeatureOrId) -> dict[str, str]:
         feature = self.get_feature(feature)
         if int_values := self.supported_vcp_values.get(feature):
             val_name_map = feature.value_names
@@ -200,29 +209,26 @@ class VCP(ABC, Finalizable):
             return {}
 
     @abstractmethod
-    def set_feature_value(self, feature: Union[str, int, Feature], value: int):
-        """
-        Sets the value of a feature on the virtual control panel.
-
-        :param feature: Feature code
-        :param value: Feature value
-        """
-        return NotImplemented
-
-    def save_settings(self):
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_feature_value(self, feature: Union[str, int, Feature]) -> tuple[int, int]:
+    def get_feature_value(self, feature: FeatureOrId) -> tuple[int, int]:
         """
         Gets the value of a feature from the virtual control panel.
 
         :param feature: Feature code
         :return: Tuple of the current value, and its maximum value
         """
-        return NotImplemented
+        raise NotImplementedError
 
-    def get_feature_value_with_names(self, feature: Union[str, int, Feature]):
+    @abstractmethod
+    def set_feature_value(self, feature: FeatureOrId, value: int):
+        """
+        Sets the value of a feature on the virtual control panel.
+
+        :param feature: Feature code
+        :param value: Feature value
+        """
+        raise NotImplementedError
+
+    def get_feature_value_with_names(self, feature: FeatureOrId):
         feat_obj = self.get_feature(feature)
         current, max_val = self.get_feature_value(feat_obj.code)
         cur_name = self.get_feature_value_name(feat_obj, current)
@@ -243,11 +249,14 @@ class VCP(ABC, Finalizable):
             else:
                 if feature.hide_extras:
                     values = {current}
-                else:
-                    if current not in values:
-                        values.add(current)
+                elif current not in values:
+                    values.add(current)
 
                 print(f'    {feature}:')
                 for value in sorted(values):
                     line = f'        0x{value:02X} ({feature.name_for(value, "UNKNOWN")})'
                     print(colored(line, 14) if value == current else line)
+
+    @abstractmethod
+    def save_settings(self):
+        raise NotImplementedError

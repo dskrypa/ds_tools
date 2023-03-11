@@ -12,22 +12,29 @@ Additional potentially interesting things that are potentially available via cty
 _notes/{dll_name}.txt
 """
 
-import ctypes
+from __future__ import annotations
+
 import logging
-import sys
+from ctypes import POINTER, c_bool, c_char, byref
 from functools import cached_property
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Iterator
 from weakref import finalize
 
-if sys.platform == 'win32':
+try:
+    from ctypes import WinError, WINFUNCTYPE, windll
     from ctypes.wintypes import DWORD, RECT, BOOL, HMONITOR, HDC, LPARAM, HANDLE, BYTE
+except ImportError:  # Not on Windows
+    WinError = WINFUNCTYPE = windll = dxva2 = user32 = None
+    DWORD = RECT = BOOL = HMONITOR = HDC = LPARAM = HANDLE = BYTE = None
 else:
-    DWORD, RECT, BOOL, HMONITOR, HDC, LPARAM, HANDLE, BYTE = (None,) * 8
+    dxva2, user32 = windll.dxva2, windll.user32
 
 from .exceptions import VCPError
-from .features import Feature
 from .structs import PhysicalMonitor, MC_VCP_CODE_TYPE, DisplayDevice, MonitorState, MonitorInfo
 from .vcp import VCP
+
+if TYPE_CHECKING:
+    from .features import FeatureOrId
 
 __all__ = ['WindowsVCP']
 log = logging.getLogger(__name__)
@@ -49,11 +56,11 @@ class WindowsVCP(VCP, close_attr='_monitor'):
         self._hmonitor = hmonitor
         self.device = device
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self.description!r}, hmonitor={self._hmonitor.value}]>'
 
     @classmethod
-    def for_id(cls, monitor_id: str) -> 'WindowsVCP':
+    def for_id(cls, monitor_id: str) -> WindowsVCP:
         """
         Truncated :class:`DisplayDevice<ds_tools.ddc.structs.DisplayDevice>` reprs showing example ID values::
             <DisplayDevice[name='\\\\.\\DISPLAY1\\Monitor0' description='CRG9_C49RG9xSS (DP)' id='MONITOR\\SAM0F9C\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0002']>
@@ -80,23 +87,9 @@ class WindowsVCP(VCP, close_attr='_monitor'):
         raise ValueError(f'Invalid {monitor_id=} - found no matches')
 
     @classmethod
-    def _get_monitors(cls) -> list['WindowsVCP']:
+    def _get_monitors(cls) -> list[WindowsVCP]:
         if not cls._monitors:
-            hmonitors = []
-
-            def _callback(hmonitor, hdc, lprect, lparam):
-                hmonitors.append(HMONITOR(hmonitor))
-                del hmonitor, hdc, lprect, lparam
-                return True  # continue enumeration
-
-            try:
-                callback = ctypes.WINFUNCTYPE(BOOL, HMONITOR, HDC, ctypes.POINTER(RECT), LPARAM)(_callback)
-                if not ctypes.windll.user32.EnumDisplayMonitors(0, 0, callback, 0):
-                    raise ctypes.WinError()
-            except OSError as e:
-                raise VCPError('Failed to enumerate VCPs') from e
-
-            handles = {MonitorInfo.for_handle(hmonitor).name: hmonitor for hmonitor in hmonitors}
+            handles = {info.name: hmonitor for info, hmonitor in get_monitor_info_and_handles()}
             displays = {dev.adapter.dev.name: dev for dev in get_active_monitors()}
             cls._monitors = {
                 mon.id.upper(): WindowsVCP(n, handles[adapter_id], mon)
@@ -107,21 +100,19 @@ class WindowsVCP(VCP, close_attr='_monitor'):
         return list(cls._monitors.values())
 
     @classmethod
-    def _close(cls, monitor: 'PhysicalMonitor'):
+    def _close(cls, monitor: PhysicalMonitor):
         """Close the handle, if it exists"""
         try:
-            ctypes.windll.dxva2.DestroyPhysicalMonitor(monitor.handle)
+            dxva2.DestroyPhysicalMonitor(monitor.handle)
         except OSError as e:
             raise VCPError('Failed to close handle') from e
 
     @cached_property
-    def _monitor(self) -> 'PhysicalMonitor':
+    def _monitor(self) -> PhysicalMonitor:
         num_physical = DWORD()
         try:
-            if not ctypes.windll.dxva2.GetNumberOfPhysicalMonitorsFromHMONITOR(
-                self._hmonitor, ctypes.byref(num_physical)
-            ):
-                raise ctypes.WinError()
+            if not dxva2.GetNumberOfPhysicalMonitorsFromHMONITOR(self._hmonitor, byref(num_physical)):
+                raise WinError()
         except OSError as e:
             raise VCPError('Windows API call failed') from e
 
@@ -131,10 +122,8 @@ class WindowsVCP(VCP, close_attr='_monitor'):
 
         physical_monitors = (PhysicalMonitor * num_physical.value)()
         try:
-            if not ctypes.windll.dxva2.GetPhysicalMonitorsFromHMONITOR(
-                self._hmonitor, num_physical.value, physical_monitors
-            ):
-                raise ctypes.WinError()
+            if not dxva2.GetPhysicalMonitorsFromHMONITOR(self._hmonitor, num_physical.value, physical_monitors):
+                raise WinError()
         except OSError as e:
             raise VCPError('Failed to open physical monitor handle') from e
 
@@ -143,11 +132,11 @@ class WindowsVCP(VCP, close_attr='_monitor'):
         return monitor
 
     @property
-    def handle(self):
+    def handle(self) -> HANDLE:
         return self._monitor.handle
 
     @property
-    def description(self):
+    def description(self) -> str:
         return self._monitor.description
 
     @cached_property
@@ -167,17 +156,17 @@ class WindowsVCP(VCP, close_attr='_monitor'):
         )
         """
         cap_len = DWORD()
-        if not ctypes.windll.dxva2.GetCapabilitiesStringLength(self.handle, ctypes.byref(cap_len)):
-            raise ctypes.WinError()
+        if not dxva2.GetCapabilitiesStringLength(self.handle, byref(cap_len)):
+            raise WinError()
 
-        caps_string = (ctypes.c_char * cap_len.value)()
-        if not ctypes.windll.dxva2.CapabilitiesRequestAndCapabilitiesReply(self.handle, caps_string, cap_len):
-            log.error(ctypes.WinError())
+        caps_string = (c_char * cap_len.value)()
+        if not dxva2.CapabilitiesRequestAndCapabilitiesReply(self.handle, caps_string, cap_len):
+            log.error(WinError())
             return None
 
         return caps_string.value.decode('ASCII')
 
-    def set_feature_value(self, feature: Union[str, int, Feature], value: int):
+    def set_feature_value(self, feature: FeatureOrId, value: int):
         """
         Sets the value of a feature on the virtual control panel.
 
@@ -186,19 +175,19 @@ class WindowsVCP(VCP, close_attr='_monitor'):
         """
         feature = self.get_feature(feature)
         try:
-            if not ctypes.windll.dxva2.SetVCPFeature(self.handle, BYTE(feature.code), DWORD(value)):
-                raise ctypes.WinError()
+            if not dxva2.SetVCPFeature(self.handle, BYTE(feature.code), DWORD(value)):
+                raise WinError()
         except OSError as e:
             raise VCPError(f'Error setting VCP {feature=!r} to {value=!r}: {e}') from e
 
     def save_settings(self):
         try:
-            if not ctypes.windll.dxva2.SaveCurrentMonitorSettings(self.handle):
-                raise ctypes.WinError()
+            if not dxva2.SaveCurrentMonitorSettings(self.handle):
+                raise WinError()
         except OSError as e:
             raise VCPError('Error saving current settings') from e
 
-    def get_feature_value(self, feature: Union[str, int, Feature]) -> tuple[int, int]:
+    def get_feature_value(self, feature: FeatureOrId) -> tuple[int, int]:
         """
         Gets the value of a feature from the virtual control panel.
 
@@ -210,14 +199,14 @@ class WindowsVCP(VCP, close_attr='_monitor'):
         feature_max = DWORD()
         code_type = MC_VCP_CODE_TYPE()
         try:
-            if not ctypes.windll.dxva2.GetVCPFeatureAndVCPFeatureReply(
+            if not dxva2.GetVCPFeatureAndVCPFeatureReply(
                 HANDLE(self.handle),
                 BYTE(feature.code),
-                ctypes.byref(code_type),
-                ctypes.byref(feature_current),
-                ctypes.byref(feature_max),
+                byref(code_type),
+                byref(feature_current),
+                byref(feature_max),
             ):
-                raise ctypes.WinError()
+                raise WinError()
         except OSError as e:
             raise VCPError(f'Error getting VCP {feature=!r}: {e}') from e
 
@@ -226,31 +215,57 @@ class WindowsVCP(VCP, close_attr='_monitor'):
 
 
 class Adapter:
+    __slots__ = ('n', 'dev', 'monitors')
+    monitors: list[DisplayDevice]
+
     def __init__(self, n: int, dev: DisplayDevice):
         self.n = n
         self.dev = dev
         self.monitors = []
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             f'<Adapter#{self.n}[name={self.dev.name!r} description={self.dev.description!r}'
             f' state={self.dev.state!r} id={self.dev.id!r} key={self.dev.key!r}]>'
         )
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[DisplayDevice]:
         yield from self.monitors
 
 
-def get_display_devices():
-    enum_display_devices = ctypes.windll.user32.EnumDisplayDevicesW
-    enum_display_devices.restype = ctypes.c_bool
+def get_monitor_info_and_handles() -> list[tuple[MonitorInfo, HMONITOR]]:
+    monitor_handles = _get_monitor_handles()
+    return [(MonitorInfo.for_handle(hmonitor), hmonitor) for hmonitor in monitor_handles]
+
+
+def _get_monitor_handles() -> list[HMONITOR]:
+    hmonitors = []
+
+    def _callback(hmonitor, hdc, lprect, lparam):
+        hmonitors.append(HMONITOR(hmonitor))
+        del hmonitor, hdc, lprect, lparam
+        return True  # continue enumeration
+
+    try:
+        callback = WINFUNCTYPE(BOOL, HMONITOR, HDC, POINTER(RECT), LPARAM)(_callback)
+        if not user32.EnumDisplayMonitors(0, 0, callback, 0):
+            raise WinError()
+    except OSError as e:
+        raise VCPError('Failed to enumerate VCPs') from e
+
+    return hmonitors
+
+
+def get_display_devices() -> list[Adapter]:
+    enum_display_devices = user32.EnumDisplayDevicesW
+    enum_display_devices.restype = c_bool
     adapters = []
     a = 0
-    while enum_display_devices(None, a, ctypes.byref(adapter_dev := DisplayDevice()), 0):
+    while enum_display_devices(None, a, byref(adapter_dev := DisplayDevice()), 0):
         adapter = Adapter(a, adapter_dev)
         adapter_dev.adapter = adapter_dev
         adapters.append(adapter)
-        while enum_display_devices(adapter_dev.name, len(adapter.monitors), ctypes.byref(dev := DisplayDevice()), 0):
+        while enum_display_devices(adapter_dev.name, len(adapter.monitors), byref(dev := DisplayDevice()), 0):
             dev.adapter = adapter
             adapter.monitors.append(dev)
         a += 1
@@ -258,5 +273,5 @@ def get_display_devices():
     return adapters
 
 
-def get_active_monitors():
+def get_active_monitors() -> list[DisplayDevice]:
     return [mon for adapter in get_display_devices() for mon in adapter if mon.state & MonitorState.ACTIVE]

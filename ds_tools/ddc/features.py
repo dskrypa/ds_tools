@@ -6,8 +6,12 @@ Alternate versions of feature code:name maps based on mccs version are not suppo
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 from functools import cached_property
-from typing import Dict, Optional, Union
+from typing import Optional, Union, TypeVar
+
+T = TypeVar('T')
 
 
 class Feature:
@@ -17,10 +21,11 @@ class Feature:
     code: int
     name: str
     model: Optional[str] = None
-    value_names: Dict[int, Optional[str]]
+    value_names: dict[int, Optional[str]]
     hide_extras = False
 
-    def __init_subclass__(cls, code: int, name: str):  # noqa
+    def __init_subclass__(cls, code: int, name: str, **kwargs):  # noqa
+        super().__init_subclass__(**kwargs)
         cls.code = code
         cls.name = name
         cls._code_feat_map[code] = cls
@@ -44,27 +49,27 @@ class Feature:
             model_inst_map[model] = inst = super().__new__(cls)
             return inst
 
-    def __init__(self, model: Optional[str] = None, value_names: Optional[Dict[int, Optional[str]]] = None):
+    def __init__(self, model: Optional[str] = None, value_names: Optional[dict[int, Optional[str]]] = None):
         if value_names:
             self.model = model
             self.value_names = value_names
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         if self.model:
             return f'<{self.__class__.__name__}[0x{self.code:02X} / {self.name} for {self.model}]>'
         return f'<{self.__class__.__name__}[0x{self.code:02X} / {self.name}]>'
 
-    def __eq__(self, other: 'Feature') -> bool:
+    def __hash__(self) -> int:
+        return hash(self.code) ^ hash(self.__class__)
+
+    def __eq__(self, other: Feature) -> bool:
         return self.code == other.code
 
-    def __hash__(self):
-        return hash(self.code)
-
-    def __lt__(self, other: 'Feature'):
+    def __lt__(self, other: Feature) -> bool:
         return self.code < other.code
 
     @classmethod
-    def for_code(cls, code: Union[str, int], model: Optional[str] = None) -> 'Feature':
+    def for_code(cls, code: Union[str, int], model: Optional[str] = None) -> Feature:
         try:
             return cls._code_feat_map[code](model)
         except KeyError:
@@ -79,18 +84,21 @@ class Feature:
             return UnknownFeature()
 
     @classmethod
-    def for_name(cls, name: str, model: Optional[str] = None) -> 'Feature':
+    def for_name(cls, name: str, model: Optional[str] = None) -> Feature:
         return cls._name_feat_map[name](model)
 
     @cached_property
-    def name_value_map(self):
+    def name_value_map(self) -> dict[str, int]:
         return {v: k for k, v in self.value_names.items()}
 
     def code_for(self, str_value: str) -> int:
         return self.name_value_map[str_value]
 
-    def name_for(self, code: int, default=None) -> str:
+    def name_for(self, code: int, default: T = None) -> str | T:
         return self.value_names.get(code, default)
+
+
+FeatureOrId = Union[str, int, Feature]
 
 
 class InputSource(Feature, code=0x60, name='input'):
