@@ -15,7 +15,7 @@ _notes/{dll_name}.txt
 from __future__ import annotations
 
 import logging
-from ctypes import POINTER, c_bool, c_char, byref
+from ctypes import POINTER, c_bool, byref
 from functools import cached_property
 from typing import TYPE_CHECKING, Optional, Iterator
 from weakref import finalize
@@ -57,7 +57,7 @@ class WindowsVCP(VCP, close_attr='_monitor'):
         self.device = device
 
     def __repr__(self) -> str:
-        return f'<{self.__class__.__name__}[{self.description!r}, hmonitor={self._hmonitor}]>'
+        return f'<{self.__class__.__name__}[{self.n}][{self.description!r}, hmonitor={self._hmonitor}]>'
 
     @classmethod
     def for_id(cls, monitor_id: str) -> WindowsVCP:
@@ -97,43 +97,18 @@ class WindowsVCP(VCP, close_attr='_monitor'):
                 if (mon := displays[adapter_id])
             }
 
-        return list(cls._monitors.values())
+        return sorted(cls._monitors.values())
 
     @classmethod
     def _close(cls, monitor: PhysicalMonitor):
         """Close the handle, if it exists"""
-        try:
-            dxva2.DestroyPhysicalMonitor(monitor.handle)
-        except OSError as e:
-            raise VCPError('Failed to close handle') from e
+        monitor.close()
 
     @cached_property
     def _monitor(self) -> PhysicalMonitor:
-        num_physical = DWORD()
-        try:
-            if not dxva2.GetNumberOfPhysicalMonitorsFromHMONITOR(self._hmonitor, byref(num_physical)):
-                raise WinError()
-        except OSError as e:
-            raise VCPError('Windows API call failed') from e
-
-        if num_physical.value != 1:
-            # The Windows API does not allow opening and closing of individual physical monitors without their hmonitors
-            raise VCPError(f'Found {num_physical.value} physical monitors for hmonitor={self._hmonitor}')
-
-        physical_monitors = (PhysicalMonitor * num_physical.value)()
-        try:
-            if not dxva2.GetPhysicalMonitorsFromHMONITOR(self._hmonitor, num_physical.value, physical_monitors):
-                raise WinError()
-        except OSError as e:
-            raise VCPError('Failed to open physical monitor handle') from e
-
-        monitor = physical_monitors[0]
+        monitor = PhysicalMonitor.for_handle(self._hmonitor)
         self._finalizer = finalize(self, self._close, monitor)
         return monitor
-
-    @property
-    def handle(self) -> HANDLE:
-        return self._monitor.handle
 
     @property
     def description(self) -> str:
@@ -155,16 +130,11 @@ class WindowsVCP(VCP, close_attr='_monitor'):
             mswhql(1)
         )
         """
-        cap_len = DWORD()
-        if not dxva2.GetCapabilitiesStringLength(self.handle, byref(cap_len)):
-            raise WinError()
-
-        caps_string = (c_char * cap_len.value)()
-        if not dxva2.CapabilitiesRequestAndCapabilitiesReply(self.handle, caps_string, cap_len):
-            log.error(WinError())
+        try:
+            return self._monitor.get_capabilities()
+        except OSError as e:
+            log.error(e)
             return None
-
-        return caps_string.value.decode('ASCII')
 
     def set_feature_value(self, feature: FeatureOrId, value: int):
         """
@@ -175,15 +145,14 @@ class WindowsVCP(VCP, close_attr='_monitor'):
         """
         feature = self.get_feature(feature)
         try:
-            if not dxva2.SetVCPFeature(self.handle, BYTE(feature.code), DWORD(value)):
+            if not dxva2.SetVCPFeature(self._monitor.handle, BYTE(feature.code), DWORD(value)):
                 raise WinError()
         except OSError as e:
             raise VCPError(f'Error setting VCP {feature=!r} to {value=!r}: {e}') from e
 
     def save_settings(self):
         try:
-            if not dxva2.SaveCurrentMonitorSettings(self.handle):
-                raise WinError()
+            self._monitor.save_settings()
         except OSError as e:
             raise VCPError('Error saving current settings') from e
 
@@ -200,7 +169,7 @@ class WindowsVCP(VCP, close_attr='_monitor'):
         code_type = MC_VCP_CODE_TYPE()
         try:
             if not dxva2.GetVCPFeatureAndVCPFeatureReply(
-                HANDLE(self.handle),
+                self._monitor.handle,
                 BYTE(feature.code),
                 byref(code_type),
                 byref(feature_current),
@@ -234,14 +203,9 @@ class Adapter:
 
 
 def get_monitor_info_and_handles() -> list[tuple[MonitorInfo, HMONITOR]]:
-    monitor_handles = _get_monitor_handles()
-    return [(MonitorInfo.for_handle(hmonitor), hmonitor) for hmonitor in monitor_handles]
-
-
-def _get_monitor_handles() -> list[HMONITOR]:
     handles = []
 
-    def _callback(handle: HMONITOR, hdc: HDC, rect: LPRECT, data: LPARAM):
+    def _callback(handle: HMONITOR, dev_ctx_handle: HDC, rect: LPRECT, data: LPARAM):
         handles.append(handle)
         return True  # continue enumeration
 
@@ -252,7 +216,7 @@ def _get_monitor_handles() -> list[HMONITOR]:
     except OSError as e:
         raise VCPError('Failed to enumerate VCPs') from e
 
-    return handles
+    return [(MonitorInfo.for_handle(hmonitor), hmonitor) for hmonitor in handles]
 
 
 def get_display_devices() -> list[Adapter]:

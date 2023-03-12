@@ -58,12 +58,12 @@ class VCP(ABC, Finalizable):
         return cls.for_id(monitor_id)
 
     @classmethod
-    def get_monitors(cls, *id_patterns: Union[str, int, None]) -> set[VCP]:
+    def get_monitors(cls, *id_patterns: Union[str, int, None]) -> list[VCP]:
         all_monitors = cls._get_monitors()
         id_patterns = {i for i in id_patterns if i is not None}
         str_patterns = {i for i in id_patterns if isinstance(i, str)}
         if not id_patterns or '*' in str_patterns or 'ALL' in str_patterns:
-            return set(all_monitors)
+            return sorted(all_monitors)
 
         nums = {i for i in id_patterns if isinstance(i, int)}
         for i in id_patterns:
@@ -82,7 +82,7 @@ class VCP(ABC, Finalizable):
                 monitors.update(mon for mon_id, mon in id_mon_map.items() if any(pat in mon_id for pat in id_patterns))
         if nums:
             monitors.update(monitor for i, monitor in enumerate(all_monitors) if i in nums)
-        return monitors
+        return sorted(monitors)
 
     @classmethod
     @abstractmethod
@@ -106,6 +106,15 @@ class VCP(ABC, Finalizable):
 
     def __setitem__(self, feature: FeatureOrId, value: int):
         return self.set_feature_value(feature, value)
+
+    def __hash__(self) -> int:
+        return hash(self.__class__) ^ hash(self.n)
+
+    def __eq__(self, other: VCP) -> bool:
+        return self is other
+
+    def __lt__(self, other: VCP) -> bool:
+        return self.n < other.n
 
     # region Informational Properties
 

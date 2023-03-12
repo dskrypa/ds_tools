@@ -6,16 +6,20 @@ Structs for VCP
 
 from __future__ import annotations
 
-from ctypes import Structure, sizeof, byref
+from ctypes import Structure, sizeof, byref, c_char
 from enum import IntFlag
 from functools import cached_property
 from typing import TYPE_CHECKING
 
 try:
     from ctypes import WinError, windll
-    from ctypes.wintypes import DWORD, HANDLE, WCHAR, RECT
+    from ctypes.wintypes import DWORD, HANDLE, WCHAR, RECT, HMONITOR
 except ImportError:  # Not on Windows
-    DWORD = HANDLE = WCHAR = RECT = windll = WinError = None
+    DWORD = HANDLE = WCHAR = RECT = HMONITOR = windll = WinError = dxva2 = user32 = None
+else:
+    dxva2, user32 = windll.dxva2, windll.user32
+
+from .exceptions import VCPError
 
 if TYPE_CHECKING:
     from ._windows import Adapter
@@ -27,6 +31,56 @@ class PhysicalMonitor(Structure):
     _fields_ = [('handle', HANDLE), ('description', WCHAR * 128)]
     handle: HANDLE
     description: str
+
+    @classmethod
+    def count(cls, handle: HMONITOR) -> int:
+        num_physical = DWORD()
+        try:
+            if not dxva2.GetNumberOfPhysicalMonitorsFromHMONITOR(handle, byref(num_physical)):
+                raise WinError()
+        except OSError as e:
+            raise VCPError('Windows API call failed') from e
+
+        if (count := num_physical.value) != 1:
+            # The Windows API does not allow opening and closing of individual physical monitors without their handles
+            raise VCPError(f'Found unexpected {count=} physical monitors for hmonitor={handle}')
+        return count
+
+    @classmethod
+    def for_handle(cls, handle: HMONITOR) -> PhysicalMonitor:
+        count = cls.count(handle)
+        physical_monitors = (PhysicalMonitor * count)()
+        try:
+            if not dxva2.GetPhysicalMonitorsFromHMONITOR(handle, count, physical_monitors):
+                raise WinError()
+        except OSError as e:
+            raise VCPError('Failed to open physical monitor handle') from e
+        return physical_monitors[0]  # There is only ever one item in the list due to the count == 1 check
+
+    def __repr__(self) -> str:
+        handle, description = self.handle, self.description
+        return f'<{self.__class__.__name__}[{handle=}, {description=}]>'
+
+    def get_capabilities(self) -> str:
+        cap_len = DWORD()
+        if not dxva2.GetCapabilitiesStringLength(self.handle, byref(cap_len)):
+            raise WinError()
+
+        caps_string = (c_char * cap_len.value)()
+        if not dxva2.CapabilitiesRequestAndCapabilitiesReply(self.handle, caps_string, cap_len):
+            raise WinError()
+
+        return caps_string.value.decode('ASCII')
+
+    def save_settings(self):
+        if not dxva2.SaveCurrentMonitorSettings(self.handle):
+            raise WinError()
+
+    def close(self):
+        try:
+            dxva2.DestroyPhysicalMonitor(self.handle)
+        except OSError as e:
+            raise VCPError('Failed to close handle') from e
 
 
 class MC_VCP_CODE_TYPE(Structure):
@@ -44,6 +98,11 @@ class DisplayDevice(Structure):
         ('id', WCHAR * 128),
         ('key', WCHAR * 128),
     ]
+    name: str           # Follows this format: \\\\.\\DISPLAY##\\Monitor0
+    description: str    # Description that includes brand or model and a brief summary of connector (HDMI / DP / etc)
+    state_flags: int    # Bit-packed flags for AdapterState / MonitorState
+    id: str             # Includes something related to device model, and a guid
+    key: str            # Path to the registry key related to this device
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -81,9 +140,9 @@ class MonitorInfo(Structure):
         self.flags = 0x01  # MONITORINFOF_PRIMARY
 
     @classmethod
-    def for_handle(cls, handle) -> MonitorInfo:
+    def for_handle(cls, handle: HMONITOR) -> MonitorInfo:
         self = cls()
-        if not windll.user32.GetMonitorInfoW(handle, byref(self)):
+        if not user32.GetMonitorInfoW(handle, byref(self)):
             raise WinError()
         return self
 
