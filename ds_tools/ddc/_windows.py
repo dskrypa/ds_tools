@@ -22,10 +22,10 @@ from weakref import finalize
 
 try:
     from ctypes import WinError, WINFUNCTYPE, windll
-    from ctypes.wintypes import DWORD, RECT, BOOL, HMONITOR, HDC, LPARAM, HANDLE, BYTE
+    from ctypes.wintypes import DWORD, RECT, BOOL, HMONITOR, HDC, LPARAM, HANDLE, BYTE, LPRECT
 except ImportError:  # Not on Windows
     WinError = WINFUNCTYPE = windll = dxva2 = user32 = None
-    DWORD = RECT = BOOL = HMONITOR = HDC = LPARAM = HANDLE = BYTE = None
+    DWORD = RECT = BOOL = HMONITOR = HDC = LPARAM = HANDLE = BYTE = LPRECT = None
 else:
     dxva2, user32 = windll.dxva2, windll.user32
 
@@ -57,7 +57,7 @@ class WindowsVCP(VCP, close_attr='_monitor'):
         self.device = device
 
     def __repr__(self) -> str:
-        return f'<{self.__class__.__name__}[{self.description!r}, hmonitor={self._hmonitor.value}]>'
+        return f'<{self.__class__.__name__}[{self.description!r}, hmonitor={self._hmonitor}]>'
 
     @classmethod
     def for_id(cls, monitor_id: str) -> WindowsVCP:
@@ -239,11 +239,10 @@ def get_monitor_info_and_handles() -> list[tuple[MonitorInfo, HMONITOR]]:
 
 
 def _get_monitor_handles() -> list[HMONITOR]:
-    hmonitors = []
+    handles = []
 
-    def _callback(hmonitor, hdc, lprect, lparam):
-        hmonitors.append(HMONITOR(hmonitor))
-        del hmonitor, hdc, lprect, lparam
+    def _callback(handle: HMONITOR, hdc: HDC, rect: LPRECT, data: LPARAM):
+        handles.append(handle)
         return True  # continue enumeration
 
     try:
@@ -253,7 +252,7 @@ def _get_monitor_handles() -> list[HMONITOR]:
     except OSError as e:
         raise VCPError('Failed to enumerate VCPs') from e
 
-    return hmonitors
+    return handles
 
 
 def get_display_devices() -> list[Adapter]:
