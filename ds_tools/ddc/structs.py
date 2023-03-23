@@ -33,10 +33,10 @@ class PhysicalMonitor(Structure):
     description: str
 
     @classmethod
-    def count(cls, handle: HMONITOR) -> int:
+    def count(cls, handle: int) -> int:
         num_physical = DWORD()
         try:
-            if not dxva2.GetNumberOfPhysicalMonitorsFromHMONITOR(handle, byref(num_physical)):
+            if not dxva2.GetNumberOfPhysicalMonitorsFromHMONITOR(HMONITOR(handle), byref(num_physical)):
                 raise WinError()
         except OSError as e:
             raise VCPError('Windows API call failed') from e
@@ -47,11 +47,11 @@ class PhysicalMonitor(Structure):
         return count
 
     @classmethod
-    def for_handle(cls, handle: HMONITOR) -> PhysicalMonitor:
+    def for_handle(cls, handle: int) -> PhysicalMonitor:
         count = cls.count(handle)
         physical_monitors = (PhysicalMonitor * count)()
         try:
-            if not dxva2.GetPhysicalMonitorsFromHMONITOR(handle, count, physical_monitors):
+            if not dxva2.GetPhysicalMonitorsFromHMONITOR(HMONITOR(handle), count, physical_monitors):
                 raise WinError()
         except OSError as e:
             raise VCPError('Failed to open physical monitor handle') from e
@@ -140,9 +140,9 @@ class MonitorInfo(Structure):
         self.flags = 0x01  # MONITORINFOF_PRIMARY
 
     @classmethod
-    def for_handle(cls, handle: HMONITOR) -> MonitorInfo:
+    def for_handle(cls, handle: int) -> MonitorInfo:
         self = cls()
-        if not user32.GetMonitorInfoW(handle, byref(self)):
+        if not user32.GetMonitorInfoW(HMONITOR(handle), byref(self)):
             raise WinError()
         return self
 

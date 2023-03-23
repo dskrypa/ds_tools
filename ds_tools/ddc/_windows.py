@@ -48,16 +48,16 @@ class WindowsVCP(VCP, close_attr='_monitor'):
     """
     _monitors = {}
 
-    def __init__(self, n: int, hmonitor: HMONITOR, device: DisplayDevice):
+    def __init__(self, n: int, handle: int, device: DisplayDevice):
         """
-        :param hmonitor: logical monitor handle
+        :param handle: logical monitor handle
         """
         super().__init__(n)
-        self._hmonitor = hmonitor
+        self._handle = handle
         self.device = device
 
     def __repr__(self) -> str:
-        return f'<{self.__class__.__name__}[{self.n}][{self.description!r}, hmonitor={self._hmonitor}]>'
+        return f'<{self.__class__.__name__}[{self.n}][{self.description!r}, handle={self._handle}]>'
 
     @classmethod
     def for_id(cls, monitor_id: str) -> WindowsVCP:
@@ -89,7 +89,7 @@ class WindowsVCP(VCP, close_attr='_monitor'):
     @classmethod
     def _get_monitors(cls) -> list[WindowsVCP]:
         if not cls._monitors:
-            handles = {info.name: hmonitor for info, hmonitor in get_monitor_info_and_handles()}
+            handles = {info.name: handle for info, handle in get_monitor_info_and_handles()}
             displays = {dev.adapter.dev.name: dev for dev in get_active_monitors()}
             cls._monitors = {
                 mon.id.upper(): WindowsVCP(n, handles[adapter_id], mon)
@@ -106,7 +106,7 @@ class WindowsVCP(VCP, close_attr='_monitor'):
 
     @cached_property
     def _monitor(self) -> PhysicalMonitor:
-        monitor = PhysicalMonitor.for_handle(self._hmonitor)
+        monitor = PhysicalMonitor.for_handle(self._handle)
         self._finalizer = finalize(self, self._close, monitor)
         return monitor
 
@@ -202,10 +202,10 @@ class Adapter:
         yield from self.monitors
 
 
-def get_monitor_info_and_handles() -> list[tuple[MonitorInfo, HMONITOR]]:
+def get_monitor_info_and_handles() -> list[tuple[MonitorInfo, int]]:
     handles = []
 
-    def _callback(handle: HMONITOR, dev_ctx_handle: HDC, rect: LPRECT, data: LPARAM):
+    def _callback(handle: int, dev_ctx_handle: HDC, rect: LPRECT, data: LPARAM):
         handles.append(handle)
         return True  # continue enumeration
 
@@ -216,7 +216,7 @@ def get_monitor_info_and_handles() -> list[tuple[MonitorInfo, HMONITOR]]:
     except OSError as e:
         raise VCPError('Failed to enumerate VCPs') from e
 
-    return [(MonitorInfo.for_handle(hmonitor), hmonitor) for hmonitor in handles]
+    return [(MonitorInfo.for_handle(handle), handle) for handle in handles]
 
 
 def get_display_devices() -> list[Adapter]:
