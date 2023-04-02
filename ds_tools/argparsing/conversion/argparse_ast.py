@@ -14,7 +14,7 @@ from ds_tools.caching.decorators import cached_property
 from ds_tools.argparsing.argparser import ArgParser as CustomArgParser
 from .ast_utils import get_name_repr, imp_names
 
-__all__ = ['ParserArg', 'ArgGroup', 'MutuallyExclusiveGroup', 'ArgParser']
+__all__ = ['ParserArg', 'ParserConstant', 'ArgGroup', 'MutuallyExclusiveGroup', 'ArgParser', 'SubParser', 'Script']
 log = logging.getLogger(__name__)
 
 InitNode = Call | Assign | withitem
