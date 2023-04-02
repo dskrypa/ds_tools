@@ -2,38 +2,60 @@ from __future__ import annotations
 
 import ast
 import logging
-from ast import AST, Assign, Call, Attribute, Name
+from ast import AST, Assign, Call, Attribute, Name, With
 from collections import deque
-from typing import Callable, TypeVar, Type, Iterator, Collection, Any
+from typing import Callable, TypeVar, Iterator, Collection, Any
 
-__all__ = ['get_match_name', 'find_nodes', 'dump', 'get_name_repr', 'imp_names']
+__all__ = ['find_nodes', 'dump', 'get_name_repr', 'imp_names', 'find_calls_by_name', 'get_assigned_alias']
 log = logging.getLogger(__name__)
 
 T = TypeVar('T')
 
 
-def get_match_name(
-    node: AST, names: Collection[str], exp_type: Type[AST] | tuple[Type[AST], ...], val_type: Type[AST] = None
-) -> str | None:
-    if not isinstance(node, exp_type) or (val_type is not None and not isinstance(node.value, val_type)):  # noqa
-        return None
+def find_calls_by_name(
+    root_node: AST, names: Collection[str], strict_assigns: bool = False
+) -> Iterator[tuple[T, AST, Call, str]]:
+    remaining = deque([root_node])
+    while remaining:
+        root = remaining.popleft()
+        nodes = list(ast.iter_child_nodes(root))
+        found_any = False
+        for node in nodes:
+            if strict_assigns and (not isinstance(node, Assign) or not isinstance(node.value, Call)):
+                continue
+
+            for call in _iter_calls(node):
+                if (name := get_name_repr(call)) in names:
+                    found_any = True
+                    yield node, root, call, name
+
+        if not found_any:
+            remaining.extend(nodes)
+
+
+def _iter_calls(node: AST) -> Iterator[Call]:
+    if isinstance(node, With):
+        for item in node.items:
+            if isinstance(item.context_expr, Call):
+                yield item.context_expr
+        return
     elif isinstance(node, Assign):
-        target = node.value
-        if val_type and val_type is Call:
-            target = target.func  # noqa
-    elif isinstance(node, Call):
-        target = node.func
-    else:
-        raise TypeError(type(node).__name__)
+        node = node.value
 
-    if not isinstance(target, (Attribute, Name)):
+    if isinstance(node, Call):
+        yield node
+
+
+def get_assigned_alias(node: AST, names: Collection[str]) -> str | None:
+    if not isinstance(node, Assign):
         return None
-
+    node = node.value
+    if not isinstance(node, (Attribute, Name)):
+        return None
     try:
-        name = get_name_repr(target)
+        name = get_name_repr(node)
     except (AttributeError, TypeError):
         return None
-
     return name if name in names else None
 
 
@@ -41,14 +63,19 @@ def find_nodes(root_node: AST, is_match: Callable[[AST], bool | Any]) -> Iterato
     remaining = deque([root_node])
     while remaining:
         root = remaining.popleft()
+
         nodes = list(ast.iter_child_nodes(root))
-        if matching_node := next((n for n in nodes if is_match(n)), None):
-            yield matching_node, root
-        else:
+        found_any = False
+        for node in nodes:
+            if is_match(node):
+                found_any = True
+                yield node, root
+
+        if not found_any:
             remaining.extend(nodes)
 
 
-def get_name_repr(node: Attribute | Name) -> str:
+def get_name_repr(node: AST) -> str:
     if isinstance(node, Call):
         node = node.func
 
@@ -57,7 +84,7 @@ def get_name_repr(node: Attribute | Name) -> str:
     elif isinstance(node, Attribute):
         return f'{get_name_repr(node.value)}.{node.attr}'  # noqa
     elif isinstance(node, AST):
-        raise TypeError(f'Unexpected type for node={ast.dump(node)}')
+        return ast.unparse(node)
     else:
         raise TypeError(f'Only AST nodes are supported - found {node.__class__.__name__}')
 
