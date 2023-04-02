@@ -2,77 +2,11 @@ from __future__ import annotations
 
 import ast
 import logging
-from ast import AST, Assign, Call, Attribute, Name, With
-from collections import deque
-from typing import Callable, TypeVar, Iterator, Collection, Any
+from ast import AST, Call, Attribute, Name
+from typing import Iterator
 
-__all__ = ['find_nodes', 'dump', 'get_name_repr', 'imp_names', 'find_calls_by_name', 'get_assigned_alias']
+__all__ = ['dump', 'get_name_repr', 'imp_names']
 log = logging.getLogger(__name__)
-
-T = TypeVar('T')
-
-
-def find_calls_by_name(
-    root_node: AST, names: Collection[str], strict_assigns: bool = False
-) -> Iterator[tuple[T, AST, Call, str]]:
-    remaining = deque([root_node])
-    while remaining:
-        root = remaining.popleft()
-        nodes = list(ast.iter_child_nodes(root))
-        found_any = False
-        for node in nodes:
-            if strict_assigns and (not isinstance(node, Assign) or not isinstance(node.value, Call)):
-                continue
-
-            for call in _iter_calls(node):
-                if (name := get_name_repr(call)) in names:
-                    found_any = True
-                    yield node, root, call, name
-
-        if not found_any:
-            remaining.extend(nodes)
-
-
-def _iter_calls(node: AST) -> Iterator[Call]:
-    if isinstance(node, With):
-        for item in node.items:
-            if isinstance(item.context_expr, Call):
-                yield item.context_expr
-        return
-    elif isinstance(node, Assign):
-        node = node.value
-
-    if isinstance(node, Call):
-        yield node
-
-
-def get_assigned_alias(node: AST, names: Collection[str]) -> str | None:
-    if not isinstance(node, Assign):
-        return None
-    node = node.value
-    if not isinstance(node, (Attribute, Name)):
-        return None
-    try:
-        name = get_name_repr(node)
-    except (AttributeError, TypeError):
-        return None
-    return name if name in names else None
-
-
-def find_nodes(root_node: AST, is_match: Callable[[AST], bool | Any]) -> Iterator[tuple[T, AST]]:
-    remaining = deque([root_node])
-    while remaining:
-        root = remaining.popleft()
-
-        nodes = list(ast.iter_child_nodes(root))
-        found_any = False
-        for node in nodes:
-            if is_match(node):
-                found_any = True
-                yield node, root
-
-        if not found_any:
-            remaining.extend(nodes)
 
 
 def get_name_repr(node: AST) -> str:

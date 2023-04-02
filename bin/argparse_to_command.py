@@ -9,7 +9,7 @@ from cli_command_parser import Command, Counter, Option, Positional, Flag, Param
 from cli_command_parser.inputs import Path as IPath
 
 from ds_tools.caching.decorators import cached_property
-from ds_tools.argparsing.conversion.argparse_script import Script
+from ds_tools.argparsing.conversion.argparse_ast import Script
 from ds_tools.argparsing.conversion.ast_utils import dump
 
 log = logging.getLogger(__name__)
@@ -55,16 +55,11 @@ class ParserConverter(Command, description=f'Tool to convert an {arg_parser} int
             parser.pprint()
 
     @action
-    def dump_imports(self):
-        for imp in self.script.imports:
-            print(dump(imp))
-
-    @action
     def dump(self):
         for i, parser in enumerate(self.script.parsers):
             if i:
                 print('\n' + ('=' * 120) + '\n')
-            print(dump(parser.root_node))
+            print(dump(parser.init_node))
 
 
 if __name__ == '__main__':
