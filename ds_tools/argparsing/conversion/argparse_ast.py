@@ -2,181 +2,92 @@ from __future__ import annotations
 
 import ast
 import logging
+import sys
 from argparse import ArgumentParser
-from ast import NodeVisitor, AST, Assign, Call, For, Attribute, Name, withitem
-from collections import ChainMap
+from ast import AST, Assign, Call, withitem
 from functools import partial
 from inspect import Signature, BoundArguments
 from pathlib import Path
-from typing import Callable, Collection, TypeVar, Generic, Type
+from typing import TYPE_CHECKING, Callable, Collection, TypeVar, Generic, Type, Iterator
 
 from ds_tools.caching.decorators import cached_property
-from ds_tools.argparsing.argparser import ArgParser as CustomArgParser
-from .ast_utils import get_name_repr, imp_names
+from .ast_utils import get_name_repr
+from .argparse_utils import ArgumentParser as _ArgumentParser, SubParsersAction as _SubParsersAction
 
-__all__ = ['ParserArg', 'ParserConstant', 'ArgGroup', 'MutuallyExclusiveGroup', 'ArgParser', 'SubParser', 'Script']
+if TYPE_CHECKING:
+    from .visitor import TrackedRefMap, TrackedRef
+
+__all__ = ['ParserArg', 'ArgGroup', 'MutuallyExclusiveGroup', 'AstArgumentParser', 'SubParser', 'Script']
 log = logging.getLogger(__name__)
 
 InitNode = Call | Assign | withitem
+OptCall = Call | None
+ParserCls = Type['AstArgumentParser']
+ParserObj = TypeVar('ParserObj', bound='AstArgumentParser')
+RepresentedCallable = TypeVar('RepresentedCallable', bound=Callable)
+AC = TypeVar('AC', bound='AstCallable')
+D = TypeVar('D')
+_NotSet = object()
 
 
-class Scoped:
-    def __init__(self, func: Callable, name: str):
-        self.func = func
-        self.name = name
+class Script:
+    _parser_classes = {}
 
-    def _scoped(self, inst: ScriptVisitor, *args, **kwargs):
-        inst.scopes = inst.scopes.new_child()
-        inst.context.append(self.name)
-        try:
-            self.func(inst, *args, **kwargs)
-        finally:
-            inst.context.pop()
-            inst.scopes = inst.scopes.parents
+    def __init__(self, path: Path, smart_loop_handling: bool = True):
+        self.path = path
+        self.src_text = path.read_text()
+        self.root_node = ast.parse(self.src_text, path.as_posix())
+        self.smart_loop_handling = smart_loop_handling
+        self._parsers = []
 
-    def __get__(self, instance, owner):
-        if instance is None:
-            return self
-        return partial(self._scoped, instance)
+    def __repr__(self) -> str:
+        parsers = len(self.parsers)
+        return f'<{self.__class__.__name__}[{parsers=} @ {self.path.as_posix()}]>'
 
+    @property
+    def mod_cls_to_ast_cls_map(self) -> dict[str, dict[str, ParserCls]]:
+        return self._parser_classes
 
-def scoped(name: str):
-    return partial(Scoped, name=name)
+    @classmethod
+    def _register_parser(cls, real_cls: Type[ArgumentParser], ast_cls: ParserCls):
+        module, name = real_cls.__module__, real_cls.__name__
+        # Identify package-level exports that may have been defined for a custom ArgumentParser subclass
+        modules = [module]
+        while (parent := module.rsplit('.', 1)[0]) != module:
+            if name in vars(sys.modules[parent]):
+                modules.append(parent)
+            module = parent
 
+        for module in modules:
+            log.debug(f'Registering {module}.{name} -> {ast_cls}')
+            cls._parser_classes.setdefault(module, {})[name] = ast_cls
 
-class ScriptVisitor(NodeVisitor):
-    context: list[str]
+    @classmethod
+    def register_parser(cls, ast_cls: ParserCls):
+        cls._register_parser(ast_cls.represents, ast_cls)
+        return ast_cls
 
-    def __init__(self, script: Script, parser_cls_names: Collection[str] = ()):
-        self.script = script
-        self.parsers = []
-        self._parser_cls_names = parser_cls_names
-        self.scopes = ChainMap()
-        self.context = ['global']
-        _ = self.mod_canonical_map
-
-    # region Imports
+    def add_parser(self, ast_cls: ParserCls, node: InitNode, call: OptCall, tracked_refs: TrackedRefMap) -> ParserObj:
+        parser = ast_cls(node, self, tracked_refs, call)
+        self._parsers.append(parser)
+        return parser
 
     @cached_property
-    def mod_canonical_map(self) -> dict[str, bool]:
-        mod_canonical_map = {'argparse': 'ArgumentParser'}
-        if extras := self._parser_cls_names:
-            for name in set(extras):
-                try:
-                    mod, canonical = name.rsplit('.', 1)
-                except ValueError:
-                    self.scopes[name] = partial(self.script.add_parser, False)
-                else:
-                    mod_canonical_map[mod] = canonical
-        return mod_canonical_map
+    def parsers(self) -> list[ParserObj]:
+        from .visitor import ScriptVisitor, TrackedRef
 
-    def visit_Import(self, node):
-        for name, as_name in imp_names(node):
-            if canonical := self.mod_canonical_map.get(name):
-                self.scopes[f'{as_name}.{canonical}'] = partial(self.script.add_parser, name == 'argparse')
+        visitor = ScriptVisitor(self)
+        visitor.track_refs_to(TrackedRef('argparse.REMAINDER'))
+        visitor.track_refs_to(TrackedRef('argparse.SUPPRESS'))
+        visitor.visit(self.root_node)
+        return self._parsers
 
-    def visit_ImportFrom(self, node):
-        module = node.module
-        if canonical := self.mod_canonical_map.get(module):
-            for name, as_name in imp_names(node):
-                if name == canonical:
-                    self.scopes[as_name] = partial(self.script.add_parser, module == 'argparse')
 
-    # endregion
-
-    # region Scope Changes
-
-    @scoped('function')
-    def visit_FunctionDef(self, node):
-        self.generic_visit(node)
-
-    visit_AsyncFunctionDef = visit_FunctionDef
-    visit_Lambda = visit_FunctionDef
-
-    @scoped('class')
-    def visit_ClassDef(self, node):
-        self.generic_visit(node)
-
-    @scoped('for')
-    def visit_For(self, node: For):
-        if not isinstance(node.target, Name):
-            self.generic_visit(node)
-            return
-
-        loop_var = node.target.id
-        try:
-            ele_names = [get_name_repr(ele) for ele in node.iter.elts]  # noqa
-        except (AttributeError, TypeError):
-            ele_names = ()
-
-        visited_any = False
-        for name in ele_names:
-            if func := self.scopes.get(name):
-                visited_any = True
-                self.scopes[loop_var] = func
-                self.generic_visit(node)
-
-        if not visited_any:
-            self.generic_visit(node)
-
-    visit_AsyncFor = visit_For
-
-    @scoped('while')
-    def visit_While(self, node):
-        self.generic_visit(node)
-
-    # endregion
-
-    def get_func(self, name: str | AST):
-        if not isinstance(name, str):
-            name = get_name_repr(name)
-        try:
-            return self.scopes[name]
-        except KeyError:
-            pass
-        try:
-            obj_name, attr = name.rsplit('.', 1)
-        except ValueError:
-            return None
-        # log.debug(f'Looking up {obj_name=}, {attr=}')
-        try:
-            obj = self.scopes[obj_name]
-        except KeyError:
-            return None
-        try:
-            can_call = attr in obj.visit_funcs
-        except (AttributeError, TypeError):
-            # log.debug(f'  > Found {obj=}')
-            return None
-        # log.debug(f'  > Found {obj=} {can_call=}')
-        return getattr(obj, attr) if can_call else None
-
-    def visit_withitem(self, item):
-        context_expr = item.context_expr
-        if func := self.get_func(context_expr):
-            call = context_expr if isinstance(context_expr, Call) else None
-            result = func(item, call)
-            if as_name := item.optional_vars:
-                self.scopes[get_name_repr(as_name)] = result
-
-    def visit_Assign(self, node: Assign):
-        value = node.value
-        if isinstance(value, (Attribute, Name)):  # Assigning an alias to a variable
-            if val_obj := self.get_func(value):
-                for target in node.targets:
-                    self.scopes[get_name_repr(target)] = val_obj
-        elif isinstance(value, Call):
-            if func := self.get_func(value.func):
-                result = func(node, value)
-                for target in node.targets:
-                    self.scopes[get_name_repr(target)] = result
-
-    def visit_Call(self, node: Call):
-        if func := self.get_func(node.func):
-            func(node, node)
+# region Decorators & Descriptors
 
 
 class visit_func:
+    """A method that can be called by an AST visitor."""
     __slots__ = ('func',)
 
     def __init__(self, func):
@@ -191,10 +102,30 @@ class visit_func:
         return self if instance is None else partial(self.func, instance)
 
 
+class AddVisitedChild(Generic[AC]):
+    """Simplifies the definition of an add_child method that can be called by an AST visitor, where possible."""
+    __slots__ = ('child_cls', 'list_attr')
+
+    def __init__(self, child_cls: Type[AC], attr: str):
+        self.child_cls = child_cls
+        self.list_attr = attr
+
+    def __set_name__(self, owner: Type[ArgCollection], name: str):
+        owner._add_visit_func(name)
+
+    def __get__(self, instance: ArgCollection, owner) -> Callable[[InitNode, Call, TrackedRefMap], AC]:
+        if instance is None:
+            return self  # noqa
+        return partial(instance._add_child, self.child_cls, getattr(instance, self.list_attr))  # noqa
+
+
+# endregion
+
+
 class AstCallable:
-    wraps: Callable
+    represents: RepresentedCallable
     visit_funcs = set()
-    _sig: Signature = None
+    _sig: Signature | None = None
 
     @classmethod
     def _add_visit_func(cls, name: str):
@@ -207,35 +138,45 @@ class AstCallable:
                 cls.visit_funcs = cls.visit_funcs.copy()
         cls.visit_funcs.add(name)
 
-    def __init_subclass__(cls, wraps: Callable = None, **kwargs):
+    def __init_subclass__(cls, represents: RepresentedCallable = None, **kwargs):
         super().__init_subclass__(**kwargs)
-        if wraps:
-            cls.wraps = wraps
+        if represents:
+            cls.represents = represents
+            cls._sig = None
 
-    def __init__(self, init_node: InitNode, parent: AstCallable | Script, call_node: Call = None):
-        self.init_node = init_node
-        if not call_node:
-            call_node = init_node.value if isinstance(init_node, Assign) else init_node  # type: Call
-        self.call_node = call_node
-        self.call_args = call_node.args
-        self.call_kwargs = call_node.keywords
+    def __init__(self, node: InitNode, parent: AstCallable | Script, tracked_refs: TrackedRefMap, call: Call = None):
+        self.init_node = node
+        if not call:
+            call = node.value if isinstance(node, Assign) else node  # type: Call
+        self.call_node = call
+        self.call_args = call.args
+        self.call_kwargs = call.keywords
+        self._tracked_refs = tracked_refs
         self.parent = parent
         self.names = set()
 
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self.init_call_repr()}]>'
 
+    def get_tracked_refs(self, module: str, name: str, default: D = _NotSet) -> set[str] | D:
+        for tracked_ref, refs in self._tracked_refs.items():
+            if tracked_ref.module == module and tracked_ref.name == name:
+                return refs
+        if default is not _NotSet:
+            return default
+        raise KeyError(f'No tracked ref found for {module}.{name}')
+
+    # region Initialization Call
+
     @classmethod
     def _signature(cls) -> Signature:
         if not (sig := cls._sig):
-            cls._sig = sig = Signature.from_callable(cls.wraps)
+            cls._sig = sig = Signature.from_callable(cls.represents)
         return sig
 
     @property
     def signature(self) -> Signature:
         return self._signature()
-
-    # region Initialization Call
 
     @cached_property
     def init_func_name(self) -> str:
@@ -250,17 +191,27 @@ class AstCallable:
     def init_func_args(self) -> list[str]:
         try:
             args = self._init_func_bound.args[1:]
-        except (TypeError, AttributeError):  # No wraps func
+        except (TypeError, AttributeError):  # No represents func
             args = self.call_args
         return [ast.unparse(arg) for arg in args]
 
+    def _init_func_kwargs(self) -> dict[str, str]:
+        try:
+            kwargs = self._init_func_bound.arguments
+        except (TypeError, AttributeError):  # No represents func
+            kwargs = {kw.arg: kw.value for kw in self.call_kwargs}
+        else:
+            kwargs = kwargs.copy()
+            kwargs.pop('self', None)
+            if isinstance(kwargs.get('args'), tuple):
+                kwargs.pop('args')
+            if isinstance(kwargs.get('kwargs'), dict):
+                kwargs.update(kwargs.pop('kwargs'))
+        return {key: ast.unparse(val) for key, val in kwargs.items()}
+
     @cached_property
     def init_func_kwargs(self) -> dict[str, str]:
-        try:
-            kwargs = self._init_func_bound.kwargs
-        except (TypeError, AttributeError):  # No wraps func
-            kwargs = {kw.arg: kw.value for kw in self.call_kwargs}
-        return {key: ast.unparse(val) for key, val in kwargs.items()}
+        return self._init_func_kwargs()
 
     def init_call_repr(self) -> str:
         arg_str = ', '.join(self.init_func_args)
@@ -270,35 +221,18 @@ class AstCallable:
 
     # endregion
 
+    def walk_nodes(self) -> Iterator[AST]:
+        yield self.init_node
+
     def pprint(self, indent: int = 0):
         print(f'{" " * indent} - {self!r}')
 
 
-class ParserArg(AstCallable, wraps=ArgumentParser.add_argument):
+# region Stdlib Argparse Wrappers
+
+
+class ParserArg(AstCallable, represents=ArgumentParser.add_argument):
     parent: ArgCollection
-
-
-class ParserConstant(AstCallable):
-    parent: ArgParser
-
-
-AC = TypeVar('AC', bound=AstCallable)
-
-
-class AddVisitedChild(Generic[AC]):
-    __slots__ = ('child_cls', 'list_attr')
-
-    def __init__(self, child_cls: Type[AC], attr: str):
-        self.child_cls = child_cls
-        self.list_attr = attr
-
-    def __set_name__(self, owner: Type[ArgCollection], name: str):
-        owner._add_visit_func(name)
-
-    def __get__(self, instance, owner) -> Callable[[InitNode, Call], AC]:
-        if instance is None:
-            return self  # noqa
-        return partial(instance._add_child, self.child_cls, getattr(instance, self.list_attr))  # noqa
 
 
 class ArgCollection(AstCallable):
@@ -313,8 +247,8 @@ class ArgCollection(AstCallable):
         if children:
             cls._children = (*cls._children, *children)
 
-    def __init__(self, init_node: InitNode, parent: AstCallable | Script, call_node: Call = None):
-        super().__init__(init_node, parent, call_node)
+    def __init__(self, node: InitNode, parent: AstCallable | Script, tracked_refs: TrackedRefMap, call: Call = None):
+        super().__init__(node, parent, tracked_refs, call)
         self.args = []
         self.groups = []
 
@@ -332,24 +266,33 @@ class ArgCollection(AstCallable):
         stdlib = self.is_stdlib
         return f'<{self.__class__.__name__}[{stdlib=}]: ``{" = ".join(sorted(self.names))} = {self.init_call_repr()}``>'
 
-    def _add_child(self, cls: Type[AC], container: list[AC], node: InitNode, call: Call) -> AC:
-        child = cls(node, self, call)
+    def _add_child(self, cls: Type[AC], container: list[AC], node: InitNode, call: Call, refs: TrackedRefMap) -> AC:
+        child = cls(node, self, refs, call)
         container.append(child)
         return child
 
     @visit_func
-    def add_mutually_exclusive_group(self, node: InitNode, call: Call):
-        return self._add_child(MutuallyExclusiveGroup, self.groups, node, call)
+    def add_mutually_exclusive_group(self, node: InitNode, call: Call, tracked_refs: TrackedRefMap):
+        return self._add_child(MutuallyExclusiveGroup, self.groups, node, call, tracked_refs)
 
     @visit_func
-    def add_argument_group(self, node: InitNode, call: Call):
-        return self._add_child(ArgGroup, self.groups, node, call)
+    def add_argument_group(self, node: InitNode, call: Call, tracked_refs: TrackedRefMap):
+        return self._add_child(ArgGroup, self.groups, node, call, tracked_refs)
+
+    def grouped_children(self) -> Iterator[list[AC]]:
+        yield self.args
+        yield self.groups
+
+    def walk_nodes(self) -> Iterator[AST]:
+        yield from super().walk_nodes()
+        for child_group in self.grouped_children():
+            for child in child_group:
+                yield from child.walk_nodes()
 
     # region Output Methods
 
     def pprint(self, indent: int = 0):
-        prefix = ' ' * indent
-        print(f'{prefix} + {self!r}:')
+        print(f'{" " * indent} + {self!r}:')
         indent += 3
         for attr in self._children:
             if values := getattr(self, attr):
@@ -359,79 +302,63 @@ class ArgCollection(AstCallable):
     # endregion
 
 
-class ArgGroup(ArgCollection, wraps=ArgumentParser.add_argument_group):
+class ArgGroup(ArgCollection, represents=_ArgumentParser.add_argument_group):
     pass
 
 
-class MutuallyExclusiveGroup(ArgGroup, wraps=ArgumentParser.add_mutually_exclusive_group):
+class MutuallyExclusiveGroup(ArgGroup, represents=_ArgumentParser.add_mutually_exclusive_group):
     pass
 
 
-class SubparsersAction(AstCallable):
-    parent: ArgParser
+class SubparsersAction(AstCallable, represents=_ArgumentParser.add_subparsers):
+    parent: ParserObj
 
     @visit_func
-    def add_parser(self, node: InitNode, call: Call):
-        return self.parent.add_subparser(node, call, True)
-
-
-class ArgParser(ArgCollection, wraps=ArgumentParser, children=('sub_parsers', 'constants')):
-    is_stdlib: bool = True
-    sub_parsers: list[SubParser]
-    constants: list[ParserConstant]
-    add_subparsers = AddVisitedChild(SubparsersAction, '_subparsers_actions')
-    add_constant = AddVisitedChild(ParserConstant, 'constants')
-
-    def __init__(
-        self, init_node: InitNode, parent: AstCallable | Script, call_node: Call = None, is_stdlib: bool = True
-    ):
-        super().__init__(init_node, parent, call_node)
-        self._subparsers_actions = []
-        self.sub_parsers = []
-        self.constants = []
-        self.is_stdlib = is_stdlib
-
-    def __repr__(self) -> str:
-        stdlib = self.is_stdlib
-        sub_parsers = len(self.sub_parsers)
-        assign_repr = f'``{" = ".join(sorted(self.names))} = {self.init_call_repr()}``'
-        return f'<{self.__class__.__name__}[{stdlib=}, {sub_parsers=}]: {assign_repr}>'
-
-    @visit_func
-    def add_subparser(self, node: InitNode, call: Call, stdlib: bool = False):
-        sub_parser = self._add_child(SubParser, self.sub_parsers, node, call)
-        if not stdlib:
-            sub_parser.wraps = CustomArgParser.add_subparser
+    def add_parser(self, node: InitNode, call: Call, tracked_refs: TrackedRefMap):
+        sub_parser = self.parent._add_subparser(node, call, tracked_refs)
+        sub_parser.sp_parent = self
         return sub_parser
 
 
-class SubParser(ArgParser):
-    @property
-    def signature(self) -> Signature:
-        if self.is_stdlib:
-            return self._signature()
-        return Signature.from_callable(self.wraps)
+@Script.register_parser
+class AstArgumentParser(ArgCollection, represents=ArgumentParser, children=('sub_parsers',)):
+    is_stdlib: bool = True
+    sub_parsers: list[SubParser]
+    add_subparsers = AddVisitedChild(SubparsersAction, '_subparsers_actions')
 
+    def __init_subclass__(cls, is_stdlib: bool = False, **kwargs):
+        super().__init_subclass__(**kwargs)
+        cls.is_stdlib = is_stdlib
 
-class Script:
-    def __init__(self, path: Path, parser_cls_names: Collection[str] = ()):
-        self.path = path
-        self.src_text = path.read_text()
-        self.root_node = ast.parse(self.src_text, path.as_posix())
-        self._parser_cls_names = parser_cls_names
-        self._parsers = []
+    def __init__(self, node: InitNode, parent: AstCallable | Script, tracked_refs: TrackedRefMap, call: Call = None):
+        super().__init__(node, parent, tracked_refs, call)
+        self._subparsers_actions = []
+        # Note: sub_parsers aren't included in grouped_children since they need different handling during conversion
+        self.sub_parsers = []
 
     def __repr__(self) -> str:
-        parsers = len(self.parsers)
-        return f'<{self.__class__.__name__}[{parsers=} @ {self.path.as_posix()}]>'
+        stdlib, sub_parsers = self.is_stdlib, len(self.sub_parsers)
+        assign_repr = f'``{" = ".join(sorted(self.names))} = {self.init_call_repr()}``'
+        return f'<{self.__class__.__name__}[{stdlib=}, {sub_parsers=}]: {assign_repr}>'
 
-    def add_parser(self, stdlib: bool, node: InitNode, call: Call | None) -> ArgParser:
-        parser = ArgParser(node, self, call, stdlib)
-        self._parsers.append(parser)
-        return parser
+    def _add_subparser(self, node: InitNode, call: Call, tracked_refs: TrackedRefMap, sub_parser_cls: ParserCls = None):
+        # Using default of None since the class hasn't been defined at the time it would need to be set as default
+        return self._add_child(sub_parser_cls or SubParser, self.sub_parsers, node, call, tracked_refs)
+
+    def walk_nodes(self) -> Iterator[AST]:
+        yield from super().walk_nodes()
+        for sub_parser in self.sub_parsers:
+            yield from sub_parser.walk_nodes()
+
+
+class SubParser(AstArgumentParser, represents=_SubParsersAction.add_parser, is_stdlib=True):
+    sp_parent: SubparsersAction = None
 
     @cached_property
-    def parsers(self) -> list[ArgParser]:
-        visitor = ScriptVisitor(self, self._parser_cls_names)
-        visitor.visit(self.root_node)
-        return self._parsers
+    def init_func_kwargs(self) -> dict[str, str]:
+        if sp_parent := self.sp_parent:
+            return sp_parent.init_func_kwargs | self._init_func_kwargs()
+        return self._init_func_kwargs()
+
+
+# endregion
