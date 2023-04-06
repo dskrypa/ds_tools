@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Iterator
 
 from ds_tools.argparsing.argparser import ArgParser
 from ds_tools.argparsing.utils import COMMON_ARGS
+from ds_tools.caching.decorators import cached_property
 from .argparse_ast import AstCallable, AstArgumentParser, Script, AddVisitedChild, ParserArg, visit_func
 from .ast_utils import get_name_repr
 from .command_builder import Converter
@@ -72,7 +73,12 @@ class AstArgParser(AstArgumentParser, represents=ArgParser, children=('constants
 
 
 class SubParserShortcut(AstArgParser, represents=ArgParser.add_subparser):
-    pass
+    @cached_property
+    def init_func_kwargs(self) -> dict[str, str]:
+        kwargs = self._init_func_kwargs()
+        if (help_desc := kwargs.get('help_desc')) and kwargs.setdefault('help', help_desc) != help_desc:
+            kwargs.setdefault('description', help_desc)
+        return kwargs
 
 
 def _common_arg_val_to_ast(value) -> AST:

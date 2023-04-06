@@ -140,21 +140,6 @@ class ParserConverter(CollectionConverter, converts=AstArgumentParser):
         self.counter = count() if counter is None else counter
 
     @cached_property
-    def name(self) -> str:
-        return f'Command{next(self.counter)}'
-
-    @cached_property
-    def name_mode(self) -> str | None:
-        return self._name_mode or (self.parent.name_mode if self.parent else None)
-
-    @cached_property
-    def _name_mode(self) -> str | None:
-        if self.parent and self.parent._name_mode:
-            return None
-        name_modes = {pc._name_mode for pc in self.descendant_args() if pc.is_option and '_' in pc.attr_name}
-        return next(iter(name_modes)) if len(name_modes) == 1 else None
-
-    @cached_property
     def sub_parser_converters(self) -> list[ParserConverter]:
         return [self.__class__(sub_parser, self, self.counter) for sub_parser in self.ast_obj.sub_parsers]
 
@@ -172,20 +157,68 @@ class ParserConverter(CollectionConverter, converts=AstArgumentParser):
             yield from sp_converter.format_lines()
 
     def _get_args(self) -> str:
-        # TODO: Finish this
-        parser = self.ast_obj
         # log.debug(f'Processing args for {parser._init_func_bound}')
-        sp_parent = getattr(parser, 'sp_parent', None)
-        is_sub_parser = isinstance(parser.parent, AstArgumentParser)
+        kwargs = self.ast_obj.init_func_kwargs.copy()
+        kwargs['option_name_mode'] = self._name_mode
+        if self.is_sub_parser:
+            if choices := self.choices:
+                if len(choices) > 1:
+                    kwargs['choices'] = f'({", ".join(choices)})'
+                elif not self._custom_name:
+                    kwargs['choice'] = choices[0]
+        elif (add_help := kwargs.get('add_help')) and literal_eval_or_none(add_help) == 'True':
+            kwargs.pop('add_help')
 
-        kwargs = {
-            'option_name_mode': self._name_mode,
-        }
-        args = (
-            self.parent.name if self.parent else 'Command',
-            *(f'{key}={val}' for key, val in kwargs.items() if val is not None)
-        )
-        return ', '.join(args)
+        cmd_args = CommandArgs.from_kwargs(**kwargs)
+        return cmd_args.to_str(self.parent.name if self.parent else 'Command')
+
+    @cached_property
+    def is_sub_parser(self) -> bool:
+        return self.parent is not None
+
+    # region Name / CLI Choices
+
+    @cached_property
+    def name(self) -> str:
+        return self._custom_name or f'Command{next(self.counter)}'
+
+    @cached_property
+    def _custom_name(self) -> str | None:
+        if not self.is_sub_parser or not (name := literal_eval_or_none(self.ast_obj.init_func_kwargs.get('name'))):
+            return None
+        if not name or ' ' in name or '-' in name or not name[0].isalpha():
+            return None
+        return name.title().replace('_', '')
+
+    @cached_property
+    def choices(self) -> list[str]:
+        choices = []
+        if not self.is_sub_parser:
+            return choices
+
+        kwargs = self.ast_obj.init_func_kwargs
+        if name := kwargs.get('name'):
+            choices.append(name)
+        if aliases := kwargs.get('aliases'):
+            choices.extend(aliases)
+        return choices
+
+    # endregion
+
+    # region Member-Related Properties
+
+    @cached_property
+    def name_mode(self) -> str | None:
+        return self._name_mode or (self.parent.name_mode if self.parent else None)
+
+    @cached_property
+    def _name_mode(self) -> str | None:
+        if self.parent and self.parent._name_mode:
+            return None
+        name_modes = {pc._name_mode for pc in self.descendant_args() if pc.is_option and '_' in pc.attr_name}
+        return next(iter(name_modes)) if len(name_modes) == 1 else None
+
+    # endregion
 
 
 class GroupConverter(CollectionConverter, converts=ArgGroup):
@@ -243,7 +276,7 @@ class ParamConverter(Converter, converts=ParserArg):
 
     def format(self, indent: int = 4) -> str:
         param_cls, args_obj = self.get_cls_and_kwargs()
-        arg_str = ', '.join((*self.get_pos_args(), args_obj.to_str()))
+        arg_str = args_obj.to_str(*self.get_pos_args())
         return f'{" " * indent}{self.attr_name} = {param_cls}({arg_str})'
 
     # region Naming
@@ -367,6 +400,8 @@ class ParamConverter(Converter, converts=ParserArg):
 
 
 class ParamConverterGroup(ConverterGroup[ParamConverter]):
+    __slots__ = ()
+
     def format_all(self, indent: int = 4) -> Iterator[str]:
         positionals, others = [], []
         i_converters = iter(sorted(self.members))
@@ -394,22 +429,21 @@ class ParamConverterGroup(ConverterGroup[ParamConverter]):
             yield from other.format_lines(indent)
 
 
-# region ParserArg Arg Containers
+# region Arg Containers
 
 
 @dataclass
 class BaseArgs:
-    name: OptStr = None
-    default: OptStr = None
-    required: OptStr = None
-    metavar: OptStr = None
     help: OptStr = None
-    hide: OptStr = None
 
-    def to_str(self) -> str:
-        skip = {'hide', 'help'}
-        keys = [f.name for f in fields(self) if f.name not in skip] + ['hide', 'help']
-        return ', '.join(f'{key}={val}' for key in keys if (val := getattr(self, key)) is not None)
+    def _to_str(self, args: tuple[str, ...], end_fields: list[str]) -> str:
+        skip = set(end_fields)
+        keys = [f.name for f in fields(self) if f.name not in skip] + end_fields
+        all_args = (*args, *(f'{key}={val}' for key in keys if (val := getattr(self, key)) is not None))
+        return ', '.join(all_args)
+
+    def to_str(self, *args: str) -> str:
+        return self._to_str(args, ['help'])
 
     @classmethod
     def from_kwargs(cls, **kwargs):
@@ -430,12 +464,44 @@ class BaseArgs:
 
 
 @dataclass
-class PassThruArgs(BaseArgs):
+class CommandArgs(BaseArgs):
+    choice: OptStr = None
+    choices: OptStr = None
+    prog: OptStr = None
+    usage: OptStr = None
+    description: OptStr = None
+    epilog: OptStr = None
+    option_name_mode: OptStr = None
+    add_help: OptStr = None
+    docs_url: OptStr = None
+    email: OptStr = None
+
+
+# endregion
+
+
+# region ParserArg Arg Containers
+
+
+@dataclass
+class ParamBaseArgs(BaseArgs):
+    name: OptStr = None
+    default: OptStr = None
+    required: OptStr = None
+    metavar: OptStr = None
+    hide: OptStr = None
+
+    def to_str(self, *args: str) -> str:
+        return self._to_str(args, ['hide', 'help'])
+
+
+@dataclass
+class PassThruArgs(ParamBaseArgs):
     pass
 
 
 @dataclass
-class ParamArgs(BaseArgs):
+class ParamArgs(ParamBaseArgs):
     action: OptStr = None
     type: OptStr = None
     nargs: OptStr = None
@@ -453,7 +519,7 @@ class ParamArgs(BaseArgs):
 
 
 @dataclass
-class OptionArgs(BaseArgs):
+class OptionArgs(ParamBaseArgs):
     name_mode: OptStr = None
 
     @classmethod
@@ -507,6 +573,13 @@ class FlagArgs(OptionArgs):
 
 
 # endregion
+
+
+def literal_eval_or_none(expr: str) -> str | None:
+    try:
+        return literal_eval(expr)
+    except ValueError:
+        return None
 
 
 class ConversionError(Exception):
