@@ -283,6 +283,11 @@ class ArgCollection(AstCallable):
         yield self.args
         yield self.groups
 
+    def descendant_args(self) -> Iterator[ParserArg]:
+        yield from self.args
+        for group in self.groups:
+            yield from group.descendant_args()
+
     def walk_nodes(self) -> Iterator[AST]:
         yield from super().walk_nodes()
         for child_group in self.grouped_children():
@@ -344,6 +349,11 @@ class AstArgumentParser(ArgCollection, represents=ArgumentParser, children=('sub
     def _add_subparser(self, node: InitNode, call: Call, tracked_refs: TrackedRefMap, sub_parser_cls: ParserCls = None):
         # Using default of None since the class hasn't been defined at the time it would need to be set as default
         return self._add_child(sub_parser_cls or SubParser, self.sub_parsers, node, call, tracked_refs)
+
+    def descendant_args(self) -> Iterator[ParserArg]:
+        yield from super().descendant_args()
+        for sub_parser in self.sub_parsers:
+            yield from sub_parser.descendant_args()
 
     def walk_nodes(self) -> Iterator[AST]:
         yield from super().walk_nodes()

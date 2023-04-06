@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from ast import literal_eval
 from dataclasses import dataclass, fields
 from itertools import count
-from typing import TYPE_CHECKING, Iterator, Iterable, Type
+from typing import TYPE_CHECKING, Iterator, Iterable, Type, TypeVar, Generic
 
 from cli_command_parser.nargs import Nargs
 
@@ -21,6 +21,7 @@ log = logging.getLogger(__name__)
 
 OptStr = str | None
 RESERVED = set(keyword.kwlist) | set(keyword.softkwlist)
+C = TypeVar('C', bound='Converter')
 
 
 def convert_script(script: Script) -> str:
@@ -37,8 +38,9 @@ class Converter(ABC):
             cls.converts = converts
             cls._ac_converter_map[converts] = cls
 
-    def __init__(self, ast_obj: AC | Script):
+    def __init__(self, ast_obj: AC | Script, parent: Converter | None = None):
         self.ast_obj = ast_obj
+        self.parent = parent
 
     @classmethod
     def for_ast_callable(cls, ast_obj: AC) -> Converter:
@@ -50,9 +52,8 @@ class Converter(ABC):
         raise TypeError(f'No Converter is registered for {ast_obj.__class__.__name__} objects')
 
     @classmethod
-    def format_all(cls, parent: Converter, ast_objs: list[AC], indent: int = 0) -> Iterator[str]:
-        for ast_obj in ast_objs:
-            yield from cls(ast_obj).format_lines(indent)
+    def init_group(cls: Type[C], parent: CollectionConverter, ast_objs: list[AC]) -> ConverterGroup[C]:
+        return ConverterGroup(parent, [cls(ast_obj, parent) for ast_obj in ast_objs])
 
     def convert(self, indent: int = 0) -> str:
         return '\n'.join(self.format_lines(indent))
@@ -60,6 +61,27 @@ class Converter(ABC):
     @abstractmethod
     def format_lines(self, indent: int = 0) -> Iterator[str]:
         raise NotImplementedError
+
+
+class ConverterGroup(Generic[C]):
+    __slots__ = ('parent', 'members')
+
+    def __init__(self, parent: CollectionConverter, members: list[C]):
+        self.parent = parent
+        self.members = members
+
+    def __len__(self) -> int:
+        return len(self.members)
+
+    def __getitem__(self, index: int) -> C:
+        return self.members[index]
+
+    def __iter__(self) -> Iterator[C]:
+        yield from self.members
+
+    def format_all(self, indent: int = 0) -> Iterator[str]:
+        for member in self.members:
+            yield from member.format_lines(indent)
 
 
 class ScriptConverter(Converter, converts=Script):
@@ -75,36 +97,79 @@ class ScriptConverter(Converter, converts=Script):
 
 
 class CollectionConverter(Converter, ABC):
-    ast_cls: ArgCollection
+    ast_obj: ArgCollection
+    parent: CollectionConverter | None
+    _name_mode = None
+
+    @cached_property
+    def name_mode(self) -> str | None:
+        return self._name_mode or (self.parent.name_mode if self.parent else None)
+
+    @cached_property
+    def grouped_children(self) -> list[ConverterGroup[ParamConverter | GroupConverter | Converter]]:
+        return [
+            self.for_ast_callable(cg[0]).init_group(self, cg) if cg else ConverterGroup(self, [])
+            for cg in self.ast_obj.grouped_children()
+        ]
+
+    def descendant_args(self) -> Iterator[ParamConverter]:
+        for child_group in self.grouped_children:
+            if not child_group:
+                continue
+            elif hasattr(child_group[0], 'descendant_args'):
+                for child in child_group:
+                    yield from child.descendant_args()
+            elif isinstance(child_group[0], ParamConverter):
+                yield from child_group
 
     def format_members(self, prefix: str, indent: int = 4) -> Iterator[str]:
-        had_members = False
-        for child_group in self.ast_obj.grouped_children():
-            if child_group:
-                had_members = True
-                yield from self.for_ast_callable(child_group[0]).format_all(self, child_group, indent)
+        for child_group in self.grouped_children:
+            yield from child_group.format_all(indent)
 
-        if not had_members:
+        if not any(cg for cg in self.grouped_children):
             yield f'{prefix}    pass'
 
 
 class ParserConverter(CollectionConverter, converts=AstArgumentParser):
     _auto_gen_disclaimer = '# This is an automatically generated name that should probably be updated'
     ast_obj: AstArgumentParser
+    parent: ParserConverter | None
 
-    def __init__(self, parser: AstArgumentParser, parent: str = 'Command', counter: count = None):
-        super().__init__(parser)
-        self.parent = parent
+    def __init__(self, parser: AstArgumentParser, parent: ParserConverter = None, counter: count = None):
+        super().__init__(parser, parent)
         self.counter = count() if counter is None else counter
 
+    @cached_property
+    def name(self) -> str:
+        return f'Command{next(self.counter)}'
+
+    @cached_property
+    def name_mode(self) -> str | None:
+        return self._name_mode or (self.parent.name_mode if self.parent else None)
+
+    @cached_property
+    def _name_mode(self) -> str | None:
+        if self.parent and self.parent._name_mode:
+            return None
+        name_modes = {pc._name_mode for pc in self.descendant_args() if pc.is_option and '_' in pc.attr_name}
+        return next(iter(name_modes)) if len(name_modes) == 1 else None
+
+    @cached_property
+    def sub_parser_converters(self) -> list[ParserConverter]:
+        return [self.__class__(sub_parser, self, self.counter) for sub_parser in self.ast_obj.sub_parsers]
+
+    def descendant_args(self) -> Iterator[ParamConverter]:
+        yield from super().descendant_args()
+        for sp_converter in self.sub_parser_converters:
+            yield from sp_converter.descendant_args()
+
     def format_lines(self, indent: int = 0) -> Iterator[str]:
-        suffix = f'  {self._auto_gen_disclaimer}' if self.parent == 'Command' else ''
-        name = f'Command{next(self.counter)}'
+        suffix = f'  {self._auto_gen_disclaimer}' if self.parent is None else ''
         yield '\n'
-        yield f'class {name}({self.parent}{self._get_args()}):{suffix}'
+        yield f'class {self.name}({self._get_args()}):{suffix}'
         yield from self.format_members('')
-        for sub_parser in self.ast_obj.sub_parsers:
-            yield from self.__class__(sub_parser, name, self.counter).format_lines()
+        for sp_converter in self.sub_parser_converters:
+            yield from sp_converter.format_lines()
 
     def _get_args(self) -> str:
         # TODO: Finish this
@@ -113,7 +178,14 @@ class ParserConverter(CollectionConverter, converts=AstArgumentParser):
         sp_parent = getattr(parser, 'sp_parent', None)
         is_sub_parser = isinstance(parser.parent, AstArgumentParser)
 
-        return ''
+        kwargs = {
+            'option_name_mode': self._name_mode,
+        }
+        args = (
+            self.parent.name if self.parent else 'Command',
+            *(f'{key}={val}' for key, val in kwargs.items() if val is not None)
+        )
+        return ', '.join(args)
 
 
 class GroupConverter(CollectionConverter, converts=ArgGroup):
@@ -145,10 +217,11 @@ class GroupConverter(CollectionConverter, converts=ArgGroup):
 
 class ParamConverter(Converter, converts=ParserArg):
     ast_obj: ParserArg
+    parent: CollectionConverter | None
     _counter = count()
 
-    def __init__(self, arg: ParserArg, num: int):
-        super().__init__(arg)
+    def __init__(self, arg: ParserArg, parent: CollectionConverter, num: int):
+        super().__init__(arg, parent)
         self.num = num
 
     def __eq__(self, other: ParamConverter) -> bool:
@@ -162,31 +235,8 @@ class ParamConverter(Converter, converts=ParserArg):
         return self.num < other.num
 
     @classmethod
-    def format_all(cls, parent: CollectionConverter, args: list[ParserArg], indent: int = 4) -> Iterator[str]:
-        positionals, others = [], []
-        i_converters = iter(sorted(cls(arg, i) for i, arg in enumerate(args)))
-        for converter in i_converters:
-            if converter.is_positional:
-                positionals.append(converter)
-            else:
-                others.append(converter)
-                others.extend(i_converters)
-
-        for positional in positionals:
-            yield from positional.format_lines(indent)
-
-        if sub_parsers := getattr(parent.ast_obj, 'sub_parsers', None):
-            try:
-                name = literal_eval(sub_parsers[0].init_func_kwargs['dest']).replace('-', '_')
-            except (KeyError, ValueError):
-                name = 'sub_cmd'
-            else:
-                if name in RESERVED:
-                    name = 'sub_cmd'
-            yield f'{" " * indent}{name} = SubCommand()'
-
-        for other in others:
-            yield from other.format_lines(indent)
+    def init_group(cls, parent: CollectionConverter, args: list[ParserArg]) -> ParamConverterGroup:
+        return ParamConverterGroup(parent, [cls(arg, parent, i) for i, arg in enumerate(args)])
 
     def format_lines(self, indent: int = 4) -> Iterator[str]:
         yield self.format(indent)
@@ -200,6 +250,20 @@ class ParamConverter(Converter, converts=ParserArg):
 
     @cached_property
     def attr_name(self) -> str:
+        return self._attr_name.replace('-', '_') if self._name_mode else self._attr_name
+
+    @cached_property
+    def name_mode(self) -> str | None:
+        return None if self.parent.name_mode else self._name_mode
+
+    @cached_property
+    def _name_mode(self) -> str | None:
+        if not self.use_auto_long_opt_str:
+            return None
+        return "'-'" if '-' in self._attr_name else None
+
+    @cached_property
+    def _attr_name(self) -> str:
         name_candidates = self._attr_name_candidates()
         while name := next(name_candidates):
             if name not in RESERVED:
@@ -208,13 +272,12 @@ class ParamConverter(Converter, converts=ParserArg):
     def _attr_name_candidates(self) -> Iterator[str]:
         long, short, plain = self._grouped_opt_strs
         if self.is_positional or self.is_pass_thru:
-            for value in plain:
-                yield value.replace('-', '_')
+            yield from plain
         if self.is_option or self.is_pass_thru:
             for group in (long, short):
                 for opt in group:
                     if opt := opt.lstrip('-'):
-                        yield opt.replace('-', '_')
+                        yield opt
         while True:
             yield f'param_{next(self._counter)}'
 
@@ -222,14 +285,22 @@ class ParamConverter(Converter, converts=ParserArg):
 
     # region Arg Processing
 
-    def get_pos_args(self) -> Iterable[str]:
+    @cached_property
+    def cmd_option_strs(self) -> list[str]:
         if not self.is_option:
-            return ()
+            return []
         long, short, plain = self._grouped_opt_strs
-        if skip_long := len(long) == 1:
-            skip_long &= long[0][2:] in (self.attr_name, self.attr_name.replace('_', '-'))
-        args = short if skip_long else (long + short)
-        return (repr(arg) for arg in args)
+        return short if self.use_auto_long_opt_str else (long + short)
+
+    @cached_property
+    def use_auto_long_opt_str(self) -> bool:
+        if not self.is_option:
+            return False
+        long, short, plain = self._grouped_opt_strs
+        return len(long) == 1 and long[0][2:] == self._attr_name
+
+    def get_pos_args(self) -> Iterable[str]:
+        return (repr(arg) for arg in self.cmd_option_strs)
 
     def get_cls_and_kwargs(self) -> tuple[str, BaseArgs]:
         kwargs = self.ast_obj.init_func_kwargs.copy()
@@ -247,6 +318,7 @@ class ParamConverter(Converter, converts=ParserArg):
                 raise ConversionError(f'{self.ast_obj}: {action=} is not supported for Positional parameters')
             return 'Positional', ParamArgs.init_positional(action, **kwargs)
         elif self.is_option:
+            kwargs['name_mode'] = self.name_mode
             if action:
                 if action in ('store_true', 'store_false', 'store_const', 'append_const'):
                     return 'Flag', FlagArgs.init_flag(action, **kwargs)
@@ -254,7 +326,7 @@ class ParamConverter(Converter, converts=ParserArg):
                     return 'Counter', FlagArgs.init_counter(**kwargs)
                 elif action not in ('store', 'append'):
                     raise ConversionError(f'{self.ast_obj}: {action=} is not supported for Option parameters')
-            return 'Option', ParamArgs.init_option(self.ast_obj, action, **kwargs)
+            return 'Option', OptionArgs.init_option(self.ast_obj, action, **kwargs)
 
         raise ConversionError(f'Unable to determine a suitable Parameter type for {self.ast_obj!r}')
 
@@ -292,6 +364,34 @@ class ParamConverter(Converter, converts=ParserArg):
             else:
                 plain.append(opt)
         return long, short, plain
+
+
+class ParamConverterGroup(ConverterGroup[ParamConverter]):
+    def format_all(self, indent: int = 4) -> Iterator[str]:
+        positionals, others = [], []
+        i_converters = iter(sorted(self.members))
+        for converter in i_converters:
+            if converter.is_positional:
+                positionals.append(converter)
+            else:
+                others.append(converter)
+                others.extend(i_converters)
+
+        for positional in positionals:
+            yield from positional.format_lines(indent)
+
+        if sub_parsers := getattr(self.parent.ast_obj, 'sub_parsers', None):
+            try:
+                name = literal_eval(sub_parsers[0].init_func_kwargs['dest']).replace('-', '_')
+            except (KeyError, ValueError):
+                name = 'sub_cmd'
+            else:
+                if name in RESERVED:
+                    name = 'sub_cmd'
+            yield f'{" " * indent}{name} = SubCommand()'
+
+        for other in others:
+            yield from other.format_lines(indent)
 
 
 # region ParserArg Arg Containers
@@ -351,6 +451,11 @@ class ParamArgs(BaseArgs):
             action = None
         return cls.from_kwargs(action=action, nargs=nargs, **kwargs)
 
+
+@dataclass
+class OptionArgs(BaseArgs):
+    name_mode: OptStr = None
+
     @classmethod
     def init_option(cls, arg: ParserArg, action: OptStr = None, nargs: OptStr = None, const: OptStr = None, **kwargs):
         if const:
@@ -371,7 +476,7 @@ class ParamArgs(BaseArgs):
 
 
 @dataclass
-class FlagArgs(ParamArgs):
+class FlagArgs(OptionArgs):
     const: OptStr = None
 
     @classmethod
