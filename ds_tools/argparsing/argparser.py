@@ -4,6 +4,8 @@ Wrapper around argparse to provide some additional functionality / shortcuts
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import inspect
 import os
 from argparse import ArgumentParser, RawDescriptionHelpFormatter, Namespace, _ArgumentGroup  # noqa
@@ -162,7 +164,7 @@ class ArgParser(ArgumentParser):
             formatter.add_text(self.epilog)
         return formatter.format_help()
 
-    def add_subparser(self, dest, name, help_desc=None, *, help=None, description=None, **kwargs) -> 'ArgParser':
+    def add_subparser(self, dest, name, help_desc=None, *, help=None, description=None, **kwargs) -> ArgParser:
         """
         Add a subparser for a subcommand to the subparser group with the given destination variable name.  Creates the
         group if it does not already exist.

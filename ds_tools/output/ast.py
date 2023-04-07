@@ -1,41 +1,11 @@
-from __future__ import annotations
+from ast import AST, Module
 
-import ast
-import logging
-from ast import AST, Call, Attribute, Name
-from typing import Iterator
-
-__all__ = ['dump', 'get_name_repr', 'imp_names']
-log = logging.getLogger(__name__)
-
-
-def get_name_repr(node: AST) -> str:
-    if isinstance(node, Call):
-        node = node.func
-
-    if isinstance(node, Name):
-        return node.id
-    elif isinstance(node, Attribute):
-        return f'{get_name_repr(node.value)}.{node.attr}'  # noqa
-    elif isinstance(node, AST):
-        return ast.unparse(node)
-    else:
-        raise TypeError(f'Only AST nodes are supported - found {node.__class__.__name__}')
-
-
-def imp_names(imp: ast.Import | ast.ImportFrom) -> Iterator[tuple[str, str]]:
-    for alias in imp.names:
-        name = alias.name
-        as_name = alias.asname or name
-        yield name, as_name
-
-
-# region AST dump
+__all__ = ['dump']
 
 
 def dump(node, skip_outer_module: bool = True):
     """Return a formatted dump of the tree in node.  This is mainly useful for debugging purposes."""
-    if skip_outer_module and isinstance(node, ast.Module) and len(node.body) == 1:
+    if skip_outer_module and isinstance(node, Module) and len(node.body) == 1:
         node = node.body[0]
     return _format(node)[0]
 
@@ -78,6 +48,3 @@ def _format(node: AST, level: int = 0, indent: str = '    '):
         return f'{cls.__name__}({", ".join(args)})', True, nested_count + 1
     formatted = f'{cls.__name__}({prefix}{sep.join(args)}{suffix})'
     return formatted, '\n' not in formatted, nested_count + 1
-
-
-# endregion

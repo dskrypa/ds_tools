@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import logging
 from ast import AST, Call, Attribute, Name, Constant, Load, keyword, literal_eval
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, Iterator, Type
 
 from ds_tools.argparsing.argparser import ArgParser
 from ds_tools.argparsing.utils import COMMON_ARGS
 from ds_tools.caching.decorators import cached_property
-from .argparse_ast import AstCallable, AstArgumentParser, Script, AddVisitedChild, ParserArg, visit_func
-from .ast_utils import get_name_repr
-from .command_builder import Converter
+from cli_command_parser.conversion.argparse_ast import AstCallable, AstArgumentParser, Script, ParserArg
+from cli_command_parser.conversion.argparse_ast import AddVisitedChild, visit_func, InitNode, SubParser, AC
+from cli_command_parser.conversion.command_builder import Converter
+from cli_command_parser.conversion.utils import get_name_repr
 
 if TYPE_CHECKING:
-    from .argparse_ast import InitNode, SubParser, AC
-    from .visitor import TrackedRefMap
+    from cli_command_parser.conversion.visitor import TrackedRefMap
 
 __all__ = ['ParserConstant', 'AstArgParser', 'SubParserShortcut', 'ConstantConverter']
 log = logging.getLogger(__name__)
@@ -67,8 +67,8 @@ class AstArgParser(AstArgumentParser, represents=ArgParser, children=('constants
                 )
                 add_arg_func(fake_node, fake_node, tracked_refs)
 
-    def grouped_children(self) -> Iterator[list[AC]]:
-        yield self.constants
+    def grouped_children(self) -> Iterator[tuple[Type[AC], list[AC]]]:
+        yield ParserConstant, self.constants
         yield from super().grouped_children()
 
 

@@ -6,7 +6,7 @@ import ast
 import logging
 from pathlib import Path
 
-from cli_command_parser import Command, Counter, Option, Positional, Flag, ParamGroup, SubCommand, main
+from cli_command_parser import Command, Counter, Positional, Flag, ParamGroup, SubCommand, main
 from cli_command_parser.inputs import Path as IPath
 
 from ds_tools.caching.decorators import cached_property
@@ -20,9 +20,6 @@ cli_cp_cmd = 'cli-command-parser Command'
 class ParserConverter(Command, description=f'Tool to convert an {arg_parser} into a {cli_cp_cmd}'):
     action = SubCommand()
     input: Path
-    # with ParamGroup(mutually_dependent=True, required=True):
-    #     input: Path = Option('-i', type=IPath(type='file', exists=True), help=f'A file containing an {arg_parser}')
-    #     # output: Path = Option('-o', type=IPath(type='file', exists=False), help='The desired output location')
     smart_for = Flag(
         '--no-smart-for', '-S', default=True, help='Disable "smart" for loop handling, which attempts to dedupe common subparser params'
     )
@@ -33,15 +30,13 @@ class ParserConverter(Command, description=f'Tool to convert an {arg_parser} int
     def _init_command_(self):
         from ds_tools.logging import init_logging
 
-        # log_fmt = '%(asctime)s %(levelname)s %(name)s %(lineno)d %(message)s' if self.verbose > 1 else '%(message)s'
-        # logging.basicConfig(level=logging.DEBUG if self.verbose else logging.INFO, format=log_fmt)
         init_logging(self.verbose, log_path=None)
 
     @cached_property
     def script(self):
         from ds_tools.argparsing.conversion import Script
 
-        script = Script(self.input, self.smart_for)
+        script = Script(self.input.read_text(), self.smart_for, path=self.input)
         log.debug(f'Found {script=}')
         return script
 
@@ -50,7 +45,7 @@ class Convert(ParserConverter):
     input: Path = Positional(type=IPath(type='file', exists=True), help=f'A file containing an {arg_parser}')
 
     def main(self):
-        from ds_tools.argparsing.conversion import convert_script
+        from cli_command_parser.conversion import convert_script
 
         print(convert_script(self.script))
 
@@ -69,7 +64,7 @@ class Dump(ParserConverter):
     compact = Flag('-c', help='Print more compact output for the dump action')
 
     def main(self):
-        from ds_tools.argparsing.conversion.ast_utils import dump
+        from ds_tools.output.ast import dump
 
         if self.parsed:
             nodes = (node for p in self.script.parsers for node in p.walk_nodes())
