@@ -1,68 +1,46 @@
 #!/usr/bin/env python
-"""
-Utility based on f3write: https://github.com/AltraMayor/f3
-
-:author: Doug Skrypa
-"""
 
 import sys
-from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, PROJECT_ROOT.joinpath('bin').as_posix())
-import _venv  # This will activate the venv, if it exists and is not already active
+from cli_command_parser import Command, SubCommand, Positional, Option, Flag, Counter, main
 
-import logging
-
-sys.path.append(PROJECT_ROOT.as_posix())
-from ds_tools.__version__ import __author_email__, __version__
-from ds_tools.argparsing import ArgParser
-from ds_tools.core.main import wrap_main
+from ds_tools.__version__ import __author_email__, __version__  # noqa
 from ds_tools.input import parse_bytes
-from ds_tools.logging import init_logging
 from ds_tools.utils.f3 import GB_BYTES, DEFAULT_CHUNK_SIZE, F3Mode, F3Data
 
-log = logging.getLogger(__name__)
+
+class F3(Command, description='Alternate F3 write/read test, based on f3write: https://github.com/AltraMayor/f3'):
+    action = SubCommand()
+    chunk_size = Option('-c', default=DEFAULT_CHUNK_SIZE, metavar='BYTES', type=parse_bytes, help='Chunk size to use')
+    verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
+
+    def _init_command_(self):
+        from ds_tools.logging import init_logging
+
+        init_logging(self.verbose, log_path=None)
 
 
-def parser():
-    parser = ArgParser(description='Alternate F3 Write/Read Test')
+class Write(F3, help='Equivalent of f3write, with more options'):
+    path = Positional(help='The directory in which files should be written')
+    start = Option('-s', default=1, type=int, help='The number for the first file to be written')
+    end = Option('-e', type=int, help='The number for the last file to be written (default: fill disk)')
+    size = Option('-S', default=GB_BYTES, metavar='BYTES', type=parse_bytes, help='File size to use (this is for testing purposes only)')
+    mode = Option('-m', default='iter', choices=[e.value for e in F3Mode], help='Buffer population mode')
+    rewrite = Flag('-r', help='If a file already exists for a given number, rewrite it (default: skip unless size is incorrect)')
+    buffering = Option('-b', default=-1, type=int, choices=(-1, 0, 1), help='Whether to enable buffering or not')
 
-    write_parser = parser.add_subparser('action', 'write', 'Equivalent of f3write, with more options')
-    write_parser.add_argument('path', help='The directory in which files should be written')
-    write_parser.add_argument('--start', '-s', type=int, default=1, help='The number for the first file to be written')
-    write_parser.add_argument('--end', '-e', type=int, help='The number for the last file to be written (default: fill disk)')
-    write_parser.add_argument('--size', '-S', metavar='BYTES', type=parse_bytes, default=GB_BYTES, help='File size to use (this is for testing purposes only)')
-    write_parser.add_argument('--chunk_size', '-c', metavar='BYTES', type=parse_bytes, default=DEFAULT_CHUNK_SIZE, help='Chunk size to use (default: %(default)s)')
-    write_parser.add_argument('--mode', '-m', choices=[e.value for e in F3Mode], default='iter', help='Buffer population mode (default: %(default)s)')
-    write_parser.add_argument('--rewrite', '-r', action='store_true', help='If a file already exists for a given number, rewrite it (default: skip unless size is incorrect)')
-    write_parser.add_argument('--buffering', '-b', choices=(-1, 0, 1), default=-1, type=int, help='Whether to enable buffering or not')
-
-    read_parser = parser.add_subparser('action', 'read', 'Simplified version of f3read')
-    read_parser.add_argument('path', help='The directory from which files should be read')
-    read_parser.add_argument('--chunk_size', '-c', metavar='BYTES', type=parse_bytes, default=DEFAULT_CHUNK_SIZE, help='Chunk size to use (default: %(default)s)')
-    read_parser.add_constant('mode', 'iter')
-    read_parser.add_constant('size', GB_BYTES)
-
-    parser.include_common_args('verbosity')
-    return parser
-
-
-@wrap_main
-def main():
-    args = parser().parse_args(req_subparser_value=True)
-    init_logging(args.verbose, log_path=None)
-
-    f3data = F3Data(args.mode, args.size, args.chunk_size, args.buffering)
-    action = args.action
-    if action == 'write':
-        if not f3data.write_files(args.path, args.start, args.end, args.rewrite):
+    def main(self):
+        f3data = F3Data(self.mode, self.size, self.chunk_size, self.buffering)
+        if not f3data.write_files(self.path, self.start, self.end, self.rewrite):
             sys.exit(1)
-    elif action == 'read':
-        if not f3data.verify_files(args.path, args.chunk_size):
+
+
+class Read(F3, help='Simplified version of f3read'):
+    path = Positional(help='The directory from which files should be read')
+
+    def main(self):
+        if not F3Data('iter', GB_BYTES, self.chunk_size).verify_files(self.path, self.chunk_size):
             sys.exit(1)
-    else:
-        raise ValueError(f'Unexpected {action=!r}')
 
 
 if __name__ == '__main__':

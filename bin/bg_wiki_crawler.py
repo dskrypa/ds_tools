@@ -5,50 +5,52 @@ Python 3 / Requests rewrite of an old script used to pull BLU spell info from BG
 :author: Doug Skrypa
 """
 
-import argparse
 import logging
-import sys
-from bs4 import BeautifulSoup
-from pathlib import Path
 
+from bs4 import BeautifulSoup
+from cli_command_parser import Command, ParamGroup, Option, Flag, Counter, main
 from requests_client import RequestsClient
 
-sys.path.append(Path(__file__).resolve().parents[1].as_posix())
-from ds_tools.logging import init_logging
 from ds_tools.output import Table, SimpleColumn
+from ds_tools.output.constants import PRINTER_FORMATS
 
 log = logging.getLogger(__name__)
 
 
-def main():
-    parser = argparse.ArgumentParser(description='BG Wiki Crawler for FFXI')
-    parser.add_argument('--verbose', '-v', action='count', help='Print more verbose log info (may be specified multiple times to increase verbosity)')
+class BgWikiCrawler(Command, description='BG Wiki Crawler for FFXI'):
+    limit = Option('-L', default=5, type=int, help='Limit on the number of links to retrieve')
 
-    mgroup0 = parser.add_mutually_exclusive_group()
-    mgroup0.add_argument('--endpoint', '-e', help='BG Wiki page to retrieve')
-    mgroup0.add_argument('--list_descriptions', '-d', action='store_true', help='List all BLU spell descriptions')
+    with ParamGroup(mutually_exclusive=True):
+        endpoint = Option('-e', help='BG Wiki page to retrieve')
+        list_descriptions = Flag('-d', help='List all BLU spell descriptions')
 
-    parser.add_argument('--limit', '-L', type=int, default=5, help='Limit on the number of links to retrieve')
-    args = parser.parse_args()
-    init_logging(args.verbose, log_path=None)
+    with ParamGroup(description='Common Options'):
+        verbose = Counter('-v', help='Print more verbose log info (may be specified multiple times)')
+        format = Option('-f', choices=PRINTER_FORMATS)
 
-    crawler = WikiCrawler()
-    if args.list_descriptions:
-        links = crawler.get_links('index.php', params={'title':'Category:Blue_Magic'})
-        # Printer('json-pretty').pprint(links)
-        # return
-        tbl = Table(SimpleColumn('Spell', links), SimpleColumn('Description', 100))
-        for i, (spell, link) in enumerate(links.items()):
-            if i == args.limit:
-                break
-            row = {'Spell': spell}
-            try:
-                row['Description'] = crawler.get_blu_spell_description(link)
-            except Exception as e:
-                log.error('Error retrieving {} from {}: {}'.format(spell, link, e))
-            tbl.print_row(row)
-    elif args.endpoint:
-        print(crawler.get_soup(args.endpoint))
+    def _init_command_(self):
+        from ds_tools.logging import init_logging
+
+        init_logging(self.verbose, log_path=None)
+
+    def main(self):
+        crawler = WikiCrawler()
+        if self.list_descriptions:
+            links = crawler.get_links('index.php', params={'title': 'Category:Blue_Magic'})
+            # Printer('json-pretty').pprint(links)
+            # return
+            tbl = Table(SimpleColumn('Spell', links), SimpleColumn('Description', 100))
+            for i, (spell, link) in enumerate(links.items()):
+                if i == self.limit:
+                    break
+                row = {'Spell': spell}
+                try:
+                    row['Description'] = crawler.get_blu_spell_description(link)
+                except Exception as e:
+                    log.error(f'Error retrieving {spell} from {link}: {e}')
+                tbl.print_row(row)
+        elif self.endpoint:
+            print(crawler.get_soup(self.endpoint))
 
 
 class WikiCrawler(RequestsClient):
@@ -76,7 +78,7 @@ class WikiCrawler(RequestsClient):
         soup = self.get_soup(endpoint, **kwargs)
         try:
             return soup.find('th', text=' Description\n').find_parent().find('td').get_text().strip()
-        except AttributeError as e:
+        except AttributeError:
             pass
         return soup.find('b', text='Description:').find_parent().find_parent().find_all('td')[-1].get_text().strip()
 
@@ -86,7 +88,4 @@ class WikiCrawler(RequestsClient):
 
 
 if __name__ == '__main__':
-    try:
-        main()
-    except KeyboardInterrupt:
-        print()
+    main()

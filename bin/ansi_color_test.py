@@ -1,16 +1,8 @@
 #!/usr/bin/env python
 
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, PROJECT_ROOT.joinpath('bin').as_posix())
-import _venv  # This will activate the venv, if it exists and is not already active
-
 from cli_command_parser import Command, Option, ParamGroup, Flag, main
 
-sys.path.append(PROJECT_ROOT.as_posix())
-from ds_tools.__version__ import __author_email__, __version__
+from ds_tools.__version__ import __author_email__, __version__  # noqa
 from ds_tools.output.color import colored
 
 ATTRS = [

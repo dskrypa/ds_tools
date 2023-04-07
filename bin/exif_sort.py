@@ -8,7 +8,7 @@ from cli_command_parser import Command, Positional, Flag, Counter, main, inputs
 log = logging.getLogger(__name__)
 
 
-class Command0(Command, description='Sorts JPGs by their EXIF dates'):
+class ExifSorter(Command, description='Sorts JPGs by their EXIF dates'):
     src_dir = Positional(type=inputs.Path(type='dir', exists=True), help='Path of the directory to sort from')
     dst_dir = Positional(type=inputs.Path(type='dir'), help='Path of the directory to sort to')
     verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')

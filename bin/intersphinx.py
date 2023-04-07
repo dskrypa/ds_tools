@@ -3,14 +3,8 @@
 This was easier than getting a convoluted grep/awk command to work...
 """
 
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, PROJECT_ROOT.joinpath('bin').as_posix())
-import _venv  # This will activate the venv, if it exists and is not already active
-
 import re
+import sys
 from typing import Optional, Any, Callable, Union
 
 from sphinx.ext.intersphinx import fetch_inventory
