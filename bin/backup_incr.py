@@ -1,25 +1,17 @@
 #!/usr/bin/env python
 
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, PROJECT_ROOT.joinpath('bin').as_posix())
-import _venv  # This will activate the venv, if it exists and is not already active
-
 import logging
 import os
 import shutil
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Iterable, Optional
 
-sys.path.append(PROJECT_ROOT.as_posix())
-from ds_tools.__version__ import __author_email__, __version__
-from ds_tools.argparsing import ArgParser
-from ds_tools.core.main import wrap_main
+from cli_command_parser import Command, SubCommand, ParamGroup, Positional, Option, Flag, Counter, main
+
+from ds_tools.__version__ import __author_email__, __version__  # noqa
 from ds_tools.fs.copy import copy_file
 from ds_tools.fs.paths import iter_sorted_files
-from ds_tools.logging import init_logging
 from ds_tools.output.formatting import readable_bytes
 
 log = logging.getLogger(__name__)
@@ -27,55 +19,42 @@ IGNORE_FILES = {'Thumbs.db', '.windows'}
 IGNORE_DIRS = {'__pycache__', '.git', '.idea'}
 
 
-def parser():
-    parser = ArgParser(description='Incremental Backup Tool')
+class BackupUtilCLI(Command, description='Incremental Backup Tool'):
+    action = SubCommand()
+    verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
+    dry_run = Flag('-D', help='Print the actions that would be taken instead of taking them')
 
-    with parser.add_subparser('action', 'backup', 'Create an incremental backup') as bkp_parser:
-        bkp_parser.add_argument('source', metavar='PATH', help='The file to backup')
-        bkp_parser.add_argument('dest_dir', metavar='PATH', help='The directory in which backups should be stored')
-        bkp_parser.add_argument('--last_dirs', nargs='+', metavar='PATH', help='One or more previous backup directories')
+    with ParamGroup(description='Behavior Options'):
+        ignore_files = Option(nargs='+', help='Add additional file names to be ignored')
+        ignore_dirs = Option(nargs='+', help='Add additional directory names to be ignored')
+        follow_links = Flag('-L', help='Follow directory symlinks')
 
-        bkp_options = bkp_parser.add_argument_group('Behavior Options')
-        bkp_options.add_argument('--ignore_files', nargs='+', help='Add additional file names to be ignored')
-        bkp_options.add_argument('--ignore_dirs', nargs='+', help='Add additional directory names to be ignored')
-        bkp_options.add_argument('--follow_links', '-L', action='store_true', help='Follow directory symlinks')
+    def _init_command_(self):
+        from ds_tools.logging import init_logging
 
-    # with parser.add_subparser('action', 'restore', 'Restore files from a set of incremental backups') as rst_parser:
-    #     rst_parser.add_argument('destination', metavar='PATH', help='The destination directory')
-    #     rst_parser.add_argument('sources', metavar='PATH', nargs='+')
-
-    with parser.add_subparser('action', 'rebuild', 'Rebuild a remote tree from local incremental backups') as bld_parser:
-        bld_parser.add_argument('remote', help='A remote directory')
-        bld_parser.add_argument('destination', help='The local destination directory')
-        bld_parser.add_argument('sources', nargs='+', help='Local incremental backup directories')
-
-        bld_options = bld_parser.add_argument_group('Behavior Options')
-        bld_options.add_argument('--ignore_files', nargs='+', help='Add additional file names to be ignored')
-        bld_options.add_argument('--ignore_dirs', nargs='+', help='Add additional directory names to be ignored')
-        bld_options.add_argument('--follow_links', '-L', action='store_true', help='Follow directory symlinks')
-
-    parser.include_common_args('verbosity', 'dry_run')
-    return parser
+        init_logging(self.verbose)
+        if self.ignore_files:
+            IGNORE_FILES.update(self.ignore_files)
+        if self.ignore_dirs:
+            IGNORE_DIRS.update(self.ignore_dirs)
 
 
-@wrap_main
-def main():
-    args = parser().parse_args()
-    init_logging(args.verbose)
+class Backup(BackupUtilCLI, help='Create an incremental backup'):
+    source = Positional(metavar='PATH', help='The file to backup')
+    dest_dir = Positional(metavar='PATH', help='The directory in which backups should be stored')
+    last_dirs = Option(metavar='PATH', nargs='+', help='One or more previous backup directories')
 
-    if args.ignore_files:
-        IGNORE_FILES.update(args.ignore_files)
-    if args.ignore_dirs:
-        IGNORE_DIRS.update(args.ignore_dirs)
+    def main(self):
+        BackupUtil(self.source, self.last_dirs, self.dest_dir, self.follow_links, self.dry_run).process_files()
 
-    if args.action == 'backup':
-        copy_util = BackupUtil(args.source, args.last_dirs, args.dest_dir, args.follow_links, args.dry_run)
-    elif args.action == 'rebuild':
-        copy_util = RebuildUtil(args.remote, args.destination, args.sources, args.follow_links, args.dry_run)
-    else:
-        raise ValueError(f'Unexpected {args.action=!r}')
 
-    copy_util.process_files()
+class Rebuild(BackupUtilCLI, help='Rebuild a remote tree from local incremental backups'):
+    remote = Positional(help='A remote directory')
+    destination = Positional(help='The local destination directory')
+    sources = Positional(nargs='+', help='Local incremental backup directories')
+
+    def main(self):
+        RebuildUtil(self.remote, self.destination, self.sources, self.follow_links, self.dry_run).process_files()
 
 
 class CopyUtil(ABC):

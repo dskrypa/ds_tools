@@ -1,51 +1,40 @@
 #!/usr/bin/env python
 
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, PROJECT_ROOT.joinpath('bin').as_posix())
-import _venv  # This will activate the venv, if it exists and is not already active
-
 import logging
+from pathlib import Path
 from hashlib import sha256
 
+from cli_command_parser import Command, Option, Counter, main, inputs
 from watchdog.observers import Observer
 
-sys.path.append(PROJECT_ROOT.as_posix())
-from ds_tools.__version__ import __author_email__, __version__
-from ds_tools.argparsing import ArgParser
-from ds_tools.core.main import wrap_main
+from ds_tools.__version__ import __author_email__, __version__  # noqa
 from ds_tools.fs.paths import unique_path
-from ds_tools.logging import init_logging
 
 log = logging.getLogger(__name__)
 
 
-def parser():
-    parser = ArgParser(description='Game Save File Watcher')
-    parser.add_argument('--path', '-p', help='Save file path to watch')
-    parser.add_argument('--backups', '-b', metavar='PATH', help='Path to the directory in which backups should be saved (default: same dir as save files)')
-    parser.include_common_args('verbosity')
-    return parser
+class SaveWatcher(Command, description='Game Save File Watcher'):
+    path = Option('-p', help='Save file path to watch')
+    backups = Option('-b', type=inputs.Path(type='dir'), help='Path to the directory in which backups should be saved (default: same dir as save files)')
+    verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
 
+    def _init_command_(self):
+        from ds_tools.logging import init_logging
 
-@wrap_main
-def main():
-    args = parser().parse_args()
-    init_logging(args.verbose, log_path=None)
+        init_logging(self.verbose, log_path=None)
 
-    save_dir = Path(args.path or '~/AppData/Local/Myst/Saved/SaveGames').expanduser().resolve()
-    backup_dir = Path(args.backups).expanduser().resolve() if args.backups else save_dir.parent.joinpath('SaveBackups')
-    if save_dir.samefile(backup_dir):
-        raise ValueError('The backup dir must be different from the save dir')
-    if backup_dir.exists() and not backup_dir.is_dir():
-        raise ValueError(f'Invalid backup_dir={backup_dir.as_posix()} - it is not a directory')
-    elif not backup_dir.exists():
-        log.debug(f'Creating backup_dir={backup_dir.as_posix()}')
-        backup_dir.mkdir(parents=True)
+    def main(self):
+        save_dir = Path(self.path or '~/AppData/Local/Myst/Saved/SaveGames').expanduser().resolve()
+        backup_dir = self.backups or save_dir.parent.joinpath('SaveBackups')
+        if save_dir.samefile(backup_dir):
+            raise ValueError('The backup dir must be different from the save dir')
+        if backup_dir.exists() and not backup_dir.is_dir():
+            raise ValueError(f'Invalid backup_dir={backup_dir.as_posix()} - it is not a directory')
+        elif not backup_dir.exists():
+            log.debug(f'Creating backup_dir={backup_dir.as_posix()}')
+            backup_dir.mkdir(parents=True)
 
-    FSEventHandler(save_dir, backup_dir).run()
+        FSEventHandler(save_dir, backup_dir).run()
 
 
 class FSEventHandler:

@@ -117,6 +117,7 @@ class LoggingPrefix:
         return self._temp_tense(Tense.PRESENT)
 
     add = Verb()
+    copy = Verb()
     create = Verb(drop_last=True)
     delete = Verb(drop_last=True)
     move = Verb(drop_last=True)

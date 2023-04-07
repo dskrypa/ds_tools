@@ -1,102 +1,108 @@
 #!/usr/bin/env python
-# PYTHON_ARGCOMPLETE_OK
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, Path(__file__).resolve().parents[1].joinpath('bin').as_posix())
-import _venv  # This will activate the venv, if it exists and is not already active
+from __future__ import annotations
 
 import logging
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ds_tools.argparsing import ArgParser
-from ds_tools.input import choose_item
+from cli_command_parser import Command, SubCommand, Positional, Option, Counter, main, inputs
 
-log = logging.getLogger(__name__)
+from ds_tools.caching.decorators import cached_property
 
-
-def parser():
-    parser = ArgParser(description='Download YouTube videos')
-
-    dl_parser = parser.add_subparser('action', 'dl', 'Download a video from YouTube')
-    dl_parser.add_argument('url', metavar='URL', help='The name URL of the video to download')
-    dl_parser.add_argument('--save_dir', '-d', metavar='PATH', default='~/Downloads/youtube/', help='Directory to store downloads')
-    # dl_parser.add_argument('--resolution', '-r', default='1080p', help='Video resolution (default: %(default)s)')
-    dl_parser.add_argument('--extension', '-e', default='mp4', help='Video extension')
-
-    list_parser = parser.add_subparser('action', 'list', 'List available parts for the given YouTube video')
-    list_parser.add_argument('url', help='The name URL of the video to download')
-
-    audio_parser = parser.add_subparser('action', 'audio', 'Download audio from YouTube')
-    audio_parser.add_argument('url', help='The name URL of the video to download')
-    audio_parser.add_argument('--save_dir', '-d', default='~/Downloads/youtube/', help='Directory to store downloads')
-    audio_parser.add_argument('--extension', '-e', help='File extension (default: based on mime type)')
-
-    parser.include_common_args('verbosity')
-    return parser
-
-
-def main():
-    args = parser().parse_args(req_subparser_value=True)
-
-    from ds_tools.logging import init_logging
-    init_logging(args.verbose, log_path=None)
-
-    from pathlib import Path
+if TYPE_CHECKING:
     from pytube import YouTube
 
-    yt = YouTube(args.url)
-    if args.action == 'dl':
-        from tempfile import TemporaryDirectory
+log = logging.getLogger(__name__)
+DEFAULT_DIR = Path('~/Downloads/youtube/').expanduser()
 
-        dest_dir = Path(args.save_dir).expanduser()
-        if not dest_dir.exists():
-            dest_dir.mkdir(parents=True)
+
+class YouTubeCLI(Command, description='Download YouTube videos'):
+    action = SubCommand()
+    verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
+    url: str
+
+    def _init_command_(self):
+        from ds_tools.logging import init_logging
+
+        init_logging(self.verbose, log_path=None)
+
+    @cached_property
+    def yt(self) -> YouTube:
+        from pytube import YouTube
+
+        return YouTube(self.url)
+
+
+class Dl(YouTubeCLI, help='Download a video from YouTube'):
+    url = Positional(metavar='URL', help='The name URL of the video to download')
+    save_dir = Option('-d', type=inputs.Path(type='dir'), default=DEFAULT_DIR, help='Directory to store downloads')
+    resolution = Option('-r', default='1080p', help='Video resolution')
+    extension = Option('-e', default='mp4', help='Video extension')
+
+    def main(self):
+        from tempfile import TemporaryDirectory
+        from ds_tools.input import choose_item
+
+        if not self.save_dir.exists():
+            self.save_dir.mkdir(parents=True)
 
         with TemporaryDirectory() as tmp_dir:
-            choices = yt.streams.order_by('resolution')
+            choices = self.yt.streams.order_by('resolution')
             vid_stream = choose_item(choices.fmt_streams, 'stream')
-            # vid_stream = yt.streams.filter(file_extension=args.extension, res=args.resolution).order_by('resolution')[-1]
+            # vid_stream = self.yt.streams.filter(file_extension=self.extension, res=self.resolution).order_by('resolution')[-1]
 
             log.info(f'Downloading video={vid_stream}')
             vid_path = Path(vid_stream.download(output_path=tmp_dir))
 
-            choices = yt.streams.filter(type='audio').order_by('abr')
+            choices = self.yt.streams.filter(type='audio').order_by('abr')
             audio_stream = choose_item(choices, 'audio stream')
 
-            # audio_stream = yt.streams.filter(type='audio').order_by('abr')[-1]
+            # audio_stream = self.yt.streams.filter(type='audio').order_by('abr')[-1]
             log.info(f'Downloading audio={audio_stream}')
             audio_path = Path(audio_stream.download(output_path=tmp_dir))
 
-            dest_path = dest_dir.joinpath(vid_stream.default_filename)
+            dest_path = self.save_dir.joinpath(vid_stream.default_filename)
             combine_via_ffmpeg(audio_path, vid_path, dest_path)
             log.info(f'Saved video to {dest_path}')
-    elif args.action == 'list':
+
+
+class List(YouTubeCLI, help='List available parts for the given YouTube video'):
+    url = Positional(help='The name URL of the video to download')
+
+    def main(self):
         print('Video:')
-        for stream in yt.streams.filter(type='video').order_by('resolution'):
+        for stream in self.yt.streams.filter(type='video').order_by('resolution'):
             print(f'    {stream}')
 
         print('\nAudio:')
-        for stream in yt.streams.filter(type='audio').order_by('abr'):
+        for stream in self.yt.streams.filter(type='audio').order_by('abr'):
             print(f'    {stream}')
-    elif args.action == 'audio':
-        dest_dir = Path(args.save_dir).expanduser()
-        if not dest_dir.exists():
-            dest_dir.mkdir(parents=True)
-        audio_stream = yt.streams.filter(type='audio').order_by('abr')[-1]
+
+
+class Audio(YouTubeCLI, help='Download audio from YouTube'):
+    url = Positional(help='The name URL of the video to download')
+    save_dir = Option('-d', type=inputs.Path(type='dir'), default=DEFAULT_DIR, help='Directory to store downloads')
+    extension = Option('-e', help='File extension (default: based on mime type)')
+
+    def main(self):
+        if not self.save_dir.exists():
+            self.save_dir.mkdir(parents=True)
+
+        audio_stream = self.yt.streams.filter(type='audio').order_by('abr')[-1]
         log.info(f'Downloading audio={audio_stream}')
-        audio_path = Path(audio_stream.download(output_path=dest_dir))
-        if args.extension:
-            path = audio_path.with_suffix(args.extension if args.extension.startswith('.') else f'.{args.extension}')
+
+        audio_path = Path(audio_stream.download(output_path=self.save_dir))
+        if self.extension:
+            path = audio_path.with_suffix(self.extension if self.extension.startswith('.') else f'.{self.extension}')
             audio_path.rename(path)
             audio_path = path
+
         log.info(f'Saved video to {audio_path}')
-    else:
-        raise ValueError(f'Unknown action={args.action}')
 
 
 def combine_via_ffmpeg(audio_path, video_path, dest_path):
-    from ds_tools.shell import exec_local
+    from subprocess import check_call
 
     cmd = [
         'ffmpeg',
@@ -109,7 +115,7 @@ def combine_via_ffmpeg(audio_path, video_path, dest_path):
         '-strict', 'experimental',
         dest_path.as_posix()
     ]
-    return exec_local(*cmd, mode='raw', raise_nonzero=True)
+    return check_call(cmd)
 
 
 if __name__ == '__main__':

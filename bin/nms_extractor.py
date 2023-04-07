@@ -1,89 +1,73 @@
 #!/usr/bin/env python
 
-import sys
+from __future__ import annotations
+
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, PROJECT_ROOT.joinpath('bin').as_posix())
-import _venv  # This will activate the venv, if it exists and is not already active
+from cli_command_parser import Command, SubCommand, ParamGroup, Positional, Option, Flag, Counter, main
+from cli_command_parser.inputs import Path as IPath
 
 import logging
 import re
-from collections import defaultdict
-from functools import cached_property
 from subprocess import check_call, check_output
 from tempfile import TemporaryDirectory
 from typing import Any, Iterable, Optional, Union, Collection
 
-sys.path.append(PROJECT_ROOT.as_posix())
-from ds_tools.__version__ import __author_email__, __version__
-from ds_tools.argparsing import ArgParser
-from ds_tools.core.main import wrap_main
-from ds_tools.logging import init_logging
+from ds_tools.__version__ import __author_email__, __version__  # noqa
+from ds_tools.caching.decorators import cached_property
 from ds_tools.output.formatting import readable_bytes
 from ds_tools.output.printer import Printer
 
 log = logging.getLogger(__name__)
 STEAMAPPS_DIR = Path('C:/Program Files (x86)/Steam/steamapps')
-NMS_PATH = STEAMAPPS_DIR.joinpath('common', 'No Man\'s Sky')
+NMS_PATH = STEAMAPPS_DIR.joinpath('common', "No Man's Sky")
 PAK_PATH = NMS_PATH.joinpath('GAMEDATA', 'PCBANKS')
 EXCLUDE = ('AUDIO', 'FONTS', 'MODELS', 'MUSIC', 'SHADERS', 'TEXTURES', 'SCENES')
 
 
-def parser():
-    parser = ArgParser(description='NMS Extractor')
+class NMSExtractor(Command, description='NMS Extractor'):
+    action = SubCommand()
+    verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
 
-    with parser.add_subparser('action', 'find', 'Find the PAK file(s) containing the specified MBIN/EXML file(s)') as find_parser:
-        find_parser.add_argument('files', nargs='+', help='The name of one or more MBIN/EXML files, with or without extension')
+    with ParamGroup(description='NMS Install Location Options'):
+        steamapps_dir = Option(default=STEAMAPPS_DIR, type=Path, help='The path to the steamapps directory, containing appmanifest_*.acf files')
+        nms_dir = Option(type=Path, help="The directory in which No Man's Sky is installed (default: $steamapps_dir/common/No Man's Sky)")
 
-    with parser.add_subparser('action', 'find_all', 'Find the PAK files(s) containing any files with paths containing the given text') as fa_parser:
-        fa_parser.add_argument('name', help='The (partial) name of a file to find')
+    with ParamGroup(description='PSARC Options'):
+        psarc = Option('-p', default='~/sbin/psarc.exe', type=IPath(type='file', exists=True), help='Path to the psarc binary to use')
+        mbin_compiler = Option('-m', default='~/sbin/MBINCompiler.exe', metavar='PATH', help='Path to the MBINCompiler binary to use')
+        debug = Flag('-d', help='Show more psarc output')
 
-    with parser.add_subparser('action', 'extract', 'Extract MBIN files from PAK files') as extract_parser:
-        extract_parser.add_argument('--all', '-A', action='store_true', help=f'Extract all files (default: skip {EXCLUDE})')
+    with ParamGroup(description='Output Options'):
+        output = Option('-o', default='~/etc/no_mans_sky/extracted/', metavar='PATH', help='Output directory')
 
-    for _parser in (find_parser, extract_parser, fa_parser):
-        nms_group = _parser.add_argument_group('NMS Install Location Options')
-        nms_group.add_argument('--steamapps_dir', type=Path, default=STEAMAPPS_DIR, help='The path to the steamapps directory, containing appmanifest_*.acf files')
-        nms_group.add_argument('--nms_dir', type=Path, help='The directory in which No Man\'s Sky is installed (default: $steamapps_dir/common/No Man\'s Sky)')
+    def _init_command_(self):
+        from ds_tools.logging import init_logging
 
-        psarc_group = _parser.add_argument_group('PSARC Options')
-        psarc_group.add_argument('--psarc', '-p', metavar='PATH', default='~/sbin/psarc.exe', help='Path to the psarc binary to use')
-        psarc_group.add_argument('--mbin_compiler', '-m', metavar='PATH', default='~/sbin/MBINCompiler.exe', help='Path to the MBINCompiler binary to use')
-        psarc_group.add_argument('--debug', '-d', action='store_true', help='Show more psarc output')
+        init_logging(self.verbose, log_path=None)
+        PakFile._psarc_loc = self.psarc.as_posix()
 
-        out_group = _parser.add_argument_group('Output Options')
-        out_group.add_argument('--output', '-o', metavar='PATH', default='~/etc/no_mans_sky/extracted/', help='Output directory')
+    @cached_property
+    def nms(self) -> NoMansSky:
+        return NoMansSky(self.psarc, Path(self.output).expanduser(), self.steamapps_dir, self.nms_dir)
 
-    parser.include_common_args('verbosity')
-    return parser
+    @cached_property
+    def mbc(self) -> MbinCompiler:
+        return MbinCompiler(Path(self.mbin_compiler), Path(self.output))
 
 
-@wrap_main
-def main():
-    args = parser().parse_args()
-    init_logging(args.verbose, log_path=None)
+class Find(NMSExtractor, help='Find the PAK file(s) containing the specified MBIN/EXML file(s)'):
+    files = Positional(nargs='+', help='The name of one or more MBIN/EXML files, with or without extension')
 
-    psarc = Path(args.psarc).expanduser().resolve()
-    if not psarc.exists():
-        raise ValueError(f'Unable to find psarc binary - {psarc.as_posix()} does not exist')
-    PakFile._psarc_loc = psarc.as_posix()
+    def main(self):
+        from collections import defaultdict
 
-    nms = NoMansSky(psarc, Path(args.output).expanduser(), args.steamapps_dir, args.nms_dir)
-    mbc = MbinCompiler(Path(args.mbin_compiler), Path(args.output))
-
-    if (action := args.action) == 'extract':
-        if args.all:
-            nms.extract_all_pak_files(args.debug)
-        else:
-            nms.extract_filtered_pak_files(EXCLUDE, args.debug)
-    elif action == 'find':
         to_find = {
             name if name.endswith('.MBIN') else f'{name[:-5]}.MBIN' if name.endswith('.EXML') else f'{name}.MBIN'
-            for name in map(str.upper, args.files)
+            for name in map(str.upper, self.files)
         }
         results = defaultdict(list)
-        for pak in nms.pak_files(debug=args.debug):
+        for pak in self.nms.pak_files(debug=self.debug):
             for name in list(to_find):
                 if mbin_path := pak.get_content_path(name):
                     results[pak.name].append(mbin_path)
@@ -96,18 +80,32 @@ def main():
             results['__NOT_FOUND__'] = sorted(to_find)
 
         Printer('yaml').pprint(results)
-    elif action == 'find_all':
-        to_find = args.name
+
+
+class FindAll(NMSExtractor, help='Find the PAK files(s) containing any files with paths containing the given text'):
+    name = Positional(help='The (partial) name of a file to find')
+
+    def main(self):
+        to_find = self.name
         results = {}
-        for pak in nms.pak_files(debug=args.debug):
+        for pak in self.nms.pak_files(debug=self.debug):
             if pak_results := list(pak.find_paths_containing(to_find)):
                 results[pak.name] = pak_results
+
         if results:
             Printer('yaml').pprint(results)
         else:
             log.warning('No results.')
-    else:
-        raise ValueError(f'Unexpected {action=}')
+
+
+class Extract(NMSExtractor, help='Extract MBIN files from PAK files'):
+    all = Flag('-A', help=f'Extract all files (default: skip {EXCLUDE})')
+
+    def main(self):
+        if self.all:
+            self.nms.extract_all_pak_files(self.debug)
+        else:
+            self.nms.extract_filtered_pak_files(EXCLUDE, self.debug)
 
 
 class MbinCompiler:

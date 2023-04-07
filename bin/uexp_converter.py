@@ -1,59 +1,47 @@
 #!/usr/bin/env python
 
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, PROJECT_ROOT.joinpath('bin').as_posix())
-import _venv  # This will activate the venv, if it exists and is not already active
-
 import logging
+from pathlib import Path
 from subprocess import check_output, CalledProcessError, PIPE
 from typing import Optional
 
-sys.path.append(PROJECT_ROOT.as_posix())
-from ds_tools.__version__ import __author_email__, __version__
-from ds_tools.argparsing import ArgParser
-from ds_tools.core.main import wrap_main
-from ds_tools.logging import init_logging
+from cli_command_parser import Command, Positional, Option, Flag, Counter, main, inputs
+
+from ds_tools.__version__ import __author_email__, __version__  # noqa
 
 log = logging.getLogger(__name__)
 HEADER_EXT_MAP = {b'mabf': '.mab', b'sabf': '.sab', b'OggS': '.ogg'}
 
 
-def parser():
-    parser = ArgParser(description='UEXP Audio Converter')
-    parser.add_argument('path', nargs='+', help='Path to the .uexp file to convert')
-    parser.add_argument('--output', '-o', metavar='PATH', help='Output directory (default: same as input directory)')
-    parser.add_argument('--wav_output', '-w', metavar='PATH', help='WAV output directory (default: same as input directory)')
-    parser.add_argument('--flac_output', '-f', metavar='PATH', help='FLAC output directory (default: same as input directory)')
-    parser.add_argument('--mp3_output', '-m', metavar='PATH', help='MP3 output directory (default: same as input directory)')
-    parser.add_argument('--mp3', '-M', action='store_true', help='Convert to MP3 in addition to FLAC')
-    parser.include_common_args('verbosity')
-    return parser
+class UEXPAudioConverter(Command, description='UEXP Audio Converter'):
+    path = Positional(nargs='+', type=inputs.Path(resolve=True), help='Path to the .uexp file to convert')
+    output = Option('-o', metavar='PATH', help='Output directory (default: same as input directory)')
+    wav_output = Option('-w', metavar='PATH', help='WAV output directory (default: same as input directory)')
+    flac_output = Option('-f', metavar='PATH', help='FLAC output directory (default: same as input directory)')
+    mp3_output = Option('-m', metavar='PATH', help='MP3 output directory (default: same as input directory)')
+    mp3 = Flag('-M', help='Convert to MP3 in addition to FLAC')
+    verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
 
+    def _init_command_(self):
+        from ds_tools.logging import init_logging
 
-@wrap_main
-def main():
-    args = parser().parse_args()
-    init_logging(args.verbose, log_path=None)
+        init_logging(self.verbose, log_path=None)
 
-    audio_dir = validate_dir(args.output, '--output/-o')
-    wav_dir = validate_dir(args.wav_output, '--wav_output/-w')
-    flac_dir = validate_dir(args.flac_output, '--flac_output/-f')
-    mp3_dir = validate_dir(args.mp3_output, '--mp3_output/-m')
-    mp3 = args.mp3
+    def main(self):
+        audio_dir = validate_dir(self.output, '--output/-o')
+        wav_dir = validate_dir(self.wav_output, '--wav-output/-w')
+        flac_dir = validate_dir(self.flac_output, '--flac-output/-f')
+        mp3_dir = validate_dir(self.mp3_output, '--mp3-output/-m')
 
-    for path in args.path:
-        dst_path = uexp_to_audio(Path(path).expanduser().resolve(), audio_dir)
-        if dst_path is not None and dst_path.suffix in {'.mab', '.sab'}:
-            wav_paths = xab_to_wav(dst_path, wav_dir)
-            if wav_paths:
-                log.info(f'Converted {dst_path.as_posix()} to {len(wav_paths)} WAV files')
-                for wav_path in wav_paths:
-                    wav_to_flac(wav_path, flac_dir)
-                    if mp3:
-                        wav_to_mp3(wav_path, mp3_dir)
+        for path in self.path:
+            dst_path = uexp_to_audio(path, audio_dir)
+            if dst_path is not None and dst_path.suffix in {'.mab', '.sab'}:
+                if wav_paths := xab_to_wav(dst_path, wav_dir):
+                    log.info(f'Converted {dst_path.as_posix()} to {len(wav_paths)} WAV files')
+                    for wav_path in wav_paths:
+                        wav_to_flac(wav_path, flac_dir)
+                        if self.mp3:
+                            wav_to_mp3(wav_path, mp3_dir)
 
 
 def validate_dir(path: Optional[str], arg_info: str) -> Optional[Path]:

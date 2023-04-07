@@ -1,66 +1,47 @@
 #!/usr/bin/env python
 
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, PROJECT_ROOT.joinpath('bin').as_posix())
-import _venv  # This will activate the venv, if it exists and is not already active
-
 import logging
 import shutil
 from datetime import datetime
+from pathlib import Path
 
-sys.path.append(PROJECT_ROOT.as_posix())
-from ds_tools.__version__ import __author_email__, __version__
-from ds_tools.argparsing import ArgParser
-from ds_tools.core.main import wrap_main
+from cli_command_parser import Command, ParamGroup, Positional, Flag, Counter, main, inputs
+
+from ds_tools.__version__ import __author_email__, __version__  # noqa
 from ds_tools.fs.hash import sha512sum
-from ds_tools.logging import init_logging
 
 log = logging.getLogger(__name__)
 
 
-def parser():
-    parser = ArgParser(description='File Backup Tool')
-    parser.add_argument('source', metavar='PATH', help='The file to backup')
-    parser.add_argument('dest_dir', metavar='PATH', help='The directory in which backups should be stored')
+class BackupUtil(Command, description='File Backup Tool'):
+    src_file: Path = Positional(type=inputs.Path(type='file', exists=True), help='The file to backup')
+    dst_dir = Positional(type=inputs.Path(type='dir'), help='The directory in which backups should be stored')
+    verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
+    dry_run = Flag('-D', help='Print the actions that would be taken instead of taking them')
 
-    opt_group = parser.add_argument_group('Behavior Options')
-    opt_group.add_argument('--always', '-a', action='store_true', help='Always make a backup, even if the source file has not changed')
+    with ParamGroup(description='Behavior Options'):
+        always = Flag('-a', help='Always make a backup, even if the source file has not changed')
 
-    parser.include_common_args('verbosity', 'dry_run')
-    return parser
+    def _init_command_(self):
+        from ds_tools.logging import init_logging
 
+        init_logging(self.verbose, log_path=None)
 
-@wrap_main
-def main():
-    args = parser().parse_args()
-    init_logging(args.verbose)
+    def main(self):
+        from ds_tools.output.prefix import LoggingPrefix
 
-    source = Path(args.source).expanduser()
-    if not source.is_file():
-        raise ValueError(f'Invalid {source=} file - does not exist or is not a file')
-    dest_dir = Path(args.dest_dir).expanduser()
-    if dest_dir.exists() and not dest_dir.is_dir():
-        raise ValueError(f'Invalid {dest_dir=} directory - is not a directory')
-    elif not dest_dir.exists():
-        dest_dir.mkdir(parents=True)
+        lp = LoggingPrefix(self.dry_run)
+        if not self.dry_run and not self.dst_dir.exists():
+            self.dst_dir.mkdir(parents=True)
 
-    latest = get_latest_backup(dest_dir)
-    if latest is None or args.always or sha512sum(source) != sha512sum(latest):
-        backup_file(source, dest_dir, args.dry_run)
-    else:
-        log.info(f'Skipping backup of {source} - it has not changed compared to {latest=!s}')
-
-
-def backup_file(source: Path, dest_dir: Path, dry_run: bool):
-    dest = dest_path(source, dest_dir)
-    if dry_run:
-        log.info(f'[DRY RUN] Would copy {source} -> {dest}')
-    else:
-        log.info(f'Copying {source} -> {dest}')
-        shutil.copy(source, dest)
+        latest = get_latest_backup(self.dst_dir)
+        if latest is None or self.always or sha512sum(self.src_file) != sha512sum(latest):
+            dst_path = dest_path(self.src_file, self.dst_dir)
+            log.info(f'{lp.copy} {self.src_file.as_posix()} -> {dst_path.as_posix()}')
+            if not self.dry_run:
+                shutil.copy(self.src_file, dst_path)
+        else:
+            log.info(f'Skipping backup of {self.src_file} - it has not changed compared to {latest=!s}')
 
 
 def dest_path(source: Path, dest_dir: Path):
