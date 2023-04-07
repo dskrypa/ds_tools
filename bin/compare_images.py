@@ -1,76 +1,64 @@
 #!/usr/bin/env python
 
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, PROJECT_ROOT.joinpath('bin').as_posix())
-import _venv  # This will activate the venv, if it exists and is not already active
-
 import logging
 
-sys.path.append(PROJECT_ROOT.as_posix())
-from ds_tools.__version__ import __author_email__, __version__
-from ds_tools.argparsing import ArgParser
-from ds_tools.core.main import wrap_main
-from ds_tools.images.compare import ComparableImage
-from ds_tools.logging import init_logging
+from cli_command_parser import Command, Positional, Option, Flag, Counter, main, inputs
+
+from ds_tools.__version__ import __author_email__, __version__  # noqa
 
 log = logging.getLogger(__name__)
 
 
-def parser():
-    # fmt: off
-    parser = ArgParser(description='Compare images')
-    parser.add_argument('path_a', help='Path to an image file')
-    parser.add_argument('path_b', help='Path to an image file')
-    parser.add_argument('--no_gray', '-G',  dest='gray', action='store_false', help='Do not normalize images to grayscale before comparisons')
-    parser.add_argument('--no_normalize', '-N', dest='normalize', action='store_false', help='Do not normalize images for exposure differences before comparisons')
-    parser.add_argument('--max_width', '-W', type=int, help='Resize images that have a width greater than this value')
-    parser.add_argument('--max_height', '-H', type=int, help='Resize images that have a height greater than this value')
-    parser.add_argument('--compare_as', '-c', choices=('jpeg', 'png'), default='jpeg', help='The image format to use for the comparison')
-    parser.add_argument('--same', '-s', action='store_true', help='Include comparisons intended for images that are the same')
-    parser.include_common_args('verbosity')
-    # fmt: on
-    return parser
+class ImageComparer(Command, description='Compare images'):
+    path_a = Positional(type=inputs.Path(type='file', exists=True), help='Path to an image file')
+    path_b = Positional(type=inputs.Path(type='file', exists=True), help='Path to an image file')
+    gray = Flag('--no-gray', '-G', default=True, help='Do not normalize images to grayscale before comparisons')
+    normalize = Flag('--no-normalize', '-N', default=True, help='Do not normalize images for exposure differences before comparisons')
+    max_width = Option('-W', type=int, help='Resize images that have a width greater than this value')
+    max_height = Option('-H', type=int, help='Resize images that have a height greater than this value')
+    compare_as = Option('-c', default='jpeg', choices=('jpeg', 'png'), help='The image format to use for comparison')
+    same = Flag('-s', help='Include comparisons intended for images that are the same')
+    verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
 
+    def _init_command_(self):
+        from ds_tools.logging import init_logging
 
-@wrap_main
-def main():
-    args = parser().parse_args(req_subparser_value=True)
-    init_logging(args.verbose, log_path=None)
+        init_logging(self.verbose, log_path=None)
 
-    image_args = (args.gray, args.normalize, args.max_width, args.max_height, args.compare_as)
-    img_a = ComparableImage(Path(args.path_a).expanduser().resolve(), *image_args)
-    img_b = ComparableImage(Path(args.path_b).expanduser().resolve(), *image_args)
-    log.log(19, f'Comparing:\n{img_a}\nto\n{img_b}')
+    def main(self):
+        from ds_tools.images.compare import ComparableImage
 
-    methods = {
-        'taxicab_distance': 'lower values = more similar',
-        # 'zero_norm': '0-1',
-        'mean_squared_error': 'lower values = more similar',
-        'mean_structural_similarity': '0-1; higher values = more similar',
-        'is_same_as': 'bool',
-        'is_similar_to': 'bool',
-    }
-    if args.same:
-        methods.update({
-            'euclidean_root_mse': '',
-            'min_max_root_mse': '',
-            'mean_root_mse': '',
-            'peak_signal_noise_ratio': 'higher values ~= higher quality if image A is an original version of image B',
-        })
+        image_args = (self.gray, self.normalize, self.max_width, self.max_height, self.compare_as)
+        img_a = ComparableImage(self.path_a, *image_args)
+        img_b = ComparableImage(self.path_b, *image_args)
+        log.log(19, f'Comparing:\n{img_a}\nto\n{img_b}')
 
-    for method, description in methods.items():
-        result = getattr(img_a, method)(img_b)
-        if isinstance(result, tuple):
-            overall, per_pix = result
-            log.info(f'{method:>26s}: {overall:17,.3f}  -  per pixel: {per_pix:10,.6f}  ({description})')
-        else:
-            if method in ('is_same_as', 'is_similar_to'):
-                log.info(f'{method:>26s}: {result!r:>17}{" " * 26}  ({description})')
+        methods = {
+            'taxicab_distance': 'lower values = more similar',
+            # 'zero_norm': '0-1',
+            'mean_squared_error': 'lower values = more similar',
+            'mean_structural_similarity': '0-1; higher values = more similar',
+            'is_same_as': 'bool',
+            'is_similar_to': 'bool',
+        }
+        if self.same:
+            methods.update({
+                'euclidean_root_mse': '',
+                'min_max_root_mse': '',
+                'mean_root_mse': '',
+                'peak_signal_noise_ratio': 'higher values ~= higher quality if image A is an original version of image B',
+            })
+
+        for method, description in methods.items():
+            result = getattr(img_a, method)(img_b)
+            if isinstance(result, tuple):
+                overall, per_pix = result
+                log.info(f'{method:>26s}: {overall:17,.3f}  -  per pixel: {per_pix:10,.6f}  ({description})')
             else:
-                log.info(f'{method:>26s}: {result:17,.3f}{" " * 26}  ({description})')
+                if method in ('is_same_as', 'is_similar_to'):
+                    log.info(f'{method:>26s}: {result!r:>17}{" " * 26}  ({description})')
+                else:
+                    log.info(f'{method:>26s}: {result:17,.3f}{" " * 26}  ({description})')
 
 
 if __name__ == '__main__':

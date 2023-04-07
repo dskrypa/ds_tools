@@ -1,95 +1,87 @@
 #!/usr/bin/env python
 
-import sys
-from pathlib import Path
+from cli_command_parser import Command, SubCommand, ParamGroup, Positional, Option, Flag, Counter, PassThru, main
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, PROJECT_ROOT.joinpath('bin').as_posix())
-import _venv  # This will activate the venv, if it exists and is not already active
-
-import logging
-
-sys.path.append(PROJECT_ROOT.joinpath('lib').as_posix())
-from ds_tools.__version__ import __author_email__, __version__
-from ds_tools.argparsing import ArgParser
-from ds_tools.core.main import wrap_main
+from ds_tools.__version__ import __author_email__, __version__  # noqa
 from ds_tools.ddc import PlatformVcp
-from ds_tools.logging import init_logging
-
-log = logging.getLogger(__name__)
 
 
-def parser():
-    parser = ArgParser(description='Utility to control monitors via DDC.  Only Windows is currently supported.')
+class DDC(Command, description='Utility to control monitors via DDC.'):
+    action = SubCommand()
+    verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
 
-    list_parser = parser.add_subparser('action', 'list', 'List monitors')
-    list_opts = list_parser.add_mutually_exclusive_group()
-    list_opts.add_argument('--capabilities', '-c', action='store_true', help='Show capabilities')
-    list_opts.add_argument('--feature', '-f', help='Show the value for the given feature for each monitor')
+    def _init_command_(self):
+        from ds_tools.logging import init_logging
 
-    get_parser = parser.add_subparser('action', 'get', 'Get a VCP feature value')
-    get_parser.add_argument('monitor', help='The ID/index of the monitor for which the feature should be retrieved')
-    get_parser.add_argument('feature', help='The feature to get')
-
-    set_parser = parser.add_subparser('action', 'set', 'Set a VCP feature')
-    set_parser.add_argument('monitor', help='The ID/index of the monitor on which the feature should be set, or ALL to set it for all monitors')
-    set_parser.add_argument('feature', help='The feature to set')
-    set_parser.add_argument('value', help='The hex value to use')
-
-    cap_parser = parser.add_subparser('action', 'capabilities', 'Show monitor capabilities')
-    cap_parser.add_argument('monitor', nargs='*', help='The ID/index(es) of the monitor(s) to show (default: all)')
-    cap_parser.add_argument('--feature', '-f', nargs='*', help='One or more features to display (default: all supported)')
-
-    off_parser = parser.add_subparser('action', 'turn_off', 'Turn off the specified monitors')
-    off_parser.add_argument('monitor', nargs='*', help='The ID pattern(s) / index(es) of the monitor(s) to show (default: all)')
-
-    parser.include_common_args('verbosity')
-    return parser
+        init_logging(self.verbose, log_path=None)
 
 
-@wrap_main
-def main():
-    args = parser().parse_args(req_subparser_value=True)
-    init_logging(args.verbose, log_path=None)
+class List(DDC, help='List monitors'):
+    with ParamGroup(mutually_exclusive=True):
+        capabilities = Flag('-c', help='Show capabilities')
+        feature = Option('-f', help='Show the value for the given feature for each monitor')
 
-    action = args.action
-    if action == 'list':
+    def main(self):
         for i, monitor in enumerate(PlatformVcp.get_monitors()):
             print(f'{i}: {monitor}')
-            if args.feature:
-                current, max_val = monitor.get_feature_value(args.feature)
-                supported = monitor.get_supported_values(args.feature) or '[not supported]'
+            if self.feature:
+                current, max_val = monitor.get_feature_value(self.feature)
+                supported = monitor.get_supported_values(self.feature) or '[not supported]'
                 print(f'    current=0x{current:02X}, max=0x{max_val:02X}, supported={supported}')
-            elif args.capabilities:
+            elif self.capabilities:
                 print(f'    {monitor.capabilities}')
-    elif action == 'get':
-        monitor = PlatformVcp.get_monitor(args.monitor)
-        feature = monitor.get_feature(args.feature)
+
+
+class Get(DDC, help='Get a VCP feature value'):
+    monitor = Positional(help='The ID/index of the monitor for which the feature should be retrieved')
+    feature = Positional(help='The feature to get')
+
+    def main(self):
+        monitor = PlatformVcp.get_monitor(self.monitor)
+        feature = monitor.get_feature(self.feature)
         current, cur_name, max_val, max_name = monitor.get_feature_value_with_names(feature)
         print(
-            f'monitors[{args.monitor}]: {monitor}[{feature}]:'
+            f'monitors[{self.monitor}]: {monitor}[{feature}]:'
             f' current={maybe_named(current, cur_name)}'
             f', max={maybe_named(max_val, max_name)}'
         )
-    elif action == 'set':
-        if not (monitors := PlatformVcp.get_monitors(args.monitor)):
-            print(f'No monitors found for {args.monitor=}')
+
+
+class Set(DDC, help='Set a VCP feature'):
+    monitor = Positional(
+        help='The ID/index of the monitor on which the feature should be set, or ALL to set it for all monitors'
+    )
+    feature = Positional(help='The feature to set')
+    value = Positional(help='The hex value to use')
+
+    def main(self):
+        if not (monitors := PlatformVcp.get_monitors(self.monitor)):
+            print(f'No monitors found for {self.monitor=}')
         for monitor in monitors:
-            feature = monitor.get_feature(args.feature)
-            monitor[feature] = value = monitor.normalize_feature_value(feature, args.value)
+            feature = monitor.get_feature(self.feature)
+            monitor[feature] = value = monitor.normalize_feature_value(feature, self.value)
             print(f'monitors[{monitor.n}][{feature}] = 0x{value:02X}')
-    elif action == 'capabilities':
-        for i, monitor in enumerate(PlatformVcp.get_monitors(*args.monitor)):
+
+
+class Capabilities(DDC, help='Show monitor capabilities'):
+    monitor = Positional(nargs='*', help='The ID/index(es) of the monitor(s) to show (default: all)')
+    feature = Option('-f', nargs='*', help='One or more features to display (default: all supported)')
+
+    def main(self):
+        for i, monitor in enumerate(PlatformVcp.get_monitors(*self.monitor)):
             if i:
                 print()
-            monitor.print_capabilities(args.feature)
-    elif action == 'turn_off':
-        for monitor in PlatformVcp.get_monitors(*args.monitor):
+            monitor.print_capabilities(self.feature)
+
+
+class TurnOff(DDC, help='Turn off the specified monitors'):
+    monitor = Positional(nargs='*', help='The ID pattern(s) / index(es) of the monitor(s) to show (default: all)')
+
+    def main(self):
+        for monitor in PlatformVcp.get_monitors(*self.monitor):
             feature = monitor.get_feature(0xD6)
             monitor[feature] = value = 0x4
             print(f'monitors[{monitor.n}][{feature}] = 0x{value:02X}')
-    else:
-        raise ValueError(f'Unknown {action=!r}')
 
 
 def maybe_named(code: int, name):
