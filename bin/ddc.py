@@ -65,7 +65,7 @@ class Set(DDC, help='Set a VCP feature'):
 
 class Capabilities(DDC, help='Show monitor capabilities'):
     monitor = Positional(nargs='*', help='The ID/index(es) of the monitor(s) to show (default: all)')
-    feature = Option('-f', nargs='*', help='One or more features to display (default: all supported)')
+    feature = Option('-f', nargs='+', help='One or more features to display (default: all supported)')
 
     def main(self):
         for i, monitor in enumerate(PlatformVcp.get_monitors(*self.monitor)):
