@@ -7,7 +7,6 @@ Note: The simplest way to copy data between 2 file-like objects:
         with output_obj as f_out:
             shutil.copyfileobj(f_in, f_out)
 
-
 :author: Doug Skrypa
 """
 
@@ -22,7 +21,10 @@ from threading import Event
 from time import monotonic
 from typing import Union, BinaryIO, Optional
 
+from tqdm import tqdm
+
 from ..output.formatting import readable_bytes, format_duration
+from .exceptions import InvalidPathError
 from .hash import sha512sum
 from .paths import is_on_local_device, get_disk_partition
 
@@ -44,6 +46,7 @@ class FileCopy:
         buf_size: Optional[int] = None,
         fast: bool = True,
         reuse_buf: bool = True,
+        use_tqdm: bool = True,
     ):
         self.src_path = Path(src_path).expanduser() if not isinstance(src_path, Path) else src_path
         self.dst_path = Path(dst_path).expanduser() if not isinstance(dst_path, Path) else dst_path
@@ -57,6 +60,7 @@ class FileCopy:
         self.buf_size = buf_size
         self.fast = fast
         self.reuse_buf = reuse_buf
+        self.use_tqdm = use_tqdm
 
     @property
     def buf_size(self) -> int:
@@ -121,50 +125,110 @@ class FileCopy:
             self.verify()
 
     def show_progress(self):
-        # Run this in a separate thread so that the spinner can move even if a chunk takes longer than 0.3s to process
         src_size = self.src_path.stat().st_size
-        pct, elapsed, rate = 0, 0, readable_bytes(0)
-        spinner = cycle('|/-\\')
-        name = self.src_path.name
-        fmt = '\r{{:11}} {{:>9}}/s {{:6.2%}} [{{:10}}] [{}] {{}}'.format(readable_bytes(src_size))
-        is_finished, wait = self.finished.is_set, self.finished.wait
-        start = monotonic()
+        if self.use_tqdm:
+            if not _WINDOWS and self._get_dst_fs_type() == 'nfs':
+                self._show_progress_tqdm_nfs(self.src_path.name, src_size)
+            else:
+                self._show_progress_tqdm_other(self.src_path.name, src_size)
+        else:
+            self._show_progress_old(self.src_path.name, src_size)
 
-        dst_fs = get_disk_partition(self.dst_path).fstype
-        if not _WINDOWS and dst_fs == 'nfs':
-            while not is_finished() and pct < .9:
-                elapsed = monotonic() - start
-                rate = readable_bytes((self.copied / elapsed) if elapsed else 0)
-                pct_chars = int(pct * 10)
-                bar = '{}{}{}'.format('=' * pct_chars, next(spinner), ' ' * (9 - pct_chars))
-                print(fmt.format(format_duration(int(elapsed)), rate, pct, bar, name), end='' if pct < 1 else '\n')
-                wait(0.3)
-                pct = self.copied / src_size
+    def _get_dst_fs_type(self) -> str:
+        try:
+            return get_disk_partition(self.dst_path).fstype
+        except InvalidPathError:
+            return 'UNKNOWN'
+
+    # region Show Progress - tqdm
+
+    def _show_progress_tqdm_nfs(self, name: str, src_size: int):
+        is_finished, wait = self.finished.is_set, self.finished.wait
+        one_percent = max(1, int(src_size * 0.01))
+        with tqdm(total=src_size, unit='B', unit_scale=True, smoothing=0.1, desc=name, maxinterval=1) as prog_bar:
+            while not is_finished() and ((copied := self.copied) / src_size) < .9:
+                prog_bar.update(copied - prog_bar.n)
+                wait(0.2)
 
             while not is_finished() and (remaining := get_writeback_size()):
-                elapsed = monotonic() - start
-                copied = src_size - remaining  # noqa
-                pct = copied / src_size
-                rate = readable_bytes((copied / elapsed) if elapsed else 0)
-                pct_chars = int(pct * 10)
-                bar = '{}{}{}'.format('=' * pct_chars, next(spinner), ' ' * (9 - pct_chars))
-                print(fmt.format(format_duration(int(elapsed)), rate, pct, bar, name), end='' if pct < 1 else '\n')
+                copied = max(one_percent, src_size - remaining)
+                if copied < (reported := prog_bar.n):
+                    # This is somewhat similar to what tqdm.reset() does, but fewer attrs are touched here
+                    # TODO: This makes it recalculate the rate, which results in a very incorrect displayed rate
+                    prog_bar.n = copied
+                    prog_bar.last_print_n = 0
+                    prog_bar.refresh()
+                else:
+                    prog_bar.update(copied - reported)
+                wait(0.2)
+
+            if (remaining := src_size - prog_bar.n) > 0:
+                prog_bar.update(remaining)
+
+    def _show_progress_tqdm_other(self, name: str, src_size: int):
+        is_finished, wait = self.finished.is_set, self.finished.wait
+        with tqdm(total=src_size, unit='B', unit_scale=True, smoothing=0.1, desc=name) as prog_bar:
+            while not is_finished() and ((copied := self.copied) / src_size) < 1:
+                prog_bar.update(copied - prog_bar.n)
                 wait(0.3)
 
-            pct = 1
+    # endregion
+
+    # region Show Progress - Old
+
+    def _show_progress_old(self, name: str, src_size: int):
+        # Run this in a separate thread so that the spinner can move even if a chunk takes longer than 0.3s to process
+        fmt = '\r{{:11}} {{:>9}}/s {{:6.2%}} [{{:10}}] [{}] {{}}'.format(readable_bytes(src_size))
+        if not _WINDOWS and self._get_dst_fs_type() == 'nfs':
+            pct, elapsed, rate = self._show_progress_old_nfs(fmt, name, src_size)
         else:
-            while not is_finished() and pct < 1:
-                elapsed = monotonic() - start
-                rate = readable_bytes((self.copied / elapsed) if elapsed else 0)
-                pct_chars = int(pct * 10)
-                bar = '{}{}{}'.format('=' * pct_chars, next(spinner), ' ' * (9 - pct_chars))
-                print(fmt.format(format_duration(int(elapsed)), rate, pct, bar, name), end='' if pct < 1 else '\n')
-                wait(0.3)
-                pct = self.copied / src_size
+            pct, elapsed, rate = self._show_progress_old_other(fmt, name, src_size)
 
         if pct == 1:
             bar = '=' * 10
             print(fmt.format(format_duration(int(elapsed)), rate, pct, bar, name), end='' if pct < 1 else '\n')
+
+    def _show_progress_old_nfs(self, fmt: str, name: str, src_size: int) -> tuple[int, float, str]:
+        pct, elapsed, rate = 0, 0, readable_bytes(0)
+        spinner = cycle('|/-\\')
+        is_finished, wait = self.finished.is_set, self.finished.wait
+        start = monotonic()
+        while not is_finished() and pct < .9:
+            elapsed = monotonic() - start
+            rate = readable_bytes((self.copied / elapsed) if elapsed else 0)
+            pct_chars = int(pct * 10)
+            bar = '{}{}{}'.format('=' * pct_chars, next(spinner), ' ' * (9 - pct_chars))
+            print(fmt.format(format_duration(int(elapsed)), rate, pct, bar, name), end='' if pct < 1 else '\n')
+            wait(0.3)
+            pct = self.copied / src_size
+
+        while not is_finished() and (remaining := get_writeback_size()):
+            elapsed = monotonic() - start
+            copied = src_size - remaining  # noqa
+            pct = copied / src_size
+            rate = readable_bytes((copied / elapsed) if elapsed else 0)
+            pct_chars = int(pct * 10)
+            bar = '{}{}{}'.format('=' * pct_chars, next(spinner), ' ' * (9 - pct_chars))
+            print(fmt.format(format_duration(int(elapsed)), rate, pct, bar, name), end='' if pct < 1 else '\n')
+            wait(0.3)
+
+        return 1, elapsed, rate
+
+    def _show_progress_old_other(self, fmt: str, name: str, src_size: int) -> tuple[int, float, str]:
+        pct, elapsed, rate = 0, 0, readable_bytes(0)
+        spinner = cycle('|/-\\')
+        is_finished, wait = self.finished.is_set, self.finished.wait
+        start = monotonic()
+        while not is_finished() and pct < 1:
+            elapsed = monotonic() - start
+            rate = readable_bytes((self.copied / elapsed) if elapsed else 0)
+            pct_chars = int(pct * 10)
+            bar = '{}{}{}'.format('=' * pct_chars, next(spinner), ' ' * (9 - pct_chars))
+            print(fmt.format(format_duration(int(elapsed)), rate, pct, bar, name), end='' if pct < 1 else '\n')
+            wait(0.3)
+            pct = self.copied / src_size
+
+        return pct, elapsed, rate
 
     def copy_file(self):
         """

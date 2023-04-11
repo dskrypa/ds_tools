@@ -2,6 +2,7 @@
 :author: Doug Skrypa
 """
 
+import re
 import logging
 import os
 import string
@@ -36,6 +37,8 @@ __all__ = [
     'PathValidator',
     'sanitize_file_name',
     'prepare_path',
+    'PathSorter',
+    'path_repr',
 ]
 log = logging.getLogger(__name__)
 PathLike = Union[str, Path]
@@ -213,7 +216,7 @@ def relative_path(path: PathLike, to: PathLike = '.') -> str:
     to = Path(to).resolve()
     try:
         return path.relative_to(to).as_posix()
-    except Exception:
+    except Exception:  # noqa
         return path.as_posix()
 
 
@@ -287,13 +290,13 @@ class PathValidator:
 
     def __init__(self, replacements: Optional[Mapping[str, str]] = _NotSet):
         replacements = self._replacements if replacements is _NotSet else {} if replacements is None else replacements
-        self.table = str.maketrans({i: replacements.get(i) or quote(i, safe='') for i in self._invalid_chars})
+        self.table = str.maketrans({i: replacements.get(i) or quote(i, safe='') for i in self._invalid_chars})  # noqa
 
     def validate(self, file_name: str):
         root = os.path.splitext(os.path.basename(file_name))
         if root in self._mac_reserved or root in self._win_reserved:
             raise ValueError(f'Invalid {file_name=} - it contains reserved name={root!r}')
-        if invalid := next((c for c in self._invalid_chars if c in file_name), None):
+        if invalid := next((c for c in self._invalid_chars if c in file_name), None):  # noqa
             raise ValueError(f'Invalid {file_name=} - it contains 1 or more invalid characters, including {invalid!r}')
 
     def sanitize(self, file_name: str) -> str:
@@ -307,13 +310,13 @@ class PathValidator:
         return cls(replacements).sanitize(file_name)
 
     @cached_classproperty
-    def _win_reserved(cls) -> set[str]:
+    def _win_reserved(cls) -> set[str]:  # noqa
         reserved = {'CON', 'PRN', 'AUX', 'CLOCK$', 'NUL'}
         reserved.update(f'{n}{i}' for n in ('COM', 'LPT') for i in range(1, 10))
         return reserved
 
     @cached_classproperty
-    def _invalid_chars(cls) -> set[str]:
+    def _invalid_chars(cls) -> set[str]:  # noqa
         unprintable_ascii = {c for c in map(chr, range(128)) if c not in string.printable}
         win_invalid = '/:*?"<>|\t\n\r\x0b\x0c\\'
         return unprintable_ascii.union(win_invalid)
@@ -346,3 +349,37 @@ def prepare_path(path: PathLike, default_name: tuple[str, str] = None, exist_ok:
     elif not exist_ok and path.exists():
         raise ValueError(f'Invalid file path={path.as_posix()!r} - it already exists')
     return path
+
+
+class PathSorter:
+    __slots__ = ('pattern',)
+
+    def __init__(self):
+        self.pattern = re.compile(r'^(\d*)(.*)$')
+
+    def _sort_key(self, path: Path) -> tuple[int, str]:
+        if m := self.pattern.match(path.name):
+            num_str, remainder = m.groups()
+            num = int(num_str) if num_str else 0
+            return num, remainder.lower()
+        return 0, path.name.lower()
+
+    def sort(self, paths: Iterable[Path], reverse: bool = False) -> list[Path]:
+        return sorted(paths, key=self._sort_key, reverse=reverse)
+
+    __call__ = sort
+
+    def sort_list(self, paths: list[Path], reverse: bool = False) -> list[Path]:
+        paths.sort(key=self._sort_key, reverse=reverse)
+        return paths
+
+
+def path_repr(path: Path) -> str:
+    try:
+        rel_path = path.relative_to(Path.home())
+    except Exception:  # noqa
+        path_str = path.as_posix()
+    else:
+        path_str = f'~/{rel_path.as_posix()}'
+
+    return (path_str + '/') if path.is_dir() else path_str

@@ -6,10 +6,8 @@ from setuptools import setup, find_packages
 
 project_root = Path(__file__).resolve().parent
 long_description = project_root.joinpath('readme.rst').read_text('utf-8')
-
 about = {}
-with project_root.joinpath('ds_tools', '__version__.py').open('r', encoding='utf-8') as f:
-    exec(f.read(), about)
+exec(project_root.joinpath('ds_tools', '__version__.py').read_text('utf-8'), about)
 
 # scripts = ['bin/{}'.format(p.name) for p in project_root.joinpath('bin').iterdir()]
 
@@ -38,15 +36,17 @@ optional_dependencies = {
     'pdf': ['pypdf2'],                                  # bin/pdf_merge.py
     'socketio': ['flask_socketio', 'gevent'],           # flasks package with socketio
     'translate': ['googletrans'],                       # ds_tools.unicode.translate
-    'windows': ['pywin32'],                             # bin/windows_tasks.py
+    'windows': [                                        # bin/windows_tasks.py
+        'pywin32',
+    ],
     'youtube': ['pytube3'],                             # bin/youtube.py
 }
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
 
 requirements = [
     'cli_command_parser',
-    'db_cache@ git+https://github.com/dskrypa/db_cache',
-    'requests_client@ git+https://github.com/dskrypa/requests_client',
+    'db_cache @ git+https://github.com/dskrypa/db_cache',
+    'requests_client @ git+https://github.com/dskrypa/requests_client',
     'beautifulsoup4',
     'bitarray',
     'cachetools',
@@ -54,6 +54,7 @@ requirements = [
     'PyYAML',
     'requests',
     'SQLAlchemy',
+    'tqdm',
     'tzlocal',
     'wrapt',
     'wcwidth',
@@ -75,6 +76,7 @@ setup(
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
     ],
     python_requires='>=3.8',
     install_requires=requirements,
