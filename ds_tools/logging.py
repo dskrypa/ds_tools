@@ -23,17 +23,21 @@ __all__ = [
 ]
 log = logging.getLogger(__name__)
 
-_NotSet = object()
-_lock = RLock()
-_stream_refs = set()
 ON_WINDOWS = os.name == 'nt'
 COLOR_CODED_THREADS = os.environ.get('DS_TOOLS_COLOR_CODED_THREAD_LOGS', '0') == '1'
-DEFAULT_LOG_DIR = '/var/tmp/{user}/script_logs'
+
+DEFAULT_LOG_DIR_NAME = 'script_logs'
+
 ENTRY_FMT_DETAILED = '%(asctime)s %(levelname)s %(threadName)s %(name)s %(lineno)d %(message)s'
 ENTRY_FMT_DETAILED_PID = '%(asctime)s %(levelname)s %(process)d %(threadName)s %(name)s %(lineno)d %(message)s'
 ENTRY_FMT_DETAILED_UID = '%(asctime)s %(levelname)s %(threadName)s %(name)s %(lineno)d [%(uid)s] %(message)s'
 ENTRY_FMT_DETAILED_PID_UID = '%(asctime)s %(levelname)s %(process)d %(threadName)s %(name)s %(lineno)d [%(uid)s] %(message)s'
+
 SUPPRESS_WARNINGS = ('InsecureRequestWarning',)
+
+_NotSet = object()
+_lock = RLock()
+_stream_refs = set()
 
 
 def init_logging(
@@ -104,7 +108,7 @@ def init_logging(
     :param file_lvl: The minimum `log level <https://docs.python.org/3/library/logging.html#logging-levels>`_ that
       should be written to the log file, if configured.
     :param file_dir: Directory in which log files should be stored for automatically generated log file paths. Ignored
-      if ``log_path`` is specified (default: :data:`DEFAULT_LOG_DIR`).
+      if ``log_path`` is specified (default: :data:`DEFAULT_LOG_DIR_NAME` within a system-appropriate temp directory).
     :param filename_fmt: Format string to use for automatically generated log file names.  Supported variables include:
       - ``{prog}``: The name of the top-level script that is running (without its extension)
       - ``{user}``: The name of the current user
@@ -271,25 +275,18 @@ def _choose_log_path(file_dir: Union[str, Path], filename_fmt: str, cleanup_old:
     from getpass import getuser
     from itertools import count
 
-    if file_dir or not ON_WINDOWS:
-        log_dir = Path(file_dir if file_dir else DEFAULT_LOG_DIR.format(user=getuser()))
-    else:
-        log_str = DEFAULT_LOG_DIR.format(user=getuser())
-        log_dir = Path(log_str)
-        if log_str.startswith('/var/tmp') and log_dir.resolve().drive != 'C:' and Path(f'C:{log_str}').exists():
-            log_dir = Path(f'C:{log_str}')
-
+    log_dir = Path(file_dir) if file_dir else _get_default_user_log_dir()
     try:
         prog = Path(inspect.getsourcefile(inspect.stack()[-1][0])).stem
     except (TypeError, AttributeError):
-        prog = '{}_interactive'.format(Path(__file__).stem)
+        prog = f'{Path(__file__).stem}_interactive'
 
     name_parts = {'prog': prog, 'user': getuser(), 'time': int(time.time()), 'uniq': '', 'pid': os.getpid()}
     log_path = log_dir.joinpath(filename_fmt.format(**name_parts))
     if log_path.exists() and '{uniq}' in filename_fmt:
         suffix = count()
         while log_path.exists():
-            name_parts['uniq'] = '-{}'.format(next(suffix))
+            name_parts['uniq'] = f'-{next(suffix)}'
             log_path = log_dir.joinpath(filename_fmt.format(**name_parts))
 
     if cleanup_old and '{time}' in filename_fmt and log_dir.exists():
@@ -309,6 +306,22 @@ def _choose_log_path(file_dir: Union[str, Path], filename_fmt: str, cleanup_old:
                     log.error(f'Error deleting old log file: {old_path} - {e}')
 
     return log_path
+
+
+def _get_default_user_log_dir() -> Path:
+    from getpass import getuser
+    from tempfile import gettempdir
+
+    path = Path(gettempdir())
+    if not ON_WINDOWS or not path.as_posix().endswith('AppData/Local/Temp'):
+        path = path.joinpath(getuser())
+    if ON_WINDOWS and path.resolve().drive != 'C:' and (log_dir := Path(f'C:{path.as_posix()}')).exists():
+        path = log_dir
+
+    path = path.joinpath(DEFAULT_LOG_DIR_NAME)
+    if not path.exists():
+        path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def _add_file_handler(
@@ -537,30 +550,28 @@ def update_level(name: str, level: int, verbosity: str = 'set', handlers: bool =
     Recursively update loggers and their handlers to change the level of logs that are emitted.
 
     :param name: Logger name
-    :param int level: Log level
-    :param str verbosity: One of ('set', 'increase', 'decrease', '+', '-') to indicate whether the log level should
+    :param level: Log level
+    :param verbosity: One of ('set', 'increase', 'decrease', '+', '-') to indicate whether the log level should
       change or not based on the current level
-    :param bool handlers: Change the level of handlers (if False: only change the level of loggers)
-    :param bool handlers_only: True to only change the level of handlers, False (default) to change the level of
+    :param handlers: Change the level of handlers (if False: only change the level of loggers)
+    :param handlers_only: True to only change the level of handlers, False (default) to change the level of
       handlers and loggers (note: ``handlers`` must also be True to change the level of handlers - if ``handlers`` is
       False and ``handlers_only`` is True, then no actions will be taken)
     """
-    fmt = 'Updating log level for {!r} from {} ({}) to {} ({})'
     lv_name = logging.getLevelName
     v, lv = verbosity, level
     logger = logging.getLogger(name)
     n = logger.level
     if not handlers_only:
         if (n != lv and v == 'set') or (n > lv and v in ('increase', '+')) or (n > lv and v in ('decrease', '-')):
-            log.info(fmt.format(logger, n, lv_name(n), level, lv_name(level)))
+            log.info(f'Updating log level for {logger!r} from {n} ({lv_name(n)}) to {level} ({lv_name(level)})')
             logger.setLevel(level)
 
-    fmt = 'Updating log level for {!r}\'s handler {!r} from {} ({}) to {} ({})'
     if handlers and hasattr(logger, 'handlers'):
         for handler in logger.handlers:
             n = handler.level
             if (n != lv and v == 'set') or (n > lv and v in ('increase', '+')) or (n > lv and v in ('decrease', '-')):
-                log.info(fmt.format(logger, handler, n, lv_name(n), level, lv_name(level)))
+                log.info(f"Updating log level for {logger=} {handler=} from {n} ({lv_name(n)}) to {lv} ({lv_name(lv)})")
                 handler.setLevel(level)
 
     if name is not None and '.' in name:
@@ -641,11 +652,11 @@ def get_level_info(handler: logging.Handler) -> str:
     :param handler: An instance of a logging handler object
     :return: A string representation of the handler's logging level and its filters
     """
-    htype = '{}.{}'.format(handler.__class__.__module__, handler.__class__.__name__)
+    htype = f'{handler.__class__.__module__}.{handler.__class__.__name__}'
     if hasattr(handler, 'stream') and hasattr(handler.stream, 'name'):
         sname = handler.stream.name
-        htype += sname if (sname.startswith('<') and sname.endswith('>')) else '<{}>'.format(sname)
-    return '{}: {} ({})'.format(htype, handler.level, logging.getLevelName(handler.level))
+        htype += sname if (sname.startswith('<') and sname.endswith('>')) else f'<{sname}>'
+    return f'{htype}: {handler.level} ({logging.getLevelName(handler.level)})'
 
 
 def get_levels(logger: logging.Logger) -> list[str]:
@@ -654,7 +665,7 @@ def get_levels(logger: logging.Logger) -> list[str]:
     :return: A list of information about the given logger's handlers from :func:`get_level_info`
     """
     levels = [get_level_info(handler) for handler in logger.handlers]
-    levels.insert(0, 'base: {} ({})'.format(logger.level, logging.getLevelName(logger.level)))
+    levels.insert(0, f'base: {logger.level} ({logging.getLevelName(logger.level)})')
     return levels
 
 
