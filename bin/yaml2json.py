@@ -8,7 +8,7 @@ import yaml
 
 
 class Yaml2Json(Command, description='Convert yaml to json'):
-    input = Positional(nargs='?', type=inputs.File(allow_dash=True, encoding='utf-8'), help='A hex string')
+    input = Positional(nargs='?', type=inputs.File(allow_dash=True, encoding='utf-8'), help='A file containing YAML')
     compact = Flag('-c', help='Print compact json (default: pretty)')
 
     def main(self):
