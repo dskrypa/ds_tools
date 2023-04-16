@@ -2,24 +2,25 @@
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import re
 import logging
 import os
-import string
 from datetime import datetime
 from getpass import getuser
 from itertools import chain
 from pathlib import Path
+from string import printable
 from tempfile import gettempdir
-from typing import Iterator, Union, Iterable, Collection, Mapping, Optional
+from typing import TYPE_CHECKING, Iterator, Iterable, Collection, Mapping, Optional
 from urllib.parse import quote
-
-from psutil import disk_partitions
-from psutil._common import sdiskpart, get_procfs_path
 
 from ..core.decorate import cached_classproperty
 from ..core.patterns import FnMatcher
-from .exceptions import InvalidPathError
+
+if TYPE_CHECKING:
+    from .typing import Paths, PathLike
 
 __all__ = [
     'validate_or_make_dir',
@@ -27,12 +28,8 @@ __all__ = [
     'get_user_cache_dir',
     'iter_paths',
     'iter_files',
-    'PathLike',
-    'Paths',
     'relative_path',
     'iter_sorted_files',
-    'get_disk_partition',
-    'is_on_local_device',
     'unique_path',
     'PathValidator',
     'sanitize_file_name',
@@ -41,10 +38,12 @@ __all__ = [
     'path_repr',
 ]
 log = logging.getLogger(__name__)
-PathLike = Union[str, Path]
-Paths = Union[PathLike, Iterable[PathLike]]
+
 ON_WINDOWS = os.name == 'nt'
 _NotSet = object()
+
+
+# region Walk / Path Iterators
 
 
 def iter_paths(path_or_paths: Paths) -> Iterator[Path]:
@@ -57,7 +56,6 @@ def iter_paths(path_or_paths: Paths) -> Iterator[Path]:
     try:
         win_bash_path_match = iter_paths._win_bash_path_match
     except AttributeError:
-        import re
         win_bash_path_match = iter_paths._win_bash_path_match = re.compile(r'^/([a-z])/(.*)', re.IGNORECASE).match
 
     if isinstance(path_or_paths, (str, Path)):
@@ -155,6 +153,9 @@ def _iter_sorted_files(
         yield from _iter_sorted_files(path, ignore_dirs, ignore_files, follow_links)
 
 
+# endregion
+
+
 def validate_or_make_dir(
     dir_path: PathLike, permissions: int = None, suppress_perm_change_exc: bool = True
 ) -> Path:
@@ -220,45 +221,6 @@ def relative_path(path: PathLike, to: PathLike = '.') -> str:
         return path.as_posix()
 
 
-def get_disk_partition(path: PathLike) -> sdiskpart:
-    path = orig_path = Path(path).expanduser().resolve()
-    partitions = {p.mountpoint: p for p in disk_partitions(all=True)}
-    while path != path.parent:
-        try:
-            return partitions[path.as_posix()]
-        except KeyError:
-            path = path.parent
-
-    try:
-        return partitions[path.as_posix()]
-    except KeyError:
-        pass
-
-    raise InvalidPathError(orig_path)
-
-
-def get_dev_fs_types():
-    """Based on code in psutil.disk_partitions"""
-    fs_types = set()
-    procfs_path = get_procfs_path()
-    with open(procfs_path + '/filesystems', 'r', encoding='utf-8') as f:
-        for line in map(str.strip, f):
-            if not line.startswith('nodev'):
-                fs_types.add(line)
-            elif line.split('\t', 1)[1] == 'zfs':
-                fs_types.add('zfs')
-    return fs_types
-
-
-def is_on_local_device(path: PathLike) -> bool:
-    try:
-        dev_fs_types = is_on_local_device._dev_fs_types
-    except AttributeError:
-        dev_fs_types = is_on_local_device._dev_fs_types = get_dev_fs_types()
-
-    return get_disk_partition(path).fstype in dev_fs_types
-
-
 def unique_path(
     parent: Path, stem: str, suffix: str, seps=('_', '-'), n: int = 1, add_date: bool = True, sanitize: bool = False,
 ) -> Path:
@@ -317,7 +279,7 @@ class PathValidator:
 
     @cached_classproperty
     def _invalid_chars(cls) -> set[str]:  # noqa
-        unprintable_ascii = {c for c in map(chr, range(128)) if c not in string.printable}
+        unprintable_ascii = {c for c in map(chr, range(128)) if c not in printable}
         win_invalid = '/:*?"<>|\t\n\r\x0b\x0c\\'
         return unprintable_ascii.union(win_invalid)
 

@@ -26,7 +26,7 @@ from tqdm import tqdm
 from ..output.formatting import readable_bytes, format_duration
 from .exceptions import InvalidPathError
 from .hash import sha512sum
-from .paths import is_on_local_device, get_disk_partition
+from .mount_info import is_on_local_device, get_disk_partition
 
 __all__ = ['copy_file']
 log = logging.getLogger(__name__)
