@@ -139,5 +139,7 @@ class DictAttrFieldNotFoundError(Exception):
         self.path_repr = path_repr
 
     def __str__(self) -> str:
-        fmt = '{!r} object has no attribute {!r} ({} not found in {!r}.{})'
-        return fmt.format(type(self.obj).__name__, self.prop_name, self.path_repr, self.obj, self.attr)
+        return (
+            f'{type(self.obj).__name__!r} object has no attribute {self.prop_name!r}'
+            f' ({self.path_repr} not found in {self.obj!r}.{self.attr})'
+        )

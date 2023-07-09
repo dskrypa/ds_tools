@@ -93,7 +93,7 @@ def insert_kwonly_arg(func, param, description, param_type='', sig=None):
     :raises: ValueError if param.kind is not ``Parameter.KEYWORD_ONLY``
     """
     if param.kind != Parameter.KEYWORD_ONLY:
-        raise ValueError('Only KEYWORD_ONLY parameters are supported; found: {}'.format(param))
+        raise ValueError(f'Only KEYWORD_ONLY parameters are supported; found: {param}')
     sig = sig or Signature.from_callable(func)
     params = list(sig.parameters.values())
     sig_pos = len(params)
@@ -107,8 +107,8 @@ def insert_kwonly_arg(func, param, description, param_type='', sig=None):
         prev = params[sig_pos - 1]
 
     if prev and func.__doc__ and any(txt in func.__doc__ for txt in (':param', ':return')):
-        prev_rx = re.compile(':param (?<!:){}:.*'.format(prev.name))
-        indent_rx = re.compile('^(\s+):.*')
+        prev_rx = re.compile(f':param (?<!:){prev.name}:.*')
+        indent_rx = re.compile(r'^(\s+):.*')
         doc = func.__doc__.splitlines()
         doc_pos = len(doc)
         found = False
@@ -116,18 +116,15 @@ def insert_kwonly_arg(func, param, description, param_type='', sig=None):
         for i, line in enumerate(doc):
             sline = line.strip()
             if sline.startswith(':'):
-                if not indent:
-                    m = indent_rx.match(line)
-                    if m:
-                        indent = m.group(1)
+                if not indent and (m := indent_rx.match(line)):
+                    indent = m.group(1)
 
                 if not found:
                     if prev_rx.match(sline) or sline.startswith(':return'):
                         found = True
-                else:
-                    if sline.startswith(':param'):
-                        doc_pos = i
-                        break
+                elif sline.startswith(':param'):
+                    doc_pos = i
+                    break
 
                 if sline.startswith(':return'):
                     doc_pos = i
@@ -135,7 +132,7 @@ def insert_kwonly_arg(func, param, description, param_type='', sig=None):
 
         param_doc = '{}:param {}{}{}: {}'.format(indent, param_type, ' ' if param_type else '', param.name, description)
         if param.default is not _empty:
-            param_doc += ' (default: {})'.format(param.default)
+            param_doc += f' (default: {param.default})'
         doc.insert(doc_pos, param_doc)
         func.__doc__ = '\n'.join(doc)
     params.insert(sig_pos, param)
@@ -143,11 +140,11 @@ def insert_kwonly_arg(func, param, description, param_type='', sig=None):
     return func
 
 
-def get_caller_script():
+def get_caller_script() -> str:
     """
-    :return str: The filename (without its extension) of the top-level script/program that is currently running
+    :return: The filename (without its extension) of the top-level script/program that is currently running
     """
     try:
         return Path(getsourcefile(stack()[-1][0])).stem
     except (TypeError, AttributeError):
-        return '{}_interactive'.format(Path(__file__).stem)
+        return f'{Path(__file__).stem}_interactive'

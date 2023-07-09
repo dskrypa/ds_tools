@@ -372,19 +372,29 @@ class Table(ClearableCachedPropertyMixin):
             TypeError: non-empty format string passed to object.__format__
 
         :param row: Mapping of {column key: row value} pairs
-        :return str: The formatted row
+        :return: The formatted row
         :raises TypeError: if one of the values has a type that is incompatible with the format string
         """
+        return self._format_row(row)[0]
+
+    def _format_row(self, row: Row, fix_types: tuple[type, ...] | None = None) -> tuple[str, tuple[type, ...] | None]:
         if self.mode == 'csv':
-            return self._csv_str(row)
+            return self._csv_str(row), fix_types
         elif self.mode == 'table':
             if isinstance(row, TableBar) or row is TableBar:
-                return self.header_bar(row.char)
+                return self.header_bar(row.char), fix_types
             elif isinstance(row, HeaderRow) or row is HeaderRow:
-                return self.header_row
+                return self.header_row, fix_types
 
-            # Don't str() the row[k] value! That will break type-specific format strings (e.g., int/float)
-            row = {k: v if (v := row.get(k)) is not None else '' for k in self.keys}
+            # Don't str() all row[k] values! That will break type-specific format strings (e.g., int/float)
+            if fix_types:
+                # Pass fix_types=() to prevent any from ever being used
+                row = {
+                    k: '' if (v := row.get(k)) is None else str(v) if isinstance(v, fix_types) else v
+                    for k in self.keys
+                }
+            else:
+                row = {k: v if (v := row.get(k)) is not None else '' for k in self.keys}
 
             if self.has_custom_formatter:
                 row_str = '  '.join(c.format(row[c.key]) for c in self.columns)
@@ -394,11 +404,13 @@ class Table(ClearableCachedPropertyMixin):
                     if self.fix_ansi_width and ANSI_COLOR_RX.search(row_str):
                         row_str = '  '.join(c.format(row[c.key]) for c in self.columns)
                 except TypeError as e:
+                    if fix_types is None:
+                        return self._format_row(row, (list, dict, set, tuple))
                     raise TableFormatException('row', self.row_fmt, row, e) from e
                 except ValueError:
                     row_str = '  '.join(c.format(row[c.key]) for c in self.columns)
 
-            return row_str.rstrip()
+            return row_str.rstrip(), fix_types
         else:
             raise ValueError(f'Invalid table mode={self.mode!r}')
 
@@ -455,7 +467,13 @@ class Table(ClearableCachedPropertyMixin):
             col.width = list(filter(None, values)) or 0
 
     def print_rows(
-        self, rows: Iterable[Row], header: bool = False, update_width: bool = False, color: Union[str, int, None] = None
+        self,
+        rows: Iterable[Row],
+        header: bool = False,
+        update_width: bool = False,
+        color: Union[str, int, None] = None,
+        *,
+        fix_types: tuple[type, ...] | None = None,
     ):
         rows = self.sorted(rows)
         if update_width or self.update_width:
@@ -463,6 +481,7 @@ class Table(ClearableCachedPropertyMixin):
 
         if header or self.auto_header:
             self.print_header(color=color)
+
         try:
             if self.mode == 'csv':
                 self.csv_writer.writerows(rows)
@@ -472,7 +491,8 @@ class Table(ClearableCachedPropertyMixin):
                     if isinstance(row, HeaderRow) or row is HeaderRow:
                         self.print_header(row.bar, color)
                     else:
-                        self._print(self.format_row(row), color)
+                        formatted, fix_types = self._format_row(row, fix_types)
+                        self._print(formatted, color)
         except IOError as e:
             if e.errno == 32:  # broken pipe
                 return

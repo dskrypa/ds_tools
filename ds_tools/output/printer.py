@@ -10,6 +10,8 @@ import logging
 import pprint
 import types
 from collections.abc import Mapping, Sized, Iterable, Container
+from inspect import Signature, Parameter
+from typing import Callable, TypeVar
 
 try:
     from win32com.client import DispatchBaseClass
@@ -17,6 +19,8 @@ try:
 except ImportError:
     DispatchBaseClass = None
     com_repr = None
+
+import yaml
 
 from ..core.serialization import PermissiveJSONEncoder, yaml_dump
 from .constants import PRINTER_FORMATS
@@ -27,6 +31,8 @@ from .terminal import uprint
 
 __all__ = ['Printer']
 log = logging.getLogger(__name__)
+
+T = TypeVar('T')
 
 _FORMAT_HANDLERS = {}
 
@@ -64,7 +70,7 @@ class Printer:
             return content
         else:
             handler = getattr(self, handler_name)
-            return handler(content)
+            return handler(content, *args, **kwargs)
 
     def pprint(self, content, *args, gen_empty_error=None, **kwargs):
         if isinstance(content, types.GeneratorType):
@@ -78,7 +84,7 @@ class Printer:
         elif self.output_format in ('csv', 'table'):
             kwargs['mode'] = self.output_format
             try:
-                Table.auto_print_rows(content, *args, **kwargs)
+                Table.auto_print_rows(content, *args, **_sanitize_kwargs(kwargs, Table, Table.auto_print_rows))
             except AttributeError:
                 raise ValueError(f'Invalid content format to be formatted as a {self.output_format}')
         elif self.output_format == 'rich':
@@ -109,7 +115,7 @@ class Printer:
     @format_handler('json-lines')
     def json_lines(self, content, *args, **kwargs):
         if not isinstance(content, (list, set)):
-            raise TypeError('Expected list or set; found {}'.format(type(content).__name__))
+            raise TypeError(f'Expected list or set; found {type(content).__name__}')
         lines = ['[']
         last = len(content) - 1
         for i, val in enumerate(content):
@@ -134,16 +140,17 @@ class Printer:
             return str(content)
 
     @format_handler('pseudo-yaml')
-    def pseudo_yaml(self, content, *args, **kwargs):
-        return '\n'.join(pseudo_yaml(content))
+    def pseudo_yaml(self, content, *args, indent=4, sort_keys=True, **kwargs):
+        return '\n'.join(pseudo_yaml(content, indent=indent, sort_keys=sort_keys))
 
     @format_handler('yaml')
-    def yaml(self, content, *args, **kwargs):
+    def yaml(self, content, *args, force_single_yaml=False, indent_nested_lists=True, sort_keys=True, **kwargs):
         return yaml_dump(
             content,
-            kwargs.pop('force_single_yaml', False),
-            kwargs.pop('indent_nested_lists', True),
-            sort_keys=kwargs.pop('sort_keys', True),
+            force_single_yaml=force_single_yaml,
+            indent_nested_lists=indent_nested_lists,
+            sort_keys=sort_keys,
+            **_sanitize_kwargs(kwargs, yaml_dump, yaml.dump, yaml.dump_all),
         )
 
     @format_handler('pprint')
@@ -155,13 +162,25 @@ class Printer:
     def tabular(self, content, *args, **kwargs):
         kwargs['mode'] = self.output_format
         try:
-            return Table.auto_format_rows(content, *args, **kwargs)
+            return Table.auto_format_rows(content, *args, **_sanitize_kwargs(kwargs, Table, Table.auto_format_rows))
         except AttributeError:
             raise ValueError(f'Invalid content format to be formatted as a {self.output_format}')
 
     @format_handler('rich')
-    def rich(self, content, *args, **kwargs):
-        return rich_repr(content)
+    def rich(self, content, *args, max_width: int = 80, soft_wrap: bool = False, **kwargs):
+        return rich_repr(content, max_width=max_width, soft_wrap=soft_wrap)
+
+
+def _get_kwarg_keys(func: Callable) -> set[str]:
+    sig = Signature.from_callable(func)
+    return {k for k, p in sig.parameters.items() if p.kind != Parameter.VAR_KEYWORD}
+
+
+def _sanitize_kwargs(kwargs: dict[str, T], func: Callable, *funcs: Callable) -> dict[str, T]:
+    keys = _get_kwarg_keys(func)
+    for fn in funcs:
+        keys |= _get_kwarg_keys(fn)
+    return {k: kwargs[k] for k in keys.intersection(kwargs)}
 
 
 class PseudoJsonEncoder(PermissiveJSONEncoder):
