@@ -4,10 +4,13 @@ Facilitates preparation of log directories and configuring loggers with custom s
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import sys
 from datetime import datetime
+from logging import LogRecord, Logger, StreamHandler, Handler, Filter, Formatter
 from pathlib import Path
 from threading import RLock
 from typing import Optional, Union, Collection, Iterable, Callable, Mapping, Any
@@ -39,20 +42,24 @@ _NotSet = object()
 _lock = RLock()
 _stream_refs = set()
 
+PathLike = Union[Path, str]
+Verbosity = Union[int, bool, None]
+OptStrs = Optional[Collection[str]]
+
 
 def init_logging(
-    verbosity: Union[int, bool, None] = 0,
+    verbosity: Verbosity = 0,
     *,
-    log_path: Union[Path, str, None] = _NotSet,
-    names: Optional[Collection[str]] = _NotSet,
-    names_add: Optional[Collection[str]] = _NotSet,
+    log_path: PathLike | None = _NotSet,
+    names: OptStrs = _NotSet,
+    names_add: OptStrs = _NotSet,
     date_fmt: str = None,
     millis: bool = False,
     entry_fmt: str = None,
     file_fmt: str = None,
     file_perm: int = 0o666,
     file_lvl: int = logging.DEBUG,
-    file_dir: Union[Path, str, None] = None,
+    file_dir: PathLike | None = None,
     filename_fmt: str = '{prog}.{user}.{time}{uniq}.log',
     file_handler_opts: Mapping[str, Any] = None,
     fix_sigpipe: bool = True,
@@ -65,9 +72,10 @@ def init_logging(
     reopen_streams: bool = True,
     color_threads: bool = None,
     capture_warnings: bool = True,
-    suppress_warnings: Optional[Collection[str]] = _NotSet,
+    suppress_warnings: OptStrs = _NotSet,
     suppress_additional_warnings: Collection[str] = None,
     http_debugging: bool = False,
+    set_tz: bool = True,
 ):
     """
     Configures stream handlers for stdout and stderr so that logs with level logging.INFO and below are sent to stdout
@@ -140,8 +148,13 @@ def init_logging(
     :param suppress_additional_warnings: Warnings to be suppressed in addition to the default warnings that will be
       suppressed (only works when ``capture_warnings`` is True)
     :param http_debugging: Enable HTTP request debug logging
+    :param set_tz: Whether a default value for the ``TZ`` environment variable should be set (defaults to True) to
+      prevent unnecessary system calls on Linux (see
+      `https://blog.packagecloud.io/set-environment-variable-save-thousands-of-system-calls/`__ for more info).
     :return: The path to which logs are being written, or None if no file handler was configured.
     """
+    if set_tz:
+        os.environ.setdefault('TZ', ':/etc/localtime')  # This avoids extra sys calls; see docstring for more info
     if fix_sigpipe:
         import signal
         try:
@@ -186,10 +199,10 @@ def init_logging(
 
 
 def stream_config_dict(
-    verbosity: Union[int, bool, None] = 0,
+    verbosity: Verbosity = 0,
     *,
-    names: Optional[Collection[str]] = _NotSet,
-    names_add: Optional[Collection[str]] = _NotSet,
+    names: OptStrs = _NotSet,
+    names_add: OptStrs = _NotSet,
     entry_fmt: str = None,
     date_fmt: str = None,
     millis: bool = False,
@@ -233,7 +246,7 @@ def stream_config_dict(
 
 
 def _add_stream_handlers(
-    loggers: Iterable[logging.Logger],
+    loggers: Iterable[Logger],
     verbosity: Union[int, bool],
     date_fmt: str,
     entry_fmt: Optional[str] = None,
@@ -268,12 +281,10 @@ def _add_stream_handlers(
             logger.addHandler(handler)
 
 
-def _choose_log_path(file_dir: Union[str, Path], filename_fmt: str, cleanup_old: bool = True) -> Path:
+def _choose_log_path(file_dir: PathLike, filename_fmt: str, cleanup_old: bool = True) -> Path:
     import inspect
-    import re
     import time
     from getpass import getuser
-    from itertools import count
 
     log_dir = Path(file_dir) if file_dir else _get_default_user_log_dir()
     try:
@@ -281,31 +292,49 @@ def _choose_log_path(file_dir: Union[str, Path], filename_fmt: str, cleanup_old:
     except (TypeError, AttributeError):
         prog = f'{Path(__file__).stem}_interactive'
 
-    name_parts = {'prog': prog, 'user': getuser(), 'time': int(time.time()), 'uniq': '', 'pid': os.getpid()}
+    name_parts = {
+        'prog': prog, 'user': getuser(), 'time': int(time.time()), 'uniq': '', 'pid': os.getpid(), 'ppid': os.getppid()
+    }
     log_path = log_dir.joinpath(filename_fmt.format(**name_parts))
-    if log_path.exists() and '{uniq}' in filename_fmt:
+    if '{uniq}' in filename_fmt and log_path.exists():
+        from itertools import count
+
         suffix = count()
         while log_path.exists():
             name_parts['uniq'] = f'-{next(suffix)}'
             log_path = log_dir.joinpath(filename_fmt.format(**name_parts))
 
-    if cleanup_old and '{time}' in filename_fmt and log_dir.exists():
-        cleanup_old = 14 if cleanup_old is True else cleanup_old
-        name_parts['time'] = r'(\d+)'
-        name_parts['uniq'] = r'\-?\d*'
-        escaped_fmt = re.escape(filename_fmt).replace('\\{', '{').replace('\\}', '}')
-        old_match = re.compile(escaped_fmt.format(**name_parts)).match
-        _now = int(time.time())
-        cleanup_old *= 60 * 60 * 24
-        for old_path in log_dir.iterdir():
-            # noinspection PyUnboundLocalVariable
-            if old_path.is_file() and (m := old_match(old_path.name)) and (_now - int(m.group(1))) > cleanup_old:
-                try:
-                    old_path.unlink()
-                except OSError as e:
-                    log.error(f'Error deleting old log file: {old_path} - {e}')
+    if cleanup_old and any(ph in filename_fmt for ph in ('{time}', '{pid}', '{ppid}')) and log_dir.exists():
+        _cleanup_old_log_files(log_dir, filename_fmt, name_parts, 14 if cleanup_old is True else cleanup_old)
 
     return log_path
+
+
+def _cleanup_old_log_files(log_dir: Path, name_fmt: str, name_parts: dict[str, str | int], del_age_days: int):
+    import re
+    import time
+    from stat import S_ISREG
+
+    name_parts.update(time=r'(\d+)', uniq=r'\-?\d*', pid='\d+', ppid='\d+')
+    use_name_time = '{time}' in name_fmt
+    escaped_fmt = re.escape(name_fmt).replace('\\{', '{').replace('\\}', '}')
+    # Note: If this code survives beyond year 2100, the following date suffix pattern will need to be updated!
+    log_fmt_match = re.compile('^' + escaped_fmt.format(**name_parts) + r'(?:\.20\d\d-[01]\d-[0-3]\d)?$').match
+    current_time = int(time.time())
+    delta_seconds = del_age_days * 86400  # = 60 * 60 * 24
+    for path in log_dir.iterdir():
+        try:
+            stat_info = path.stat()
+        except OSError:
+            continue
+        if not S_ISREG(stat_info.st_mode):
+            continue
+        m = log_fmt_match(path.name)
+        if m and (current_time - (int(m.group(1)) if use_name_time else stat_info.st_mtime)) > delta_seconds:
+            try:
+                path.unlink()
+            except OSError as e:
+                log.error(f'Error deleting old log file: {path} - {e}')
 
 
 def _get_default_user_log_dir() -> Path:
@@ -325,7 +354,7 @@ def _get_default_user_log_dir() -> Path:
 
 
 def _add_file_handler(
-    loggers: Iterable[logging.Logger],
+    loggers: Iterable[Logger],
     log_path: Path,
     date_fmt: str,
     file_fmt: str,
@@ -352,9 +381,9 @@ def _add_file_handler(
 
 
 def _get_logger_names(
-    names: Optional[Collection[str]] = _NotSet,
-    verbosity: Union[int, bool, None] = 0,
-    names_add: Optional[Collection[str]] = _NotSet,
+    names: OptStrs = _NotSet,
+    verbosity: Verbosity = 0,
+    names_add: OptStrs = _NotSet,
 ) -> set[Optional[str]]:
     if names is _NotSet:
         if verbosity and verbosity > 10:
@@ -373,12 +402,7 @@ def _get_logger_names(
     return names
 
 
-def _get_loggers(
-    names: Optional[Collection[str]],
-    verbosity: Union[int, bool, None],
-    names_add: Optional[Collection[str]],
-    replace_handlers: bool,
-) -> list[logging.Logger]:
+def _get_loggers(names: OptStrs, verbosity: Verbosity, names_add: OptStrs, replace_handlers: bool) -> list[Logger]:
     loggers = list(map(logging.getLogger, _get_logger_names(names, verbosity, names_add)))
     for logger in loggers:
         logger.setLevel(logging.NOTSET)  # Let handlers deal with log levels
@@ -390,18 +414,26 @@ def _get_loggers(
     return loggers
 
 
-def _capture_warnings(warnings: Optional[Collection[str]] = _NotSet, additional: Optional[Collection[str]] = None):
+def _capture_warnings(warnings: OptStrs = _NotSet, additional: OptStrs = None):
     logging.captureWarnings(True)
     warnings = set(SUPPRESS_WARNINGS) if warnings is _NotSet else set(warnings) if warnings else set()
     if additional:
         warnings.update(additional)
 
     class WarningFilter(logging.Filter):
-        def filter(self, record):
-            try:
-                return not any(w in record.args[0] for w in warnings)
-            except Exception:  # noqa
-                return True
+        if sys.version_info[:2] > (3, 11):  # The behavior changed between 3.10 and 3.11
+            def filter(self, record):
+                try:
+                    msg = record.args[0]
+                    return not any(w in msg for w in warnings)
+                except Exception:  # noqa
+                    return True
+        else:
+            def filter(self, record):
+                try:
+                    return not any(w in record.msg for w in warnings)
+                except Exception:  # noqa
+                    return True
 
     logging.getLogger('py.warnings').addFilter(WarningFilter())
 
@@ -441,7 +473,7 @@ def enable_http_debug_logging():
         logger.propagate = True
 
 
-def create_filter(filter_fn: Callable):
+def create_filter(filter_fn: Callable[[LogRecord], bool]) -> Filter:
     """
     Uses the given function to filter log entries based on level number.  The function should return True if the
     record should be logged, or False to ignore it.
@@ -452,24 +484,23 @@ def create_filter(filter_fn: Callable):
     :param filter_fn: A function that takes 1 parameter (record) and returns a boolean
     :return: A custom, initialized subclass of logging.Filter using the given filter function
     """
-    class CustomLogFilter(logging.Filter):
-        def filter(self, record):
+    class CustomLogFilter(Filter):
+        def filter(self, record: LogRecord) -> bool:
             return filter_fn(record)
 
     return CustomLogFilter()
 
 
-class DatetimeFormatter(logging.Formatter):
+class DatetimeFormatter(Formatter):
     """Enables use of ``%f`` (micro/milliseconds) in datetime formats."""
     _local_tz = get_localzone()
 
-    def formatTime(self, record, datefmt: str = None):
+    def formatTime(self, record: LogRecord, datefmt: str = None) -> str:
         dt = datetime.fromtimestamp(record.created, self._local_tz)
         if datefmt:
             return dt.strftime(datefmt)
         else:
-            t = dt.strftime(self.default_time_format)
-            return self.default_msec_format % (t, record.msecs)
+            return self.default_msec_format % (dt.strftime(self.default_time_format), record.msecs)
 
 
 class ColorLogFormatter(DatetimeFormatter):
@@ -478,7 +509,8 @@ class ColorLogFormatter(DatetimeFormatter):
     parameter when logging, for example::\n
         log.error('An error occurred', extra={'color': 'red'})
     """
-    def format(self, record):
+
+    def format(self, record: LogRecord) -> str:
         formatted = super().format(record)
         color = getattr(record, 'color', None)
         if color:
@@ -493,14 +525,15 @@ class ColorLogFormatter(DatetimeFormatter):
 
 class ColorThreadFormatter(ColorLogFormatter):
     """Use a different color for each thread's logged messages."""
-    def format(self, record):
+
+    def format(self, record: LogRecord) -> str:
         formatted = super().format(record)
         try:
-            thread_no = int(record.threadName.split('-')[1])
+            thread_num = int(record.threadName.split('-')[1])
         except Exception:  # noqa
             pass
         else:
-            color_num = thread_no % 256
+            color_num = thread_num % 256
             while color_num in (0, 16, 17, 18, 19, 232, 233, 234, 235, 236, 237):
                 color_num += 51
                 if color_num > 255:
@@ -509,7 +542,7 @@ class ColorThreadFormatter(ColorLogFormatter):
         return formatted
 
 
-def prep_log_dir(log_path: Union[str, Path], perm_change_prefix: str = '/var/tmp/', new_dir_permissions: int = 0o1777):
+def prep_log_dir(log_path: PathLike, perm_change_prefix: str = '/var/tmp/', new_dir_permissions: int | None = 0o1777):
     """
     Creates any necessary intermediate directories in order for the given log path to be valid.  Log directory's
     permissions default to 1777 (sticky, read/write/exec for everyone).
@@ -518,27 +551,27 @@ def prep_log_dir(log_path: Union[str, Path], perm_change_prefix: str = '/var/tmp
     :param perm_change_prefix: Apply new_dir_permissions to the dir if it needs to be created and starts with this
     :param new_dir_permissions: Octal permissions for the new directory if it needs to be created.
     """
-    log_dir = Path(log_path).parent
+    log_dir = log_path.parent if isinstance(log_path, Path) else Path(log_path).parent
     if log_dir.exists():
         if not log_dir.is_dir():
             raise ValueError(f'Invalid log path - {log_dir} is not a directory')
     else:
-        log_dir.mkdir(parents=True)
-        if log_dir.as_posix().startswith(perm_change_prefix) and new_dir_permissions is not None:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        if new_dir_permissions is not None and log_dir.as_posix().startswith(perm_change_prefix):
             try:
                 log_dir.chmod(new_dir_permissions)
             except OSError as e:
                 log.error(f'Error changing permissions for {log_dir} to 0o{new_dir_permissions:o}: {e}')
 
 
-def add_context_filter(filter_instance: logging.Filter, name: str = None):
+def add_context_filter(filter_instance: Filter, name: str = None):
     """
     :param filter_instance: An instance of the :class:`logging.Filter` class that should be used
     :param name: None to add to all loggers, or a string that is the prefix of all loggers that should use the given
       filter
     """
-    for lname, logger in logging.Logger.manager.loggerDict.items():
-        if (name is None) or (isinstance(lname, str) and lname.startswith(name)):
+    for logger_name, logger in Logger.manager.loggerDict.items():
+        if (name is None) or (isinstance(logger_name, str) and logger_name.startswith(name)):
             try:
                 logger.addFilter(filter_instance)
             except AttributeError:                  # ignore PlaceHolder objects
@@ -582,7 +615,7 @@ def get_logger_info(only_with_handlers: bool = False, non_null_handlers_only: bo
     from collections import ChainMap
 
     loggers = {}
-    for lname, logger in ChainMap(logging.Logger.manager.loggerDict, {None: logging.getLogger()}).items():
+    for lname, logger in ChainMap(Logger.manager.loggerDict, {None: logging.getLogger()}).items():
         entry = {'type': type(logger).__qualname__}
         try:
             entry['level'] = logger.level
@@ -647,7 +680,7 @@ def get_logger_info(only_with_handlers: bool = False, non_null_handlers_only: bo
     return loggers
 
 
-def get_level_info(handler: logging.Handler) -> str:
+def get_level_info(handler: Handler) -> str:
     """
     :param handler: An instance of a logging handler object
     :return: A string representation of the handler's logging level and its filters
@@ -659,26 +692,17 @@ def get_level_info(handler: logging.Handler) -> str:
     return f'{htype}: {handler.level} ({logging.getLevelName(handler.level)})'
 
 
-def get_levels(logger: logging.Logger) -> list[str]:
+def get_levels(logger: Logger) -> list[str]:
     """
     :param logger: A Logger
     :return: A list of information about the given logger's handlers from :func:`get_level_info`
     """
-    levels = [get_level_info(handler) for handler in logger.handlers]
-    levels.insert(0, f'base: {logger.level} ({logging.getLevelName(logger.level)})')
-    return levels
+    return [
+        f'base: {logger.level} ({logging.getLevelName(logger.level)})', *(get_level_info(h) for h in logger.handlers)
+    ]
 
 
-def _stream_handler_repr(self):
-    # This monkey patch is to fix the case where the stream name is an int; doesn't seem necessary in 3.7.4
-    level = logging.getLevelName(self.level)
-    name = str(getattr(self.stream, 'name', ''))
-    if name:
-        name += ' '
-    return '<%s %s(%s)>' % (self.__class__.__name__, name, level)
-
-
-def _stream_handler_emit(self, record):
+def _stream_handler_emit(self: StreamHandler, record: LogRecord):
     # This monkey patch is to fix handling of piped output on Windows
     try:
         msg = self.format(record)
@@ -694,7 +718,7 @@ def _stream_handler_emit(self, record):
         self.handleError(record)
 
 
-def _stream_handler_emit_quiet(self, record):
+def _stream_handler_emit_quiet(self: StreamHandler, record: LogRecord):
     # This monkey patch is to fix handling of piped output on Windows
     try:
         msg = self.format(record)
@@ -710,7 +734,7 @@ def _stream_handler_emit_quiet(self, record):
         self.handleError(record)
 
 
-def logger_has_non_null_handlers(logger: logging.Logger):
+def logger_has_non_null_handlers(logger: Logger) -> bool:
     # Based on logging.Logger.hasHandlers(), but checks that they are not all NullHandlers
     c = logger
     rv = False
@@ -723,6 +747,3 @@ def logger_has_non_null_handlers(logger: logging.Logger):
         else:
             c = c.parent
     return rv
-
-
-logging.StreamHandler.__repr__ = _stream_handler_repr
