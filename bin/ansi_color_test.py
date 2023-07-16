@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from cli_command_parser import Command, Option, ParamGroup, Flag, main
+from cli_command_parser.inputs import NumRange
 
 from ds_tools.__version__ import __author_email__, __version__  # noqa
 from ds_tools.output.color import colored
@@ -13,8 +14,8 @@ ATTRS = [
 
 class AnsiColorTest(Command, description='Tool for testing ANSI colors'):
     text = Option('-t', help='Text to be displayed (default: the number of the color being shown)')
-    attr = Option('-a', choices=ATTRS, help='Background color to use (default: None)')
-    limit: int = Option('-L', default=256, help='Range limit')
+    attr = Option('-a', nargs='+', choices=ATTRS, help='Background color to use (default: None)')
+    limit: int = Option('-L', default=256, type=NumRange(min=0, max=256), help='Range limit')
 
     with ParamGroup(mutually_exclusive=True):
         basic = Flag('-B', help='Display colors without the 38;5; prefix (cannot be combined with other args)')
@@ -30,6 +31,7 @@ class AnsiColorTest(Command, description='Tool for testing ANSI colors'):
                 print(' '.join(colored(f'{i:3d}', prefix=i) for i in range(row, row + 16)))
         elif self.hex:
             from ds_tools.output._colors import HEX_COLORS_REVERSE
+
             hexs, nums = [], []
             for i, (hex, num) in enumerate(sorted(HEX_COLORS_REVERSE.items())):
                 hexs.append(colored(hex, hex))
@@ -38,8 +40,8 @@ class AnsiColorTest(Command, description='Tool for testing ANSI colors'):
                     print(' '.join(hexs), '|', ' '.join(nums))
                     hexs, nums = [], []
         elif self.color and self.background:
-            attrs = (self.attr,) if self.attr else ATTRS
-            for attr in attrs:
+            # attrs = (self.attr,) if self.attr else ATTRS
+            for attr in (self.attr or ATTRS):
                 text = self.text or f'{attr}: example text'
                 print(colored(text, self.color, self.background, attr))
         elif self.color:
