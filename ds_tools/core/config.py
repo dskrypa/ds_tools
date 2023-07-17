@@ -19,24 +19,6 @@ ConfigValue = Union[CV, DV]
 _NotSet = object()
 
 
-# region Exceptions
-
-
-class ConfigException(Exception):
-    """Base exception for config-related errors"""
-
-
-class InvalidConfigError(ConfigException):
-    """Raised when invalid config items are provided when initializing a ConfigSection"""
-
-
-class MissingConfigItemError(ConfigException):
-    """Raised if a required config item is accessed when no value was provided for it"""
-
-
-# endregion
-
-
 class ConfigItem(Generic[CV, DV]):
     __slots__ = ('name', 'type', 'default', 'default_func')
 
@@ -93,25 +75,50 @@ class NestedSection(ConfigItem):
     def __init__(self, section_cls: Type[ConfigSection]):
         super().__init__(type=section_cls, default_func=section_cls)
 
+    def __set_name__(self, owner: Type[ConfigSection], name: str):
+        super().__set_name__(owner, name)
+        owner._nested_config_sections_[name] = self
+
 
 class ConfigMeta(type):
     """
-    Metaclass for ConfigSections.  Necessary to initialize the ``_config_items_`` dict for ConfigItem registration
-    because the contents of a class is evaluated before ``__init_subclass__`` is called.
+    Metaclass for ConfigSections.  Necessary to initialize the ``_config_items_`` and ``_nested_config_sections_`` dicts
+    for ConfigItem registration because the contents of a class is evaluated before ``__init_subclass__`` is called.
     """
+    _config_items_: dict[str, ConfigItem | NestedSection]
+    _nested_config_sections_: dict[str, NestedSection]
 
     @classmethod
     def __prepare__(mcs, name: str, bases: Iterable[type], **kwargs) -> dict[str, Any]:
         """Called before ``__new__`` and before evaluating the contents of a class."""
-        return {
-            '_config_items_': {
-                k: v for base in bases for k, v in base._config_items_.items() if isinstance(base, mcs)  # noqa
-            }
-        }
+        config_items, nested_sections = {}, {}
+        for base in bases:
+            if isinstance(base, mcs):
+                config_items.update(base._config_items_)
+                nested_sections.update(base._nested_config_sections_)
+        return {'_config_items_': config_items, '_nested_config_sections_': nested_sections}
 
 
 class ConfigSection(metaclass=ConfigMeta):
     _config_items_: dict[str, ConfigItem | NestedSection]
+    _nested_config_sections_: dict[str, NestedSection]
+    _config_key_delimiter_: str | None = '.'
+    _merge_nested_sections_: bool = True
+
+    def __init_subclass__(cls, merge_nested: bool = True, key_delimiter: str = '.', **kwargs):
+        """
+        :param merge_nested: If True (default), when calling :meth:`._update_` / :meth:`.update`, if a value is
+          provided for a nested section, then that nested section should be updated with the new value, otherwise any
+          overrides in it should be replaced with the provided new value so any nested overrides that existed before
+          whose keys are not present in the new value will be lost.
+        :param key_delimiter: A delimiter for nested keys to allow direct access to multiple levels of nested items.
+          If None or another non-truthy value, then all keys will be treated at face value.
+        """
+        super().__init_subclass__(**kwargs)
+        if not merge_nested:
+            cls._merge_nested_sections_ = False
+        if key_delimiter != '.':
+            cls._config_key_delimiter_ = key_delimiter
 
     def __init__(self, config: Mapping[str, Any] = None, **kwargs):
         if data := ChainMap(config, kwargs) if config and kwargs else (config or kwargs):
@@ -121,4 +128,75 @@ class ConfigSection(metaclass=ConfigMeta):
             for key, val in data.items():
                 setattr(self, key, val)
 
+    def _update_(self, config: Mapping[str, Any] = None, **kwargs):
+        if data := ChainMap(config, kwargs) if config and kwargs else (config or kwargs):
+            if bad := set(data).difference(self._config_items_):
+                raise InvalidConfigError(f'Invalid configuration - unsupported options: {", ".join(sorted(bad))}')
+            elif self._merge_nested_sections_:
+                for key, val in data.items():
+                    if key in self._nested_config_sections_:  # Merge nested configs instead of overwriting them
+                        getattr(self, key)._update_(val)
+                    else:
+                        setattr(self, key, val)
+            else:
+                for key, val in data.items():
+                    setattr(self, key, val)
+
+    update = _update_
+
+    def __contains__(self, key: str) -> bool:
+        if delim := self._config_key_delimiter_:
+            base, _, remainder = key.partition(delim)
+        else:
+            base, remainder = key, ''
+
+        if not remainder or base not in self._config_items_:
+            return False
+        return remainder in getattr(self, base)
+
+    def __getitem__(self, key: str):
+        if delim := self._config_key_delimiter_:
+            base, _, remainder = key.partition(delim)
+        else:
+            base, remainder = key, ''
+
+        if base not in self._config_items_:
+            raise KeyError(key)
+        elif remainder:
+            return getattr(self, base)[remainder]
+        else:
+            return getattr(self, base)
+
+    def __setitem__(self, key: str, value: Any):
+        if delim := self._config_key_delimiter_:
+            base, _, remainder = key.partition(delim)
+        else:
+            base, remainder = key, ''
+
+        if base not in self._config_items_:
+            raise KeyError(key)
+        elif remainder:
+            getattr(self, base)[remainder] = value
+        else:
+            setattr(self, base, value)
+
+
 # TODO: Config subclass of ConfigSection, with from_json_file and similar classmethods?
+
+
+# region Exceptions
+
+
+class ConfigException(Exception):
+    """Base exception for config-related errors"""
+
+
+class InvalidConfigError(ConfigException):
+    """Raised when invalid config items are provided when initializing a ConfigSection"""
+
+
+class MissingConfigItemError(ConfigException):
+    """Raised if a required config item is accessed when no value was provided for it"""
+
+
+# endregion
