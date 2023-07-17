@@ -55,8 +55,8 @@ class ConfigItem(Generic[CV, DV]):
             raise MissingConfigItemError(self.name) from e
 
     def __set__(self, instance: ConfigSection, value: ConfigValue):
-        if (type_func := self.type) is not None:
-            value = type_func(value)
+        if self.type is not None:
+            value = self.type(value)
         instance.__dict__[self.name] = value
 
     def __delete__(self, instance: ConfigSection):
@@ -102,10 +102,10 @@ class ConfigMeta(type):
 class ConfigSection(metaclass=ConfigMeta):
     _config_items_: dict[str, ConfigItem | NestedSection]
     _nested_config_sections_: dict[str, NestedSection]
-    _config_key_delimiter_: str | None = '.'
+    _config_key_delimiter_: str | None = None
     _merge_nested_sections_: bool = True
 
-    def __init_subclass__(cls, merge_nested: bool = True, key_delimiter: str = '.', **kwargs):
+    def __init_subclass__(cls, merge_nested: bool = True, key_delimiter: str = None, **kwargs):
         """
         :param merge_nested: If True (default), when calling :meth:`._update_` / :meth:`.update`, if a value is
           provided for a nested section, then that nested section should be updated with the new value, otherwise any
@@ -145,8 +145,8 @@ class ConfigSection(metaclass=ConfigMeta):
     update = _update_
 
     def __contains__(self, key: str) -> bool:
-        if delim := self._config_key_delimiter_:
-            base, _, remainder = key.partition(delim)
+        if self._config_key_delimiter_:
+            base, _, remainder = key.partition(self._config_key_delimiter_)
         else:
             base, remainder = key, ''
 
@@ -155,8 +155,8 @@ class ConfigSection(metaclass=ConfigMeta):
         return remainder in getattr(self, base)
 
     def __getitem__(self, key: str):
-        if delim := self._config_key_delimiter_:
-            base, _, remainder = key.partition(delim)
+        if self._config_key_delimiter_:
+            base, _, remainder = key.partition(self._config_key_delimiter_)
         else:
             base, remainder = key, ''
 
@@ -168,8 +168,8 @@ class ConfigSection(metaclass=ConfigMeta):
             return getattr(self, base)
 
     def __setitem__(self, key: str, value: Any):
-        if delim := self._config_key_delimiter_:
-            base, _, remainder = key.partition(delim)
+        if self._config_key_delimiter_:
+            base, _, remainder = key.partition(self._config_key_delimiter_)
         else:
             base, remainder = key, ''
 
