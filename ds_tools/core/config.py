@@ -153,15 +153,16 @@ class ConfigSection(metaclass=ConfigMeta):
         """
         Returns True if the given key is a config item in this section (or a subsection thereof, if a delimiter
         was configured and was present in the key), and it has a non-default value.  If the key is a config item that
-        only has a default value, then False will be returned instead.  False will always be returned for keys that are
-        not associated with any config items.
+        only has a default value, then False will be returned instead.  If the section was defined with
+        ``strict=False``, and a value was stored for a non-ConfigItem key, then True will be returned for that key.
+        When ``strict=True``, False will always be returned for keys that are not associated with any config items.
         """
         if self._config_key_delimiter_:
             base, _, remainder = key.partition(self._config_key_delimiter_)
         else:
             base, remainder = key, ''
 
-        if base not in self._config_items_:
+        if self._strict_config_keys_ and base not in self._config_items_:
             return False
         elif not remainder:
             return base in self.__dict__  # A non-default value exists for the given key
@@ -174,7 +175,7 @@ class ConfigSection(metaclass=ConfigMeta):
         else:
             base, remainder = key, ''
 
-        if base not in self._config_items_:
+        if self._strict_config_keys_ and base not in self._config_items_:
             raise KeyError(key)
         elif remainder:
             return getattr(self, base)[remainder]

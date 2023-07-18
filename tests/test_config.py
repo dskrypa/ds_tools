@@ -83,6 +83,14 @@ class ConfigTest(TestCase):
         del config['foo.baz']
         self.assertIsNone(config['foo.baz'])
 
+    def test_permissive_getitem_with_period(self):
+        class Config(ConfigSection, strict=False):
+            foo = ConfigItem(123)
+
+        config = Config({'foo.bar': 456})
+        self.assertEqual(123, config.foo)
+        self.assertEqual(456, config['foo.bar'])
+
     def test_bad_key_strict(self):
         class Config(ConfigSection):
             foo = ConfigItem(123, type=int)
@@ -114,7 +122,8 @@ class ConfigTest(TestCase):
         self.assertEqual(1, config.foo)
         self.assertEqual(1, config.bar)  # noqa
         self.assertIn('foo', config)  # noqa  # PyCharm doesn't seem to understand __contains__
-        self.assertNotIn('bar', config)  # noqa  # PyCharm doesn't seem to understand __contains__
+        self.assertIn('bar', config)  # noqa  # PyCharm doesn't seem to understand __contains__
+        self.assertNotIn('baz', config)  # noqa  # PyCharm doesn't seem to understand __contains__
 
     def test_missing_value(self):
         class Config(ConfigSection):
