@@ -332,8 +332,7 @@ class Passwords:
 
     def _save(self, passwords: set[str]):
         log.debug(f'Saving changes to {self.path.as_posix()}')
-        with self.path.open('w', encoding='utf-8') as f:
-            f.write('\n'.join(passwords))
+        self.path.write_text('\n'.join(passwords), encoding='utf-8')
 
     @property
     def passwords(self):
@@ -402,6 +401,7 @@ def _prep_extracted_dest(dst_root: Path, name: str) -> Path:
     i = 1
     while dst_path.exists():
         dst_path = dst_root.joinpath(f'{name}-{i}')
+        i += 1
 
     return dst_path
 

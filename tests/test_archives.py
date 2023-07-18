@@ -1,13 +1,18 @@
 #!/usr/bin/env python
 
+import sys
+from contextlib import ExitStack
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
+
+from rarfile import RarCannotExec
 
 from ds_tools.fs.archives import ArchiveFile, Passwords
 from ds_tools.test_common import TestCaseBase, main
 
 DATA_DIR = Path(__file__).resolve().parent.joinpath('data', Path(__file__).stem)
+REQUIRE_RAR = False
 
 
 class ArchiveTestCase(TestCaseBase):
@@ -36,32 +41,54 @@ class ArchiveTestCase(TestCaseBase):
         self.assertEqual(2, len(list(expected.iterdir())))
         self.assertEqual(1, len(list(out_path.iterdir())))
 
-    @patch.object(Passwords, 'path', pw_path)
-    def test_sample_archives(self):
-        self.assertFalse(self.pw_path.exists())
-
-        for path in DATA_DIR.joinpath('plain').iterdir():
-            with self.subTest(f'plain + {"".join(path.suffixes)}'), TemporaryDirectory() as tmp_dir:
-                ArchiveFile(path).extract_all(tmp_dir)
-                self.assert_extracted_content_matches(tmp_dir)
-
-        self.assertFalse(self.pw_path.exists())
-
-        with patch('builtins.input', return_value='test') as input_mock:
-            with patch('ds_tools.fs.archives.get_input', return_value=True) as get_input_mock:
-                for path in DATA_DIR.joinpath('enc_content').iterdir():
-                    with self.subTest(f'enc_content + {"".join(path.suffixes)}'), TemporaryDirectory() as tmp_dir:
+    def test_sample_archives_plain(self):
+        with TemporaryDirectory() as pw_tmp_dir:
+            pw_path = Path(pw_tmp_dir).joinpath('archive_passwords.txt')
+            with patch.object(Passwords, 'path', pw_path):
+                self.assertFalse(pw_path.exists())
+                for path in DATA_DIR.joinpath('plain').iterdir():
+                    with self.subTest(f'plain + {"".join(path.suffixes)}'), TemporaryDirectory() as tmp_dir:
                         ArchiveFile(path).extract_all(tmp_dir)
                         self.assert_extracted_content_matches(tmp_dir)
-                        self.assertEqual(1, input_mock.call_count)
-                        self.assertEqual(1, get_input_mock.call_count)
 
-        self.assertTrue(self.pw_path.exists())
+                self.assertFalse(pw_path.exists())
 
+    def test_sample_archives_encrypted_content(self):
+        with ExitStack() as stack:
+            pw_tmp_dir = stack.enter_context(TemporaryDirectory())
+            pw_path = Path(pw_tmp_dir).joinpath('archive_passwords.txt')
+            stack.enter_context(patch.object(Passwords, 'path', pw_path))
+            self.assertFalse(pw_path.exists())
+            input_mock = stack.enter_context(patch('builtins.input', return_value='test'))
+            get_input_mock = stack.enter_context(patch('ds_tools.fs.archives.get_input', return_value=True))
+            for path in DATA_DIR.joinpath('enc_content').iterdir():
+                with self.subTest(f'enc_content + {"".join(path.suffixes)}'):
+                    with TemporaryDirectory() as tmp_dir:
+                        try:
+                            ArchiveFile(path).extract_all(tmp_dir)
+                        except RarCannotExec as e:
+                            if REQUIRE_RAR or path.suffix != '.rar':
+                                raise
+                            print(f'Unable to test {path.name}: {e}', file=sys.stderr)
+                        else:
+                            self.assert_extracted_content_matches(tmp_dir)
+                            self.assertEqual(1, input_mock.call_count)
+                            self.assertEqual(1, get_input_mock.call_count)
+
+            self.assertTrue(pw_path.exists())
+
+    @patch.object(Passwords, 'path', pw_path)
+    def test_sample_archives_encrypted_full(self):
         for path in DATA_DIR.joinpath('enc_full').iterdir():
             with self.subTest(f'enc_full + {"".join(path.suffixes)}'), TemporaryDirectory() as tmp_dir:
-                ArchiveFile(path).extract_all(tmp_dir)
-                self.assert_extracted_content_matches(tmp_dir)
+                try:
+                    ArchiveFile(path).extract_all(tmp_dir)
+                except RarCannotExec as e:
+                    if REQUIRE_RAR or path.suffix != '.rar':
+                        raise
+                    print(f'Unable to test {path.name}: {e}', file=sys.stderr)
+                else:
+                    self.assert_extracted_content_matches(tmp_dir)
 
     def test_no_inner_dir(self):
         path = DATA_DIR.joinpath('test_dir_files.7z')
