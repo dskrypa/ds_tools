@@ -104,8 +104,9 @@ class ConfigSection(metaclass=ConfigMeta):
     _nested_config_sections_: dict[str, NestedSection]
     _config_key_delimiter_: str | None = None
     _merge_nested_sections_: bool = True
+    _strict_config_keys_: bool = True
 
-    def __init_subclass__(cls, merge_nested: bool = True, key_delimiter: str = None, **kwargs):
+    def __init_subclass__(cls, merge_nested: bool = None, key_delimiter: str = _NotSet, strict: bool = None, **kwargs):
         """
         :param merge_nested: If True (default), when calling :meth:`._update_` / :meth:`.update`, if a value is
           provided for a nested section, then that nested section should be updated with the new value, otherwise any
@@ -113,16 +114,20 @@ class ConfigSection(metaclass=ConfigMeta):
           whose keys are not present in the new value will be lost.
         :param key_delimiter: A delimiter for nested keys to allow direct access to multiple levels of nested items.
           If None or another non-truthy value, then all keys will be treated at face value.
+        :param strict: Whether init and update methods should accept keys that do not match registered ConfigItems
+          (default: True / strict).
         """
         super().__init_subclass__(**kwargs)
-        if not merge_nested:
+        if merge_nested is not None and merge_nested != cls._merge_nested_sections_:
             cls._merge_nested_sections_ = False
-        if key_delimiter != '.':
+        if key_delimiter is not _NotSet and key_delimiter != cls._config_key_delimiter_:
             cls._config_key_delimiter_ = key_delimiter
+        if strict is not None and strict != cls._strict_config_keys_:
+            cls._strict_config_keys_ = strict
 
     def __init__(self, config: Mapping[str, Any] = None, **kwargs):
         if data := ChainMap(config, kwargs) if config and kwargs else (config or kwargs):
-            if bad := set(data).difference(self._config_items_):
+            if self._strict_config_keys_ and (bad := set(data).difference(self._config_items_)):
                 raise InvalidConfigError(f'Invalid configuration - unsupported options: {", ".join(sorted(bad))}')
 
             for key, val in data.items():
@@ -130,7 +135,7 @@ class ConfigSection(metaclass=ConfigMeta):
 
     def _update_(self, config: Mapping[str, Any] = None, **kwargs):
         if data := ChainMap(config, kwargs) if config and kwargs else (config or kwargs):
-            if bad := set(data).difference(self._config_items_):
+            if self._strict_config_keys_ and (bad := set(data).difference(self._config_items_)):
                 raise InvalidConfigError(f'Invalid configuration - unsupported options: {", ".join(sorted(bad))}')
             elif self._merge_nested_sections_:
                 for key, val in data.items():
@@ -145,14 +150,23 @@ class ConfigSection(metaclass=ConfigMeta):
     update = _update_
 
     def __contains__(self, key: str) -> bool:
+        """
+        Returns True if the given key is a config item in this section (or a subsection thereof, if a delimiter
+        was configured and was present in the key), and it has a non-default value.  If the key is a config item that
+        only has a default value, then False will be returned instead.  False will always be returned for keys that are
+        not associated with any config items.
+        """
         if self._config_key_delimiter_:
             base, _, remainder = key.partition(self._config_key_delimiter_)
         else:
             base, remainder = key, ''
 
-        if not remainder or base not in self._config_items_:
+        if base not in self._config_items_:
             return False
-        return remainder in getattr(self, base)
+        elif not remainder:
+            return base in self.__dict__  # A non-default value exists for the given key
+        else:
+            return remainder in getattr(self, base)
 
     def __getitem__(self, key: str):
         if self._config_key_delimiter_:
@@ -173,12 +187,25 @@ class ConfigSection(metaclass=ConfigMeta):
         else:
             base, remainder = key, ''
 
-        if base not in self._config_items_:
+        if self._strict_config_keys_ and base not in self._config_items_:
             raise KeyError(key)
         elif remainder:
             getattr(self, base)[remainder] = value
         else:
             setattr(self, base, value)
+
+    def __delitem__(self, key: str):
+        if self._config_key_delimiter_:
+            base, _, remainder = key.partition(self._config_key_delimiter_)
+        else:
+            base, remainder = key, ''
+
+        if self._strict_config_keys_ and base not in self._config_items_:
+            raise KeyError(key)
+        elif remainder:
+            del getattr(self, base)[remainder]
+        else:
+            delattr(self, base)
 
 
 # TODO: Config subclass of ConfigSection, with from_json_file and similar classmethods?

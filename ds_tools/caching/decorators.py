@@ -16,7 +16,14 @@ from threading import RLock
 from types import GenericAlias
 from typing import TypeVar, Union, Callable, Generic, MutableMapping, Collection, overload
 
-__all__ = ['CachedProperty', 'cached_property', 'ClearableCachedProperty', 'ClearableCachedPropertyMixin']
+__all__ = [
+    'CachedProperty',
+    'cached_property',
+    'ClearableCachedProperty',
+    'ClearableCachedPropertyMixin',
+    'register_cached_property_class',
+    'unregister_cached_property_class',
+]
 
 _NOT_FOUND = object()
 
@@ -228,8 +235,21 @@ def clear_cached_properties(instance, *names: str, skip: Collection[str] = None)
             pass
 
 
+_CACHED_PROPERTY_CLASSES: tuple[type, ...] = (CachedProperty, ClearableCachedProperty, _functools.cached_property)
+
+
 def is_cached_property(obj) -> bool:
-    return isinstance(obj, (CachedProperty, ClearableCachedProperty, _functools.cached_property))
+    return isinstance(obj, _CACHED_PROPERTY_CLASSES)
+
+
+def register_cached_property_class(cls: type):
+    global _CACHED_PROPERTY_CLASSES
+    _CACHED_PROPERTY_CLASSES = (*_CACHED_PROPERTY_CLASSES, cls)
+
+
+def unregister_cached_property_class(cls: type):
+    global _CACHED_PROPERTY_CLASSES
+    _CACHED_PROPERTY_CLASSES = tuple(c for c in _CACHED_PROPERTY_CLASSES if c is not cls)
 
 
 # endregion
