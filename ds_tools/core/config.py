@@ -35,6 +35,7 @@ class ConfigItem(Generic[CV, DV]):
     def __set_name__(self, owner: Type[ConfigSection], name: str):
         self.name = name
         owner._config_items_[name] = self
+        owner._config_item_keys_.add(name)
 
     @overload
     def __get__(self, instance: None, owner: Type[ConfigSection]) -> ConfigItem[CV, DV]:
@@ -89,6 +90,7 @@ class ConfigMeta(type):
     for ConfigItem registration because the contents of a class is evaluated before ``__init_subclass__`` is called.
     """
     _config_items_: dict[str, ConfigItem | NestedSection]
+    _config_item_keys_: set[str]
     _nested_config_sections_: dict[str, NestedSection]
 
     @classmethod
@@ -99,11 +101,16 @@ class ConfigMeta(type):
             if isinstance(base, mcs):
                 config_items.update(base._config_items_)
                 nested_sections.update(base._nested_config_sections_)
-        return {'_config_items_': config_items, '_nested_config_sections_': nested_sections}
+        return {
+            '_config_items_': config_items,
+            '_config_item_keys_': set(config_items),
+            '_nested_config_sections_': nested_sections,
+        }
 
 
 class ConfigSection(metaclass=ConfigMeta):
     _config_items_: dict[str, ConfigItem | NestedSection]
+    _config_item_keys_: set[str]
     _nested_config_sections_: dict[str, NestedSection]
     _config_key_delimiter_: str | None = None
     _merge_nested_sections_: bool = True
