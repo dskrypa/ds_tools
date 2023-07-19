@@ -8,6 +8,9 @@ from ds_tools.core.config import ConfigItem, ConfigSection, NestedSection, Missi
 
 
 class ConfigTest(TestCase):
+    # Note: noqa comments on assertIn / assertNotIn checks are present
+    # because PyCharm doesn't seem to understand __contains__ well
+
     @classmethod
     def setUpClass(cls):
         register_cached_property_class(ConfigItem)
@@ -57,7 +60,7 @@ class ConfigTest(TestCase):
         self.assertEqual('abc', config.bar.baz)
         self.assertEqual('abc', config.bar['baz'])
         self.assertEqual('abc', config['bar']['baz'])
-        self.assertNotIn('bar.baz', config)  # noqa  # PyCharm doesn't seem to understand __contains__
+        self.assertNotIn('bar.baz', config)  # noqa
         with self.assertRaises(KeyError):  # delimiter-based access is not enabled by default
             config['bar.baz']  # noqa
         with self.assertRaises(KeyError):
@@ -74,8 +77,8 @@ class ConfigTest(TestCase):
             foo: FooConfig = NestedSection(FooConfig)
 
         config = Config({'foo': {'bar': 'abc'}})
-        self.assertIn('foo.bar', config)  # noqa  # PyCharm doesn't seem to understand __contains__
-        self.assertNotIn('foo.baz', config)  # noqa  # PyCharm doesn't seem to understand __contains__
+        self.assertIn('foo.bar', config)  # noqa
+        self.assertNotIn('foo.baz', config)  # noqa
         self.assertEqual('abc', config['foo.bar'])
         self.assertIsNone(config['foo.baz'])
         config['foo.baz'] = 456
@@ -83,13 +86,38 @@ class ConfigTest(TestCase):
         del config['foo.baz']
         self.assertIsNone(config['foo.baz'])
 
-    def test_permissive_getitem_with_period(self):
+    def test_permissive_getitem_with_delim(self):
+        class FooConfig(ConfigSection):
+            bar = ConfigItem(123)
+
+        class Config(ConfigSection, key_delimiter='.', strict=False):
+            foo: FooConfig = NestedSection(FooConfig)
+
+        self.assertNotIn('foo.bar', Config())  # noqa
+        self.assertNotIn('foo.bar', Config({'foo': {}}))  # noqa
+        self.assertNotIn('abc.123', Config())  # noqa
+        self.assertIn('abc.xyz', Config({'abc': {'xyz': 1}}))  # noqa
+
+        abc_int = Config({'abc': 123})
+        self.assertNotIn('abc.123', abc_int)  # noqa
+        with self.assertRaises(KeyError):
+            abc_int['abc.123']  # noqa
+        with self.assertRaises(KeyError):
+            abc_int['abc.123'] = 456
+        with self.assertRaises(KeyError):
+            del abc_int['abc.123']
+
+    def test_permissive_getitem_with_no_delim(self):
         class Config(ConfigSection, strict=False):
             foo = ConfigItem(123)
 
         config = Config({'foo.bar': 456})
         self.assertEqual(123, config.foo)
         self.assertEqual(456, config['foo.bar'])
+        with self.assertRaises(KeyError):
+            config['abc']  # noqa
+        with self.assertRaises(KeyError):
+            del config['abc']
 
     def test_bad_key_strict(self):
         class Config(ConfigSection):
@@ -121,9 +149,9 @@ class ConfigTest(TestCase):
         config.update(bar=1)
         self.assertEqual(1, config.foo)
         self.assertEqual(1, config.bar)  # noqa
-        self.assertIn('foo', config)  # noqa  # PyCharm doesn't seem to understand __contains__
-        self.assertIn('bar', config)  # noqa  # PyCharm doesn't seem to understand __contains__
-        self.assertNotIn('baz', config)  # noqa  # PyCharm doesn't seem to understand __contains__
+        self.assertIn('foo', config)  # noqa
+        self.assertIn('bar', config)  # noqa
+        self.assertNotIn('baz', config)  # noqa
 
     def test_missing_value(self):
         class Config(ConfigSection):
@@ -217,6 +245,18 @@ class ConfigTest(TestCase):
 
         self.assertEqual('~', AConfig._config_key_delimiter_)
         self.assertEqual('~', BConfig._config_key_delimiter_)
+
+    def test_extension_override(self):
+        class AConfig(ConfigSection):
+            foo = ConfigItem(123)
+
+        class BConfig(AConfig):
+            foo = ConfigItem(456)
+
+        config = BConfig()
+        self.assertIsInstance(config, AConfig)
+        self.assertEqual(456, config.foo)
+        self.assertEqual(123, AConfig().foo)
 
 
 if __name__ == '__main__':

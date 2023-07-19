@@ -1,6 +1,9 @@
 """
-This module provides a base class for configuration classes, and the ConfigItem descriptor that is intended to be used
-to define each configurable option in subclasses of ConfigSection.
+This module provides a recipe for building classes to keep track of configuration info, and to perform basic
+validation / normalization of config values.
+
+The :class:`ConfigSection` class is intended to be used as a base class for configuration classes, and the
+:class:`ConfigItem` descriptor is intended to be used to define each configurable option in subclasses of ConfigSection.
 """
 
 from __future__ import annotations
@@ -149,64 +152,75 @@ class ConfigSection(metaclass=ConfigMeta):
 
     update = _update_
 
+    def __split_key(self, key: str) -> tuple[str, str]:
+        if self._config_key_delimiter_:
+            base, _, remainder = key.partition(self._config_key_delimiter_)
+        else:
+            base, remainder = key, ''
+
+        if self._strict_config_keys_ and base not in self._config_items_:
+            raise KeyError(key)
+        return base, remainder
+
     def __contains__(self, key: str) -> bool:
         """
         Returns True if the given key is a config item in this section (or a subsection thereof, if a delimiter
-        was configured and was present in the key), and it has a non-default value.  If the key is a config item that
-        only has a default value, then False will be returned instead.  If the section was defined with
-        ``strict=False``, and a value was stored for a non-ConfigItem key, then True will be returned for that key.
-        When ``strict=True``, False will always be returned for keys that are not associated with any config items.
-        """
-        if self._config_key_delimiter_:
-            base, _, remainder = key.partition(self._config_key_delimiter_)
-        else:
-            base, remainder = key, ''
+        was configured and was present in the key), and it has a non-default value.
 
-        if self._strict_config_keys_ and base not in self._config_items_:
+        If the key is a config item that only has a default value, then False will be returned instead.
+
+        If the section was defined with ``strict=False``, and a value was stored for a non-``ConfigItem`` key, then
+        True will be returned for that key.  When ``strict=True``, False will always be returned for keys that are not
+        associated with any config items.
+        """
+        try:
+            base, remainder = self.__split_key(key)
+        except KeyError:
             return False
-        elif not remainder:
+
+        if not remainder:
             return base in self.__dict__  # A non-default value exists for the given key
         else:
-            return remainder in getattr(self, base)
+            try:
+                return remainder in getattr(self, base)
+            except (AttributeError, TypeError):
+                return False
 
     def __getitem__(self, key: str):
-        if self._config_key_delimiter_:
-            base, _, remainder = key.partition(self._config_key_delimiter_)
+        base, remainder = self.__split_key(key)
+        if remainder:
+            try:
+                return getattr(self, base)[remainder]
+            except TypeError:
+                raise KeyError(key) from None
         else:
-            base, remainder = key, ''
-
-        if self._strict_config_keys_ and base not in self._config_items_:
-            raise KeyError(key)
-        elif remainder:
-            return getattr(self, base)[remainder]
-        else:
-            return getattr(self, base)
+            try:
+                return getattr(self, base)
+            except AttributeError:
+                raise KeyError(key) from None
 
     def __setitem__(self, key: str, value: Any):
-        if self._config_key_delimiter_:
-            base, _, remainder = key.partition(self._config_key_delimiter_)
-        else:
-            base, remainder = key, ''
-
-        if self._strict_config_keys_ and base not in self._config_items_:
-            raise KeyError(key)
-        elif remainder:
-            getattr(self, base)[remainder] = value
+        base, remainder = self.__split_key(key)
+        if remainder:
+            try:
+                getattr(self, base)[remainder] = value
+            except TypeError:
+                raise KeyError(key) from None
         else:
             setattr(self, base, value)
 
     def __delitem__(self, key: str):
-        if self._config_key_delimiter_:
-            base, _, remainder = key.partition(self._config_key_delimiter_)
+        base, remainder = self.__split_key(key)
+        if remainder:
+            try:
+                del getattr(self, base)[remainder]
+            except TypeError:
+                raise KeyError(key) from None
         else:
-            base, remainder = key, ''
-
-        if self._strict_config_keys_ and base not in self._config_items_:
-            raise KeyError(key)
-        elif remainder:
-            del getattr(self, base)[remainder]
-        else:
-            delattr(self, base)
+            try:
+                delattr(self, base)
+            except AttributeError:
+                raise KeyError(key) from None
 
 
 # TODO: Config subclass of ConfigSection, with from_json_file and similar classmethods?
