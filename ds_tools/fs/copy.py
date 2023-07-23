@@ -14,7 +14,7 @@ import errno
 import logging
 import os
 import sys
-from concurrent import futures
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import cycle
 from pathlib import Path
 from threading import Event
@@ -108,10 +108,10 @@ class FileCopy:
         cls(src_path, dst_path, buf_size, fast, reuse_buf).run(verify)
 
     def run(self, verify: bool = False):
-        with futures.ThreadPoolExecutor(max_workers=2) as executor:
-            _futures = [executor.submit(self.copy_file), executor.submit(self.show_progress)]
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(self.copy_file), executor.submit(self.show_progress)]
             try:
-                for future in futures.as_completed(_futures):
+                for future in as_completed(futures):
                     future.result()
             except BaseException:  # Inside the as_completed loop
                 self.finished.set()
