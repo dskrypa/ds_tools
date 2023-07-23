@@ -4,6 +4,7 @@ import logging
 from abc import ABC, abstractmethod
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
+from hashlib import sha256
 from itertools import product
 from pathlib import Path
 from sqlite3 import register_adapter
@@ -497,6 +498,7 @@ class ImageFile(Base):
     mod_time: int = Column(Integer)
     dir_id: int = Column(Integer, ForeignKey('dirs.id'))
     dir: Directory = relationship(Directory, lazy='joined')
+    sha256sum: str = Column(String)
     hashes: list[ImageHash] = relationship(
         ImageHash, back_populates='image', cascade='all, delete, delete-orphan', lazy='joined'
     )
@@ -554,31 +556,37 @@ class ImageDB:
         return dir_obj
 
     def add_image(self, path: Path) -> ImageFile:
-        return self._add_image(path, MULTI_CLS.from_any(path, HASH_CLS))
+        return self._add_image(path, MULTI_CLS.from_any(path, HASH_CLS), sha256(path.read_bytes()).hexdigest())
 
     def add_images(self, paths: Iterable[Path], workers: int = None):
         with ProcessPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(MULTI_CLS.from_path, path): path for path in paths}  # noqa
+            futures = {executor.submit(_hash_image, path): path for path in paths}  # noqa
             with tqdm(total=len(futures), unit='img', smoothing=0.1, maxinterval=1) as prog_bar:
                 try:
                     for future in as_completed(futures):
                         path = futures[future]
                         prog_bar.update(1)
                         try:
-                            multi_hash = future.result()
+                            multi_hash, sha256sum = future.result()
                         except Exception as e:
                             exc_info = not isinstance(e, UnidentifiedImageError)
                             log.error(f'Error hashing {path}: {e}', exc_info=exc_info, extra={'color': 'red'})
                         else:
-                            image = self._add_image(path, multi_hash)
+                            image = self._add_image(path, multi_hash, sha256sum)
                             log.debug(f'Added {image=}')
                 except BaseException:
                     executor.shutdown(cancel_futures=True)
                     raise
 
-    def _add_image(self, path: Path, multi_hash: MULTI_CLS) -> ImageFile:
+    def _add_image(self, path: Path, multi_hash: MULTI_CLS, sha256sum: str) -> ImageFile:
         stat_info = path.stat()
-        image = ImageFile(dir=self.get_dir(path), name=path.name, size=stat_info.st_size, mod_time=stat_info.st_mtime)
+        image = ImageFile(
+            dir=self.get_dir(path),
+            name=path.name,
+            size=stat_info.st_size,
+            mod_time=stat_info.st_mtime,
+            sha256sum=sha256sum,
+        )
         for seg_hash in multi_hash.hashes:
             a, b, c, d, e, f, g, h = seg_hash.array
             image.hashes.append(ImageHash(a=a, b=b, c=c, d=d, e=e, f=f, g=g, h=h))
@@ -615,3 +623,8 @@ class ImageDB:
                 ImageHash.e.in_(e), ImageHash.f.in_(f), ImageHash.g.in_(g), ImageHash.h.in_(h),  # noqa
             )
         )
+
+
+def _hash_image(path: Path) -> tuple[MULTI_CLS, str]:
+    # TODO: Read once and use BytesIO or something for one of these?
+    return MULTI_CLS.from_path(path), sha256(path.read_bytes()).hexdigest()
