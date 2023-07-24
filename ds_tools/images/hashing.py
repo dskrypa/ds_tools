@@ -5,10 +5,11 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from hashlib import sha256
+from io import BytesIO
 from itertools import product
 from pathlib import Path
 from sqlite3 import register_adapter
-from typing import Iterable, Literal, Type, Collection
+from typing import Iterable, Literal, Type, Collection, BinaryIO
 
 from numpy import transpose, bitwise_and, full as np_full, invert as np_invert
 from numpy import array, asarray, frombuffer, packbits, unpackbits, nonzero, count_nonzero, log2, median
@@ -46,15 +47,16 @@ ANTIALIAS = Resampling.LANCZOS
 class ImageHashBase(ABC):
     """
     A 64-bit hash of an image.  Based heavily on the implementation in
-    `imagehash<https://github.com/JohannesBuchner/imagehash>`__, but with some differences / optimizations for this use
-    case.  Most notably, the hash array is stored as / expected to be an array of uint8 values instead of bools.
+    `imagehash<https://github.com/JohannesBuchner/imagehash>`__, but with some differences / optimizations for
+    this use case.  Most notably, the hash array is stored as / expected to be a 1x8 array of uint8 values
+    instead of an 8x8 array of bools.
     """
     array: NDArray[uint8]
 
     def __init__(self, hash_array: NDArray[uint8]):
         """
-        :param hash_array: A numpy array of uint8 values.  If you have an array of bools or 1/0s, use ``numpy.packbits``
-          on it to obtain the value expected here.
+        :param hash_array: A 1x8 numpy array of uint8 values.  If you have an array of bools or 1/0s, use
+          ``numpy.packbits`` on it to obtain the value expected here.
         """
         self.array = hash_array
 
@@ -218,8 +220,8 @@ class MultiHash(ABC):
         return cls.from_image(as_image(image), *args, **kwargs)
 
     @classmethod
-    def from_path(cls, path: Path, *args, **kwargs) -> MultiHash:
-        return cls.from_image(open_image(path), *args, **kwargs)
+    def from_file(cls, file: Path | BinaryIO, *args, **kwargs) -> MultiHash:
+        return cls.from_image(open_image(file), *args, **kwargs)
 
     @classmethod
     @abstractmethod
@@ -248,8 +250,6 @@ class MultiHash(ABC):
 
 class RotatedMultiHash(MultiHash):
     __slots__ = ()
-    # TODO: Only store one hash when populating the DB, but calculate the rotated hashes during lookup?
-    #  ... though that would make it harder to perform an in-place scan of the DB for dupes
 
     @classmethod
     def from_image(cls, image: PILImage, hash_cls: Type[ImageHashBase] = HASH_CLS) -> MultiHash:
@@ -626,5 +626,5 @@ class ImageDB:
 
 
 def _hash_image(path: Path) -> tuple[MULTI_CLS, str]:
-    # TODO: Read once and use BytesIO or something for one of these?
-    return MULTI_CLS.from_path(path), sha256(path.read_bytes()).hexdigest()
+    data = path.read_bytes()
+    return MULTI_CLS.from_file(BytesIO(data)), sha256(data).hexdigest()
