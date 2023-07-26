@@ -56,24 +56,12 @@ class CachedProperty(Generic[T]):
         self.block_all = block_all
 
     def __set_name__(self, owner, name: str):
-        if (orig := self.name) is None:
+        if self.name is None:
             self.name = name
-        elif orig != name:
+        elif self.name != name:
             raise TypeError(
-                f'Cannot assign the same {self.__class__.__name__} to two different names ({orig!r} and {name!r}).'
+                f'Cannot assign the same {self.__class__.__name__} to two different names ({self.name!r} and {name!r}).'
             )
-
-    def get_name_and_cache(self, instance: Obj) -> tuple[str, Cache]:
-        if (name := self.name) is None:
-            raise TypeError(f'Cannot use {self.__class__.__name__} instance without calling __set_name__ on it.')
-
-        try:
-            cache = instance.__dict__
-        except AttributeError:  # not all objects have __dict__ (e.g. class defines slots)
-            cls = instance.__class__.__name__
-            raise TypeError(f"Unable to cache {cls}.{name} because {cls} has no '__dict__' attribute") from None
-
-        return name, cache
 
     def _get_instance_lock(self, key) -> RLock:
         with self.lock:
@@ -113,8 +101,14 @@ class CachedProperty(Generic[T]):
     def __get__(self, instance, owner):
         if instance is None:
             return self
+        elif (name := self.name) is None:
+            raise TypeError(f'Cannot use {self.__class__.__name__} instance without calling __set_name__ on it.')
+        try:
+            cache = instance.__dict__
+        except AttributeError:  # not all objects have __dict__ (e.g. class defines slots)
+            cls = owner.__name__
+            raise TypeError(f"Unable to cache {cls}.{name} because {cls} has no '__dict__' attribute") from None
 
-        name, cache = self.get_name_and_cache(instance)
         if (val := cache.get(name, _NOT_FOUND)) is _NOT_FOUND:
             if self.block:
                 with self.instance_lock(instance, owner):
@@ -122,21 +116,20 @@ class CachedProperty(Generic[T]):
                     if (val := cache.get(name, _NOT_FOUND)) is _NOT_FOUND:
                         val = self.func(instance)
                         try:
-                            cache[self.name] = val
+                            cache[name] = val
                         except TypeError:
-                            cls = instance.__class__.__name__
+                            cls = owner.__name__
                             raise TypeError(
-                                f'Unable to cache {cls}.{self.name} because {cls}.__dict__'
-                                ' does not support item assignment'
+                                f'Unable to cache {cls}.{name} because {cls}.__dict__ does not support item assignment'
                             ) from None
             else:
                 val = self.func(instance)
                 try:
-                    cache[self.name] = val
+                    cache[name] = val
                 except TypeError:
-                    cls = instance.__class__.__name__
+                    cls = owner.__name__
                     raise TypeError(
-                        f'Unable to cache {cls}.{self.name} because {cls}.__dict__ does not support item assignment'
+                        f'Unable to cache {cls}.{name} because {cls}.__dict__ does not support item assignment'
                     ) from None
 
         return val
