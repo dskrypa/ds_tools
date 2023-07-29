@@ -101,6 +101,11 @@ class Dupes(ImageDBCLI, help='Find duplicate images in the DB'):
 
     def print_similar_dupes(self):
         pass
+        # query = self.image_db._find_similar_dupes()
+        # print(query)
+        # results = query.all()
+        # print(f'Found {len(results)} results')
+        # print(results[0])
 
     def print_exact_dupes(self):
         for sha, num, images in self.image_db.find_exact_dupes():
