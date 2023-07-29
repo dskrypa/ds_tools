@@ -41,6 +41,7 @@ class Status(ImageDBCLI, help='Show info about the DB'):
 class Scan(ImageDBCLI, help='Scan images to populate the DB'):
     paths = Positional(nargs='+', help='One or more image files to hash and store in the DB')
     no_ext_filter = Flag(help='Do not filter files by extension')
+    max_workers: int = Option('-w', help='Maximum number of worker processes to use (default: based on core count)')
 
     def main(self):
         from ds_tools.fs.paths import iter_files
@@ -50,7 +51,7 @@ class Scan(ImageDBCLI, help='Scan images to populate the DB'):
             ext_allow_list = {'.jpg', '.jpeg', '.png'}
             path_iter = (p for p in path_iter if p.suffix.lower() in ext_allow_list)
 
-        self.image_db.add_images(path_iter)
+        self.image_db.add_images(path_iter, self.max_workers)
 
 
 class Find(ImageDBCLI, help='Find images in the DB similar to the given image'):

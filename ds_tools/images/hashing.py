@@ -581,7 +581,7 @@ class ImageDB:
                             exc_info = not isinstance(e, UnidentifiedImageError)
                             log.error(f'Error hashing {path}: {e}', exc_info=exc_info, extra={'color': 'red'})
                         else:
-                            image = self._add_image(path, multi_hash, sha256sum, commit=False)
+                            image = self._add_image(path, multi_hash, sha256sum, commit=False, stat_info=stat_info)
                             if i % 100 == 0:
                                 self.session.commit()
                             log.debug(f'Added {image=}')
