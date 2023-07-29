@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import logging
 from pathlib import Path
 
 from cli_command_parser import Command, Option, Flag, Counter, Positional, ParamGroup, main
@@ -7,6 +8,8 @@ from cli_command_parser.inputs import Path as IPath, NumRange
 
 from ds_tools.__version__ import __author_email__, __version__  # noqa
 from ds_tools.caching.decorators import cached_property
+
+log = logging.getLogger(__name__)
 
 
 class TileImages(Command, description='Tile Images', option_name_mode='*-'):
@@ -29,6 +32,33 @@ class TileImages(Command, description='Tile Images', option_name_mode='*-'):
 
         init_logging(self.verbose, log_path=None)
 
+    def main(self):
+        from PIL.Image import new as new_image
+
+        if not self.out_path.parent.exists():
+            self.out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        width, height = self.width, self.height
+        cols, rows = self.cols_and_rows
+        tile_width, tile_height = self.tile_size
+
+        prefix = '[DRY RUN] Would create' if self.dry_run else 'Creating'
+        log.info(
+            f'{prefix} a {width} x {height} px composite image with {tile_width} x {tile_height} px tiles'
+            f' in a {cols} x {rows} grid, using {cols * rows:,d} / {len(self._in_paths):,d} images'
+        )
+        if self.dry_run:
+            return
+
+        image = new_image('RGB', (width, height))
+        for tile, box in self.iter_tiles():
+            image.paste(tile, box)
+
+        fmt = 'png' if self.out_path.suffix.lower() == '.png' else 'jpeg'
+        log.info(f'Saving {self.out_path.as_posix()}')
+        with self.out_path.open('wb') as f:
+            image.save(f, fmt)
+
     @cached_property
     def _in_paths(self) -> list[Path]:
         from random import shuffle
@@ -40,52 +70,44 @@ class TileImages(Command, description='Tile Images', option_name_mode='*-'):
         return paths
 
     @cached_property
-    def rows_and_cols(self) -> tuple[int, int]:
-        from math import sqrt
-
-        rows, columns = self.rows, self.columns
-        if rows:
-            total = rows * columns
-            if total > len(self._in_paths):
+    def cols_and_rows(self) -> tuple[int, int]:
+        cols, rows = self.columns, self.rows
+        img_count = len(self._in_paths)
+        if cols:  # They are mutually dependent
+            total = cols * rows
+            if total > img_count:
                 raise ValueError(
-                    f'Invalid {rows=}, {columns=} combo - it would require {total:,d}'
-                    f' images, but only {len(self._in_paths):,d} images were provided'
+                    f'Invalid {cols=}, {rows=} combo - it would require {total:,d}'
+                    f' images, but only {img_count:,d} images were provided'
                 )
+        elif self.width == self.height:
+            cols = rows = int(img_count ** 0.5)
         else:
-            rows = columns = int(sqrt(len(self._in_paths)))
+            aspect_ratio = self.width / self.height
+            rows = int((img_count / aspect_ratio) ** 0.5)
+            cols = img_count // rows
 
-        return rows, columns
+        return cols, rows
 
-    def main(self):
-        from PIL.Image import open as open_image, new as new_image
+    @cached_property
+    def tile_size(self) -> tuple[int, int]:
+        cols, rows = self.cols_and_rows
+        return self.width // cols, self.height // rows
 
-        path_grid = self.get_path_grid()
+    def iter_tiles(self):
+        from PIL.Image import open as open_image
 
-        if not self.out_path.parent.exists():
-            self.out_path.parent.mkdir(parents=True, exist_ok=True)
+        cols, rows = self.cols_and_rows
+        tile_width, tile_height = tile_size = self.tile_size
 
-        rows, columns = self.rows_and_cols
-        tile_width, tile_height = tile_size = self.width // rows, self.height // columns
-
-        image = new_image('RGB', (self.width, self.height))
-        y = 0
-        for r, row in enumerate(path_grid):
-            x = 0
-            for c, path in enumerate(row):
-                in_img = open_image(path).convert('RGB').resize(tile_size)
-                image.paste(in_img, (x, y))
-                x += tile_width
-            y += tile_height
-
-        fmt = 'png' if self.out_path.suffix.lower() == '.png' else 'jpeg'
-        print(f'Saving {self.out_path.as_posix()}')
-        with self.out_path.open('wb') as f:
-            image.save(f, fmt)
-
-    def get_path_grid(self) -> list[list[Path]]:
-        rows, columns = self.rows_and_cols
-        iter_paths = iter(self._in_paths)
-        return [[next(iter_paths) for _ in range(columns)] for _ in range(rows)]
+        paths = iter(self._in_paths)
+        for row in range(rows):  # y
+            y = row * tile_height
+            for col in range(cols):  # x
+                in_img = open_image(next(paths))
+                if in_img.format != 'RGB':
+                    in_img = in_img.convert('RGB')
+                yield in_img.resize(tile_size), (col * tile_width, y)
 
 
 if __name__ == '__main__':
