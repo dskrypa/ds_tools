@@ -16,7 +16,7 @@ class ImageDBCLI(Command, description='Image Hash DB CLI', option_name_mode='*-'
     action = SubCommand()
     verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
     db_path: Path = Option(
-        '-db', type=IPath(type='file'), default='~/.cache/img_hashes.db', help='Path to the DB that should be used'
+        '-db', type=IPath(type='file'), default='~/.cache/img_hash_db/img_hashes.db', help='Path to the DB that should be used'
     )
 
     def _init_command_(self):

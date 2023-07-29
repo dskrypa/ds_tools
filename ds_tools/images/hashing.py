@@ -9,7 +9,7 @@ from io import BytesIO
 from itertools import product
 from pathlib import Path
 from sqlite3 import register_adapter
-from typing import Iterable, Iterator, Literal, Type, Collection, BinaryIO
+from typing import TYPE_CHECKING, Iterable, Iterator, Literal, Type, Collection, BinaryIO
 
 from numpy import transpose, bitwise_and, full as np_full, invert as np_invert
 from numpy import array, asarray, frombuffer, packbits, unpackbits, nonzero, count_nonzero, log2, median
@@ -18,9 +18,9 @@ from numpy.typing import NDArray
 from PIL import UnidentifiedImageError
 from PIL.Image import Resampling, Transpose, Image as PILImage, open as open_image  # noqa
 from PIL.ImageFilter import GaussianBlur, MedianFilter
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, or_, and_
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, or_, and_, text
 from sqlalchemy.sql.functions import count
-from sqlalchemy.orm import Query, relationship, scoped_session, sessionmaker, DeclarativeBase, Mapped
+from sqlalchemy.orm import Query, relationship, scoped_session, sessionmaker, DeclarativeBase, Mapped, aliased
 from tqdm import tqdm
 
 try:
@@ -30,6 +30,9 @@ except ImportError:
 
 from ds_tools.caching.decorators import cached_property
 from .utils import ImageType, as_image
+
+if TYPE_CHECKING:
+    from os import stat_result
 
 __all__ = [
     'ImageHashBase', 'DifferenceHash', 'HorizontalDifferenceHash', 'VerticalDifferenceHash', 'WaveletHash',
@@ -546,14 +549,19 @@ class ImageDB:
         engine = create_engine(f'sqlite:///{path}')
         Base.metadata.create_all(engine)
         self.session = scoped_session(sessionmaker(bind=engine, expire_on_commit=expire_on_commit))
+        self._dir_cache = {}
 
     def get_dir(self, path: Path) -> Directory:
         dir_str = path.parent.as_posix()
-        if dir_obj := self.session.query(Directory).filter_by(path=dir_str).first():
+        if dir_obj := self._dir_cache.get(dir_str):
+            return dir_obj
+        elif dir_obj := self.session.query(Directory).filter_by(path=dir_str).first():
+            self._dir_cache[dir_str] = dir_obj
             return dir_obj  # noqa
         dir_obj = Directory(path=dir_str)
         self.session.add(dir_obj)
         self.session.commit()
+        self._dir_cache[dir_str] = dir_obj
         return dir_obj
 
     def add_image(self, path: Path) -> ImageFile:
@@ -564,23 +572,30 @@ class ImageDB:
             futures = {executor.submit(_hash_image, path): path for path in paths}  # noqa
             with tqdm(total=len(futures), unit='img', smoothing=0.1, maxinterval=1) as prog_bar:
                 try:
-                    for future in as_completed(futures):
+                    for i, future in enumerate(as_completed(futures)):
                         path = futures[future]
                         prog_bar.update(1)
                         try:
-                            multi_hash, sha256sum = future.result()
+                            multi_hash, sha256sum, stat_info = future.result()
                         except Exception as e:
                             exc_info = not isinstance(e, UnidentifiedImageError)
                             log.error(f'Error hashing {path}: {e}', exc_info=exc_info, extra={'color': 'red'})
                         else:
-                            image = self._add_image(path, multi_hash, sha256sum)
+                            image = self._add_image(path, multi_hash, sha256sum, commit=False)
+                            if i % 100 == 0:
+                                self.session.commit()
                             log.debug(f'Added {image=}')
                 except BaseException:
                     executor.shutdown(cancel_futures=True)
                     raise
+                finally:
+                    self.session.commit()
 
-    def _add_image(self, path: Path, multi_hash: MULTI_CLS, sha256sum: str) -> ImageFile:
-        stat_info = path.stat()
+    def _add_image(
+        self, path: Path, multi_hash: MULTI_CLS, sha256sum: str, commit: bool = True, stat_info: stat_result = None
+    ) -> ImageFile:
+        if not stat_info:
+            stat_info = path.stat()
         image = ImageFile(
             dir=self.get_dir(path),
             name=path.name,
@@ -593,7 +608,8 @@ class ImageDB:
             image.hashes.append(ImageHash(a=a, b=b, c=c, d=d, e=e, f=f, g=g, h=h))
 
         self.session.add(image)
-        self.session.commit()
+        if commit:
+            self.session.commit()
         return image
 
     def get_image(self, path: Path) -> ImageFile | None:
@@ -646,12 +662,35 @@ class ImageDB:
 
         query = self.session.query(ImageFile.sha256sum, sub_query.c.count, ImageFile)\
             .join(sub_query, sub_query.c.sha256sum == ImageFile.sha256sum)\
-            .where(sub_query.c.count > 1)\
+            .where(sub_query.c.count > 1) \
             .order_by(sub_query.c.count.desc())
 
         return query
 
+    def _find_similar_dupes(self) -> Query:
+        hash_parts = (
+            ImageHash.a, ImageHash.b, ImageHash.c, ImageHash.d, ImageHash.e, ImageHash.f, ImageHash.g, ImageHash.h
+        )
+        # part_queries = [
+        #     self.session.query(ImageHash.id, count(ImageHash.image_id.distinct())).group_by(p).subquery()
+        #     for p in hash_parts
+        # ]
 
-def _hash_image(path: Path) -> tuple[MULTI_CLS, str]:
+        query = part_query = self.session.query(ImageHash.id, count(ImageHash.image_id.distinct())) \
+            .group_by(*hash_parts)
+            # .group_by(or_(*hash_parts)).subquery()
+
+        # hash_query = self.session.query(ImageHash.id, part_query.c.count)\
+        #     .join(part_query, part_query.c.id == ImageHash.id)\
+        #     .where(part_query.c.count > 1).subquery()
+
+        # query = self.session.query(ImageHash, part_query.c.count, ImageFile) \
+        #     .join(hash_query, hash_query.c.id == ImageHash.id) \
+        #     .join(ImageFile) \
+        #     .order_by(part_query.c.count.desc())
+        return query
+
+
+def _hash_image(path: Path) -> tuple[MULTI_CLS, str, stat_result]:
     data = path.read_bytes()
-    return MULTI_CLS.from_file(BytesIO(data)), sha256(data).hexdigest()
+    return MULTI_CLS.from_file(BytesIO(data)), sha256(data).hexdigest(), path.stat()
