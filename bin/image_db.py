@@ -104,9 +104,9 @@ class Dupes(ImageDBCLI, help='Find exact duplicate images in the DB'):
             print(f'{sha}: {len(images)}:\n' + '\n'.join(sorted(f' - {img.path.as_posix()}' for img in images)))
 
     def print_filtered_dupes(self):
-        dirs = {Path(path).expanduser() for path in self.dir_filter}
+        dirs = tuple({Path(path).expanduser().as_posix() for path in self.dir_filter})
         for sha, num, images in self.image_db.find_exact_dupes():
-            if not any(img.path.parent in dirs for img in images):
+            if not any(img.path.as_posix().startswith(dirs) for img in images):
                 continue
             print(f'{sha}: {len(images)}:\n' + '\n'.join(sorted(f' - {img.path.as_posix()}' for img in images)))
 
