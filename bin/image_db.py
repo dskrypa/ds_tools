@@ -90,27 +90,35 @@ class Find(ImageDBCLI, help='Find images in the DB similar to the given image'):
         table.print_rows(rows)
 
 
-class Dupes(ImageDBCLI, help='Find duplicate images in the DB'):
-    # exact = Flag(help='Find exact matches by sha256 hash (default: by dhash)')
+class Dupes(ImageDBCLI, help='Find exact duplicate images in the DB'):
+    dir_filter = Option('-d', nargs='+', help='If specified, filter results to those in the specified directories')
 
     def main(self):
-        self.print_exact_dupes()
-        # if self.exact:
-        #     self.print_exact_dupes()
-        # else:
-        #     self.print_similar_dupes()
+        if self.dir_filter:
+            self.print_filtered_dupes()
+        else:
+            self.print_all_exact_dupes()
 
-    def print_similar_dupes(self):
+    def print_all_exact_dupes(self):
+        for sha, num, images in self.image_db.find_exact_dupes():
+            print(f'{sha}: {len(images)}:\n' + '\n'.join(sorted(f' - {img.path.as_posix()}' for img in images)))
+
+    def print_filtered_dupes(self):
+        dirs = {Path(path).expanduser() for path in self.dir_filter}
+        for sha, num, images in self.image_db.find_exact_dupes():
+            if not any(img.path.parent in dirs for img in images):
+                continue
+            print(f'{sha}: {len(images)}:\n' + '\n'.join(sorted(f' - {img.path.as_posix()}' for img in images)))
+
+
+class Similar(ImageDBCLI, help='Find similar images in the DB'):
+    def main(self):
         pass
         # query = self.image_db._find_similar_dupes()
         # print(query)
         # results = query.all()
         # print(f'Found {len(results)} results')
         # print(results[0])
-
-    def print_exact_dupes(self):
-        for sha, num, images in self.image_db.find_exact_dupes():
-            print(f'{sha}: {len(images)}:\n' + '\n'.join(sorted(f' - {img.path.as_posix()}' for img in images)))
 
 
 if __name__ == '__main__':
