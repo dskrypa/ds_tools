@@ -362,9 +362,6 @@ class ConfigSection(metaclass=ConfigMeta):
     as_dict = _as_dict_
 
 
-# TODO: Config subclass of ConfigSection, with from_json_file and similar classmethods?
-
-
 # region Exceptions
 
 
