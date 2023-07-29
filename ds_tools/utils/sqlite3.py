@@ -233,6 +233,7 @@ class DBRow(dict):
 
 class DBTable:
     __slots__ = ('db', 'name', '_rows', 'col_names', 'col_types', 'columns', 'pk', 'pk_pos')
+    db: Sqlite3Database
 
     def __init__(self, parent_db: Sqlite3Database, name: str, columns=None, pk=None):
         """
@@ -241,52 +242,24 @@ class DBTable:
         :param list columns: Column names
         :param pk: Primary key (defaults to the table's PK or the first column if not defined for the table)
         """
-        self.db = parent_db  # type: Sqlite3Database
+        self.db = parent_db
         self.name = name
         self._rows = {}
-        table_exists = self.name in self.db
-
-        if (columns is None) and (not table_exists):
-            raise ValueError('Columns are required for tables that do not already exist')
-
-        if table_exists:
+        if table_exists := self.name in self.db:
             table_info = self.info()
             current_names = [entry['name'] for entry in table_info]
             current_types = [entry['type'] for entry in table_info]
             pk_entry = itemfinder(table_info, itemgetter('pk'))
             current_pk = pk_entry['name'] if pk_entry is not None else None
+        elif columns is None:
+            raise ValueError('Columns are required for tables that do not already exist')
         else:
             current_names, current_types, current_pk = None, None, None
 
         if columns is not None:
-            if not isinstance(columns, (list, tuple)):
-                raise TypeError(f'Columns must be provided as a list or tuple, not {type(columns)}')
-            elif (current_names is not None) and (len(current_names) != len(columns)):
-                raise ValueError('The number of columns provided does not match the existing ones')
-
-            self.col_names, self.col_types = [], []
-            for col in columns:
-                if isinstance(col, tuple):
-                    self.col_names.append(col[0])
-                    self.col_types.append(col[1])
-                else:
-                    self.col_names.append(col)
-                    self.col_types.append('')
-
-            if (current_names is not None) and (self.col_names != current_names):
-                raise ValueError('The provided column names do not match the existing ones')
-            elif current_types is not None:
-                for i in range(len(current_types)):
-                    ct = current_types[i]
-                    nt = self.col_types[i]
-                    if (ct != nt) and ((ct != '') or (nt != '')):
-                        raise ValueError(
-                            f'The provided type for column {self.col_names[i]!r} ({ct})'
-                            f' did not match the existing one ({nt})'
-                        )
+            self.col_names, self.col_types = _normalize_new_columns(columns, current_names, current_types)
         else:
-            self.col_names = current_names
-            self.col_types = current_types
+            self.col_names, self.col_types = current_names, current_types
 
         self.columns = dict(zip(self.col_names, self.col_types))
 
@@ -308,7 +281,7 @@ class DBTable:
             col_strs = [f'{cname} {ctype}' if ctype else cname for cname, ctype in self.columns.items()]
             if pk is not None:
                 col_strs[self.pk_pos] += ' PRIMARY KEY'
-            self.db.execute('CREATE TABLE "{}" ({});'.format(self.name, ', '.join(col_strs)))
+            self.db.execute(f'CREATE TABLE "{self.name}" ({", ".join(col_strs)});')
 
     def info(self):
         return self.db.query(f'pragma table_info("{self.name}")')
@@ -438,6 +411,34 @@ class DBTable:
                 if len(value) != col_count:
                     row.insert(self.pk_pos, key)
             self.insert(row)
+
+
+def _normalize_new_columns(columns, current_names, current_types):
+    if not isinstance(columns, (list, tuple)):
+        raise TypeError(f'Columns must be provided as a list or tuple, not {type(columns)}')
+    elif (current_names is not None) and (len(current_names) != len(columns)):
+        raise ValueError('The number of columns provided does not match the existing ones')
+
+    col_names, col_types = [], []
+    for col in columns:
+        if isinstance(col, tuple):
+            col_names.append(col[0])
+            col_types.append(col[1])
+        else:
+            col_names.append(col)
+            col_types.append('')
+
+    if (current_names is not None) and (col_names != current_names):
+        raise ValueError('The provided column names do not match the existing ones')
+    elif current_types is not None:
+        for i in range(len(current_types)):
+            ct = current_types[i]
+            nt = col_types[i]
+            if (ct != nt) and ((ct != '') or (nt != '')):
+                raise ValueError(
+                    f'The provided type={ct!r} for column={col_names[i]!r} did not match the existing type={nt!r}'
+                )
+    return col_names, col_types
 
 
 def _quote(name: str) -> str:
