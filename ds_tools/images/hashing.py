@@ -9,7 +9,7 @@ from io import BytesIO
 from itertools import product
 from pathlib import Path
 from sqlite3 import register_adapter
-from typing import Iterable, Literal, Type, Collection, BinaryIO
+from typing import Iterable, Iterator, Literal, Type, Collection, BinaryIO
 
 from numpy import transpose, bitwise_and, full as np_full, invert as np_invert
 from numpy import array, asarray, frombuffer, packbits, unpackbits, nonzero, count_nonzero, log2, median
@@ -18,9 +18,9 @@ from numpy.typing import NDArray
 from PIL import UnidentifiedImageError
 from PIL.Image import Resampling, Transpose, Image as PILImage, open as open_image  # noqa
 from PIL.ImageFilter import GaussianBlur, MedianFilter
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, or_
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Query, relationship, scoped_session, sessionmaker
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, or_, and_
+from sqlalchemy.sql.functions import count
+from sqlalchemy.orm import Query, relationship, scoped_session, sessionmaker, DeclarativeBase, Mapped
 from tqdm import tqdm
 
 try:
@@ -459,31 +459,32 @@ MULTI_CLS = RotatedMultiHash
 # region Tables
 
 
-Base = declarative_base()
+class Base(DeclarativeBase):
+    pass
 
 
 class Directory(Base):
     __tablename__ = 'dirs'
-    id: int = Column(Integer, primary_key=True)
-    path: str = Column(String, index=True, unique=True)
+    id: Mapped[int] = Column(Integer, primary_key=True)
+    path: Mapped[str] = Column(String, index=True, unique=True)
 
 
 class ImageHash(Base):
     __tablename__ = 'hashes'
-    id: int = Column(Integer, primary_key=True)
+    id: Mapped[int] = Column(Integer, primary_key=True)
 
-    a: int = Column(Integer, index=True)  # Intended to be uint16, but sqlite and sqlalchemy don't support bit widths
-    b: int = Column(Integer, index=True)
-    c: int = Column(Integer, index=True)
-    d: int = Column(Integer, index=True)
+    a: Mapped[int] = Column(Integer, index=True)  # Actually uint8, but sqlite and sqlalchemy don't support bit widths
+    b: Mapped[int] = Column(Integer, index=True)
+    c: Mapped[int] = Column(Integer, index=True)
+    d: Mapped[int] = Column(Integer, index=True)
 
-    e: int = Column(Integer, index=True)
-    f: int = Column(Integer, index=True)
-    g: int = Column(Integer, index=True)
-    h: int = Column(Integer, index=True)
+    e: Mapped[int] = Column(Integer, index=True)
+    f: Mapped[int] = Column(Integer, index=True)
+    g: Mapped[int] = Column(Integer, index=True)
+    h: Mapped[int] = Column(Integer, index=True)
 
-    image_id: int = Column(Integer, ForeignKey('images.id'))
-    image: ImageFile = relationship('ImageFile', back_populates='hashes', lazy='joined')
+    image_id: Mapped[int] = Column(Integer, ForeignKey('images.id'))
+    image: Mapped[ImageFile] = relationship('ImageFile', back_populates='hashes', lazy='joined')
 
     @cached_property(block=False)
     def img_hash(self) -> HASH_CLS:
@@ -492,14 +493,14 @@ class ImageHash(Base):
 
 class ImageFile(Base):
     __tablename__ = 'images'
-    id: int = Column(Integer, primary_key=True)
-    name: str = Column(String)
-    size: int = Column(Integer)
-    mod_time: int = Column(Integer)
-    dir_id: int = Column(Integer, ForeignKey('dirs.id'))
-    dir: Directory = relationship(Directory, lazy='joined')
-    sha256sum: str = Column(String)
-    hashes: list[ImageHash] = relationship(
+    id: Mapped[int] = Column(Integer, primary_key=True)
+    name: Mapped[str] = Column(String)
+    size: Mapped[int] = Column(Integer)
+    mod_time: Mapped[int] = Column(Integer)
+    dir_id: Mapped[int] = Column(Integer, ForeignKey('dirs.id'))
+    dir: Mapped[Directory] = relationship(Directory, lazy='joined')
+    sha256sum: Mapped[str] = Column(String)
+    hashes: Mapped[list[ImageHash]] = relationship(
         ImageHash, back_populates='image', cascade='all, delete, delete-orphan', lazy='joined'
     )
 
@@ -623,6 +624,32 @@ class ImageDB:
                 ImageHash.e.in_(e), ImageHash.f.in_(f), ImageHash.g.in_(g), ImageHash.h.in_(h),  # noqa
             )
         )
+
+    def find_exact_dupes(self) -> Iterator[tuple[str, int, list[ImageFile]]]:
+        last_sha, last_num, images = None, 0, []
+        for sha, num, image in self._find_exact_dupes():
+            if sha != last_sha:
+                if images:
+                    yield last_sha, last_num, images
+                images = [image]
+                last_num = num
+                last_sha = sha
+            else:
+                images.append(image)
+
+        if images:
+            yield last_sha, last_num, images
+
+    def _find_exact_dupes(self) -> Query:
+        sub_query = self.session.query(ImageFile.sha256sum, count(ImageFile.id.distinct()))\
+            .group_by(ImageFile.sha256sum).subquery()
+
+        query = self.session.query(ImageFile.sha256sum, sub_query.c.count, ImageFile)\
+            .join(sub_query, sub_query.c.sha256sum == ImageFile.sha256sum)\
+            .where(sub_query.c.count > 1)\
+            .order_by(sub_query.c.count.desc())
+
+        return query
 
 
 def _hash_image(path: Path) -> tuple[MULTI_CLS, str]:

@@ -7,7 +7,7 @@ from cli_command_parser.inputs import Path as IPath, NumRange
 
 from ds_tools.__version__ import __author_email__, __version__  # noqa
 from ds_tools.caching.decorators import cached_property
-from ds_tools.images.hashing import ImageDB, TABLE_MAP, Directory, ImageHash, ImageFile
+from ds_tools.images.hashing import ImageDB, Directory, ImageHash, ImageFile
 
 PCT_FLOAT = NumRange(float, min=0, max=1, include_max=True)
 
@@ -36,17 +36,6 @@ class Status(ImageDBCLI, help='Show info about the DB'):
         for name, table_cls in tables.items():
             row_count = self.image_db.session.query(table_cls).count()
             print(f'Saved {name}: {row_count:,d}')
-
-
-# class List(ImageDBCLI, help='List all DB entries of a specified type'):
-#     table = Positional(choices=('dirs', 'images', 'hashes'), help='The table / type of item to list')
-#
-#     def main(self):
-#         from ds_tools.images.hashing.db import TABLE_MAP, Directory, ImageHash, ImageFile
-#
-#         table_cls = TABLE_MAP[self.table]
-#         order_by =
-#         self.image_db.session.query(table_cls).order_by
 
 
 class Scan(ImageDBCLI, help='Scan images to populate the DB'):
@@ -98,6 +87,24 @@ class Find(ImageDBCLI, help='Find images in the DB similar to the given image'):
             update_width=True,
         )
         table.print_rows(rows)
+
+
+class Dupes(ImageDBCLI, help='Find duplicate images in the DB'):
+    # exact = Flag(help='Find exact matches by sha256 hash (default: by dhash)')
+
+    def main(self):
+        self.print_exact_dupes()
+        # if self.exact:
+        #     self.print_exact_dupes()
+        # else:
+        #     self.print_similar_dupes()
+
+    def print_similar_dupes(self):
+        pass
+
+    def print_exact_dupes(self):
+        for sha, num, images in self.image_db.find_exact_dupes():
+            print(f'{sha}: {len(images)}:\n' + '\n'.join(sorted(f' - {img.path.as_posix()}' for img in images)))
 
 
 if __name__ == '__main__':
