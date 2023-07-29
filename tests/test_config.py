@@ -253,10 +253,143 @@ class ConfigTest(TestCase):
         class BConfig(AConfig):
             foo = ConfigItem(456)
 
+        class CConfig(BConfig):
+            pass
+
         config = BConfig()
         self.assertIsInstance(config, AConfig)
         self.assertEqual(456, config.foo)
         self.assertEqual(123, AConfig().foo)
+        self.assertEqual(456, CConfig().foo)
+
+    def test_filter(self):
+        class Config(ConfigSection):
+            foo = ConfigItem()
+
+        self.assertEqual({}, Config.filter({'bar': 123}))
+        self.assertEqual({'foo': 456}, Config.filter({'foo': 456, 'bar': 123}))
+        self.assertEqual({'foo': 456}, Config.filter({'foo': 456, 'bar': 123}))
+        self.assertEqual({'foo': 456}, Config.filter({'bar': 123}, {'foo': 456}))
+        self.assertEqual({}, Config.filter({'foo': 456}, exclude={'foo'}))
+        self.assertEqual({}, Config.filter({}))
+
+    def test_filter_truthy(self):
+        class Config(ConfigSection):
+            foo = ConfigItem()
+            bar = ConfigItem()
+
+        self.assertEqual({}, Config.filter({'foo': None}, {'bar': 0}, truthy=True))
+        self.assertEqual({'bar': 1}, Config.filter({'foo': None}, {'bar': 1}, truthy=True))
+        self.assertEqual({'bar': 1, 'foo': 'a'}, Config.filter({'foo': 'a'}, {'bar': 1}, truthy=True))
+        self.assertEqual({'bar': 1, 'foo': 'a'}, Config.filter({'foo': 'a', 'bar': 1}, truthy=True))
+        self.assertEqual({'bar': 1}, Config.filter({'foo': 'a', 'bar': 1}, truthy=True, exclude={'foo'}))
+
+    def test_unflatten(self):
+        class BConfig(ConfigSection):
+            c = ConfigItem(2)
+            d = ConfigItem(3)
+
+        class AConfig(ConfigSection):
+            a = ConfigItem(1)
+            b = NestedSection(BConfig)
+
+        self.assertEqual({'a': 3, 'b': {'c': 4}}, AConfig.filter({'a': 3, 'c': 4}, unflatten=True))
+        self.assertEqual({'a': 3}, AConfig.filter({'a': 3, 'baz': None}, truthy=True, unflatten=True))
+        self.assertEqual({'b': {'c': 4}}, AConfig.filter({'a': None, 'c': 4}, truthy=True, unflatten=True))
+        self.assertEqual({'a': 3, 'b': {'c': 4}}, AConfig.filter({'a': 3, 'b': {'c': 4}}, unflatten=True))
+        self.assertEqual(
+            {'a': 3, 'b': {'c': 4, 'd': 5}}, AConfig.filter({'a': 3, 'b': {'c': 4}, 'd': 5}, unflatten=True)
+        )
+        self.assertEqual({'a': 3}, AConfig.filter({'a': 3, 'b': {'c': 4}, 'd': 5}, unflatten=True, exclude={'b'}))
+
+    def test_update_known(self):
+        class Config(ConfigSection):
+            foo = ConfigItem()
+
+        config = Config()
+        self.assertEqual({}, config.__dict__)
+        config.update_known({'bar': 123})
+        self.assertEqual({}, config.__dict__)
+        config.update_known(foo=456, bar=789)
+        self.assertEqual({'foo': 456}, config.__dict__)
+        config.update_known(Config(foo=987))
+        self.assertEqual({'foo': 987}, config.__dict__)
+
+    def test_as_dict_no_defaults(self):
+        class Config(ConfigSection):
+            a = ConfigItem(1)
+            b = ConfigItem(2)
+
+        config = Config({'a': 10})
+        self.assertEqual({'a': 10, 'b': 2}, config.as_dict())
+        self.assertEqual({'a': 10}, config.as_dict(include_defaults=False))
+
+    def test_nested_update_known(self):
+        class BConfig(ConfigSection):
+            c = ConfigItem(2)
+            d = ConfigItem(3)
+
+        class AConfig(ConfigSection):
+            a = ConfigItem(1)
+            b = NestedSection(BConfig)
+
+        config = AConfig({'a': 10, 'b': {'c': 20}})
+        self.assertEqual({'a': 10, 'b': {'c': 20, 'd': 3}}, config.as_dict())
+        self.assertEqual({'a': 10}, config.as_dict(recursive=False))
+        config.update_known({'b': {'d': 30, 'e': 40}, 'f': 50})
+        self.assertEqual({'a': 10, 'b': {'c': 20, 'd': 30}}, config.as_dict())
+
+    def test_nested_update_known_no_merge(self):
+        class BConfig(ConfigSection):
+            c = ConfigItem(2)
+            d = ConfigItem(3)
+
+        class AConfig(ConfigSection, merge_nested=False):
+            a = ConfigItem(1)
+            b = NestedSection(BConfig)
+
+        config = AConfig({'a': 10, 'b': {'c': 20}})
+        self.assertEqual({'a': 10, 'b': {'c': 20, 'd': 3}}, config.as_dict())
+        config.update_known({'b': {'d': 30, 'e': 40}, 'f': 50})
+        self.assertEqual({'a': 10, 'b': {'c': 2, 'd': 30}}, config.as_dict())
+
+    def test_3_nested_update_known(self):
+        class CConfig(ConfigSection):
+            f = ConfigItem(5)
+            g = ConfigItem(6)
+
+        class BConfig(ConfigSection):
+            c = NestedSection(CConfig)
+            d = ConfigItem(3)
+            e = ConfigItem(4)
+
+        class AConfig(ConfigSection):
+            a = ConfigItem(1)
+            b = NestedSection(BConfig)
+
+        config = AConfig({'a': 10, 'b': {'c': {'f': 50}, 'd': 30}})
+        self.assertEqual({'a': 10, 'b': {'c': {'f': 50, 'g': 6}, 'd': 30, 'e': 4}}, config.as_dict())
+        config.update_known({'b': {'c': {'g': 60, 'h': 70}, 'e': 40}, 'f': 500})
+        self.assertEqual({'a': 10, 'b': {'c': {'f': 50, 'g': 60}, 'd': 30, 'e': 40}}, config.as_dict())
+
+    def test_3_nested_update_known_no_merge(self):
+        class CConfig(ConfigSection):
+            f = ConfigItem(5)
+            g = ConfigItem(6)
+
+        class BConfig(ConfigSection, merge_nested=False):
+            c = NestedSection(CConfig)
+            d = ConfigItem(3)
+            e = ConfigItem(4)
+
+        class AConfig(ConfigSection, merge_nested=False):
+            a = ConfigItem(1)
+            b = NestedSection(BConfig)
+
+        config = AConfig({'a': 10, 'b': {'c': {'f': 50}, 'd': 30}})
+        self.assertEqual({'a': 10, 'b': {'c': {'f': 50, 'g': 6}, 'd': 30, 'e': 4}}, config.as_dict())
+        config.update_known({'b': {'c': {'g': 60, 'h': 70}, 'e': 40}, 'f': 500})
+        self.assertEqual({'a': 10, 'b': {'c': {'f': 5, 'g': 60}, 'd': 3, 'e': 40}}, config.as_dict())
 
 
 if __name__ == '__main__':
