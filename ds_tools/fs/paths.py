@@ -11,6 +11,7 @@ from datetime import datetime
 from getpass import getuser
 from itertools import chain
 from pathlib import Path
+from stat import S_ISDIR, S_ISREG
 from string import printable
 from tempfile import gettempdir
 from typing import TYPE_CHECKING, Iterator, Iterable, Collection, Mapping, Optional
@@ -64,93 +65,124 @@ def iter_paths(path_or_paths: Paths) -> Iterator[Path]:
     for p in path_or_paths:
         if isinstance(p, str):
             p = Path(p)
-        if isinstance(p, Path):
-            try:
-                if ON_WINDOWS and not p.exists() and (m := win_bash_path_match(p.as_posix())):
-                    p = Path(f'{m.group(1).upper()}:/{m.group(2)}')
-            except OSError:
-                if any(c in p.name for c in '*?['):
-                    matcher = FnMatcher(p.name)
-                    for root, dirs, files in os.walk(os.getcwd()):
-                        root_join = Path(root).joinpath
-                        for f in matcher.matching_values(chain(dirs, files)):
-                            yield root_join(f)
-                else:
-                    raise
-            else:
-                yield p.expanduser().resolve()
-        else:
+        elif not isinstance(p, Path):
             raise TypeError(f'Unexpected type={p.__class__.__name__} for path={p!r}')
 
+        try:
+            if ON_WINDOWS and not p.exists() and (m := win_bash_path_match(p.as_posix())):
+                p = Path(f'{m.group(1).upper()}:/{m.group(2)}')
+        except OSError:
+            if any(c in p.name for c in '*?['):
+                matcher = FnMatcher(p.name)
+                for root, dirs, files in os.walk(os.getcwd()):
+                    root_join = Path(root).joinpath
+                    for f in matcher.matching_values(chain(dirs, files)):
+                        yield root_join(f)
+            else:
+                raise
+        else:
+            yield p.expanduser().resolve()
 
-def iter_files(path_or_paths: Paths) -> Iterator[Path]:
+
+def iter_files(path_or_paths: Paths, recursive: bool = True) -> Iterator[Path]:
     """
     Iterate over all file paths represented by the given input.  If any directories are provided, they are traversed
     recursively to discover all files within them.
 
     :param path_or_paths: A path or iterable that yields paths
+    :param recursive: If True, provided directories will be traversed recursively, otherwise only the files they
+      directly contain will be yielded.
     :return: Generator that yields :class:`Path<pathlib.Path>` objects.
     """
     for path in iter_paths(path_or_paths):
-        if path.is_file():
+        mode = path.stat().st_mode
+        if S_ISREG(mode):  # It is a file
             yield path
-        else:
-            for root, dirs, files in os.walk(path):
-                root_join = Path(root).joinpath
-                for f in files:
-                    yield root_join(f)
+        elif S_ISDIR(mode):
+            if recursive:
+                for root, dirs, files in os.walk(path):
+                    if not files:
+                        continue
+                    root_join = Path(root).joinpath
+                    for f in files:
+                        yield root_join(f)
+            else:
+                with os.scandir(path) as scanner:
+                    # DirEntry.is_file() generally won't result in a system call, while iterating over Path.iterdir()
+                    # and calling Path.is_file() on each result will call stat for each path.
+                    for entry in scanner:
+                        if entry.is_file():
+                            yield Path(entry)
 
 
 def iter_sorted_files(
     path_or_paths: Paths,
     ignore_dirs: Collection[str] = None,
     ignore_files: Collection[str] = None,
+    ignore_suffixes: Collection[str] = None,
+    *,
     follow_links: bool = False,
 ) -> Iterator[Path]:
     """
     Similar to os.walk, but only yields Path objects for files, and traverses the directory tree in sorted order.
 
     :param path_or_paths: A path or iterable that yields paths
-    :param ignore_dirs: Collection of directory names to skip (does not support wildcards)
-    :param ignore_files: Collection of file names to skip (does not support wildcards)
+    :param ignore_dirs: Collection of directory names to skip (doesn't support wildcards)
+    :param ignore_files: Collection of file names to skip (doesn't support wildcards)
+    :param ignore_suffixes: File suffixes to skip (including the preceding ``.``) (doesn't support wildcards)
     :param follow_links: Follow directory symlinks to also yield Path objects from the target of each symlink directory
     :return: Iterator that yields Path objects for the files in the given path or paths, sorted at each level.
     """
-    ignore_dirs = set(ignore_dirs) if ignore_dirs and not isinstance(ignore_dirs, set) else ignore_dirs
-    ignore_files = set(ignore_files) if ignore_files and not isinstance(ignore_files, set) else ignore_files
+    if ignore_dirs and not isinstance(ignore_dirs, set):
+        ignore_dirs = set(ignore_dirs)
+    if ignore_files and not isinstance(ignore_files, set):
+        ignore_files = set(ignore_files)
+    if ignore_suffixes and not isinstance(ignore_suffixes, tuple):
+        ignore_suffixes = tuple(ignore_suffixes)  # Necessary because DirEntry objects have no .suffix attr
+
     for path in iter_paths(path_or_paths):
         if path.is_file():
-            if not ignore_files or path.name not in ignore_files:
+            if (
+                (not ignore_files or path.name not in ignore_files)
+                and (not ignore_suffixes or path.suffix not in ignore_suffixes)
+            ):
                 yield path
-        else:
-            if (not ignore_dirs or path.name not in ignore_dirs) and (follow_links or not path.is_symlink()):
-                yield from _iter_sorted_files(path, ignore_dirs, ignore_files, follow_links)
+        # Note: is_file calls stat with follow_symlinks=True, while is_symlink calls stat with follow_symlinks=False
+        elif (not ignore_dirs or path.name not in ignore_dirs) and (follow_links or not path.is_symlink()):
+            yield from _iter_sorted_files(path, ignore_dirs, ignore_files, ignore_suffixes, follow_links)
 
 
 def _iter_sorted_files(
-    root: Path, ignore_dirs: set[str] = None, ignore_files: set[str] = None, follow_links: bool = False
+    root: Path,
+    ignore_dirs: set[str] = None,
+    ignore_files: set[str] = None,
+    ignore_suffixes: tuple[str, ...] = None,
+    follow_links: bool = False,
 ) -> Iterator[Path]:
     """
     Similar to os.walk, but only yields Path objects for files, and traverses the directory tree in sorted order.
 
     :param root: The path to walk
-    :param ignore_dirs: Collection of directory names to skip (does not support wildcards)
-    :param ignore_files: Collection of file names to skip (does not support wildcards)
+    :param ignore_dirs: Collection of directory names to skip (doesn't support wildcards)
+    :param ignore_files: Collection of file names to skip (doesn't support wildcards)
+    :param ignore_suffixes: File suffixes to skip (including the preceding ``.``) (doesn't support wildcards)
     :param follow_links: Follow directory symlinks to also yield Path objects from the target of each symlink directory
     :return: Iterator that yields Path objects for the files in the given path, sorted at each level.
     """
     dirs = []
-    for entry in sorted(os.listdir(root)):
-        path = root.joinpath(entry)
-        if path.is_dir():
-            if (not ignore_dirs or entry not in ignore_dirs) and (follow_links or not path.is_symlink()):
-                dirs.append(path)
-        else:
-            if not ignore_files or entry not in ignore_files:
-                yield path
+    with os.scandir(root) as scanner:
+        for entry in sorted(scanner, key=lambda de: de.name):
+            if entry.is_dir():
+                if (not ignore_dirs or entry.name not in ignore_dirs) and (follow_links or not entry.is_symlink()):
+                    dirs.append(root.joinpath(entry.name))
+            elif (
+                (not ignore_files or entry.name not in ignore_files)
+                and (not ignore_suffixes or entry.name.endswith(ignore_suffixes))
+            ):
+                yield root.joinpath(entry.name)
 
     for path in dirs:
-        yield from _iter_sorted_files(path, ignore_dirs, ignore_files, follow_links)
+        yield from _iter_sorted_files(path, ignore_dirs, ignore_files, ignore_suffixes, follow_links)
 
 
 # endregion
@@ -167,13 +199,15 @@ def validate_or_make_dir(
 
     :param dir_path: The path of a directory that exists or should be created if it doesn't
     :param permissions: Permissions to set on the directory if it needs to be created (octal notation is suggested)
-    :param suppress_perm_change_exc: Suppress an OSError if the permission change is unsuccessful (default: suppress/True)
+    :param suppress_perm_change_exc: Suppress an OSError if the permission change is unsuccessful (default:
+      suppress/True)
     :return: The path
     """
     path = Path(dir_path).expanduser()
-    if path.exists():
-        if not path.is_dir():
-            raise ValueError(f'Invalid path - not a directory: {dir_path}')
+    if path.is_dir():
+        return path
+    elif path.exists():
+        raise ValueError(f'Invalid path - not a directory: {dir_path}')
     else:
         path.mkdir(parents=True)
         if permissions is not None:

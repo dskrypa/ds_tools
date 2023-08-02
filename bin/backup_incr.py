@@ -142,7 +142,7 @@ class BackupUtil(CopyUtil):
         return None, None
 
     def iter_target_files(self):
-        for src_path in iter_sorted_files(self.src_root, IGNORE_DIRS, IGNORE_FILES, self.follow_links):
+        for src_path in iter_sorted_files(self.src_root, IGNORE_DIRS, IGNORE_FILES, follow_links=self.follow_links):
             rel_path = src_path.relative_to(self.src_root)
             matches_previous, src_stat = self.matches_previous_backup(src_path, rel_path)
             if matches_previous:
