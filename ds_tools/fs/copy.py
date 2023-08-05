@@ -3,9 +3,8 @@ Utilities for copying files with a progress indicator
 
 Note: The simplest way to copy data between 2 file-like objects:
 
-    with input_obj as f_in:
-        with output_obj as f_out:
-            shutil.copyfileobj(f_in, f_out)
+    with input_obj as f_in, output_obj as f_out:
+        shutil.copyfileobj(f_in, f_out)
 
 :author: Doug Skrypa
 """
@@ -25,7 +24,7 @@ from tqdm import tqdm
 
 from ..output.formatting import readable_bytes, format_duration
 from .exceptions import InvalidPathError
-from .hash import sha512sum
+from .hash import sha256sum
 from .mount_info import is_on_local_device, get_disk_partition
 
 __all__ = ['copy_file']
@@ -53,7 +52,7 @@ class FileCopy:
         if self.dst_path.exists():
             raise FileExistsError(f'File already exists: {dst_path}')
         if not self.dst_path.parent.exists():
-            self.dst_path.parent.mkdir(parents=True)
+            self.dst_path.parent.mkdir(parents=True, exist_ok=True)
         self.copied = 0
         self.finished = Event()
         self.src_size = self.src_path.stat().st_size
@@ -272,12 +271,7 @@ class FileCopy:
         buf = memoryview(bytearray(buf_size))
         finished = self.finished.is_set
         while (read := src_readinto(buf)) and not finished():
-            if read < buf_size:
-                # noinspection PyTypeChecker
-                self.copied += dst_write(buf[:read])
-            else:
-                # noinspection PyTypeChecker
-                self.copied += dst_write(buf)
+            self.copied += dst_write(buf[:read] if read < buf_size else buf)  # noqa
 
     def _fastcopy_sendfile(self, src: BinaryIO, dst: BinaryIO):
         """Based on :func:`shutil._fastcopy_sendfile`"""
@@ -306,20 +300,20 @@ class FileCopy:
                 raise e from None
             elif self.copied == 0 and os.lseek(out_fd, 0, os.SEEK_CUR) == 0:
                 raise _GiveupOnFastCopy(e)
-            raise e
+            raise
 
     def verify(self):
         log.info(f'Verifying copied file: {self.dst_path}')
-        src_sha = sha512sum(self.src_path)
-        log.debug(f'sha512 of {self.src_path} = {src_sha}')
-        dst_sha = sha512sum(self.dst_path)
-        log.debug(f'sha512 of {self.dst_path} = {dst_sha}')
+        src_sha = sha256sum(self.src_path)
+        log.debug(f'sha256 of {self.src_path} = {src_sha}')
+        dst_sha = sha256sum(self.dst_path)
+        log.debug(f'sha256 of {self.dst_path} = {dst_sha}')
         if src_sha != dst_sha:
-            log.warning(f'Copy failed - sha512({self.src_path}) != sha512({self.dst_path})')
+            log.warning(f'Copy failed - sha256({self.src_path}) != sha256({self.dst_path})')
             log.warning(f'Deleting due to failed verification: {self.dst_path}')
             self.dst_path.unlink()
         else:
-            log.info(f'Copy succeeded - sha512({self.src_path}) == sha512({self.dst_path})')
+            log.info(f'Copy succeeded - sha256({self.src_path}) == sha256({self.dst_path})')
 
 
 copy_file = FileCopy.copy
@@ -329,7 +323,7 @@ class _GiveupOnFastCopy(Exception):
     """Fallback to using raw read()/write() file copy when fast-copy functions fail to do so."""
 
 
-def get_writeback_size():
+def get_writeback_size() -> int:
     with open('/proc/meminfo', 'rb') as f:
         for line in f:
             if line.startswith(b'Writeback:'):
