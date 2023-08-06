@@ -260,7 +260,7 @@ def unique_path(
     stem: str,
     suffix: str = '',
     *,
-    seps=('_', '-'),
+    seps: tuple[str, str] = ('_', '-'),
     n: int = 1,
     add_date: bool = False,
     sanitize: bool = False,
@@ -285,6 +285,17 @@ def unique_path(
         name = f'{stem}{n_sep}{n}{suffix}'
         n += 1
     return path
+
+
+def _unique_path(
+    path: PathLike, *, seps: tuple[str, str] = ('_', '-'), n: int = 1, add_date: bool = False, sanitize: bool = False
+) -> Path:
+    if not isinstance(path, Path):
+        path = Path(path).expanduser()
+    return unique_path(path.parent, path.stem, path.suffix, seps=seps, n=n, add_date=add_date, sanitize=sanitize)
+
+
+unique_path.for_path = _unique_path
 
 
 class PathValidator:
