@@ -255,47 +255,56 @@ def relative_path(path: PathLike, to: PathLike = '.') -> str:
         return path.as_posix()
 
 
-def unique_path(
-    parent: Path,
-    stem: str,
-    suffix: str = '',
-    *,
-    seps: tuple[str, str] = ('_', '-'),
-    n: int = 1,
-    add_date: bool = False,
-    sanitize: bool = False,
-) -> Path:
-    """
-    :param parent: Directory in which a unique file name should be created
-    :param stem: File name without extension
-    :param suffix: File extension, including `.`
-    :param seps: Separators between stem and date/n, respectfully.
-    :param n: First number to try; incremented by 1 until adding this value would cause the file name to be unique
-    :param add_date: Whether a date should be added before n. If True, a date will always be added.
-    :param sanitize: Whether the stem should be sanitized
-    :return: Path with a file name that does not currently exist in the target directory
-    """
-    if sanitize:
-        stem = sanitize_file_name(stem)
-    date_sep, n_sep = seps
-    if add_date:
-        stem = f'{stem}{date_sep}{date.today().isoformat()}'
-    name = stem + suffix
-    while (path := parent.joinpath(name)).exists():
-        name = f'{stem}{n_sep}{n}{suffix}'
-        n += 1
-    return path
+class _UniquePathPicker:
+    __slots__ = ()
+
+    def __call__(
+        self,
+        parent: Path,
+        stem: str,
+        suffix: str = '',
+        *,
+        seps: tuple[str, str] = ('_', '-'),
+        n: int = 1,
+        add_date: bool = False,
+        sanitize: bool = False,
+    ) -> Path:
+        """
+        :param parent: Directory in which a unique file name should be created
+        :param stem: File name without extension
+        :param suffix: File extension, including `.`
+        :param seps: Separators between stem and date/n, respectfully.
+        :param n: First number to try; incremented by 1 until adding this value would cause the file name to be unique
+        :param add_date: Whether a date should be added before n. If True, a date will always be added.
+        :param sanitize: Whether the stem should be sanitized
+        :return: Path with a file name that does not currently exist in the target directory
+        """
+        if sanitize:
+            stem = sanitize_file_name(stem)
+        date_sep, n_sep = seps
+        if add_date:
+            stem = f'{stem}{date_sep}{date.today().isoformat()}'
+        name = stem + suffix
+        while (path := parent.joinpath(name)).exists():
+            name = f'{stem}{n_sep}{n}{suffix}'
+            n += 1
+        return path
+
+    def for_path(
+        self,
+        path: PathLike,
+        *,
+        seps: tuple[str, str] = ('_', '-'),
+        n: int = 1,
+        add_date: bool = False,
+        sanitize: bool = False,
+    ) -> Path:
+        if not isinstance(path, Path):
+            path = Path(path).expanduser()
+        return self(path.parent, path.stem, path.suffix, seps=seps, n=n, add_date=add_date, sanitize=sanitize)
 
 
-def _unique_path(
-    path: PathLike, *, seps: tuple[str, str] = ('_', '-'), n: int = 1, add_date: bool = False, sanitize: bool = False
-) -> Path:
-    if not isinstance(path, Path):
-        path = Path(path).expanduser()
-    return unique_path(path.parent, path.stem, path.suffix, seps=seps, n=n, add_date=add_date, sanitize=sanitize)
-
-
-unique_path.for_path = _unique_path
+unique_path = _UniquePathPicker()
 
 
 class PathValidator:
@@ -307,14 +316,14 @@ class PathValidator:
         self.table = str.maketrans({i: replacements.get(i) or quote(i, safe='') for i in self._invalid_chars})  # noqa
 
     def validate(self, file_name: str):
-        root = os.path.splitext(os.path.basename(file_name))
+        root = os.path.splitext(os.path.basename(file_name))[0]
         if root in self._mac_reserved or root in self._win_reserved:
             raise ValueError(f'Invalid {file_name=} - it contains reserved name={root!r}')
         if invalid := next((c for c in self._invalid_chars if c in file_name), None):  # noqa
             raise ValueError(f'Invalid {file_name=} - it contains 1 or more invalid characters, including {invalid!r}')
 
     def sanitize(self, file_name: str) -> str:
-        root = os.path.splitext(os.path.basename(file_name))
+        root = os.path.splitext(os.path.basename(file_name))[0]
         if root in self._mac_reserved or root in self._win_reserved:
             file_name = f'_{file_name}'
         return file_name.translate(self.table)
@@ -388,7 +397,7 @@ class PathSorter:
         return paths
 
 
-def path_repr(path: Path) -> str:
+def path_repr(path: Path, is_dir: bool = None) -> str:
     try:
         rel_path = path.relative_to(Path.home())
     except Exception:  # noqa
@@ -396,4 +405,6 @@ def path_repr(path: Path) -> str:
     else:
         path_str = f'~/{rel_path.as_posix()}'
 
-    return (path_str + '/') if path.is_dir() else path_str
+    if is_dir is None:
+        is_dir = path.is_dir()
+    return (path_str + '/') if is_dir else path_str
