@@ -174,7 +174,7 @@ class Encoder(ABC):
         else:
             out_dir, stem, ext = self.video.path.parent, self.video.path.stem, CODEC_DEFAULT_EXT_MAP[self.codec]
 
-        return unique_path(out_dir, stem, '.' + ext, add_date=False)
+        return unique_path(out_dir, stem, '.' + ext)
 
     def encode(self, out_path: Union[str, Path] = None, passes: int = 1):
         if passes not in (1, 2):

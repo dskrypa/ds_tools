@@ -78,7 +78,7 @@ class FSEventHandler:
         if data_hash != self.last_hash:
             log.debug(f'Data changed - old={self.last_hash} new={data_hash}')
             self.last_hash = data_hash
-            dest_path = unique_path(self.backup_dir, path.stem, path.suffix)
+            dest_path = unique_path(self.backup_dir, path.stem, path.suffix, add_date=True)
             log.info(f'Saving backup to {dest_path.as_posix()}')
             dest_path.write_bytes(data)
         else:

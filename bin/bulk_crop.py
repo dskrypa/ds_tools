@@ -67,7 +67,7 @@ class BulkCropper(Command, description='Crop multiple images with the same dimen
         if suffix:
             name_parts.append(suffix)
 
-        dst_path = unique_path(self.output or src_path.parent, '_'.join(name_parts), src_path.suffix, add_date=False)
+        dst_path = unique_path(self.output or src_path.parent, '_'.join(name_parts), src_path.suffix)
         print(f'Saving {dst_path.name}')
         try:
             as_image(src_path).crop(box).save(dst_path)

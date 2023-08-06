@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 import logging
 import os
-from datetime import datetime
+from datetime import date
 from getpass import getuser
 from itertools import chain
 from pathlib import Path
@@ -256,7 +256,14 @@ def relative_path(path: PathLike, to: PathLike = '.') -> str:
 
 
 def unique_path(
-    parent: Path, stem: str, suffix: str, seps=('_', '-'), n: int = 1, add_date: bool = True, sanitize: bool = False,
+    parent: Path,
+    stem: str,
+    suffix: str = '',
+    *,
+    seps=('_', '-'),
+    n: int = 1,
+    add_date: bool = False,
+    sanitize: bool = False,
 ) -> Path:
     """
     :param parent: Directory in which a unique file name should be created
@@ -272,7 +279,7 @@ def unique_path(
         stem = sanitize_file_name(stem)
     date_sep, n_sep = seps
     if add_date:
-        stem = f'{stem}{date_sep}{datetime.now().strftime("%Y-%m-%d")}'
+        stem = f'{stem}{date_sep}{date.today().isoformat()}'
     name = stem + suffix
     while (path := parent.joinpath(name)).exists():
         name = f'{stem}{n_sep}{n}{suffix}'
