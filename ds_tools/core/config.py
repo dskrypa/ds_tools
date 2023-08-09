@@ -9,10 +9,11 @@ The :class:`ConfigSection` class is intended to be used as a base class for conf
 from __future__ import annotations
 
 from collections import ChainMap
-from typing import Union, TypeVar, Callable, Iterable, Any, Mapping, Generic, Type, Collection, overload
+from typing import Union, TypeVar, Callable, Iterable, Any, Mapping, Generic, Type, Collection, Iterator, overload
 
 __all__ = [
-    'ConfigItem', 'NestedSection', 'ConfigSection', 'ConfigException', 'InvalidConfigError', 'MissingConfigItemError'
+    'ConfigItem', 'NestedSection', 'ConfigSection',
+    'ConfigException', 'InvalidConfigError', 'ConfigTypeError', 'MissingConfigItemError',
 ]
 
 T = TypeVar('T')
@@ -76,6 +77,12 @@ class ConfigItem(Generic[CV, DV]):
 
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__}({self.default!r}, type={self.type!r})>'
+
+
+# TODO: Add dynamic config item, similar to @property decorator, where users can define a getter and/or a setter by
+#  decorating a method within a ConfigSection.
+#  For getter-only ones, a default may be provided, and the method may raise UseDefault to use that default value?
+#  For setter-only ones, the method would replace the `type`, so it would need to return the value to store
 
 
 class NestedSection(ConfigItem):
@@ -163,10 +170,12 @@ def _config_map(
 ):
     if isinstance(config, ConfigSection):
         config = config.__dict__
+    elif config is not None and not isinstance(config, Mapping):
+        raise ConfigTypeError(f'expected a dict or other mapping, but found {config.__class__.__name__}: {config!r}')
 
     if config_map := ChainMap(config, kwargs) if config and kwargs else (config or kwargs):
         if check_keys and section._strict_config_keys_ and (bad := set(config_map) - section._config_item_keys_):
-            raise InvalidConfigError(f'Invalid configuration - unsupported options: {", ".join(sorted(bad))}')
+            raise InvalidConfigError('unsupported options: ' + ', '.join(sorted(bad)))
         if only_known:
             return _filter(section, config_map)
     return config_map
@@ -207,12 +216,13 @@ class ConfigSection(metaclass=ConfigMeta):
             self.__dict__.clear()
 
         if config_map := _config_map(self, config, kwargs, check_keys=not only_known, only_known=only_known):
-            for key, val in config_map.items():
-                if only_known and key in self._nested_config_sections_:
-                    # Note: `clear` will only ever be True here due to how this is called by update_known
-                    getattr(self, key).__init(val, only_known=only_known, clear=clear)
-                else:
-                    setattr(self, key, val)
+            with _ConfigIter(self, config_map) as config_iter:
+                for key in config_iter:
+                    if only_known and key in self._nested_config_sections_:
+                        # Note: `clear` will only ever be True here due to how this is called by update_known
+                        getattr(self, key).__init(config_map[key], only_known=only_known, clear=clear)
+                    else:
+                        setattr(self, key, config_map[key])
 
     # region Update
 
@@ -256,17 +266,21 @@ class ConfigSection(metaclass=ConfigMeta):
             keys = set(config_map)
             if nested_keys := keys.intersection(self._nested_config_sections_):
                 if self._merge_nested_sections_:
-                    for key in nested_keys:
-                        getattr(self, key).__update(config_map[key], check_keys=check_keys, only_known=only_known)
+                    with _ConfigIter(self, nested_keys) as config_iter:
+                        for key in config_iter:
+                            getattr(self, key).__update(config_map[key], check_keys=check_keys, only_known=only_known)
                 else:
-                    for key in nested_keys:
-                        getattr(self, key).__init(config_map[key], only_known=only_known, clear=True)
+                    with _ConfigIter(self, nested_keys) as config_iter:
+                        for key in config_iter:
+                            getattr(self, key).__init(config_map[key], only_known=only_known, clear=True)
             if item_keys := keys - nested_keys:
-                for key in item_keys:
-                    setattr(self, key, config_map[key])
+                with _ConfigIter(self, item_keys) as config_iter:
+                    for key in config_iter:
+                        setattr(self, key, config_map[key])
         else:
-            for key, val in config_map.items():
-                setattr(self, key, val)
+            with _ConfigIter(self, config_map) as config_iter:
+                for key in config_iter:
+                    setattr(self, key, config_map[key])
 
     # endregion
 
@@ -362,6 +376,28 @@ class ConfigSection(metaclass=ConfigMeta):
     as_dict = _as_dict_
 
 
+class _ConfigIter:
+    """Context manager that wraps key iteration for section initialization & updates to enrich errors with more info"""
+    __slots__ = ('section', 'keys', 'key')
+
+    def __init__(self, section: ConfigSection, keys: Strs):
+        self.section = section
+        self.keys = keys
+
+    def __enter__(self):
+        return self
+
+    def __iter__(self) -> Iterator[str]:
+        for key in self.keys:
+            self.key = key
+            yield key
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if isinstance(exc_val, ConfigTypeError):
+            exc_val.update_key(self.key, self.section._config_key_delimiter_)
+        return False
+
+
 # region Exceptions
 
 
@@ -372,9 +408,37 @@ class ConfigException(Exception):
 class InvalidConfigError(ConfigException):
     """Raised when invalid config items are provided when initializing a ConfigSection"""
 
+    def __init__(self, message: str):
+        self.message = message
+
+    def __str__(self) -> str:
+        return f'Invalid configuration - {self.message}'
+
+
+class ConfigTypeError(InvalidConfigError, TypeError):
+    """Raised when an invalid type is provided for a config item value"""
+
+    def __init__(self, message: str, key: str = None):
+        super().__init__(message)
+        self.key = key
+
+    def update_key(self, key: str, delim: str = None):
+        if self.key:
+            self.key = f'{key!r}{delim or "."}{self.key}'
+        else:
+            self.key = repr(key)
+
+    def __str__(self) -> str:
+        info = f' for key={self.key}' if self.key else ''
+        return f'Invalid configuration{info} - {self.message}'
+
 
 class MissingConfigItemError(ConfigException):
     """Raised if a required config item is accessed when no value was provided for it"""
+
+
+# class UseDefault(ConfigException):
+#     """Used by dynamic config items to signal that the default value should be used"""
 
 
 # endregion

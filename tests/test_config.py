@@ -4,7 +4,8 @@ from unittest import TestCase, main
 
 from ds_tools.caching.decorators import register_cached_property_class, unregister_cached_property_class
 from ds_tools.caching.decorators import ClearableCachedPropertyMixin
-from ds_tools.core.config import ConfigItem, ConfigSection, NestedSection, MissingConfigItemError, InvalidConfigError
+from ds_tools.core.config import ConfigItem, ConfigSection, NestedSection
+from ds_tools.core.config import MissingConfigItemError, InvalidConfigError, ConfigTypeError
 
 
 class ConfigTest(TestCase):
@@ -123,7 +124,7 @@ class ConfigTest(TestCase):
         class Config(ConfigSection):
             foo = ConfigItem(123, type=int)
 
-        with self.assertRaises(InvalidConfigError):
+        with self.assertRaisesRegex(InvalidConfigError, 'Invalid configuration - unsupported options:'):
             Config({'bar': 1})
         with self.assertRaises(InvalidConfigError):
             Config({'foo': 1}, bar=2)
@@ -371,6 +372,8 @@ class ConfigTest(TestCase):
         self.assertEqual({'a': 10, 'b': {'c': {'f': 50, 'g': 6}, 'd': 30, 'e': 4}}, config.as_dict())
         config.update_known({'b': {'c': {'g': 60, 'h': 70}, 'e': 40}, 'f': 500})
         self.assertEqual({'a': 10, 'b': {'c': {'f': 50, 'g': 60}, 'd': 30, 'e': 40}}, config.as_dict())
+        with self.assertRaisesRegex(ConfigTypeError, "Invalid configuration for key='b'.'c' - expected"):
+            AConfig({'b': {'c': ['x', 'y', 'z']}})
 
     def test_3_nested_update_known_no_merge(self):
         class CConfig(ConfigSection):
@@ -390,6 +393,20 @@ class ConfigTest(TestCase):
         self.assertEqual({'a': 10, 'b': {'c': {'f': 50, 'g': 6}, 'd': 30, 'e': 4}}, config.as_dict())
         config.update_known({'b': {'c': {'g': 60, 'h': 70}, 'e': 40}, 'f': 500})
         self.assertEqual({'a': 10, 'b': {'c': {'f': 5, 'g': 60}, 'd': 3, 'e': 40}}, config.as_dict())
+        with self.assertRaisesRegex(ConfigTypeError, "Invalid configuration for key='b'.'c' - expected"):
+            AConfig({'b': {'c': ['x', 'y', 'z']}})
+
+    def test_bad_nested_section_value(self):
+        for strict in (True, False):
+            with self.subTest(strict=strict):
+                class BConfig(ConfigSection, strict=strict):
+                    c = ConfigItem(None)
+
+                class AConfig(ConfigSection):
+                    b = NestedSection(BConfig)
+
+                with self.assertRaisesRegex(ConfigTypeError, "Invalid configuration for key='b' - expected"):
+                    AConfig({'b': ['x', 'y', 'z']})
 
 
 if __name__ == '__main__':
