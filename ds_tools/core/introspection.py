@@ -5,8 +5,7 @@ Introspection utilities that build upon the built-in introspection module.
 """
 
 import re
-from contextlib import suppress
-from inspect import Signature, Parameter, _empty, stack, getsourcefile  # noqa
+from inspect import Signature, Parameter, stack, getsourcefile
 from pathlib import Path
 
 __all__ = ['arg_vals_with_defaults', 'split_arg_vals_with_defaults', 'insert_kwonly_arg', 'get_caller_script']
@@ -30,6 +29,7 @@ def arg_vals_with_defaults(sig: Signature, *args, **kwargs):
     """
     vals = sig.bind(*args, **kwargs).arguments
     new_args = {}
+    _empty = Parameter.empty
     for name, param in sig.parameters.items():
         try:
             new_args[name] = vals[name]
@@ -55,28 +55,36 @@ def split_arg_vals_with_defaults(sig, *args, **kwargs):
     :param kwargs: Keyword args explicitly provided for the function with the given signature
     :return tuple: (List of args that can be provided as positional, Mapping of arg:value)
     """
-    vals = sig.bind(*args, **kwargs).arguments
+    return _split_arg_vals_with_defaults(sig, args, kwargs)
+
+
+def _split_arg_vals_with_defaults(
+    sig: Signature,
+    args: tuple,
+    kwargs: dict,
+    *,
+    _empty=Parameter.empty,
+    _var_kw=Parameter.VAR_KEYWORD,
+    _var_pos=Parameter.VAR_POSITIONAL,
+    _pos=(Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD),
+    _no_defaults=(Parameter.VAR_KEYWORD, Parameter.VAR_POSITIONAL),
+):
+    get_val = sig.bind(*args, **kwargs).arguments.get
     args_out = []
     kwargs_out = {}
     for name, param in sig.parameters.items():
-        if param.kind == Parameter.VAR_KEYWORD:
-            with suppress(KeyError):
-                kwargs_out.update(vals[name])
-        elif param.kind == Parameter.VAR_POSITIONAL:
-            with suppress(KeyError):
-                args_out.extend(vals[name])
-        elif param.kind in (Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD):
-            try:
-                args_out.append(vals[name])
-            except KeyError:
-                if param.default is not _empty:
-                    args_out.append(param.default)
-        else:
-            try:
-                kwargs_out[name] = vals[name]
-            except KeyError:
-                if param.default is not _empty:
-                    kwargs_out[name] = param.default
+        kind = param.kind
+        if (val := get_val(name, _empty if kind in _no_defaults else param.default)) is _empty:
+            continue
+        elif kind in _pos:
+            args_out.append(val)
+        elif kind == _var_pos:
+            args_out.extend(val)
+        elif kind == _var_kw:
+            kwargs_out.update(val)
+        else:  # param.kind is Parameter.KEYWORD_ONLY
+            kwargs_out[name] = val
+
     return args_out, kwargs_out
 
 
@@ -131,7 +139,7 @@ def insert_kwonly_arg(func, param, description, param_type='', sig=None):
                     break
 
         param_doc = '{}:param {}{}{}: {}'.format(indent, param_type, ' ' if param_type else '', param.name, description)
-        if param.default is not _empty:
+        if param.default is not Parameter.empty:
             param_doc += f' (default: {param.default})'
         doc.insert(doc_pos, param_doc)
         func.__doc__ = '\n'.join(doc)
