@@ -19,7 +19,7 @@ try:
 except ImportError:
     Kakasi = None
 
-from ..caching import cached
+from ..caching.decorate import cached
 from ..core.decorate import classproperty
 from ..utils.text_processing import chars_by_category, strip_punctuation
 from .hangul import hangul_romanized_permutations, matches_hangul_permutation

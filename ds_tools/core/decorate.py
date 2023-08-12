@@ -2,13 +2,15 @@
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import logging
-import time
-import traceback
 from functools import wraps, update_wrapper, partial
 from operator import attrgetter
 from threading import Lock
-from typing import Callable, Union
+from time import sleep, monotonic
+from traceback import format_stack
+from typing import Callable, Union, Type, ParamSpec, TypeVar, Generic
 
 from .itertools import partitioned
 
@@ -17,6 +19,9 @@ __all__ = [
     'trace_entry_and_dump_stack', 'primed_coroutine', 'basic_coroutine', 'trace_entry_and_exit'
 ]
 log = logging.getLogger(__name__)
+
+P = ParamSpec('P')
+T = TypeVar('T')
 
 
 class cached_property_or_err:
@@ -166,9 +171,9 @@ def partitioned_exec(n: Union[int, str, attrgetter], container_factory, merge_fn
 def trace_entry(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        arg_str = ', '.join(repr(v) if isinstance(v, str) else str(v) for v in args)
-        kwarg_str = ', '.join('{}={}'.format(k, repr(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
-        print('{}({}, {})'.format(func.__name__, arg_str, kwarg_str))
+        arg_str = ', '.join(_repr_or_str(v) for v in args)
+        kwarg_str = ', '.join(f'{k}={_repr_or_str(v)}' for k, v in kwargs.items())
+        print(f'{func.__name__}({arg_str}, {kwarg_str})')
         return func(*args, **kwargs)
     return wrapper
 
@@ -176,11 +181,11 @@ def trace_entry(func):
 def trace_entry_and_exit(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        arg_str = ', '.join(repr(v) if isinstance(v, str) else str(v) for v in args)
-        kwarg_str = ', '.join('{}={}'.format(k, repr(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
-        print('{}({}, {})'.format(func.__name__, arg_str, kwarg_str))
+        arg_str = ', '.join(_repr_or_str(v) for v in args)
+        kwarg_str = ', '.join(f'{k}={_repr_or_str(v)}' for k, v in kwargs.items())
+        print(f'{func.__name__}({arg_str}, {kwarg_str})')
         val = func(*args, **kwargs)
-        print('finished {}({}, {})'.format(func.__name__, arg_str, kwarg_str))
+        print(f'finished {func.__name__}({arg_str}, {kwarg_str})')
         return val
     return wrapper
 
@@ -188,8 +193,8 @@ def trace_entry_and_exit(func):
 def trace_exit(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        arg_str = ', '.join(repr(v) if isinstance(v, str) else str(v) for v in args)
-        kwarg_str = ', '.join('{}={}'.format(k, repr(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
+        arg_str = ', '.join(_repr_or_str(v) for v in args)
+        kwarg_str = ', '.join(f'{k}={_repr_or_str(v)}' for k, v in kwargs.items())
         val = func(*args, **kwargs)
         print(f'{func.__name__}(\n    {arg_str}, {kwarg_str}\n) => {val!r}')
         return val
@@ -199,14 +204,17 @@ def trace_exit(func):
 def trace_entry_and_dump_stack(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        arg_str = ', '.join(repr(v) if isinstance(v, str) else str(v) for v in args)
-        kwarg_str = ', '.join('{}={}'.format(k, repr(v) if isinstance(v, str) else str(v)) for k, v in kwargs.items())
-        print('{}({}, {})\n{}'.format(func.__name__, arg_str, kwarg_str, ''.join(traceback.format_stack())))
+        arg_str = ', '.join(_repr_or_str(v) for v in args)
+        kwarg_str = ', '.join(f'{k}={_repr_or_str(v)}' for k, v in kwargs.items())
+        print(f'{func.__name__}({arg_str}, {kwarg_str})\n' + ''.join(format_stack()))
         val = func(*args, **kwargs)
-        print('finished {}({}, {})'.format(func.__name__, arg_str, kwarg_str))
+        print(f'finished {func.__name__}({arg_str}, {kwarg_str})')
         return val
     return wrapper
 
+
+def _repr_or_str(value) -> str:
+    return repr(value) if isinstance(value, str) else str(value)
 
 # endregion
 
@@ -214,9 +222,9 @@ def trace_entry_and_dump_stack(func):
 def timed(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        start = time.monotonic()
+        start = monotonic()
         r = func(*args, **kwargs)
-        end = time.monotonic()
+        end = monotonic()
         print(f'{func.__name__} ran in {end - start} s')
         return r
     return wrapper
@@ -231,65 +239,63 @@ def rate_limited(interval: Union[float, str, attrgetter] = 0, log_lvl: int = log
     if is_attrgetter:
         interval = attrgetter(interval) if isinstance(interval, str) else interval
 
+    fn_type = 'method' if is_attrgetter else 'function'
+
     def decorator(func):
         last_call = 0
         lock = Lock()
-        log_fmt = 'Rate limited {} {!r} is being delayed {{:,.3f}} seconds'.format(
-            'method' if is_attrgetter else 'function', func.__name__
-        )
 
         @wraps(func)
         def wrapper(*args, **kwargs):
-            nonlocal last_call, lock
+            nonlocal last_call
             obj_interval = interval(args[0]) if is_attrgetter else interval
             with lock:
-                elapsed = time.monotonic() - last_call
+                elapsed = monotonic() - last_call
                 if elapsed < obj_interval:
                     wait = obj_interval - elapsed
-                    log.log(log_lvl, log_fmt.format(wait))
-                    time.sleep(wait)
-                last_call = time.monotonic()
+                    log.log(log_lvl, f'Rate limited {fn_type} {func.__name__!r} is being delayed {wait:,.3f} seconds')
+                    sleep(wait)
+                last_call = monotonic()
                 return func(*args, **kwargs)
         return wrapper
     return decorator
 
 
-def retry_on_exception(retries=0, delay=0, *exception_classes, warn=True):
+def retry_on_exception(retries: int = 0, delay: float = 0, *exception_classes: Type[Exception], warn: bool = True):
     """
     Decorator to wrap function with a callable that waits and retries when the given exceptions are encountered
 
-    :param int retries: Number of times to retry; 0 (default) is equivalent to not using this wrapper
-    :param float delay: Number of seconds to wait between an exception and a retry
+    :param retries: Number of times to retry; 0 (default) is equivalent to not using this wrapper
+    :param delay: Number of seconds to wait between an exception and a retry
     :param exception_classes: Exceptions to expect and gracefully retry upon catching
-    :param bool warn: [KW-only] Log a warning when an exception is encountered
+    :param warn: [KW-only] Log a warning when an exception is encountered
     :return: Decorator function that returns the wrapped/decorated function
     """
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            nonlocal retries, delay, warn, exception_classes
+            remaining = retries
             last_action = 0
-            while retries >= 0:
-                retries -= 1
-                remaining = delay - (time.monotonic() - last_action)
-                if remaining > 0:
-                    time.sleep(remaining)
-                last_action = time.monotonic()
+            while remaining >= 0:
+                remaining -= 1
+                if (sleep_time := delay - (monotonic() - last_action)) > 0:
+                    sleep(sleep_time)
+                last_action = monotonic()
                 try:
                     return func(*args, **kwargs)
                 except exception_classes as e:
-                    if retries >= 0:
+                    if remaining >= 0:
                         if warn:
                             groups = (map(repr, args), (f'{k}={v!r}' for k, v in kwargs.items()))
                             fn_args = ', '.join(arg for group in groups for arg in group)
                             log.warning(f'Error calling {func.__name__}({fn_args}): {e}; retrying in {delay}s')
                     else:
-                        raise e
+                        raise
         return wrapper
     return decorator
 
 
-class flex_method:
+class flex_method(Generic[P, T]):
     """
     A decorator for a method that can be used as either a classmethod or a normal method.
 
@@ -297,20 +303,20 @@ class flex_method:
     same method is used for both.
     """
 
-    def __init__(self, func: Callable):
+    def __init__(self, func: Callable[P, T]):
         self.inst_func = self.cls_func = func
         update_wrapper(self, func)
 
-    def __get__(self, instance, cls):
+    def __get__(self, instance, cls) -> Callable[P, T]:
         if instance is None:
             return partial(self.cls_func, cls)
         else:
             return partial(self.inst_func, instance)
 
-    def classmethod(self, func: Callable):
+    def classmethod(self, func: Callable[P, T]) -> flex_method[P, T]:
         self.cls_func = func
         return self
 
-    def method(self, func: Callable):
+    def method(self, func: Callable[P, T]) -> flex_method[P, T]:
         self.inst_func = func
         return self

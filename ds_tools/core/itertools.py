@@ -6,7 +6,7 @@ Functions that expand upon those in the built-in itertools module.
 
 from collections.abc import Mapping, MutableMapping
 from copy import deepcopy
-from itertools import chain, zip_longest
+from itertools import zip_longest
 from typing import Iterable, Iterator, TypeVar
 
 __all__ = ['chunked', 'flatten_mapping', 'itemfinder', 'kwmerge', 'merge', 'partitioned']
@@ -68,9 +68,11 @@ def kwmerge(*params, **kwargs):
     :return dict: Merged values
     """
     merged = {}
-    for p in chain(params, (kwargs,)):
-        if p is not None:
-            merged.update(p)
+    for p in params:
+        if p:
+            merged |= p
+    if kwargs:
+        merged |= kwargs
     return merged
 
 
@@ -130,12 +132,12 @@ def vmap(func, mapping):
     return obj
 
 
-def flatten_mapping(mapping, delimiter='.'):
+def flatten_mapping(mapping, delimiter: str = '.'):
     flattened = type(mapping)()
     for key, val in mapping.items():
         if isinstance(val, Mapping):
             for subkey, subval in flatten_mapping(val).items():
-                flattened['{}{}{}'.format(key, delimiter, subkey)] = subval
+                flattened[f'{key}{delimiter}{subkey}'] = subval
         else:
             flattened[key] = val
     return flattened
