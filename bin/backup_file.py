@@ -25,7 +25,7 @@ class BackupUtil(Command, description='File Backup Tool'):
     def _init_command_(self):
         from ds_tools.logging import init_logging
 
-        init_logging(self.verbose, log_path=None)
+        init_logging(self.verbose)
 
     def main(self):
         from ds_tools.output.prefix import LoggingPrefix

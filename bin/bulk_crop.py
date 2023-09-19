@@ -16,8 +16,12 @@ class BulkCropper(Command, description='Crop multiple images with the same dimen
     paths = Positional(nargs='+', type=IPath(type='file', exists=True), help='Path to an image file')
 
     with ParamGroup('Crop'):
-        position = Option('-p', default=(0, 0), type=int, nargs=2, help='Top left corner x, y coordinates')
         size = Option('-s', required=True, type=int, nargs=2, help='Size (width, height) of the area to crop to')
+        with ParamGroup('Position', mutually_exclusive=True):
+            position = Option('-p', type=int, nargs=2, help='Top left corner x, y coordinates')
+            # center = Flag(  # TODO
+            #     '-c', help='Select a section from the center with the same aspect ratio as the specified size'
+            # )
 
     with ParamGroup('Output'):
         output = Option('-o', type=IPath(type='dir'), help='Output directory (default: same directory as original)')
@@ -40,7 +44,7 @@ class BulkCropper(Command, description='Crop multiple images with the same dimen
         if self.no_suffix and not dst_dir:
             raise ValueError('--no_suffix / -n may only be used if --output / -o is also specified')
 
-        x, y = self.position
+        x, y = self.position or (0, 0)
         width, height = self.size
         box = (x, y, x + width, y + height)
         suffix = '' if self.no_suffix else f'{x}x{y}+{width}x{height}'
