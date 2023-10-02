@@ -564,12 +564,21 @@ class WoOperationMode(Feature, code=0xDE, name='wo operation mode'):
 
 # region Model-Specific Overrides
 
-# TODO: Use a config file to make it easier?
+# TODO: Use a config file to make it easier?  Input-independent keys?  Common values for certain brands?
 
+# region Samsung
+
+InputSource('G55T_CxxG5xT (DP)', {0x06: 'HDMI-1', 0x09: 'DisplayPort-1'})
 InputSource('CRG9_C49RG9xSS (DP)', {0x06: 'HDMI-1', 0x09: 'DisplayPort-1'})
 PowerMode('CRG9_C49RG9xSS (DP)', {0x01: 'On', 0x04: 'Off'})
 
+# endregion
+
+# region LG
+
 InputSource('LG FULLHD(HDMI)', {0x01: 'VGA-1', 0x04: 'HDMI-1'})
 PowerMode('LG FULLHD(HDMI)', {0x01: 'On', 0x04: 'Off'})
+
+# endregion
 
 # endregion
