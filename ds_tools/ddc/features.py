@@ -501,6 +501,8 @@ class V2OutputSelect(Feature, code=0xD0, name='v2 output select'):
 
 
 class PowerMode(Feature, code=0xD6, name='power mode'):
+    # DPM: (Could not find info)
+    # DPMS = Display Power Management Signaling - https://en.wikipedia.org/wiki/VESA_Display_Power_Management_Signaling
     value_names = {
         0x01: 'DPM: On,  DPMS: Off',
         0x02: 'DPM: Off, DPMS: Standby',

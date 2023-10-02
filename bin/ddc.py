@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from cli_command_parser import Command, SubCommand, ParamGroup, Positional, Option, Flag, Counter, PassThru, main
+from cli_command_parser import Command, SubCommand, ParamGroup, Positional, Option, Flag, Counter, main
 
 from ds_tools.__version__ import __author_email__, __version__  # noqa
 from ds_tools.ddc import PlatformVcp
@@ -79,8 +79,8 @@ class TurnOff(DDC, help='Turn off the specified monitors'):
 
     def main(self):
         for monitor in PlatformVcp.get_monitors(*self.monitor):
-            feature = monitor.get_feature(0xD6)
-            monitor[feature] = value = 0x4
+            feature = monitor.get_feature(0xD6)     # 0xD6 = PowerMode
+            monitor[feature] = value = 0x4          # 0x04 = DPM: Off, DPMS: Off
             print(f'monitors[{monitor.n}][{feature}] = 0x{value:02X}')
 
 

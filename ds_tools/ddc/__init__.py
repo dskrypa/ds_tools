@@ -1,5 +1,5 @@
 """
-Library for communicating with monitors via DDC
+Library for communicating with monitors via DDC (Display Data Channel)
 
 :author: Doug Skrypa
 """
