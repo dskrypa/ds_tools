@@ -101,6 +101,9 @@ class Feature:
 FeatureOrId = Union[str, int, Feature]
 
 
+# region Feature Classes
+
+
 class InputSource(Feature, code=0x60, name='input'):
     value_names = {
         0x01: 'VGA-1',
@@ -555,8 +558,16 @@ class WoOperationMode(Feature, code=0xDE, name='wo operation mode'):
     }
 
 
+# endregion
+
+# region Model-Specific Overrides
+
+# TODO: Use a config file to make it easier?
+
 InputSource('CRG9_C49RG9xSS (DP)', {0x06: 'HDMI-1', 0x09: 'DisplayPort-1'})
 PowerMode('CRG9_C49RG9xSS (DP)', {0x01: 'On', 0x04: 'Off'})
 
 InputSource('LG FULLHD(HDMI)', {0x01: 'VGA-1', 0x04: 'HDMI-1'})
 PowerMode('LG FULLHD(HDMI)', {0x01: 'On', 0x04: 'Off'})
+
+# endregion

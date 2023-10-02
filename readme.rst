@@ -19,7 +19,7 @@ Regardless of OS, setuptools is required::
 
 All of the other requirements are handled in setup.py, which will be run when you install like this::
 
-    $ pip install git+git://github.com/dskrypa/ds_tools
+    $ pip install git+https://github.com/dskrypa/ds_tools
 
 
 Clone & Install Requirements
