@@ -62,6 +62,8 @@ def init_logging(
     file_dir: PathLike | None = None,
     filename_fmt: str = '{prog}.{user}.{time}{uniq}.log',
     file_handler_opts: Mapping[str, Any] = None,
+    prog_from_sys_argv: bool = False,
+    cleanup_old_files: bool = True,
     fix_sigpipe: bool = True,
     patch_emit: str = 'quiet',
     replace_handlers: bool = True,
@@ -127,6 +129,10 @@ def init_logging(
     :param file_handler_opts: Keyword arguments to pass to :class:`TimedRotatingFileHandler
       <logging.handlers.TimedRotatingFileHandler>`.  Overrides all arguments specified by default, except the log path.
       Defaults to ``{'when': 'midnight', 'backupCount': 7, 'encoding': 'utf-8'}``
+    :param prog_from_sys_argv: If True, and logging to file with an automatically generated name is enabled, derive the
+      value for ``prog`` from ``sys.argv`` (default: derive the value by inspecting the call stack)
+    :param cleanup_old_files: If logging to file with an automatically generated name is enabled, then old log files
+      with matching names will be cleaned up by default.  Set to ``False`` to disable.
     :param fix_sigpipe: Restores the default handler for SIGPIPE so that a closed pipe (such as when piping
       output to ``| head``) will not cause an exception.
     :param patch_emit: Patches :meth:`logging.StreamHandler.emit` to fix closed pipe behavior on Windows (such
@@ -187,7 +193,12 @@ def init_logging(
             logging.getLogger(name).setLevel(lvl)
 
     if log_path is not None:
-        log_path = _choose_log_path(file_dir, filename_fmt) if log_path is _NotSet else Path(log_path).expanduser()
+        if log_path is _NotSet:
+            log_path = _choose_log_path(
+                file_dir, filename_fmt, cleanup_old=cleanup_old_files, prog_from_sys_argv=prog_from_sys_argv
+            )
+        else:
+            log_path = Path(log_path).expanduser()
         _add_file_handler(loggers, log_path, date_fmt, file_fmt, file_lvl, file_handler_opts, file_perm)
 
     if capture_warnings:
@@ -281,15 +292,38 @@ def _add_stream_handlers(
             logger.addHandler(handler)
 
 
-def _choose_log_path(file_dir: PathLike, filename_fmt: str, cleanup_old: bool = True) -> Path:
+def _find_prog_name(use_sys_argv: bool = False) -> str:
+    if use_sys_argv:
+        try:
+            return Path(sys.argv[0]).stem
+        except (IndexError, TypeError, AttributeError):
+            pass
+
     import inspect
+
+    # Traceback = namedtuple('Traceback', 'filename lineno function code_context index')
+    # FrameInfo = namedtuple('FrameInfo', ('frame',) + Traceback._fields)
+    stack = inspect.stack()
+    top_file = stack[-1].filename
+    if not top_file.startswith('<'):
+        return Path(top_file).stem
+    # stack[0] = this function
+    # stack[1] = _choose_log_path
+    # stack[2] = init_logging
+    # stack[3] => is therefore presumably from the file that called init_logging
+    return Path(stack[3].filename).stem
+
+
+def _choose_log_path(
+    file_dir: PathLike, filename_fmt: str, cleanup_old: bool = True, prog_from_sys_argv: bool = False
+) -> Path:
     import time
     from getpass import getuser
 
     log_dir = Path(file_dir) if file_dir else _get_default_user_log_dir()
     try:
-        prog = Path(inspect.getsourcefile(inspect.stack()[-1][0])).stem
-    except (TypeError, AttributeError):
+        prog = _find_prog_name(prog_from_sys_argv)
+    except (TypeError, AttributeError, IndexError):
         prog = f'{Path(__file__).stem}_interactive'
 
     name_parts = {
@@ -315,7 +349,7 @@ def _cleanup_old_log_files(log_dir: Path, name_fmt: str, name_parts: dict[str, s
     import time
     from stat import S_ISREG
 
-    name_parts.update(time=r'(\d+)', uniq=r'\-?\d*', pid='\d+', ppid='\d+')
+    name_parts.update(time=r'(\d+)', uniq=r'\-?\d*', pid=r'\d+', ppid=r'\d+')
     use_name_time = '{time}' in name_fmt
     escaped_fmt = re.escape(name_fmt).replace('\\{', '{').replace('\\}', '}')
     # Note: If this code survives beyond year 2100, the following date suffix pattern will need to be updated!

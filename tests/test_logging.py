@@ -21,7 +21,7 @@ class LoggingInitTest(unittest.TestCase):
         this_file_name = get_expected_name()
         with tempfile.TemporaryDirectory() as tmp_dir:
             log_path = init_logging(filename_fmt='{prog}.log', file_dir=tmp_dir, names='test', streams=False)
-            self.assertEqual(Path(log_path).name, '{}.log'.format(this_file_name))
+            self.assertEqual(Path(log_path).name, f'{this_file_name}.log')
             self._cleanup_handlers('test')
 
     def test_log_path_uniq(self):
@@ -31,8 +31,8 @@ class LoggingInitTest(unittest.TestCase):
             log_path_2 = init_logging(filename_fmt='{prog}{uniq}.log', file_dir=tmp_dir, names='test2', streams=False)
             log_path_3 = init_logging(filename_fmt='{prog}{uniq}.log', file_dir=tmp_dir, names='test3', streams=False)
             self.assertEqual(Path(log_path_1).stem, this_file_name)
-            self.assertEqual(Path(log_path_2).stem, '{}-0'.format(this_file_name))
-            self.assertEqual(Path(log_path_3).stem, '{}-1'.format(this_file_name))
+            self.assertEqual(Path(log_path_2).stem, f'{this_file_name}-0')
+            self.assertEqual(Path(log_path_3).stem, f'{this_file_name}-1')
             self._cleanup_handlers('test1', 'test2', 'test3')
 
 

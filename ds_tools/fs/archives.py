@@ -18,6 +18,7 @@ from functools import cached_property
 from gzip import GzipFile
 from lzma import LZMAFile, LZMAError
 from pathlib import Path
+from sys import version_info
 from tarfile import TarFile
 from tempfile import TemporaryDirectory
 from typing import Union, Optional, Iterable, Iterator, Type, TypeVar
@@ -174,7 +175,7 @@ class ArchiveFile(ABC, Finalizable, close_attr='file'):
 
     @property
     @abstractmethod
-    def needs_password(self):
+    def needs_password(self) -> bool:
         raise NotImplementedError
 
 
@@ -187,7 +188,7 @@ class RarArchiveFile(ArchiveFile, fcls=RarFile, ext='rar'):
         patch_rarfile()
 
     @property
-    def needs_password(self):
+    def needs_password(self) -> bool:
         return self.file.needs_password()
 
     def _extract_all(self, path: Union[Path, str], password: str = None, pw_n: int = None, pw_count: int = None):
@@ -205,7 +206,7 @@ class SevenZipArchiveFile(ArchiveFile, fcls=SevenZipFile, ext='7z'):
     _pw_required = None
 
     @cached_property
-    def file(self):
+    def file(self) -> SevenZipFile | None:
         try:
             file = SevenZipFile(self.path)
         except PasswordRequired:
@@ -216,7 +217,7 @@ class SevenZipArchiveFile(ArchiveFile, fcls=SevenZipFile, ext='7z'):
             return file
 
     @property
-    def needs_password(self):
+    def needs_password(self) -> bool:
         if self._pw_required is None and (file := self.file):
             self._pw_required = file.needs_password()  # noqa
             if self._pw_required:
@@ -239,20 +240,23 @@ class SevenZipArchiveFile(ArchiveFile, fcls=SevenZipFile, ext='7z'):
 
 class TarArchiveFile(ArchiveFile, fcls=TarFile, exts=('tar', 'tgz', 'tar.gz', 'tbz2', 'tar.bz2', 'txz', 'tar.xz')):
     @cached_property
-    def file(self):
+    def file(self) -> TarFile:
         return TarFile.open(self.path)
 
     @property
-    def needs_password(self):
+    def needs_password(self) -> bool:
         return False
 
     def _extract_all(self, path: Union[Path, str], password: str = None, pw_n: int = None, pw_count: int = None):
-        self.file.extractall(path)
+        if version_info.minor >= 12:
+            self.file.extractall(path, filter='data')  # noqa
+        else:
+            self.file.extractall(path)
 
 
 class ZipArchiveFile(ArchiveFile, fcls=ZipFile, ext='zip'):
     @property
-    def needs_password(self):
+    def needs_password(self) -> bool:
         return any(file.flag_bits & 0x1 for file in self.file.filelist)
 
     def _extract_all(self, path: Union[Path, str], password: str = None, pw_n: int = None, pw_count: int = None):
@@ -271,7 +275,7 @@ class ZipArchiveFile(ArchiveFile, fcls=ZipFile, ext='zip'):
 
 class _SingleArchiveFile(ArchiveFile, ABC):
     @property
-    def needs_password(self):
+    def needs_password(self) -> bool:
         return False
 
     def _extract_all(self, path: Union[Path, str], password: str = None, pw_n: int = None, pw_count: int = None):

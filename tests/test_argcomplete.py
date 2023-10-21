@@ -24,8 +24,8 @@ def do_nothing():
         pass
 
 
-@patch('argcomplete.mute_stderr', do_nothing)
-@patch('argcomplete.mute_stdout', do_nothing)
+@patch('argcomplete.io.mute_stderr', do_nothing)
+@patch('argcomplete.io.mute_stdout', do_nothing)
 class ArgCompletionTest(TestCaseBase):
     def setUp(self):
         super().setUp()

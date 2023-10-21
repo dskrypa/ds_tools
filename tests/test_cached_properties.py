@@ -4,6 +4,7 @@ import functools as _functools
 from abc import ABC, abstractmethod
 from concurrent.futures import as_completed, ThreadPoolExecutor
 from itertools import count
+from sys import version_info
 from time import sleep, monotonic
 from unittest import TestCase, main
 from unittest.mock import patch
@@ -99,15 +100,23 @@ class CachedPropertyTest(TestCase):
         self.assertIsInstance(Foo.bar, CachedProperty)
 
     def test_reassign_name_error(self):
-        with self.assertRaisesRegex(RuntimeError, 'Error calling __set_name__ on') as exc_ctx:
+        if version_info.minor >= 12:
+            exc_cls = TypeError
+            msg = 'Cannot assign the same CachedProperty to two different'
+        else:
+            exc_cls = RuntimeError
+            msg = 'Error calling __set_name__ on'
+
+        with self.assertRaisesRegex(exc_cls, msg) as exc_ctx:
             class Foo:
                 @cached_property
                 def bar(self):
                     return 1
                 baz = bar  # this triggers the expected exception
 
-        original_exc = exc_ctx.exception.__cause__
-        self.assertRegex(str(original_exc), 'Cannot assign the same')
+        if version_info.minor < 12:
+            original_exc = exc_ctx.exception.__cause__
+            self.assertRegex(str(original_exc), 'Cannot assign the same')
 
     def test_reassign_same_name_ok(self):
         class Foo:
