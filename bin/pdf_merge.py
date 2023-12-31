@@ -3,7 +3,7 @@
 import logging
 
 from cli_command_parser import Command, Positional, Option, Counter, main
-from PyPDF2 import PdfFileMerger, PdfFileReader
+from PyPDF2 import PdfMerger, PdfReader
 
 from ds_tools.__version__ import __author_email__, __version__  # noqa
 
@@ -21,11 +21,11 @@ class PDFMerger(Command, description='Merge 2 or more PDFs'):
         init_logging(self.verbose, log_path=None)
 
     def main(self):
-        merger = PdfFileMerger()
+        merger = PdfMerger()
         for path in self.path:
             log.info(f'Adding {path}')
             with open(path, 'rb') as f:
-                merger.append(PdfFileReader(f))
+                merger.append(PdfReader(f))
 
         log.info(f'Writing merged PDF: {self.output}')
         merger.write(self.output)
