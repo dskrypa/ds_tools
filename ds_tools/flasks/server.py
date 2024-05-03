@@ -4,12 +4,14 @@ Utilities for running Flask servers
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
-import time
 from itertools import chain
 from uuid import uuid4
+from time import monotonic
 from typing import TYPE_CHECKING, Optional, Iterable
 
 from flask import request, Blueprint, Response, session
@@ -37,7 +39,7 @@ debug_bp = Blueprint('debug', __name__)
 class FlaskServer:
     def __init__(
         self,
-        app: 'Flask',
+        app: Flask,
         port: int,
         host: Optional[str] = None,
         *,
@@ -135,11 +137,11 @@ def init_logging(
     **kwargs
 ):
     """
-    :param str log_path: Location to store log file
-    :param bool verbose: Verbosity
-    :param bool pid: Include pid in the default log format, if no specific format is specified
-    :param str log_fmt: The log format to use
-    :param bool patch_log_record: Patch :class:`LogRecord` to include a ``uid`` attribute for tracking actions related
+    :param log_path: Location to store log file
+    :param verbose: Verbosity
+    :param pid: Include pid in the default log format, if no specific format is specified
+    :param log_fmt: The log format to use
+    :param patch_log_record: Patch :class:`LogRecord` to include a ``uid`` attribute for tracking actions related
       to specific requests (see :func:`_patch_log_record`)
     :param kwargs: Additional kwargs to pass to :func:`init_logging<ds_tools.logging.init_logging>`
     :return: See :func:`init_logging<ds_tools.logging.init_logging>`
@@ -167,8 +169,8 @@ def handle_response_exception(exc):
 @base.before_app_request
 def before_requests():
     env = request.environ
-    wz_local.time = time.monotonic()
-    wz_local.uid = str(uuid4())
+    wz_local.time = monotonic()  # noqa
+    wz_local.uid = str(uuid4())  # noqa
     user = request.remote_user or '-'
     method = request.method
     path = request.path
@@ -176,12 +178,12 @@ def before_requests():
     ip = request.remote_addr
     referrer = request.referrer
     scheme = 'ws' if 'wsgi.websocket' in env else 'http'
-    log.info(f'Beginning request for {ip=} {user=} {scheme=} {method=} {path=} {qs=!r} {referrer=!r}')
+    log.info(f'Beginning request for {ip=} {user=} {scheme=} {method=} {path=} {qs=} {referrer=}')
 
 
 @base.after_app_request
 def after_requests(response: Response):
-    duration = time.monotonic() - wz_local.time
+    duration = monotonic() - wz_local.time
     user = request.remote_user or '-'
     method = request.method
     path = request.path
@@ -225,4 +227,4 @@ def debug_info():
         'request.args': {k: request.args[k] for k in sorted(request.args)},
         'request.headers': {k: request.headers[k] for k in sorted(request.headers.keys())},
     }
-    return Response(Template(debug_table_template).render(tables=tables))
+    return Template(debug_table_template).render(tables=tables)
