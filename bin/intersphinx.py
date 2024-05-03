@@ -5,8 +5,9 @@ This was easier than getting a convoluted grep/awk command to work...
 
 import re
 import sys
-from typing import Optional, Any, Callable, Union
+from typing import Any, Callable, Union
 
+from sphinx.config import Config
 from sphinx.ext.intersphinx import fetch_inventory
 from cli_command_parser import Command, Option, Flag, main
 
@@ -32,14 +33,12 @@ class Intersphinx(Command):
             slash = '' if url.endswith('/') else '/'
             url += slash + 'objects.inv'
 
-        class MockConfig:
-            intersphinx_timeout: Optional[int] = None
-            tls_verify = False
-            user_agent = None
+        sphinx_config = Config()
+        sphinx_config.add('intersphinx_timeout', None, '', ())
 
         class MockApp:
             srcdir = ''
-            config = MockConfig()
+            config = sphinx_config
 
             def warn(self, msg: str) -> None:
                 print(msg, file=sys.stderr)
