@@ -205,12 +205,12 @@ def debug_info():
         <h1>{{tbl_name}}</h1>
         <table>
             {% for key, val in tbl.items() %}
-                <tr><td>{{key}}</td><td>{{val}}</td></tr>
+                <tr><td>{{key}}</td><td>{{val|e}}</td></tr>
             {% endfor %}
         </table>
     {% endfor %}
     """
-    skip = {'environ', 'args', 'headers', '_MutableMapping__marker'}
+    skip = {'environ', 'args', 'headers', '_MutableMapping__marker', 'json'}
     tables = {
         'session': {
             k: getattr(session, k)

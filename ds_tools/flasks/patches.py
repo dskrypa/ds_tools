@@ -4,7 +4,6 @@
 
 import json
 import inspect
-import logging
 from pprint import pprint
 from traceback import format_stack
 
@@ -14,7 +13,7 @@ from werkzeug.utils import escape
 from ..output.printer import PseudoJsonEncoder
 
 __all__ = ['patch_http_exception']
-log = logging.getLogger(__name__)
+
 _http_exc_init = HTTPException.__init__
 
 
@@ -26,18 +25,18 @@ def patch_http_exception():
 def _format(data):
     try:
         return json.dumps(data, sort_keys=True, indent=4, cls=PseudoJsonEncoder, ensure_ascii=False)
-    except Exception:
+    except Exception:  # noqa
         return pprint(data)
 
 
-def http_exc_get_body(self, environ=None):
+def http_exc_get_body(self, environ=None, scope=None):
     name = escape(self.name)
     if isinstance(self.description, str) and self.description.startswith('<pre>'):
         description = self.description
     else:
         description = self.get_description(environ)
 
-    body = (
+    return (
         '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">\n'
         f'<title>{self.code} {name}</title>\n'
         f'<h1>{self.code} {name}</h1>\n'
@@ -48,7 +47,6 @@ def http_exc_get_body(self, environ=None):
         '<h2>Locals</h2>\n'
         f'<pre>{escape(self._locals)}</pre>\n'
     )
-    return body
 
 
 def http_exc_init(self, *args, **kwargs):
