@@ -5,6 +5,7 @@ __pycache__/
 nsbin/
 out/
 temp/
+build/
 *.pyc
 *.egg-info
 .coverage
