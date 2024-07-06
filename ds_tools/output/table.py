@@ -12,7 +12,7 @@ from functools import cached_property
 from io import StringIO
 from shutil import get_terminal_size
 from types import GeneratorType
-from typing import Union, Collection, TextIO, Optional, List, Dict, Mapping, Any, Type, Iterable
+from typing import Union, Collection, TextIO, Optional, Mapping, Any, Type, Iterable, Callable
 from unicodedata import normalize
 
 from wcwidth import wcswidth
@@ -24,6 +24,7 @@ __all__ = ['Column', 'SimpleColumn', 'Table', 'TableBar', 'HeaderRow', 'TableFor
 
 ANSI_COLOR_RX = re.compile(r'(\033\[\d+;?\d*;?\d*m)(.*)(\033\[\d+;?\d*;?\d*m)')
 Row = Union[Mapping[str, Any], 'TableBar', 'HeaderRow', Type['TableBar'], Type['HeaderRow']]
+Formatter = Callable[[Any, str], str]
 
 
 class Column:
@@ -39,17 +40,26 @@ class Column:
         - Treat width as a sequence where all values are relevant
     - If the length of the title is greater than the current width, take that length instead
 
-    :param str key: Row key associated with this column
-    :param str title: Column header
+    :param key: Row key associated with this column
+    :param title: Column header
     :param width: Width of this column (can auto-detect if passed values for this column)
-    :param bool display: Include this column in output (default: True)
-    :param str align: String formatting alignment indicator (default: left; example: '>' for right)
-    :param str ftype: String formatting type/format indicator (default: none; example: ',d' for thousands indicator)
+    :param display: Include this column in output (default: True)
+    :param align: String formatting alignment indicator (default: left; example: '>' for right)
+    :param ftype: String formatting type/format indicator (default: none; example: ',d' for thousands indicator)
     """
 
     __slots__ = ('key', 'title', '_width', 'display', 'align', 'ftype', 'formatter')
 
-    def __init__(self, key, title, width, display=True, align='', ftype='', formatter=None):
+    def __init__(
+        self,
+        key: str,
+        title: str,
+        width: Any,
+        display: bool = True,
+        align: str = '',
+        ftype: str = '',
+        formatter: Formatter = None,
+    ):
         self.key = key
         self.title = str(title)
         self._width = 0
@@ -59,31 +69,35 @@ class Column:
         self.formatter = formatter
         self.width = width
 
-    def __repr__(self):
-        return '<{}({!r}, {!r})>'.format(type(self).__name__, self.key, self.title)
+    def __repr__(self) -> str:
+        return f'<{self.__class__.__name__}({self.key!r}, {self.title!r})>'
+
+    # region Row / Header Format Strings
 
     @property
-    def _test_fmt(self):
-        return '{{:{}{}}}'.format(self.align, self.ftype)
+    def _test_fmt(self) -> str:
+        return f'{{:{self.align}{self.ftype}}}'
 
     @property
-    def _row_fmt(self):
-        return '{{:{}{}{}}}'.format(self.align, self.width, self.ftype)
+    def _row_fmt(self) -> str:
+        return f'{{:{self.align}{self.width}{self.ftype}}}'
 
     @property
-    def row_fmt(self):
-        return '{{0[{}]:{}{}{}}}'.format(self.key, self.align, self.width, self.ftype)
+    def row_fmt(self) -> str:
+        return f'{{0[{self.key}]:{self.align}{self.width}{self.ftype}}}'
 
     @property
-    def _header_fmt(self):
-        return '{{:{}{}}}'.format(self.align, self.width)
+    def _header_fmt(self) -> str:
+        return f'{{:{self.align}{self.width}}}'
 
     @property
-    def header_fmt(self):
-        return '{{0[{}]:{}{}}}'.format(self.key, self.align, self.width)
+    def header_fmt(self) -> str:
+        return f'{{0[{self.key}]:{self.align}{self.width}}}'
+
+    # endregion
 
     @contextmanager
-    def _temp_width(self, value):
+    def _temp_width(self, value: Any):
         orig_width = self._width
         try:
             test_val = self._test_fmt.format(value)
@@ -93,21 +107,20 @@ class Column:
         char_count = len(test_val)
         str_width = mono_width(test_val)
         if char_count != str_width and str_width > 0:
-            diff = str_width - char_count
-            self._width -= diff
+            self._width -= str_width - char_count
 
         try:
             yield
         finally:
             self._width = orig_width
 
-    def _format(self, value):
+    def _format(self, value: Any) -> str:
         try:
             return self._row_fmt.format(value)
         except ValueError:
             return self._header_fmt.format(value)
 
-    def format(self, value):
+    def format(self, value: Any) -> str:
         with self._temp_width(value):
             try:
                 if self.formatter:
@@ -122,63 +135,76 @@ class Column:
                 raise TableFormatException('column', self.row_fmt, value, e) from e
 
     @property
-    def width(self):
+    def width(self) -> int:
         return self._width
 
     @width.setter
-    def width(self, value):
+    def width(self, value: Any):
         try:
             self._width = max(self._calc_width(value), mono_width(self.title))
         except (ValueError, TypeError) as e:
             try:
-                raise ValueError('{}: Unable to determine width (likely no values were found)'.format(self)) from e
-            except ValueError as e2:
+                raise ValueError(f'{self}: Unable to determine width (likely no values were found)') from e
+            except ValueError as e2:  # TODO: wtf?
                 raise ValueError('No results.') from e2
 
-    def _len(self, text):
+    def _len(self, text: str) -> int:
         char_count = len(text)
         str_width = mono_width(text)
         if (char_count != str_width) and not self.formatter:
             self.formatter = lambda a, b: b  # Force Table.format_row to delegate formatting to Column.format
         return str_width
 
-    def _calc_width(self, width):
-        fmt = self._test_fmt
+    def _calc_width(self, width: Any) -> int:
         try:
             return int(width)
         except TypeError:
+            pass
+        format_value = self._test_fmt.format
+        try:  # Assume a mapping where the values are row dicts
+            return max(self._len(format_value(e[self.key])) for e in width.values())
+        except (KeyError, TypeError, AttributeError):
+            pass
+        try:  # Assume a collection where items are row dicts
+            return max(self._len(format_value(e[self.key])) for e in width)
+        except (KeyError, TypeError, AttributeError):
+            pass
+        try:  # Assume a collection where items are column values
+            return max(self._len(format_value(obj)) for obj in width)
+        except ValueError as e:
+            if 'Unknown format code' not in str(e):
+                raise
+
+        values = []
+        for obj in width:
             try:
-                return max(self._len(fmt.format(e[self.key])) for e in width.values())
-            except (KeyError, TypeError, AttributeError):
-                try:
-                    return max(self._len(fmt.format(e[self.key])) for e in width)
-                except (KeyError, TypeError, AttributeError):
-                    try:
-                        return max(self._len(fmt.format(obj)) for obj in width)
-                    except ValueError as e:
-                        if 'Unknown format code' in str(e):
-                            values = []
-                            for obj in width:
-                                try:
-                                    values.append(fmt.format(obj))
-                                except ValueError:
-                                    values.append(str(obj))
-                            return max(self._len(val) for val in values)
+                values.append(format_value(obj))
+            except ValueError:
+                values.append(str(obj))
+        return max(self._len(val) for val in values)
 
 
 class SimpleColumn(Column):
     """
     An output column metadata handler
 
-    :param str title: Column header & row key associated with this column
+    :param title: Column header & row key associated with this column
     :param width: Width of this column (can auto-detect if passed values for this column)
     :param bool display: Include this column in output (default: True)
-    :param str align: String formatting alignment indicator (default: left; example: '>' for right)
-    :param str ftype: String formatting type/format indicator (default: none; example: ',d' for thousands indicator)
+    :param align: String formatting alignment indicator (default: left; example: '>' for right)
+    :param ftype: String formatting type/format indicator (default: none; example: ',d' for thousands indicator)
     """
     __slots__ = ()
 
-    def __init__(self, title, width=0, display=True, align='', ftype='', formatter=None):
+    def __init__(
+        self,
+        title: str,
+        width: Any = 0,
+        display: bool = True,
+        align: str = '',
+        ftype: str = '',
+        formatter: Formatter = None,
+    ):
         super().__init__(title, title, width, display, align, ftype, formatter)
 
 
@@ -205,7 +231,7 @@ class HeaderRow:
 class Table(ClearableCachedPropertyMixin):
     def __init__(
         self,
-        *columns: Union[Column, SimpleColumn],
+        *columns: Column | SimpleColumn,
         mode: str = 'table',
         auto_header: bool = True,
         auto_bar: bool = True,
@@ -242,7 +268,7 @@ class Table(ClearableCachedPropertyMixin):
                 return c
         raise KeyError(item)
 
-    def append(self, column: Union[Column, SimpleColumn]):
+    def append(self, column: Column | SimpleColumn):
         self._columns.append(column)
         if column.display:
             self.clear_cached_properties()
@@ -253,11 +279,11 @@ class Table(ClearableCachedPropertyMixin):
         self.clear_cached_properties()
 
     @cached_property
-    def columns(self) -> List[Union[Column, SimpleColumn]]:
+    def columns(self) -> list[Column | SimpleColumn]:
         return [c for c in self._columns if c.display]
 
     @cached_property
-    def keys(self) -> List[str]:
+    def keys(self) -> list[str]:
         return [c.key for c in self.columns]
 
     @cached_property
@@ -269,7 +295,7 @@ class Table(ClearableCachedPropertyMixin):
         return '  '.join(c.header_fmt for c in self.columns)
 
     @cached_property
-    def headers(self) -> Dict[str, str]:
+    def headers(self) -> dict[str, str]:
         return {c.key: c.title for c in self.columns if c.display}
 
     @cached_property
@@ -305,8 +331,8 @@ class Table(ClearableCachedPropertyMixin):
             rows = [row for row in rows.values()]
 
         keys = sorted(rows[0].keys()) if type(rows[0]) is dict and sort_keys else rows[0].keys()
-        tbl = Table(
-            *[Column(k, k, rows) for k in keys],
+        tbl = cls(
+            *(Column(k, k, rows) for k in keys),
             mode=mode,
             auto_header=header,
             auto_bar=bar,
@@ -324,7 +350,7 @@ class Table(ClearableCachedPropertyMixin):
             rows = [row for row in rows.values()]
 
         keys = sorted(rows[0].keys()) if type(rows[0]) is dict else rows[0].keys()
-        tbl = Table(*[Column(k, k, rows) for k in keys], mode=mode, sort=sort, sort_by=sort_by, **kwargs)
+        tbl = cls(*(Column(k, k, rows) for k in keys), mode=mode, sort=sort, sort_by=sort_by, **kwargs)
         output_rows = tbl.format_rows(rows)
         if header:
             if bar and mode == 'table':
@@ -443,7 +469,7 @@ class Table(ClearableCachedPropertyMixin):
             rows = [{k: row[k] for k in self.keys} for row in rows]
         return rows
 
-    def format_rows(self, rows: Iterable[Row], full: bool = False) -> Union[List[str], str]:
+    def format_rows(self, rows: Iterable[Row], full: bool = False) -> Union[list[str], str]:
         if self.mode == 'csv':
             rows = self.sorted(rows)
             return list(self._csv_str(rows).splitlines())
@@ -515,15 +541,18 @@ class replacement_itemgetter:
         self._repl = replacements or {}
         if not items:
             self._items = (item,)
+
             def func(obj):
                 val = obj[item]
                 try:
                     return self._repl[val]
                 except KeyError:
                     return val
+
             self._call = func
         else:
             self._items = items = (item,) + items
+
             def func(obj):
                 vals = []
                 for val in (obj[i] for i in items):
@@ -532,6 +561,7 @@ class replacement_itemgetter:
                     except KeyError:
                         vals.append(val)
                 return tuple(vals)
+
             self._call = func
 
     def __call__(self, obj):
@@ -546,6 +576,8 @@ class TableFormatException(Exception):
         self.exc = exc
         super().__init__(*args)
 
-    def __str__(self):
-        msg_fmt = 'Error formatting {}: {} {}\nFormat string: {!r}\nContent: {}'
-        return msg_fmt.format(self.scope, type(self.exc).__name__, self.exc, self.fmt_str, self.value)
+    def __str__(self) -> str:
+        return (
+            f'Error formatting {self.scope}: {type(self.exc).__name__} {self.exc}'
+            f'\nFormat string: {self.fmt_str!r}\nContent: {self.value}'
+        )

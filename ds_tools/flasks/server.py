@@ -65,7 +65,7 @@ class FlaskServer:
             attrs = ('root_path', 'static_folder', 'template_folder')
             paths = {
                 f'<{abp.__class__.__name__}: {abp.name}>': {attr: getattr(abp, attr) for attr in attrs}
-                for abp in chain((app,), app.blueprints.values())
+                for abp in chain((app,), app.blueprints.values())  # noqa
             }
             log.info(
                 f'Initializing {self!r} with app'
@@ -83,7 +83,7 @@ class FlaskServer:
 
         app = self._app
         app.debug = bool(self._debug)
-        show_server_banner(app.env, app.debug, app.name, False)
+        show_server_banner(app.debug, app.name)
         log.warning(
             'Using werkzeug.serving.make_server instead of Flask.run, so behavior may be slightly different'
             ' - use a production WSGI server instead of the built-in development server!',

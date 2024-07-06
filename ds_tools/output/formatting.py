@@ -11,7 +11,7 @@ import re
 from math import log as math_log
 
 from struct import calcsize, unpack_from, error as StructError
-from typing import TYPE_CHECKING, Union, Mapping, Sized, Iterable, Container, Iterator, Collection, Any, Callable
+from typing import TYPE_CHECKING, Mapping, Sized, Iterable, Container, Iterator, Collection, Any, Callable
 
 from .color import colored
 
@@ -49,18 +49,18 @@ def short_repr(
     if containers_only and not isinstance(obj, Container):
         return obj_repr
     if len(obj_repr) > when_gt:
-        return '{}{}{}'.format(obj_repr[:parts], sep, obj_repr[-parts:])
+        return f'{obj_repr[:parts]}{sep}{obj_repr[-parts:]}'
     return obj_repr
 
 
 def readable_bytes(
-    size: Union[float, int],
+    size: float | int,
     dec_places: int = None,
     dec_by_unit: Mapping[str, int] = None,
     si: Bool = False,
     bits: Bool = False,
     i: Bool = False,
-    rate: Union[bool, str] = False,
+    rate: bool | str = False,
 ) -> str:
     """
     :param size: The number of bytes to render as a human-readable string
@@ -98,20 +98,20 @@ def readable_bytes(
     return f'{size / kilo ** exp:,.{dec}f} {unit}'
 
 
-def format_percent(num: Union[float, int], div: Union[float, int]) -> str:
+def format_percent(num: float | int, div: float | int) -> str:
     return f'{num / div:,.2%}' if div > 0 else '--.--%'
 
 
-def format_output(text, should_color, color_str, width=None, justify=None):
+def format_output(text: str, should_color: bool, color_str: str, width: int = None, justify: str = None) -> str:
     """
     Pad output with spaces to work around ansi colors messing with normal string formatting width detection
 
-    :param str text: Text to format
-    :param bool should_color: Do apply color_str color
-    :param str color_str: Color to use
-    :param int width: Column width (for padding)
-    :param str justify: Left or Right (default: right)
-    :return str: Formatted output
+    :param text: Text to format
+    :param should_color: Do apply color_str color
+    :param color_str: Color to use
+    :param width: Column width (for padding)
+    :param justify: Left or Right (default: right)
+    :return: Formatted output
     """
     if width is not None:
         padding = ' ' * (width - len(text))
@@ -192,9 +192,10 @@ def pseudo_yaml(obj, indent: int = 4, sort_keys: Bool = True) -> list[str]:
 
 
 def bullet_list(data: Collection[Any], bullet: str = '-', indent: int = 2, sort: bool = True):
-    data = sorted(data) if sort else data
-    fmt = '{}{} {{}}'.format(' ' * indent, bullet)
-    return '\n'.join(fmt.format(line) for line in data)
+    if sort:
+        data = sorted(data)
+    prefix = ' ' * indent + bullet
+    return '\n'.join(f'{prefix} {line}' for line in data)
 
 
 def to_hex_and_str(
@@ -227,6 +228,7 @@ def to_hex_and_str(
         as_str = ''.join(c if c in esc else f' {c}' for c in data.decode(encoding, 'replace')).translate(replacements)
     else:
         as_str = data.decode(encoding, 'replace').translate(replacements)
+
     if fill:
         if (to_fill := fill * 2 + (fill // 4) - 1 - len(as_hex)) > 0:
             as_hex += ' ' * to_fill
