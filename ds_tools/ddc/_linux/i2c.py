@@ -56,11 +56,11 @@ class I2CFile(Finalizable):
             raise VCPPermissionError(self.path) from e
         except OSError as e:
             raise VCPIOError(f'Unable to open VCP at {self.path}') from e
+        self._finalizer = finalize(self, self._close, fd, self.path)
         try:
             os.read(fd, 1)
         except OSError as e:
             raise VCPIOError('Unable to read from I2C bus') from e
-        self._finalizer = finalize(self, self._close, fd, self.path)
 
     @classmethod
     def _close(cls, fd: int, path: Path):

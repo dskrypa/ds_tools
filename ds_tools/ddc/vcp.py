@@ -40,6 +40,7 @@ class VcpFeature:
 
 class VCP(ABC, Finalizable):
     input = VcpFeature(0x60)
+    _monitors = {}
 
     def __init__(self, n: int):
         self.n = n
@@ -73,23 +74,53 @@ class VCP(ABC, Finalizable):
                 nums.add(int(i))
 
         monitors = set()
-        if str_patterns and isinstance((id_mon_map := getattr(cls, '_monitors', None)), dict):
-            # This block currently only applies to Windows
-            for mon_id, monitor in id_mon_map.items():
+        if str_patterns:
+            for mon_id, monitor in cls._monitors.items():
                 log.debug(f'{mon_id=}: {monitor}')
 
             matches = FnMatcher(str_patterns).match
-            monitors.update(monitor for mon_id, monitor in id_mon_map.items() if matches(mon_id))
+            monitors.update(monitor for mon_id, monitor in cls._monitors.items() if matches(mon_id))
             if not monitors:
-                monitors.update(mon for mon_id, mon in id_mon_map.items() if any(pat in mon_id for pat in id_patterns))
+                monitors.update(
+                    mon for mon_id, mon in cls._monitors.items() if any(pat in mon_id for pat in id_patterns)
+                )
         if nums:
             monitors.update(monitor for i, monitor in enumerate(all_monitors) if i in nums)
         return sorted(monitors)
 
     @classmethod
-    @abstractmethod
     def for_id(cls, monitor_id: str) -> VCP:
-        raise NotImplementedError
+        """
+        On Linux:
+            This is based on the :meth:`~LinuxVCP.description`, rather than on a canonical ID.  Example values::
+                GSM5ABB / LG FULL HD # 16843009 @ /dev/i2c-8
+                SAM0F9C / C49RG9x # H1AK500000 @ /dev/i2c-11
+                GSM5ABB / LG FULL HD # 16843009 @ /dev/i2c-12
+
+        On Windows:
+            Truncated :class:`DisplayDevice<ds_tools.ddc.structs.DisplayDevice>` reprs showing example ID values::
+                <DisplayDevice[name='\\\\.\\DISPLAY1\\Monitor0' description='CRG9_C49RG9xSS (DP)' id='MONITOR\\SAM0F9C\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0002']>
+                <DisplayDevice[name='\\\\.\\DISPLAY2\\Monitor0' description='LG FULLHD(HDMI)' id='MONITOR\\GSM5ABB\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0004']>
+                <DisplayDevice[name='\\\\.\\DISPLAY3\\Monitor0' description='LG FULLHD(HDMI)' id='MONITOR\\GSM5ABB\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0003']>
+
+        :param monitor_id: A full display device ID, or a unique portion of it.  In the above example, ``SAM0F9C`` could
+          be used to uniquely identify ``DISPLAY1\\Monitor0``, but ``GSM5ABB`` matches both LG monitors, so a longer
+          portion of the ID would need to be provided.
+        :return: The :class:`WindowsVCP` object representing the specified monitor.
+        :raise: :class:`ValueError` if the specified ID is ambiguous or does not match any active monitors.
+        """
+        if not cls._monitors:
+            cls._get_monitors()
+        monitor_id = monitor_id.upper()
+        try:
+            return cls._monitors[monitor_id]
+        except KeyError:
+            pass
+        if id_matches := {mid for mid in cls._monitors if monitor_id in mid}:
+            if len(id_matches) == 1:
+                return cls._monitors[next(iter(id_matches))]
+            raise ValueError(f'Invalid {monitor_id=} - found {len(id_matches)} matches: {id_matches}')
+        raise ValueError(f'Invalid {monitor_id=} - found no matches')
 
     @classmethod
     @abstractmethod

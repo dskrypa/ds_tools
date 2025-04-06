@@ -13,6 +13,7 @@ from weakref import finalize
 from ..exceptions import VCPIOError
 from ..vcp import VCP
 from .constants import DDCPacketType
+from .edid import Edid
 from .i2c import I2CFile, I2CIoctlClient, DDCCIClient, Capabilities
 
 if TYPE_CHECKING:
@@ -23,19 +24,12 @@ log = logging.getLogger(__name__)
 
 
 class LinuxVCP(VCP):
-    _monitors = []
-
     def __init__(self, n: int, path: Path, ignore_checksum_errors: bool = True):
         super().__init__(n)
         self.path = path  # /dev/i2c-*
-        # self.last_write = 0
         self.ignore_checksum_errors = ignore_checksum_errors
 
     # region Initializers / Class Methods
-
-    @classmethod
-    def for_id(cls, monitor_id: str) -> LinuxVCP:
-        raise NotImplementedError
 
     @classmethod
     def _get_monitors(cls, ignore_checksum_errors: bool = True) -> list[LinuxVCP]:
@@ -47,8 +41,8 @@ class LinuxVCP(VCP):
                 except (OSError, VCPIOError):
                     pass
                 else:
-                    cls._monitors.append(vcp)
-        return cls._monitors
+                    cls._monitors[vcp.description] = vcp
+        return sorted(cls._monitors.values())
 
     # endregion
 
@@ -78,10 +72,17 @@ class LinuxVCP(VCP):
     def capabilities(self) -> str | None:
         return self._ddcci.get_str(Capabilities)
 
+    @cached_property
+    def edid(self) -> Edid:
+        return Edid(self._ioctl.read_edid())
+
     @property
     def description(self) -> str:
-        # TODO: `ddcutil detect`
-        return self.path.as_posix()
+        edid = self.edid
+        return (
+            f'{edid.manufacturer}{edid.product_code_hex}'  # this matches a portion of the ID used by Windows
+            f' / {edid.model} {edid.serial_number_repr} @ {self.path.as_posix()}'
+        )
 
     def set_feature_value(self, feature: FeatureOrId, value: int):
         feature = self.get_feature(feature)

@@ -60,33 +60,6 @@ class WindowsVCP(VCP, close_attr='_monitor'):
         return f'<{self.__class__.__name__}[{self.n}][{self.description!r}, handle={self._handle}]>'
 
     @classmethod
-    def for_id(cls, monitor_id: str) -> WindowsVCP:
-        """
-        Truncated :class:`DisplayDevice<ds_tools.ddc.structs.DisplayDevice>` reprs showing example ID values::
-            <DisplayDevice[name='\\\\.\\DISPLAY1\\Monitor0' description='CRG9_C49RG9xSS (DP)' id='MONITOR\\SAM0F9C\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0002']>
-            <DisplayDevice[name='\\\\.\\DISPLAY2\\Monitor0' description='LG FULLHD(HDMI)' id='MONITOR\\GSM5ABB\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0004']>
-            <DisplayDevice[name='\\\\.\\DISPLAY3\\Monitor0' description='LG FULLHD(HDMI)' id='MONITOR\\GSM5ABB\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0003']>
-
-        :param monitor_id: A full display device ID, or a unique portion of it.  In the above example, ``SAM0F9C`` could
-          be used to uniquely identify ``DISPLAY1\\Monitor0``, but ``GSM5ABB`` matches both LG monitors, so a longer
-          portion of the ID would need to be provided.
-        :return: The :class:`WindowsVCP` object representing the specified monitor.
-        :raise: :class:`ValueError` if the specified ID is ambiguous or does not match any active monitors.
-        """
-        if not cls._monitors:
-            cls._get_monitors()
-        monitor_id = monitor_id.upper()
-        try:
-            return cls._monitors[monitor_id]
-        except KeyError:
-            pass
-        if id_matches := {mid for mid in cls._monitors if monitor_id in mid}:
-            if len(id_matches) == 1:
-                return cls._monitors[next(iter(id_matches))]
-            raise ValueError(f'Invalid {monitor_id=} - found {len(id_matches)} matches: {id_matches}')
-        raise ValueError(f'Invalid {monitor_id=} - found no matches')
-
-    @classmethod
     def _get_monitors(cls) -> list[WindowsVCP]:
         if not cls._monitors:
             handles = {info.name: handle for info, handle in get_monitor_info_and_handles()}
