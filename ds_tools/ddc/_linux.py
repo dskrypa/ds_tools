@@ -82,7 +82,7 @@ Identity = VcpRequest('identity', 0xF1, 0xE1)
 class LinuxVCP(VCP, close_attr='_fd'):
     _monitors = []
 
-    def __init__(self, n: int, path: str, ignore_checksum_errors: bool = True):
+    def __init__(self, n: int, path: Path, ignore_checksum_errors: bool = True):
         super().__init__(n)
         self.path = path  # /dev/i2c-*
         self.last_write = 0
@@ -98,7 +98,7 @@ class LinuxVCP(VCP, close_attr='_fd'):
     def _get_monitors(cls, ignore_checksum_errors: bool = True) -> list[LinuxVCP]:
         if not cls._monitors:
             for path in Path('/dev').glob('i2c-*'):
-                vcp = cls(int(path.name.rsplit('-', 1)[1]), path.as_posix(), ignore_checksum_errors)
+                vcp = cls(int(path.name.rsplit('-', 1)[1]), path, ignore_checksum_errors)
                 try:
                     vcp._fd  # noqa
                 except (OSError, VCPIOError):
@@ -223,8 +223,8 @@ class LinuxVCP(VCP, close_attr='_fd'):
         return self.get_str(Capabilities)
 
     @property
-    def description(self):
-        return None
+    def description(self) -> str:
+        return self.path.as_posix()
 
     def set_feature_value(self, feature: FeatureOrId, value: int):
         feature = self.get_feature(feature)
@@ -243,7 +243,7 @@ class LinuxVCP(VCP, close_attr='_fd'):
             # I2C bus address, DDC-CI command address on the I2C bus
             fcntl.ioctl(fd, 0x0703, 0x37)
         except PermissionError as e:
-            raise VCPPermissionError(f'Permission error for {self.path}') from e
+            raise VCPPermissionError(self.path) from e
         except OSError as e:
             raise VCPIOError(f'Unable to open VCP at {self.path}') from e
         try:
@@ -254,7 +254,7 @@ class LinuxVCP(VCP, close_attr='_fd'):
         return fd
 
     @classmethod
-    def _close(cls, fd: int, path: str):
+    def _close(cls, fd: int, path: Path):
         try:
             os.close(fd)
         except OSError as e:

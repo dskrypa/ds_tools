@@ -6,13 +6,10 @@ Convert DDCA_Feature_Value_Entry code to the format used in :mod:`ds_tools.ddc.f
 
 import re
 from pathlib import Path
-from typing import Dict, Tuple
 
 
-def parse_features() -> Dict[Tuple[int, str], Dict[int, str]]:
-    path = Path(__file__).resolve().parent.joinpath('vcp_feature_codes.c')
-    with path.open('r', encoding='utf-8') as f:
-        content = f.read().splitlines()
+def parse_features() -> dict[tuple[int, str], dict[int, str]]:
+    content = Path(__file__).resolve().parent.joinpath('vcp_feature_codes.c').read_text('utf-8').splitlines()
 
     start_match = re.compile(r'(?:static)?\s*DDCA_Feature_Value_Entry\s+x([\da-fA-F]{2})_(\w+)_values\[').match
     entry_search = re.compile(r'{\s*0x([\da-fA-F]{2}),\s*"([^"]+)"\s*}').search
@@ -33,7 +30,7 @@ def parse_features() -> Dict[Tuple[int, str], Dict[int, str]]:
     return features
 
 
-def write_feature_classes(features: Dict[Tuple[int, str], Dict[int, str]]):
+def write_feature_classes(features: dict[tuple[int, str], dict[int, str]]):
     classes = []
     for (code, name), values in sorted(features.items()):
         split_name = name.replace('_', ' ')

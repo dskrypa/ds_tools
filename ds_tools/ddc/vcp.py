@@ -58,7 +58,7 @@ class VCP(ABC, Finalizable):
         return cls.for_id(monitor_id)
 
     @classmethod
-    def get_monitors(cls, *id_patterns: Union[str, int, None]) -> list[VCP]:
+    def get_monitors(cls, *id_patterns: str | int | None) -> list[VCP]:
         all_monitors = cls._get_monitors()
         id_patterns = {i for i in id_patterns if i is not None}
         str_patterns = {i for i in id_patterns if isinstance(i, str)}
@@ -120,7 +120,7 @@ class VCP(ABC, Finalizable):
 
     @property
     @abstractmethod
-    def description(self):
+    def description(self) -> str:
         raise NotImplementedError
 
     @property
