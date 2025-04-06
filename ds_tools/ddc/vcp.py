@@ -60,6 +60,7 @@ class VCP(ABC, Finalizable):
     @classmethod
     def get_monitors(cls, *id_patterns: str | int | None) -> list[VCP]:
         all_monitors = cls._get_monitors()
+        log.debug(f'Found {len(all_monitors)} monitors')
         id_patterns = {i for i in id_patterns if i is not None}
         str_patterns = {i for i in id_patterns if isinstance(i, str)}
         if not id_patterns or '*' in str_patterns or 'ALL' in str_patterns:
@@ -73,6 +74,7 @@ class VCP(ABC, Finalizable):
 
         monitors = set()
         if str_patterns and isinstance((id_mon_map := getattr(cls, '_monitors', None)), dict):
+            # This block currently only applies to Windows
             for mon_id, monitor in id_mon_map.items():
                 log.debug(f'{mon_id=}: {monitor}')
 

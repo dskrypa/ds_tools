@@ -4,7 +4,8 @@ Mixins for common functionality
 :author: Doug Skrypa
 """
 
-from typing import Optional
+from __future__ import annotations
+
 from weakref import finalize
 
 __all__ = ['Finalizable']
@@ -24,8 +25,10 @@ class Finalizable:
         You can find an example of :class:`weakref.finalize` being used correctly in `the stdlib tempfile module
         <https://github.com/python/cpython/blob/v3.10.4/Lib/tempfile.py#L782-L852>`_
     """
+
+    __slots__ = ('_finalizer', '__weakref__')
     _finalizer: finalize
-    __close_attr: Optional[str] = None
+    __close_attr: str | None = None
 
     def __init_subclass__(cls, close_attr: str = None):
         if close_attr:

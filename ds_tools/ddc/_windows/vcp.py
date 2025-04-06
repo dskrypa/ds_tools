@@ -29,12 +29,12 @@ except ImportError:  # Not on Windows
 else:
     dxva2, user32 = windll.dxva2, windll.user32
 
-from .exceptions import VCPError
+from ..exceptions import VCPError
+from ..vcp import VCP
 from .structs import PhysicalMonitor, MC_VCP_CODE_TYPE, DisplayDevice, MonitorState, MonitorInfo
-from .vcp import VCP
 
 if TYPE_CHECKING:
-    from .features import FeatureOrId
+    from ..features import FeatureOrId
 
 __all__ = ['WindowsVCP']
 log = logging.getLogger(__name__)
