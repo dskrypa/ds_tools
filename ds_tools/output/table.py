@@ -4,6 +4,8 @@ Table and supporting classes for formatting / printing tabular data to stdout.
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import csv
 import re
 import sys
@@ -236,7 +238,7 @@ class Table(ClearableCachedPropertyMixin):
         auto_header: bool = True,
         auto_bar: bool = True,
         sort: bool = False,
-        sort_by: Union[Collection, str, None] = None,
+        sort_by: Collection | str | None | Callable = None,
         update_width: bool = False,
         fix_ansi_width: bool = False,
         file: Optional[TextIO] = None,
@@ -457,11 +459,14 @@ class Table(ClearableCachedPropertyMixin):
             rows = rows.values()
 
         if self.sort_by is not None:
-            sort_by = [self.sort_by] if not isinstance(self.sort_by, (list, tuple, set)) else self.sort_by
-            try:
-                rows = sorted(rows, key=replacement_itemgetter(*sort_by, replacements={None: -1}))
-            except TypeError:
-                rows = sorted(rows, key=replacement_itemgetter(*sort_by, replacements={None: ''}))
+            if callable(self.sort_by):
+                rows = sorted(rows, key=self.sort_by)
+            else:
+                sort_by = [self.sort_by] if not isinstance(self.sort_by, (list, tuple, set)) else self.sort_by
+                try:
+                    rows = sorted(rows, key=replacement_itemgetter(*sort_by, replacements={None: -1}))
+                except TypeError:
+                    rows = sorted(rows, key=replacement_itemgetter(*sort_by, replacements={None: ''}))
         elif self.sort:
             rows = sorted(rows)
 
@@ -469,7 +474,7 @@ class Table(ClearableCachedPropertyMixin):
             rows = [{k: row[k] for k in self.keys} for row in rows]
         return rows
 
-    def format_rows(self, rows: Iterable[Row], full: bool = False) -> Union[list[str], str]:
+    def format_rows(self, rows: Iterable[Row], full: bool = False) -> list[str] | str:  # noqa
         if self.mode == 'csv':
             rows = self.sorted(rows)
             return list(self._csv_str(rows).splitlines())
@@ -485,6 +490,8 @@ class Table(ClearableCachedPropertyMixin):
                     self._file, self._flush = orig_file, orig_flush
             else:
                 return [self.format_row(row) for row in self.sorted(rows)]
+        else:
+            raise ValueError(f'Unexpected mode={self.mode!r}')
 
     def set_width(self, rows: Iterable[Row]):
         ignore = (TableBar, HeaderRow)

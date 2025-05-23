@@ -111,7 +111,7 @@ class I2CIoctlClient(I2CFileClient):
         return self.read(size, EDID_ADDR)
 
 
-# region DDCCI
+# region DDC-CI
 
 
 class DDCCIClient:
