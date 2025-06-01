@@ -1,32 +1,47 @@
 #!/usr/bin/env python
 
+from __future__ import annotations
+
+import logging
 from concurrent.futures import as_completed, ProcessPoolExecutor
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from cli_command_parser import Command, ParamGroup, Positional, Option, Flag, Counter, main
+from cli_command_parser import Command, ParamGroup, Positional, Option, Flag, TriFlag, Counter, main
 from cli_command_parser.inputs import Path as IPath
+from tqdm import tqdm
 
-from ds_tools.__version__ import __author_email__, __version__  # noqa
-from ds_tools.fs.paths import unique_path
+from ds_tools.fs.paths import unique_path, iter_files
 from ds_tools.images.utils import as_image, Box
 
+if TYPE_CHECKING:
+    from PIL.Image import Image as PILImage
 
-class BulkCropper(Command, description='Crop multiple images with the same dimensions'):
-    paths = Positional(nargs='+', type=IPath(type='file', exists=True), help='Path to an image file')
+log = logging.getLogger(__name__)
+EXISTING_PATH = IPath(type='file|dir', exists=True)
 
-    with ParamGroup('Crop'):
-        size = Option('-s', required=True, type=int, nargs=2, help='Size (width, height) of the area to crop to')
-        with ParamGroup('Position', mutually_exclusive=True):
+
+class BulkCropper(Command, show_group_tree=True):
+    """Crop multiple images with the same dimensions"""
+
+    paths = Positional(nargs='+', type=EXISTING_PATH, help='Path to an image file or a directory containing images')
+
+    with ParamGroup('Crop', mutually_exclusive=True, required=True):
+        auto = Flag('-a', help='Automatically crop to the visible image')
+        with ParamGroup():
+            size = Option('-s', required=True, type=int, nargs=2, help='Size (width, height) of the area to crop to')
             position = Option('-p', type=int, nargs=2, help='Top left corner x, y coordinates')
-            # center = Flag(  # TODO
-            #     '-c', help='Select a section from the center with the same aspect ratio as the specified size'
-            # )
 
     with ParamGroup('Output'):
         output = Option('-o', type=IPath(type='dir'), help='Output directory (default: same directory as original)')
         date_prefix = Option('-d', help='Rename output files with the given prefix and the modification date (useful for [win]+[print screen] screenshots)')
-        no_suffix = Flag('-n', help='Do not include a pos/size suffix (only allowed when --output/-o is specified)')
+        split_by_date = Flag(help='Sort output files into dated directories')
+        suffix = TriFlag(help='Whether a pos/size suffix should be included (default: True if --output/-o is not specified, False otherwise)')
+
+        @suffix.register_default_cb
+        def _suffix(self) -> bool:
+            return not self.output
 
     with ParamGroup('Common'):
         verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
@@ -38,46 +53,74 @@ class BulkCropper(Command, description='Crop multiple images with the same dimen
         init_logging(self.verbose, log_path=None)
 
     def main(self):
-        if (dst_dir := self.output) and not dst_dir.exists():
-            dst_dir.mkdir(parents=True)
+        if self.output:
+            self.output.mkdir(parents=True, exist_ok=True)
+        elif not self.suffix:
+            raise ValueError('--no-suffix may only be used if --output / -o is also specified')
 
-        if self.no_suffix and not dst_dir:
-            raise ValueError('--no_suffix / -n may only be used if --output / -o is also specified')
+        if self.parallel > 1:
+            self._crop_all_mp()
+        else:
+            self._crop_all_st()
+
+    def crop_image(self, src_path: Path):
+        image = as_image(src_path)
+        box = self._get_box(image)
+        dst_path, rel_path = self._get_dst_path(src_path, box)
+        log.debug(f'Saving {rel_path}')
+        try:
+            image.crop(box).save(dst_path)
+        except BaseException:
+            dst_path.unlink(missing_ok=True)  # It would be incomplete
+            raise
+
+    def _crop_all_mp(self):
+        files = list(iter_files(self.paths))
+        with ProcessPoolExecutor(max_workers=self.parallel) as executor:
+            futures = {executor.submit(self.crop_image, path): path for path in files}
+            try:
+                with tqdm(total=len(files), unit='img', smoothing=0.1, maxinterval=1) as prog_bar:
+                    for future in as_completed(futures):
+                        _ = future.result()
+                        prog_bar.update()
+            except BaseException:
+                executor.shutdown(wait=True, cancel_futures=True)
+                raise
+
+    def _crop_all_st(self):
+        files = list(iter_files(self.paths))
+        with tqdm(total=len(files), unit='img', smoothing=0.1, maxinterval=1) as prog_bar:
+            for src_path in files:
+                self.crop_image(src_path)
+                prog_bar.update()
+
+    def _get_box(self, image: PILImage) -> Box:
+        if self.auto:
+            return image.getbbox()
 
         x, y = self.position or (0, 0)
         width, height = self.size
-        box = (x, y, x + width, y + height)
-        suffix = '' if self.no_suffix else f'{x}x{y}+{width}x{height}'
+        return x, y, x + width, y + height
 
-        if self.parallel > 1:
-            with ProcessPoolExecutor(max_workers=self.parallel) as executor:
-                futures = {executor.submit(self.crop_image, path, suffix, box): path for path in self.paths}
-                try:
-                    for future in as_completed(futures):
-                        _ = future.result()
-                except BaseException:
-                    executor.shutdown(wait=True, cancel_futures=True)
-                    raise
-        else:
-            for src_path in self.paths:
-                self.crop_image(src_path, suffix, box)
-
-    def crop_image(self, src_path: Path, suffix: str, box: Box):
+    def _get_dst_path(self, src_path: Path, box: Box) -> tuple[Path, str]:
         if prefix := self.date_prefix:
             name_parts = [prefix, datetime.fromtimestamp(src_path.stat().st_mtime).strftime('%Y-%m-%d_%H.%M.%S')]
         else:
             name_parts = [src_path.stem]
 
-        if suffix:
-            name_parts.append(suffix)
+        if self.suffix:
+            x, y, xw, yh = box
+            width = xw - x
+            height = yh - y
+            name_parts.append(f'{x}x{y}+{width}x{height}')
 
-        dst_path = unique_path(self.output or src_path.parent, '_'.join(name_parts), src_path.suffix)
-        print(f'Saving {dst_path.name}')
-        try:
-            as_image(src_path).crop(box).save(dst_path)
-        except BaseException:
-            dst_path.unlink(missing_ok=True)  # It would be incomplete
-            raise
+        dst_base = dst_dir = self.output or src_path.parent
+        if self.split_by_date:
+            dst_dir /= datetime.fromtimestamp(src_path.stat().st_mtime).strftime('%Y-%m-%d')
+            dst_dir.mkdir(parents=True, exist_ok=True)
+
+        dst_path = unique_path(dst_dir, '_'.join(name_parts), src_path.suffix)
+        return dst_path, dst_path.relative_to(dst_base).as_posix()
 
 
 if __name__ == '__main__':
