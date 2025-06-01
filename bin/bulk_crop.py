@@ -75,7 +75,7 @@ class BulkCropper(Command, show_group_tree=True):
             raise
 
     def _crop_all_mp(self):
-        files = list(iter_files(self.paths))
+        files = self._get_files()
         with ProcessPoolExecutor(max_workers=self.parallel) as executor:
             futures = {executor.submit(self.crop_image, path): path for path in files}
             try:
@@ -88,11 +88,16 @@ class BulkCropper(Command, show_group_tree=True):
                 raise
 
     def _crop_all_st(self):
-        files = list(iter_files(self.paths))
+        files = self._get_files()
         with tqdm(total=len(files), unit='img', smoothing=0.1, maxinterval=1) as prog_bar:
             for src_path in files:
                 self.crop_image(src_path)
                 prog_bar.update()
+
+    def _get_files(self) -> list[Path]:
+        if files := list(iter_files(self.paths)):
+            return files
+        raise ValueError('No image files were found in the specified location(s)')
 
     def _get_box(self, image: PILImage) -> Box:
         if self.auto:
