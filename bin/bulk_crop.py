@@ -109,10 +109,7 @@ class BulkCropper(Command, show_group_tree=True):
             name_parts = [src_path.stem]
 
         if self.suffix:
-            x, y, xw, yh = box
-            width = xw - x
-            height = yh - y
-            name_parts.append(f'{x}x{y}+{width}x{height}')
+            name_parts.append(box_suffix(box))
 
         dst_base = dst_dir = self.output or src_path.parent
         if self.split_by_date:
@@ -121,6 +118,13 @@ class BulkCropper(Command, show_group_tree=True):
 
         dst_path = unique_path(dst_dir, '_'.join(name_parts), src_path.suffix)
         return dst_path, dst_path.relative_to(dst_base).as_posix()
+
+
+def box_suffix(box: Box) -> str:
+    x, y, xw, yh = box
+    width = xw - x
+    height = yh - y
+    return f'{x}x{y}+{width}x{height}'
 
 
 if __name__ == '__main__':
