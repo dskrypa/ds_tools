@@ -65,18 +65,15 @@ translate = ['googletrans']
 windows = ['pywin32']
 youtube = ['pytube3']
 
-[tools.setuptools]
+[tool.setuptools]
 include-package-data = true
-#package-dir = {'' = 'lib'}
 
-[tools.setuptools.packages.find]
+[tool.setuptools.packages.find]
 include = ['ds_tools*']
-# where = ['lib']
 namespaces = false
 
-[tools.setuptools.dynamic]
+[tool.setuptools.dynamic]
 version = {attr='ds_tools.__version__.__version__'}
-# entry-points = {file=['entry_points.txt']}
 
 # [tool.uv]
 # reinstall-package = ['ds_tools']  # Always reinstall to generate entry points
