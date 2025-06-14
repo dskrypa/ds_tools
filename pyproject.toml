@@ -1,22 +1,82 @@
-[tool.black]
-skip-string-normalization = true
-line-length = 120
-include = '\.pyi?$'
-target-version = ['py38']
-exclude = '''
-/(
-    \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | _build
-  | buck-out
-  | build
-  | dist
-  | __pycache__
-  | .*\.ya?ml$
-  | .*\.toml$
-)/
-'''
-force-exclude = '''.*?(?:\.ya?ml|Makefile|\.toml)$'''
+[build-system]
+requires = ['setuptools']
+build-backend = 'setuptools.build_meta'
+
+[project]
+dynamic = [
+    'version',
+#    'entry-points', 'scripts'
+]
+name = 'ds_tools'
+description = 'Misc Python 3 libraries and scripts'
+readme = 'readme.rst'
+authors = [{name='Doug Skrypa', email='dskrypa@gmail.com'}]
+classifiers = [
+    'Development Status :: 5 - Production/Stable',
+    'Environment :: Console',
+    'Intended Audience :: Developers',
+    'Operating System :: OS Independent',
+    'Programming Language :: Python',
+    'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 3.11',
+    'Programming Language :: Python :: 3.12',
+    'Programming Language :: Python :: 3.13',
+    'Programming Language :: Python :: 3.14',
+]
+requires-python = '>=3.11'
+dependencies = [
+    'cli-command-parser',
+    'db_cache @ git+https://github.com/dskrypa/db_cache',
+    'requests_client @ git+https://github.com/dskrypa/requests_client',
+    'beautifulsoup4',
+    'bitarray',
+    'cachetools',
+    'psutil',
+    'PyYAML',
+    'requests',
+    'SQLAlchemy',
+    'tqdm',
+    'tzlocal',
+    'wrapt',
+    'wcwidth',
+]
+
+[project.urls]
+Source = 'https://github.com/dskrypa/ds_tools'
+Issues = 'https://github.com/dskrypa/ds_tools/issues'
+
+[project.optional-dependencies]
+archives = ['py7zr', 'rarfile', 'cryptography', 'zstandard']  # ds_tools.fs.archives
+cffi = ['cffi']  # bin/cffi_test.py, bin/f3.py, examples/cffi/*
+click = ['click', 'click_option_group']  # ds_tools.argparsing.click_parsing
+completion = ['argcomplete']  # bash autocompletion
+dev = ['coverage', 'ipython', 'rich', 'pre-commit']  # Development env requirements
+docs = ['sphinx']
+exif = ['exifread']
+flask = ['flask', 'jinja2', 'werkzeug']
+game_saves = ['send2trash', 'watchdog', 'zstandard']
+gunicorn = ['gevent', 'gunicorn']
+# Note: 'skimage' is required for image comparison, but it requires scipy, which breaks in python 3.10
+images = ['imageio', 'numpy', 'pillow', 'scikit-image; python_version < "3.10"']
+J2R = ['pykakasi']
+pdf = ['pypdf2']
+socketio = ['flask_socketio', 'gevent']
+translate = ['googletrans']
+windows = ['pywin32']
+youtube = ['pytube3']
+
+[tools.setuptools]
+include-package-data = true
+#package-dir = {'' = 'lib'}
+
+[tools.setuptools.packages.find]
+include = ['ds_tools*']
+# where = ['lib']
+namespaces = false
+
+[tools.setuptools.dynamic]
+version = {attr='ds_tools.__version__.__version__'}
+# entry-points = {file=['entry_points.txt']}
+
+# [tool.uv]
+# reinstall-package = ['ds_tools']  # Always reinstall to generate entry points
