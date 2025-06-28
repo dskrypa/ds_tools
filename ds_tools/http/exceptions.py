@@ -4,25 +4,27 @@ HTTP / REST Exceptions
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 __all__ = [
     'CodeBasedRestException', 'SimpleRestException', 'UnauthorizedRestException', 'UnavailableRestException',
     'http_code_and_reason',
 ]
 
 
-def http_code_and_reason(cause):
+def http_code_and_reason(cause) -> tuple[int, str] | tuple[None, None]:
     """
     Determines the HTTP response code and its associated string representation based on the given Exception or Response.
 
     :param cause: An Exception of :class:`requests.Response` object
-    :return tuple: (int(code), str(reason)) if possible, otherwise (None, None)
+    :return: (int(code), str(reason)) if possible, otherwise (None, None)
     """
     try:
         lc_codes = http_code_and_reason._lc_codes
     except AttributeError:
         from requests.status_codes import codes
         lc_codes = http_code_and_reason._lc_codes = {
-            '{} {}'.format(c, reason.lower().replace('_', ' ')): c for reason, c in codes.__dict__.items()
+            f'{c} {reason.lower().replace("_", " ")}': c for reason, c in codes.__dict__.items()
         }
 
     if isinstance(cause, Exception):
@@ -35,6 +37,7 @@ def http_code_and_reason(cause):
             return cause.status_code, cause.reason
         except AttributeError:
             pass
+
     return None, None
 
 
@@ -69,10 +72,10 @@ class SimpleRestException(Exception):
                     self.msg = self.resp.text
         super().__init__(*args)
 
-    def __str__(self):
+    def __str__(self) -> str:
         if self.msg:
-            return '{} [{}] {} on {}: {}'.format(type(self).__name__, self.code, self.reason, self.endpoint, self.msg)
-        return '{} [{}] {} on {}'.format(type(self).__name__, self.code, self.reason, self.endpoint)
+            return f'{type(self).__name__} [{self.code}] {self.reason} on {self.endpoint}: {self.msg}'
+        return f'{type(self).__name__} [{self.code}] {self.reason} on {self.endpoint}'
 
     __repr__ = __str__
 
@@ -105,9 +108,9 @@ class CodeBasedRestException(Exception):
     def __new__(cls, cause, endpoint, *args):
         code, reason = http_code_and_reason(cause)
         if (cls is CodeBasedRestException) and (code in cls._types):
-            obj = super(CodeBasedRestException, cls).__new__(cls._types.get(code, cls))
+            obj = super().__new__(cls._types.get(code, cls))
         else:
-            obj = super(CodeBasedRestException, cls).__new__(cls)
+            obj = super().__new__(cls)
         obj.code = code
         obj.reason = reason
         return obj
@@ -128,7 +131,7 @@ class CodeBasedRestException(Exception):
                 txt = self.resp.text
                 if isinstance(txt, str) and ((len(txt.splitlines()) < 6) and (len(txt) < 500)):
                     self.msg = self.resp.text
-        super(CodeBasedRestException, self).__init__(*args)
+        super().__init__(*args)
 
     def __reduce__(self):
         """Makes pickle work properly; implementing __getnewargs__ was not working"""
@@ -140,10 +143,10 @@ class CodeBasedRestException(Exception):
     def __setstate__(self, state):
         self.__dict__.update(state)
 
-    def __str__(self):
+    def __str__(self) -> str:
         if self.msg:
-            return '{} [{}] {} on {}: {}'.format(type(self).__name__, self.code, self.reason, self.endpoint, self.msg)
-        return '{} [{}] {} on {}'.format(type(self).__name__, self.code, self.reason, self.endpoint)
+            return f'{type(self).__name__} [{self.code}] {self.reason} on {self.endpoint}: {self.msg}'
+        return f'{type(self).__name__} [{self.code}] {self.reason} on {self.endpoint}'
 
     __repr__ = __str__
 

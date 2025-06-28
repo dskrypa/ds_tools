@@ -398,13 +398,27 @@ class PathSorter:
 
 
 def path_repr(path: Path, is_dir: bool = None) -> str:
+    path_strs = [path.as_posix()]
     try:
-        rel_path = path.relative_to(Path.home())
+        path_strs.append(f'~/{path.relative_to(Path.home()).as_posix()}')
     except Exception:  # noqa
-        path_str = path.as_posix()
-    else:
-        path_str = f'~/{rel_path.as_posix()}'
+        pass
+
+    cwd = Path.cwd()
+    try:
+        path_strs.append(path.relative_to(cwd).as_posix())
+    except Exception:  # noqa
+        pass
+    try:
+        path_strs.append(path.resolve().relative_to(cwd.resolve()).as_posix())
+    except Exception:  # noqa
+        pass
 
     if is_dir is None:
-        is_dir = path.is_dir()
+        try:
+            is_dir = path.is_dir()
+        except OSError:
+            is_dir = False
+
+    path_str = min(path_strs, key=len)
     return (path_str + '/') if is_dir else path_str
