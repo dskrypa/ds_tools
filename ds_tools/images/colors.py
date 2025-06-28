@@ -4,36 +4,29 @@ Utilities for working with colors in images
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 from random import randrange
-from typing import Union, Collection
+from typing import TYPE_CHECKING, Collection
 
 import numpy
 from PIL.Image import Image as PILImage, fromarray as image_from_array
 from PIL.ImageColor import getrgb
 from PIL.ImagePalette import ImagePalette
 
-from .utils import ImageType, as_image
+from .utils import as_image
+
+if TYPE_CHECKING:
+    from .typing import ImageType, RGB, RGBA, Color
 
 __all__ = [
-    'color_to_rgb',
-    'color_to_alpha',
-    'palette_index_to_color',
-    'color_at_pos',
-    'find_unused_color',
-    'RGB',
-    'RGBA',
-    'Color',
-    'replace_color',
+    'color_to_rgb', 'color_to_alpha', 'palette_index_to_color', 'color_at_pos', 'find_unused_color', 'replace_color'
 ]
 
-RGB = tuple[int, int, int]
-RGBA = tuple[int, int, int, int]
-Color = Union[str, RGB, RGBA]
 
-
-def color_to_rgb(color: Color) -> Union[RGB, RGBA]:
+def color_to_rgb(color: Color) -> RGB | RGBA:
     if isinstance(color, tuple):
-        return color
+        return color  # noqa
     try:
         return getrgb(color)
     except ValueError:
@@ -55,7 +48,7 @@ def color_to_alpha(image: ImageType, color: Color) -> PILImage:
     return image
 
 
-def palette_index_to_color(image_or_palette: Union[ImageType, ImagePalette], index: int) -> tuple[int, ...]:
+def palette_index_to_color(image_or_palette: ImageType | ImagePalette, index: int | float) -> tuple[int, ...]:
     if isinstance(image_or_palette, ImagePalette):
         palette = image_or_palette
     else:
@@ -67,7 +60,7 @@ def palette_index_to_color(image_or_palette: Union[ImageType, ImagePalette], ind
     return tuple(palette.palette[offset:offset + chars])
 
 
-def color_at_pos(image: ImageType, pos: tuple[int, int]) -> Union[tuple[int, ...], int]:
+def color_at_pos(image: ImageType, pos: tuple[int, int]) -> tuple[int, ...] | int | float:
     image = as_image(image)
     color = image.getpixel(pos)
     if isinstance(color, tuple):

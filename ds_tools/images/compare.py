@@ -26,7 +26,7 @@ except ImportError:
 
 if TYPE_CHECKING:
     from numpy.typing import ArrayLike
-    from .utils import Size
+    from .typing import Size
 
 __all__ = ['ComparableImage']
 log = logging.getLogger(__name__)

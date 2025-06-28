@@ -24,7 +24,7 @@ from .gif import AnimatedGif
 from .utils import prepare_dir
 
 if TYPE_CHECKING:
-    from ..utils import Size, FloatBox
+    from ..typing import Size, FloatBox
 
 __all__ = ['Spinner']
 log = logging.getLogger(__name__)

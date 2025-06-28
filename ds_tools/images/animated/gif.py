@@ -10,7 +10,7 @@ import logging
 from functools import cached_property
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Union, Iterator, Iterable, Sequence, Callable
+from typing import TYPE_CHECKING, Iterator, Sequence, Callable
 
 from PIL import ImageShow
 from PIL.Image import Image as PILImage, Resampling  # noqa
@@ -18,9 +18,12 @@ from PIL.ImagePalette import ImagePalette
 from PIL.ImageSequence import Iterator as FrameIterator
 
 from ..colors import color_to_alpha
-from ..utils import ImageType, Size, Box, as_image, get_image_info
+from ..utils import as_image, get_image_info
 from .cycle import FrameCycle
 from .utils import prepare_dir
+
+if TYPE_CHECKING:
+    from ..typing import ImageTypeIter, IntBox, Size
 
 __all__ = ['AnimatedGif']
 log = logging.getLogger(__name__)
@@ -32,7 +35,7 @@ class AnimatedGif:
         tile = (decoder, (x0, y0, x1, y1), frame_byte_offset, (bits, interlace, transparency))
     """
 
-    def __init__(self, image: Union[ImageType, Iterable[ImageType]]):
+    def __init__(self, image: ImageTypeIter):
         self._path = Path(image) if isinstance(image, (str, Path)) else None
         try:
             image = as_image(image)
@@ -51,10 +54,10 @@ class AnimatedGif:
 
     @cached_property
     def n_frames(self):
-        return len(self._frames) if self._frames is not None else self._image.n_frames
+        return len(self._frames) if self._frames is not None else self._image.n_frames  # noqa
 
     @classmethod
-    def from_images(cls, images: Union[Iterable[ImageType], str, Path]) -> AnimatedGif:
+    def from_images(cls, images: ImageTypeIter | str | Path) -> AnimatedGif:
         if isinstance(images, (str, Path)):
             path = Path(images).expanduser()
             if not path.is_dir():
@@ -85,7 +88,7 @@ class AnimatedGif:
     def color_to_alpha(self, color: str) -> AnimatedGif:
         return self.__class__((color_to_alpha(frame, color) for frame in self.frames(True)))
 
-    def resize(self, size: Size, resample: int = Resampling.LANCZOS, box: Box = None, reducing_gap: float = None):
+    def resize(self, size: Size, resample: int = Resampling.LANCZOS, box: IntBox = None, reducing_gap: float = None):
         frames = (
             frame.resize(size, resample=resample, box=box, reducing_gap=reducing_gap)
             for frame in self.frames(True)
@@ -95,14 +98,14 @@ class AnimatedGif:
     def cycle(self, wrapper: Callable = None, duration: int = None, default_duration: int = 100) -> FrameCycle:
         return FrameCycle(self.frames(), wrapper, duration, default_duration)
 
-    def get_info(self, frames: Union[bool, int] = False):
+    def get_info(self, frames: bool | int = False):
         if frames is not False:
             return list(map(get_image_info, self.frames(n=None if frames is True else frames)))
         else:
             image = self._image or self._frames[0]
             return get_image_info(image)
 
-    def print_info(self, frames: Union[bool, int] = False):
+    def print_info(self, frames: bool | int = False):
         if frames is not False:
             for i, frame in enumerate(self.frames(n=None if frames is True else frames)):
                 print(get_image_info(frame, True, f'Frame {i}'))
@@ -110,7 +113,7 @@ class AnimatedGif:
             key = self._path.as_posix() if self._path else str(self._image if self._image else self._frames[0])
             print(get_image_info(self._image or self._frames[0], True, key))
 
-    def save_frames(self, path: Union[Path, str], prefix: str = 'frame_', format: str = 'PNG', mode: str = None):  # noqa
+    def save_frames(self, path: Path | str, prefix: str = 'frame_', format: str = 'PNG', mode: str = None):  # noqa
         path = prepare_dir(path)
         name_fmt = prefix + '{:0' + str(len(str(self.n_frames))) + 'd}.' + format.lower()
         for i, frame in enumerate(self.frames()):
@@ -123,15 +126,15 @@ class AnimatedGif:
 
     def save(
         self,
-        path: Union[Path, str],
+        path: Path | str,
         *,
         include_color_table: bool = None,
         interlace: bool = None,
-        disposal: Union[int, Sequence[int]] = None,
-        palette: Union[bytes, ImagePalette] = None,
+        disposal: int | Sequence[int] = None,
+        palette: bytes | ImagePalette = None,
         optimize: bool = None,
         transparency: int = None,
-        duration: Union[int, Sequence[int]] = None,
+        duration: int | Sequence[int] = None,
         loop: int = 0,
         comment: str = None,
     ):

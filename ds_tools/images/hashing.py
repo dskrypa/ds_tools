@@ -4,6 +4,7 @@ import logging
 from abc import ABC, abstractmethod
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
+from functools import cached_property
 from hashlib import sha256
 from io import BytesIO
 from itertools import product
@@ -28,11 +29,11 @@ try:
 except ImportError:
     wavedec2 = waverec2 = None
 
-from ds_tools.caching.decorators import cached_property
-from .utils import ImageType, as_image
+from .utils import as_image
 
 if TYPE_CHECKING:
     from os import stat_result
+    from .typing import ImageType
 
 __all__ = [
     'ImageHashBase', 'DifferenceHash', 'HorizontalDifferenceHash', 'VerticalDifferenceHash', 'WaveletHash',
@@ -82,11 +83,11 @@ class ImageHashBase(ABC):
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self.hex}, size={self.array.size}]>'
 
-    @cached_property(block=False)
+    @cached_property
     def hex(self) -> str:
         return self.array.tobytes().hex().upper()
 
-    @cached_property(block=False)
+    @cached_property
     def hash_bits(self) -> NDArray:
         """
         A 64-element array of 0s and 1s representing this hash.  Calculating hamming distance using this has the same
@@ -97,7 +98,7 @@ class ImageHashBase(ABC):
         """
         return unpackbits(self.array)
 
-    @cached_property(block=False)
+    @cached_property
     def uint16(self) -> NDArray[uint16]:  # No longer used
         return self.array.view(uint16)
 
@@ -489,7 +490,7 @@ class ImageHash(Base):
     image_id: Mapped[int] = Column(Integer, ForeignKey('images.id'))
     image: Mapped[ImageFile] = relationship('ImageFile', back_populates='hashes', lazy='joined')
 
-    @cached_property(block=False)
+    @cached_property
     def img_hash(self) -> HASH_CLS:
         return HASH_CLS(array([self.a, self.b, self.c, self.d, self.e, self.f, self.g, self.h], dtype=uint8))
 
@@ -518,7 +519,7 @@ class ImageFile(Base):
     def path(self) -> Path:
         return Path(self.dir.path, self.name)
 
-    @cached_property(block=False)
+    @cached_property
     def multi_hash(self) -> MULTI_CLS:
         return MULTI_CLS([h.img_hash for h in self.hashes])
 

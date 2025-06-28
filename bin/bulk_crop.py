@@ -13,10 +13,11 @@ from cli_command_parser.inputs import Path as IPath
 from tqdm import tqdm
 
 from ds_tools.fs.paths import unique_path, iter_files
-from ds_tools.images.utils import as_image, Box
+from ds_tools.images.utils import as_image
 
 if TYPE_CHECKING:
     from PIL.Image import Image as PILImage
+    from ds_tools.images.typing import IntBox
 
 log = logging.getLogger(__name__)
 EXISTING_PATH = IPath(type='file|dir', exists=True)
@@ -45,7 +46,7 @@ class BulkCropper(Command, show_group_tree=True):
 
     with ParamGroup('Common'):
         verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
-        parallel = Option('-P', default=1, type=int, help='Maximum number of workers to use in parallel')
+        parallel = Option('-P', default=4, type=int, help='Maximum number of workers to use in parallel')
 
     def _init_command_(self):
         from ds_tools.logging import init_logging
@@ -57,6 +58,8 @@ class BulkCropper(Command, show_group_tree=True):
             self.output.mkdir(parents=True, exist_ok=True)
         elif not self.suffix:
             raise ValueError('--no-suffix may only be used if --output / -o is also specified')
+
+        # TODO: Move to trash after crop option
 
         if self.parallel > 1:
             self._crop_all_mp()
@@ -95,11 +98,12 @@ class BulkCropper(Command, show_group_tree=True):
                 prog_bar.update()
 
     def _get_files(self) -> list[Path]:
+        # TODO: Skip thumbnails
         if files := list(iter_files(self.paths)):
             return files
         raise ValueError('No image files were found in the specified location(s)')
 
-    def _get_box(self, image: PILImage) -> Box:
+    def _get_box(self, image: PILImage) -> IntBox:
         if self.auto:
             return image.getbbox()
 
@@ -107,7 +111,7 @@ class BulkCropper(Command, show_group_tree=True):
         width, height = self.size
         return x, y, x + width, y + height
 
-    def _get_dst_path(self, src_path: Path, box: Box) -> tuple[Path, str]:
+    def _get_dst_path(self, src_path: Path, box: IntBox) -> tuple[Path, str]:
         if prefix := self.date_prefix:
             name_parts = [prefix, datetime.fromtimestamp(src_path.stat().st_mtime).strftime('%Y-%m-%d_%H.%M.%S')]
         else:
@@ -125,7 +129,7 @@ class BulkCropper(Command, show_group_tree=True):
         return dst_path, dst_path.relative_to(dst_base).as_posix()
 
 
-def box_suffix(box: Box) -> str:
+def box_suffix(box: IntBox) -> str:
     x, y, xw, yh = box
     width = xw - x
     height = yh - y
