@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import as_completed, ProcessPoolExecutor
 from datetime import datetime
+from multiprocessing import set_start_method
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -52,6 +53,7 @@ class BulkCropper(Command, show_group_tree=True):
         from ds_tools.logging import init_logging
 
         init_logging(self.verbose, log_path=None)
+        set_start_method('spawn')
 
     def main(self):
         if self.output:
