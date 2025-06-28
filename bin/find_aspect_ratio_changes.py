@@ -94,7 +94,6 @@ class Fix(AspectRatioChangeFinder):
                 '-i', self.in_path.as_posix(),
                 '-vf', r'select=bitor(gte(t-prev_selected_t\,1)\,isnan(prev_selected_t))',
                 '-fps_mode', 'vfr',
-                # '-vsync', '0',  # TODO: -vsync is deprecated. Use -fps_mode
                 'still_%04d.jpg',
             ]
             check_call(cmd)
