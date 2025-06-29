@@ -17,6 +17,46 @@ __all__ = [
     'has_nested',
 ]
 
+UNICODE_CATEGORY_NAMES = {
+    # Data source: https://en.wikipedia.org/wiki/Template:General_Category_(Unicode)
+    'Cc': 'Other, control',
+    'Cf': 'Other, format',
+    'Cn': 'Other, not assigned',
+    'Co': 'Other, private use',
+    'Cs': 'Other, surrogate',
+
+    'Ll': 'Letter, lowercase',
+    'Lm': 'Letter, modifier',
+    'Lo': 'Letter, other',
+    'Lt': 'Letter, titlecase',
+    'Lu': 'Letter, uppercase',
+
+    'Mc': 'Mark, spacing, combining',
+    'Me': 'Mark, enclosing',
+    'Mn': 'Mark, non-spacing',
+
+    'Nd': 'Number, decimal digit',
+    'Nl': 'Number, letter',
+    'No': 'Number, other',
+
+    'Pc': 'Punctuation, connector',
+    'Pd': 'Punctuation, dash',
+    'Pe': 'Punctuation, close',
+    'Pf': 'Punctuation, final quote',
+    'Pi': 'Punctuation, initial quote',
+    'Po': 'Punctuation, other',
+    'Ps': 'Punctuation, open',
+
+    'Sc': 'Symbol, currency',
+    'Sk': 'Symbol, modifier',
+    'Sm': 'Symbol, math',
+    'So': 'Symbol, other',
+
+    'Zl': 'Separator, line',
+    'Zp': 'Separator, paragraph',
+    'Zs': 'Separator, space'
+}
+
 
 def chars_by_category(cat: str = None, prefix: str = None) -> Union[str, dict[str, str]]:
     # ALL_NUMS = ''.join(re.findall(r'\d', ''.join(chr(c) for c in range(sys.maxunicode + 1))))
