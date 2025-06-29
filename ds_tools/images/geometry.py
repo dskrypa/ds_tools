@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from fractions import Fraction
 from functools import cached_property
 from math import floor, ceil
-from typing import TYPE_CHECKING, Callable, Iterator
+from typing import TYPE_CHECKING, Callable, Iterator, overload
 
 if TYPE_CHECKING:
     from .typing import XY, OptXYF, HasSize
@@ -12,6 +13,7 @@ if TYPE_CHECKING:
 __all__ = ['Sized', 'Box', 'AspectRatio', 'COMMON_VIDEO_ASPECT_RATIOS']
 
 X = Y = int
+_NotSet = object()
 
 
 class Sized(ABC):
@@ -365,12 +367,54 @@ def new_aspect_ratio_height(width: int, aspect_ratio: float) -> int:
 
 
 class AspectRatio:
-    __slots__ = ('x', 'y', 'ratio')
+    __slots__ = ('x', 'y', '_fraction', '_float')
 
-    def __init__(self, x: float, y: float):
-        self.x = x
-        self.y = y
-        self.ratio = x / y
+    @overload
+    def __init__(self, /, x: int | float, y: int | float): ...
+
+    @overload
+    def __init__(self, /, x: int | float): ...
+
+    @overload
+    def __init__(self, /, ratio: str | Fraction): ...
+
+    def __init__(self, /, x_or_ratio: int | float | str | Fraction, y: int | float = _NotSet):
+        try:
+            fraction, xy_from_fraction = self._normalize_fraction(x_or_ratio, y)
+        except ZeroDivisionError as e:
+            raise ZeroDivisionError(
+                'Invalid aspect ratio - the denominator / proportional height must not be zero'
+            ) from e
+
+        self._fraction = fraction
+        self._float = float(fraction)
+        if xy_from_fraction:
+            self.x = fraction.numerator
+            self.y = fraction.denominator
+        else:
+            self.x = x_or_ratio
+            self.y = 1 if y is _NotSet else y
+
+    @classmethod
+    def _normalize_fraction(
+        cls, x_or_ratio: int | float | str | Fraction, y: int | float = _NotSet
+    ) -> tuple[Fraction, bool]:
+        if isinstance(x_or_ratio, (str, Fraction)):
+            if y is not _NotSet:
+                raise TypeError(
+                    'AspectRatio may only be initialized from separate width/height proportions xor a string/Fraction'
+                )
+            if isinstance(x_or_ratio, Fraction):
+                return x_or_ratio, True
+            return Fraction(x_or_ratio.replace(':', '/')), True
+        elif x_or_ratio.is_integer():
+            return Fraction(x_or_ratio, 1 if y is _NotSet else y), False
+        elif y is _NotSet or y == 1:
+            # Using str because Fraction('2.35') -> Fraction(47, 20),
+            # but Fraction(2.35) -> Fraction(5291729562160333, 2251799813685248)
+            return Fraction(str(x_or_ratio)), False
+        else:
+            return Fraction(x_or_ratio, y), False
 
     def __str__(self) -> str:
         return f'{self.x}:{self.y}'
@@ -379,39 +423,38 @@ class AspectRatio:
         return f'<{self.__class__.__name__}[{self.x}:{self.y}]>'
 
     def __float__(self) -> float:
-        return self.ratio
+        return self._float
 
     def __iter__(self) -> Iterator[float]:
         yield self.x
         yield self.y
 
-    def __eq__(self, other: AspectRatio | float) -> bool:
-        if isinstance(other, AspectRatio):
-            other = other.ratio
-        return self.ratio == other
-
     def __hash__(self) -> int:
-        return hash(self.__class__) ^ hash(self.ratio)
+        return hash(self.__class__) ^ hash(self._fraction) ^ hash(self._float)
 
-    def __lt__(self, other: AspectRatio | float) -> bool:
+    def __eq__(self, other: AspectRatio | int | float | Fraction) -> bool:
         if isinstance(other, AspectRatio):
-            other = other.ratio
-        return self.ratio < other
+            return self._fraction == other._fraction or self._float == other._float
+        elif isinstance(other, Fraction):
+            return self._fraction == other
+        else:
+            return self._float == other
 
-    def __gt__(self, other: AspectRatio | float) -> bool:
-        if isinstance(other, AspectRatio):
-            other = other.ratio
-        return self.ratio > other
+    def __lt__(self, other: AspectRatio | int | float | Fraction) -> bool:
+        return self._float < float(other)
+
+    def __gt__(self, other: AspectRatio | int | float | Fraction) -> bool:
+        return self._float > float(other)
 
 
 COMMON_VIDEO_ASPECT_RATIOS = [
     AspectRatio(16, 10),
     AspectRatio(16, 9),
     AspectRatio(4, 3),
-    AspectRatio(1.85, 1),
-    AspectRatio(2.21, 1),
-    AspectRatio(2.35, 1),
-    AspectRatio(2.39, 1),
+    AspectRatio(1.85, 1),  # == 37:20
+    AspectRatio(2.21, 1),  # No LCD below 100
+    AspectRatio(2.35, 1),  # == 47:20
+    AspectRatio(2.39, 1),  # No LCD below 100
     AspectRatio(5, 3),
     AspectRatio(5, 4),
     AspectRatio(1, 1),
