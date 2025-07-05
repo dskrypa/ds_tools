@@ -6,9 +6,10 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from enum import Enum
-from typing import Optional, Type, Union, ContextManager
+from functools import cached_property
+from typing import ContextManager, Iterator, Type
 
-__all__ = ['LoggingPrefix', 'Verb']
+__all__ = ['LoggingPrefix', 'Verb', 'DryRunMixin']
 
 
 class Tense(Enum):
@@ -74,7 +75,7 @@ class Verb:
         else:
             return self.past_participle.capitalize()
 
-    def __get__(self, instance: Optional[LoggingPrefix], owner: Type[LoggingPrefix]) -> Union[Verb, str]:
+    def __get__(self, instance: LoggingPrefix | None, owner: Type[LoggingPrefix]) -> Verb | str:
         if instance is None:
             return self
         return self.conjugate(instance.dry_run, instance.tense)
@@ -102,7 +103,7 @@ class LoggingPrefix:
             raise KeyError(verb) from None
 
     @contextmanager
-    def _temp_tense(self, tense: Tense) -> ContextManager[LoggingPrefix]:
+    def _temp_tense(self, tense: Tense) -> Iterator[LoggingPrefix]:
         old = self._tense
         try:
             self._tense = tense
@@ -122,6 +123,7 @@ class LoggingPrefix:
     create = Verb(drop_last=True)
     delete = Verb(drop_last=True)
     move = Verb(drop_last=True)
+    replace = Verb(drop_last=True)
     remove = Verb(drop_last=True)
     rename = Verb(drop_last=True)
     reset = Verb(double_last=True, past_participle='reset')
@@ -129,3 +131,20 @@ class LoggingPrefix:
     save = Verb(drop_last=True)
     send = Verb()
     update = Verb(drop_last=True)
+
+
+class DryRunMixin:
+    __dry_run: bool = False
+
+    @property
+    def dry_run(self) -> bool:
+        return self.__dry_run
+
+    @dry_run.setter
+    def dry_run(self, value: bool):
+        self.__dry_run = value
+        self.lp.dry_run = value
+
+    @cached_property
+    def lp(self) -> LoggingPrefix:
+        return LoggingPrefix(self.dry_run)
