@@ -14,6 +14,7 @@ from cli_command_parser.inputs import Path as IPath
 from tqdm import tqdm
 
 from ds_tools.fs.paths import unique_path, iter_files
+from ds_tools.images.bbox import Image as BboxImage
 from ds_tools.images.utils import as_image
 
 if TYPE_CHECKING:
@@ -31,6 +32,7 @@ class BulkCropper(Command, show_group_tree=True):
 
     with ParamGroup('Crop', mutually_exclusive=True, required=True):
         auto = Flag('-a', help='Automatically crop to the visible image')
+        auto_find = Flag('-A', help='Automatically crop to the visible image using custom bbox detection')
         with ParamGroup():
             size = Option('-s', required=True, type=int, nargs=2, help='Size (width, height) of the area to crop to')
             position = Option('-p', type=int, nargs=2, help='Top left corner x, y coordinates')
@@ -70,7 +72,13 @@ class BulkCropper(Command, show_group_tree=True):
 
     def crop_image(self, src_path: Path):
         image = as_image(src_path)
-        box = self._get_box(image)
+        if self.auto_find:
+            # Note: Even when using alpha_only=False with `PIL.Image.Image.getbbox`, some letterboxing does not get
+            # detected
+            box = BboxImage(src_path).find_bbox().as_bbox()
+        else:
+            box = self._get_box(image)
+
         dst_path, rel_path = self._get_dst_path(src_path, box)
         log.debug(f'Saving {rel_path}')
         try:
