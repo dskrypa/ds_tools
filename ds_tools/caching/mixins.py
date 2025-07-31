@@ -123,11 +123,14 @@ class DictAttrProperty(ClearableCachedProperty):
                     value = self.default_factory()
                     break
                 raise DictAttrFieldNotFoundError(obj, self.name, self.attr, self.path_repr)
+        else:
+            # Only cast the type if the default was not used
+            if self.type is not _NotSet:
+                value = self.type(value)
 
-        if self.type is not _NotSet:
-            value = self.type(value)
         if '#' not in self.name:
             obj.__dict__[self.name] = value
+
         return value
 
 

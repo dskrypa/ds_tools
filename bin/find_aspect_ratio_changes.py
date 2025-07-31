@@ -12,19 +12,15 @@ from multiprocessing import set_start_method
 from pathlib import Path
 from subprocess import check_call, check_output
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Iterable, Sequence
+from typing import Sequence
 
 from cli_command_parser import Command, ParamGroup, Positional, Option, Counter, SubCommand, main
 from cli_command_parser.inputs import Path as IPath, NumRange
-from imageio.v3 import imread
-from numpy import unique, uint32, array
 from tqdm import tqdm
 
 from ds_tools.output.formatting import format_duration
+from ds_tools.images.bbox import Image, ImageInfo
 from ds_tools.images.geometry import COMMON_VIDEO_ASPECT_RATIOS, AspectRatio, Box
-
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
 
 log = logging.getLogger(__name__)
 EXISTING_PATH = IPath(type='file|dir', exists=True)
@@ -249,66 +245,6 @@ def _get_common_ratios(box: Box) -> dict[AspectRatio, Box]:
 
 def _get_image_info(path: Path, threshold: float = 0.99) -> ImageInfo:
     return Image(path).get_info(threshold)
-
-
-class Image:
-    _pack_arrays = {
-        1: array([1], dtype=uint32),
-        2: array([1, 256], dtype=uint32),
-        3: array([1, 256, 65536], dtype=uint32),
-        4: array([1, 256, 65536, 16777216], dtype=uint32),  # 2 ** (0, 8, 16, 24)
-    }
-
-    def __init__(self, path: Path):
-        self.path = path
-        self.data = imread(path)
-        # Note: imiter(self.path) can be used to iterate over individual frames as numpy arrays
-        height, width, self.bands = self.data.shape
-        self.box = Box.from_size_and_pos(width, height)
-
-    def get_info(self, threshold: float = 0.99) -> ImageInfo:
-        return ImageInfo(self.path, box=self.box, bbox=self.find_bbox(threshold), bands=self.bands)
-
-    def find_bbox(self, threshold: float = 0.99) -> Box:
-        return Box(0, self.find_top(threshold), self.box.right, self.find_bottom(threshold))
-
-    def find_top(self, threshold: float = 0.99) -> int:
-        return self._find_row(self.data, threshold)
-
-    def find_bottom(self, threshold: float = 0.99) -> int:
-        return self.box.bottom - self._find_row(self.data[::-1], threshold)
-
-    def _find_row(self, image_data: NDArray, threshold: float = 0.99) -> int:
-        pack_array = self._pack_arrays[image_data.shape[2]]
-        row: NDArray
-        for i, row in enumerate(image_data):
-            # Pack each pixel's 3-4 RGB(A) 8-bit ints into a 32-bit int so that counting unique values counts full
-            # colors instead of counting unique values for individual bands
-            row = row.dot(pack_array)
-            values, counts = unique(row, return_counts=True)
-            if len(values) == 1:  # Only one unique value
-                continue
-            if (counts.max() / len(row)) < threshold:
-                return i
-        return 0
-
-
-@dataclass
-class ImageInfo:
-    path: Path
-    box: Box
-    bbox: Box
-    bands: int
-
-    @cached_property
-    def seconds(self) -> int:
-        return int(self.path.stem.rsplit('_', 1)[-1]) - 1  # ffmpeg starts from 1
-
-    def find_closest_bbox(self, boxes: Iterable[Box]) -> Box:
-        return min(boxes, key=lambda box: abs(box.area - self.bbox.area))
-
-    def __lt__(self, other: ImageInfo) -> bool:
-        return self.seconds < other.seconds
 
 
 @dataclass
