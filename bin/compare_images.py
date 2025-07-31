@@ -4,8 +4,6 @@ import logging
 
 from cli_command_parser import Command, Positional, Option, Flag, Counter, main, inputs
 
-from ds_tools.__version__ import __author_email__, __version__  # noqa
-
 log = logging.getLogger(__name__)
 
 
@@ -16,7 +14,6 @@ class ImageComparer(Command, description='Compare images'):
     normalize = Flag('--no-normalize', '-N', default=True, help='Do not normalize images for exposure differences before comparisons')
     max_width = Option('-W', type=int, help='Resize images that have a width greater than this value')
     max_height = Option('-H', type=int, help='Resize images that have a height greater than this value')
-    compare_as = Option('-c', default='jpeg', choices=('jpeg', 'png'), help='The image format to use for comparison')
     same = Flag('-s', help='Include comparisons intended for images that are the same')
     verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
 
@@ -28,7 +25,7 @@ class ImageComparer(Command, description='Compare images'):
     def main(self):
         from ds_tools.images.compare import ComparableImage
 
-        image_args = (self.gray, self.normalize, self.max_width, self.max_height, self.compare_as)
+        image_args = (self.gray, self.normalize, self.max_width, self.max_height)
         img_a = ComparableImage(self.path_a, *image_args)
         img_b = ComparableImage(self.path_b, *image_args)
         log.log(19, f'Comparing:\n{img_a}\nto\n{img_b}')
