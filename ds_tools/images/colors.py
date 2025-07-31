@@ -17,6 +17,8 @@ from PIL.ImagePalette import ImagePalette
 from .utils import as_image
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
     from .typing import ImageType, RGB, RGBA, Color
 
 __all__ = [
@@ -87,10 +89,10 @@ def replace_color(image: ImageType, old_color: Color, new_color: Color) -> PILIm
     image = as_image(image)
     if (orig_mode := image.mode) != 'RGBA':
         image = image.convert('RGBA')
-    data = numpy.array(image)  # noqa
+    data = numpy.asarray(image)
     r, g, b, a = data.T
-    to_replace = (r == old_r) & (g == old_g) & (b == old_b)
-    data[..., :-1][to_replace.T] = new_color  # noqa
+    to_replace: NDArray = (r == old_r) & (g == old_g) & (b == old_b)  # noqa
+    data[..., :-1][to_replace.T] = new_color
     updated = image_from_array(data)
     if orig_mode != 'RGBA':
         updated = updated.convert(orig_mode)

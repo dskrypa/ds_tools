@@ -8,7 +8,7 @@ from math import floor, ceil
 from typing import TYPE_CHECKING, Callable, Iterator, overload
 
 if TYPE_CHECKING:
-    from .typing import XY, OptXYF, HasSize
+    from .typing import XY, OptXYF, XYF, HasSize
 
 __all__ = ['Sized', 'Box', 'AspectRatio', 'COMMON_VIDEO_ASPECT_RATIOS']
 
@@ -113,7 +113,7 @@ class Sized(ABC):
         else:
             return self.target_size(size, keep_ratio)
 
-    def scale_size(self, size: OptXYF, keep_ratio: bool = True) -> XY:
+    def scale_size(self, size: XYF, keep_ratio: bool = True) -> XY:
         """
         Scale this object's size to as close to the given target size as possible, optionally respecting aspect ratio.
 
@@ -448,14 +448,19 @@ class AspectRatio:
 
 
 COMMON_VIDEO_ASPECT_RATIOS = [
+    AspectRatio(21, 9),     # Ultrawide
     AspectRatio(16, 10),
     AspectRatio(16, 9),
     AspectRatio(4, 3),
-    AspectRatio(1.85, 1),  # == 37:20
-    AspectRatio(2.21, 1),  # No LCD below 100
-    AspectRatio(2.35, 1),  # == 47:20
-    AspectRatio(2.39, 1),  # No LCD below 100
+    AspectRatio(37, 20),    # == 1.85:1
+    AspectRatio(2.21, 1),   # No LCD below 100
+    AspectRatio(47, 20),    # == 2.35:1
+    AspectRatio(2.39, 1),   # No LCD below 100
     AspectRatio(5, 3),
     AspectRatio(5, 4),
     AspectRatio(1, 1),
+]
+
+UNCOMMON_VIDEO_ASPECT_RATIOS = [
+    AspectRatio(12, 5),  # 2.4:1
 ]

@@ -57,7 +57,7 @@ flask = ['flask', 'jinja2', 'werkzeug']
 game_saves = ['send2trash', 'watchdog', 'zstandard']
 gunicorn = ['gevent', 'gunicorn']
 # Note: 'skimage' is required for image comparison, but it requires scipy, which breaks in python 3.10
-images = ['imageio', 'numpy', 'pillow', 'scikit-image; python_version < "3.10"']
+images = ['numpy', 'pillow', 'scikit-image; python_version < "3.10"']
 J2R = ['pykakasi']
 pdf = ['pypdf2']
 socketio = ['flask_socketio', 'gevent']

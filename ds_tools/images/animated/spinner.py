@@ -12,8 +12,7 @@ from __future__ import annotations
 
 import logging
 from math import pi, cos, sin
-from pathlib import Path
-from typing import TYPE_CHECKING, Union, Iterator, Callable
+from typing import TYPE_CHECKING, Callable, Iterator
 
 from PIL.Image import Image as PILImage, new as new_image
 from PIL.ImageDraw import ImageDraw, Draw
@@ -24,6 +23,7 @@ from .gif import AnimatedGif
 from .utils import prepare_dir
 
 if TYPE_CHECKING:
+    from pathlib import Path
     from ..typing import Size, FloatBox
 
 __all__ = ['Spinner']
@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 class Spinner:
     def __init__(
         self,
-        size: Union[Size, int],
+        size: Size | int,
         color: str = '#204274',  # sort of a slate blue
         spokes: int = 8,
         bg: str = None,
@@ -63,7 +63,7 @@ class Spinner:
         return self._size
 
     @size.setter
-    def size(self, value: Union[Size, int]):
+    def size(self, value: Size | int):
         if isinstance(value, int):
             value = (value, value)
         self._size = value
@@ -115,7 +115,7 @@ class Spinner:
 
     frames = __iter__
 
-    def resize(self, size: Union[Size, int]):
+    def resize(self, size: Size | int):
         self.size = (size, size) if isinstance(size, int) else size
         return self
 
@@ -131,32 +131,13 @@ class Spinner:
         kwargs.setdefault('duration', self.frame_duration_ms)
         self.as_gif().show(**kwargs)
 
-    def save(self, path: Union[Path, str], lib: str = 'PIL', **kwargs):
-        if lib == 'PIL':
-            self._save_via_pil(path, **kwargs)
-        elif lib == 'imageio':
-            self._save_via_imageio(path, **kwargs)
-        else:
-            raise ValueError(f'Unsupported save {lib=}')
-
-    def _save_via_imageio(self, path: Union[Path, str], **kwargs):
-        import imageio
-        import numpy
-
-        path = Path(path).expanduser().resolve() if isinstance(path, str) else path
-        kwargs.setdefault('fps', 1000 / self.frame_duration_ms)
-        log.info(f'Saving {path.as_posix()} with {kwargs=}')
-        with imageio.get_writer(path, format='gif', mode='I', **kwargs) as writer:  # This uses PIL too...
-            for frame in map(numpy.asarray, self.frames()):  # noqa
-                writer.append_data(frame)
-
-    def _save_via_pil(self, path: Union[Path, str], **kwargs):
+    def save(self, path: Path | str, **kwargs):
         kwargs.setdefault('disposal', 2)
         kwargs.setdefault('transparency', 0)
         kwargs.setdefault('duration', self.frame_duration_ms)
         self.as_gif().save(path, **kwargs)
 
-    def save_frames(self, path: Union[Path, str], prefix: str = 'frame_', format: str = 'PNG', mode: str = None):  # noqa
+    def save_frames(self, path: Path | str, prefix: str = 'frame_', format: str = 'PNG', mode: str = None):  # noqa
         path = prepare_dir(path)
         name_fmt = prefix + '{:0' + str(len(str(len(self)))) + 'd}.' + format.lower()
         for i, frame in enumerate(self.frames()):
