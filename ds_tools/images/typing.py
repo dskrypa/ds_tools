@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from pathlib import Path
-from typing import Annotated, Iterable, Protocol, runtime_checkable
+from typing import Annotated, Iterable, Literal, Protocol, runtime_checkable
 
 from numpy import uint8
 from numpy.typing import NDArray
@@ -25,10 +25,18 @@ RGB = tuple[int, int, int]
 RGBA = tuple[int, int, int, int]
 Color = str | RGB | RGBA
 
-NP_RGB = Annotated[NDArray[uint8], (3,)]
-NP_RGBA = Annotated[NDArray[uint8], (4,)]
-NP_Gray = Annotated[NDArray[uint8], (1,)]
-NP_Image = NP_RGB | NP_RGBA | NP_Gray
+# Annotated usage below is based on https://stackoverflow.com/a/72585748/19070573
+NP_RGB = Annotated[NDArray[uint8], Literal[3]]
+NP_RGBA = Annotated[NDArray[uint8], Literal[4]]
+NP_Gray = Annotated[NDArray[uint8], Literal[1]]
+NP_Pixel = NP_RGB | NP_RGBA | NP_Gray
+
+PixelColor = Color | int | NP_Pixel
+
+NPI_RGB = Annotated[NDArray[uint8], Literal['N', 'N', 3]]
+NPI_RGBA = Annotated[NDArray[uint8], Literal['N', 'N', 4]]
+NPI_Gray = Annotated[NDArray[uint8], Literal['N', 'N', 1]]
+NP_Image = NPI_RGB | NPI_RGBA | NPI_Gray
 
 
 @runtime_checkable

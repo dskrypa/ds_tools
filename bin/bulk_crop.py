@@ -14,7 +14,7 @@ from cli_command_parser.inputs import Path as IPath
 from tqdm import tqdm
 
 from ds_tools.fs.paths import unique_path, iter_files
-from ds_tools.images.bbox import Image as BboxImage
+from ds_tools.images.array import ImageArray
 from ds_tools.images.utils import as_image
 
 if TYPE_CHECKING:
@@ -72,13 +72,8 @@ class BulkCropper(Command, show_group_tree=True):
 
     def crop_image(self, src_path: Path):
         image = as_image(src_path)
-        if self.auto_find:
-            # Note: Even when using alpha_only=False with `PIL.Image.Image.getbbox`, some letterboxing does not get
-            # detected
-            box = BboxImage(src_path).find_bbox().as_bbox()
-        else:
-            box = self._get_box(image)
-
+        box = self._get_box(image)
+        log.debug(f'Cropping image with bbox={box}')
         dst_path, rel_path = self._get_dst_path(src_path, box)
         log.debug(f'Saving {rel_path}')
         try:
@@ -114,7 +109,11 @@ class BulkCropper(Command, show_group_tree=True):
         raise ValueError('No image files were found in the specified location(s)')
 
     def _get_box(self, image: PILImage) -> IntBox:
-        if self.auto:
+        if self.auto_find:
+            # Note: Even when using alpha_only=False with `PIL.Image.Image.getbbox`, some letterboxing does not get
+            # detected
+            return ImageArray(image).find_bbox().as_bbox()
+        elif self.auto:
             return image.getbbox()
 
         x, y = self.position or (0, 0)

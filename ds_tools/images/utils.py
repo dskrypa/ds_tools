@@ -21,7 +21,7 @@ from ..core.serialization import PermissiveJSONEncoder
 if TYPE_CHECKING:
     from .typing import ImageType, Size
 
-__all__ = ['as_image', 'image_to_bytes', 'calculate_resize', 'scale_image', 'get_image_info']
+__all__ = ['as_image', 'image_to_bytes', 'calculate_resize', 'scale_image', 'get_image_path', 'get_image_info']
 
 
 def as_image(image: ImageType) -> PILImage:
@@ -77,6 +77,29 @@ def _round_aspect(number, key):
     return rounded if rounded > 1 else 1
 
 
+def get_image_path(image: ImageType) -> Path | None:
+    match image:
+        case Path():
+            return image.expanduser()
+        case str():
+            return Path(image).expanduser()
+        case PILImage():
+            return _get_image_path(image)
+        case _:
+            return None
+
+
+def _get_image_path(image: PILImage) -> Path | None:
+    try:
+        return Path(image.filename)  # noqa
+    except (AttributeError, TypeError):
+        pass
+    try:
+        return Path(image.fp.name)
+    except (AttributeError, TypeError):
+        return None
+
+
 def get_image_info(image: ImageType, as_str: bool = False, identifier: str = None) -> dict[str, Any] | str:
     image = as_image(image)
     info = deepcopy(image.info)
@@ -92,22 +115,19 @@ def get_image_info(image: ImageType, as_str: bool = False, identifier: str = Non
     if palette := image.palette:
         info['palette'] = f'<ImagePalette[mode={palette.mode!r}, raw={palette.rawmode}, len={len(palette.palette)}]>'
 
-    if as_str:
-        if identifier is None:
-            try:
-                identifier = Path(image.filename).as_posix()  # noqa
-            except Exception:  # noqa
-                try:
-                    identifier = Path(image.fp.name).as_posix()  # noqa
-                except Exception:  # noqa
-                    identifier = str(image)
-
-        sio = StringIO()
-        sio.write(f'---\n{identifier}:')
-        for key, val in sorted(info.items()):
-            if not isinstance(val, (str, int, float)):
-                val = json.dumps(val, cls=PermissiveJSONEncoder)
-            sio.write(f'\n  {key}: {val}')
-        return sio.getvalue()
-    else:
+    if not as_str:
         return info
+
+    if identifier is None:
+        if path := _get_image_path(image):
+            identifier = path.as_posix()
+        else:
+            identifier = str(image)
+
+    sio = StringIO()
+    sio.write(f'---\n{identifier}:')
+    for key, val in sorted(info.items()):
+        if not isinstance(val, (str, int, float)):
+            val = json.dumps(val, cls=PermissiveJSONEncoder)
+        sio.write(f'\n  {key}: {val}')
+    return sio.getvalue()

@@ -9,7 +9,7 @@ from __future__ import annotations
 from random import randrange
 from typing import TYPE_CHECKING, Collection
 
-import numpy
+from numpy import asarray, ndarray, uint8
 from PIL.Image import Image as PILImage, fromarray as image_from_array
 from PIL.ImageColor import getrgb
 from PIL.ImagePalette import ImagePalette
@@ -19,10 +19,16 @@ from .utils import as_image
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from .typing import ImageType, RGB, RGBA, Color
+    from .typing import ImageType, RGB, RGBA, Color, PixelColor, NP_Pixel
 
 __all__ = [
-    'color_to_rgb', 'color_to_alpha', 'palette_index_to_color', 'color_at_pos', 'find_unused_color', 'replace_color'
+    'color_to_rgb',
+    'normalize_pixel_color',
+    'color_to_alpha',
+    'palette_index_to_color',
+    'color_at_pos',
+    'find_unused_color',
+    'replace_color',
 ]
 
 
@@ -35,6 +41,28 @@ def color_to_rgb(color: Color) -> RGB | RGBA:
         if isinstance(color, str) and len(color) in (3, 4, 6, 8):
             return getrgb(f'#{color}')
         raise
+
+
+def normalize_pixel_color(color: PixelColor) -> RGB | RGBA | int | NP_Pixel:
+    match color:
+        case str():
+            return color_to_rgb(color)
+        case tuple():
+            if len(color) in (4, 3, 1) and all(isinstance(v, int) and 0 <= v < 256 for v in color):
+                return color
+            raise ValueError('Invalid color/pixel - expected a tuple of 1/3/4 positive integers < 256')
+        case int():
+            if 0 <= color < 256:
+                return color
+            raise ValueError(f'Invalid {color=} - expected 0 <= value < 256')
+        case ndarray():
+            if color.dtype == uint8 and color.shape in ((4,), (3,), (1,)):
+                return color
+            raise ValueError('Invalid color/pixel - expected a 1D array with dtype=uint8 and 1/3/4 elements')
+        case _:
+            raise TypeError(
+                f'Invalid color/pixel - expected an RGB(A) str, tuple, int, or ndarray; found: {type(color).__name__}'
+            )
 
 
 def color_to_alpha(image: ImageType, color: Color) -> PILImage:
@@ -89,7 +117,7 @@ def replace_color(image: ImageType, old_color: Color, new_color: Color) -> PILIm
     image = as_image(image)
     if (orig_mode := image.mode) != 'RGBA':
         image = image.convert('RGBA')
-    data = numpy.asarray(image)
+    data = asarray(image)
     r, g, b, a = data.T
     to_replace: NDArray = (r == old_r) & (g == old_g) & (b == old_b)  # noqa
     data[..., :-1][to_replace.T] = new_color

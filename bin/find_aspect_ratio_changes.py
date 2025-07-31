@@ -19,8 +19,8 @@ from cli_command_parser.inputs import Path as IPath, NumRange
 from tqdm import tqdm
 
 from ds_tools.output.formatting import format_duration
-from ds_tools.images.bbox import Image, ImageInfo
 from ds_tools.images.geometry import COMMON_VIDEO_ASPECT_RATIOS, AspectRatio, Box
+from ds_tools.images.info import ImageInfo
 
 log = logging.getLogger(__name__)
 EXISTING_PATH = IPath(type='file|dir', exists=True)
@@ -155,7 +155,7 @@ class AspectRatioProcessor:
         with ProcessPoolExecutor(max_workers=self.parallel) as executor:
             with tqdm(total=len(paths), unit='img', smoothing=0.1, maxinterval=1) as prog_bar:
                 try:
-                    futures = {executor.submit(_get_image_info, path): path for path in paths}
+                    futures = {executor.submit(ImageInfo.for_image, path): path for path in paths}
                     for future in as_completed(futures):
                         try:
                             results.append(future.result())
@@ -241,10 +241,6 @@ def _get_common_ratios(box: Box) -> dict[AspectRatio, Box]:
         except ValueError as e:
             log.debug(e)
     return common_ratios
-
-
-def _get_image_info(path: Path, threshold: float = 0.99) -> ImageInfo:
-    return Image(path).get_info(threshold)
 
 
 @dataclass
