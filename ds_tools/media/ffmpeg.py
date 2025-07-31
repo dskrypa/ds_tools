@@ -4,12 +4,14 @@ Utilities for interacting with ffmpeg.
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import re
 from pathlib import Path
 from subprocess import run, CalledProcessError
-from typing import Union, Optional, Sequence, Any
+from typing import Any, Sequence
 
 from .constants import FFMPEG_CONFIG_PATH
 from .exceptions import FfmpegError
@@ -17,10 +19,12 @@ from .exceptions import FfmpegError
 __all__ = ['load_config', 'set_ffmpeg_path', 'run_ffmpeg_cmd', 'get_decoders', 'get_encoders', 'CodecLibrary']
 log = logging.getLogger(__name__)
 
-FFMPEG_DIR: Optional[Path] = None
+FFMPEG_DIR: Path | None = None
+
+_Path = str | Path | None
 
 
-def set_ffmpeg_path(path: Union[str, Path, None]):
+def set_ffmpeg_path(path: _Path):
     global FFMPEG_DIR
 
     if path is None:
@@ -34,7 +38,7 @@ def set_ffmpeg_path(path: Union[str, Path, None]):
     FFMPEG_DIR = path
 
 
-def load_config(path: Union[str, Path] = None):
+def load_config(path: _Path = None):
     path = Path(path or FFMPEG_CONFIG_PATH).expanduser()
     if not path.exists():
         return
@@ -46,13 +50,13 @@ def load_config(path: Union[str, Path] = None):
 
 def run_ffmpeg_cmd(
     args: Sequence[str] = None,
-    file: Union[str, Path] = None,
+    file: _Path = None,
     cmd: str = 'ffmpeg',
     capture: bool = False,
     decode: bool = True,
     kwargs: dict[str, Any] = None,
     log_level: int = logging.DEBUG,
-) -> Optional[Union[str, bytes]]:
+) -> str | bytes | None:
     command = [FFMPEG_DIR.joinpath(cmd).as_posix() if FFMPEG_DIR is not None else cmd]
     if args:
         command.extend(args)
@@ -99,8 +103,7 @@ class CodecLibrary:
         if self.codec:
             parts.append(f'codec={self.codec}')
         parts.append(f'capabilities={self.capabilities}')
-        info = ', '.join(parts)
-        return f'<{self.__class__.__name__}[{info}]>'
+        return f'<{self.__class__.__name__}[{", ".join(parts)}]>'
 
     @property
     def video(self) -> bool:
@@ -115,17 +118,18 @@ class CodecLibrary:
         return 'S' in self.capabilities
 
 
-def get_encoders(by_codec: bool = False) -> dict[str, Union[CodecLibrary, dict[Optional[str], CodecLibrary]]]:
+CodecLibMap = dict[str | None, CodecLibrary]
+
+
+def get_encoders(by_codec: bool = False) -> dict[str, CodecLibrary | CodecLibMap]:
     return _get_codec_libs('-encoders', by_codec)
 
 
-def get_decoders(by_codec: bool = False) -> dict[str, Union[CodecLibrary, dict[Optional[str], CodecLibrary]]]:
+def get_decoders(by_codec: bool = False) -> dict[str, CodecLibrary | CodecLibMap]:
     return _get_codec_libs('-decoders', by_codec)
 
 
-def _get_codec_libs(
-    lib_type: str, by_codec: bool = False
-) -> dict[str, Union[CodecLibrary, dict[Optional[str], CodecLibrary]]]:
+def _get_codec_libs(lib_type: str, by_codec: bool = False) -> dict[str, CodecLibrary | CodecLibMap]:
     stdout = run_ffmpeg_cmd([lib_type], capture=True)
     """
     Example format:
