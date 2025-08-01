@@ -1,13 +1,15 @@
 #!/usr/bin/env python
 
+import logging
 from pathlib import Path
 
 from cli_command_parser import Command, SubCommand, Positional, Option, Flag, Counter, main
 from cli_command_parser.inputs import Path as IPath, NumRange
 
-from ds_tools.__version__ import __author_email__, __version__  # noqa
 from ds_tools.caching.decorators import cached_property
-from ds_tools.images.hashing import ImageDB, Directory, ImageHash, ImageFile
+from ds_tools.images.hashing import ImageDB, Directory, ImageHash, ImageFile, set_hash_mode, HASH_MODES, MULTI_MODES
+
+log = logging.getLogger(__name__)
 
 PCT_FLOAT = NumRange(float, min=0, max=1, include_max=True)
 
@@ -15,14 +17,22 @@ PCT_FLOAT = NumRange(float, min=0, max=1, include_max=True)
 class ImageDBCLI(Command, description='Image Hash DB CLI', option_name_mode='*-'):
     action = SubCommand()
     verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
-    db_path: Path = Option(
-        '-db', type=IPath(type='file'), default='~/.cache/img_hash_db/img_hashes.db', help='Path to the DB that should be used'
-    )
+    hash_mode = Option('-m', choices=HASH_MODES, help='Use a specific hash mode')
+    multi_mode = Option('-M', choices=MULTI_MODES, help='Use a specific multi-hash mode')
+    db_path: Path = Option('-db', type=IPath(type='file'), help='Path to the DB that should be used')
 
     def _init_command_(self):
         from ds_tools.logging import init_logging
 
         init_logging(self.verbose, log_path=None)
+        set_hash_mode(hash_mode=self.hash_mode, multi_mode=self.multi_mode)
+
+    @db_path.register_default_cb  # noqa
+    def _db_path(self) -> Path:
+        from ds_tools.images.hashing import HASH_CLS, MULTI_CLS
+
+        cache_dir = Path('~/.cache/img_hash_db').expanduser()
+        return cache_dir.joinpath(f'{MULTI_CLS.__name__}_{HASH_CLS.__name__}_hashes.db')
 
     @cached_property
     def image_db(self) -> ImageDB:
@@ -36,6 +46,15 @@ class Status(ImageDBCLI, help='Show info about the DB'):
         for name, table_cls in tables.items():
             row_count = self.image_db.session.query(table_cls).count()
             print(f'Saved {name}: {row_count:,d}')
+
+
+class Reset(ImageDBCLI, help='Reset the DB'):
+    def main(self):
+        log.info(f'Deleting {self.db_path.as_posix()}')
+        try:
+            self.db_path.unlink()
+        except OSError as e:
+            log.error(f'Error deleting DB: {e}')
 
 
 class Scan(ImageDBCLI, help='Scan images to populate the DB'):

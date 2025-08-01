@@ -8,12 +8,13 @@ from functools import cached_property
 from hashlib import sha256
 from io import BytesIO
 from itertools import product
+from math import log2
 from pathlib import Path
 from sqlite3 import register_adapter
 from typing import TYPE_CHECKING, Annotated, Iterable, Iterator, Literal, Type, Collection, BinaryIO
 
 from numpy import full as np_full
-from numpy import array, asarray, frombuffer, packbits, unpackbits, nonzero, count_nonzero, log2, median
+from numpy import array, asarray, frombuffer, packbits, unpackbits, nonzero, count_nonzero, median
 from numpy import uint8, uint16, uint64
 from numpy.typing import NDArray
 from PIL import UnidentifiedImageError
@@ -39,6 +40,7 @@ __all__ = [
     'ImageHashBase', 'DifferenceHash', 'HorizontalDifferenceHash', 'VerticalDifferenceHash', 'WaveletHash',
     'MultiHash', 'RotatedMultiHash', 'CropResistantMultiHash',
     'Directory', 'ImageFile', 'ImageHash', 'ImageDB',
+    'set_hash_mode', 'HASH_MODES', 'MULTI_MODES',
 ]
 log = logging.getLogger(__name__)
 
@@ -57,6 +59,15 @@ class ImageHashBase(ABC):
     instead of an 8x8 array of bools.
     """
     array: Annotated[NDArray[uint8], Literal[8]]  # A 1D array with 8x uint8 values
+    _hash_x_offset: int = 0
+    _hash_y_offset: int = 0
+
+    def __init_subclass__(cls, hash_x_offset: int = 0, hash_y_offset: int = 0, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if hash_x_offset:
+            cls._hash_x_offset = hash_x_offset
+        if hash_y_offset:
+            cls._hash_y_offset = hash_y_offset
 
     def __init__(self, hash_array: NDArray[uint8]):
         """
@@ -74,12 +85,39 @@ class ImageHashBase(ABC):
 
     @classmethod
     @abstractmethod
-    def from_image(cls, image: PILImage, hash_size: int = 8, convert: bool = True):
+    def from_image(cls, image: PILImage, hash_size: int = 8, skip_prep: bool = False):
         raise NotImplementedError
 
     @classmethod
     def from_any(cls, image: ImageType | str, hash_size: int = 8):
         return cls.from_image(as_image(image), hash_size)
+
+    @classmethod
+    def _prepare_image(cls, image: PILImage, hash_size: int = 8) -> PILImage:
+        """
+        Adding this thumbnail step provides an overall ~2x perf boost.  Performance gains come from having a smaller
+        area to convert from mode=RGB(A) to mode=L, and during the resizing step with `ANTIALIASING` later.
+
+        Originally based on `a post in this issue <https://github.com/JohannesBuchner/imagehash/issues/128>`__.
+
+        The original implementation used a slower loop instead of using `math.log2`, and it used a 4x multiplier, which
+        resulted in both overly-permissive and less accurate matching, depending on when it was applied relative to
+        converting the image to mode=L.  The x16 multiplier used here works for either order, and seems to allow
+        additional detail to be retained while still providing the same magnitude of performance improvement.  The
+        conversion to mode=L is forced to occur at the end of this method, after calling thumbnail, due to improved
+        performance when using this order.
+        """
+        width, height = image.size
+        # Note: math.log2 is 3-4x faster than numpy.log2 for this use case
+        if width < height:
+            factor = 2 ** int(log2(width / ((hash_size + cls._hash_x_offset) * 16)))
+        else:
+            factor = 2 ** int(log2(height / ((hash_size + cls._hash_y_offset) * 16)))
+
+        if factor > 1:
+            image.thumbnail((width / factor, height / factor), NEAREST)  # This doesn't return anything
+
+        return image.convert('L')
 
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self.hex}, size={self.array.size}]>'
@@ -127,50 +165,36 @@ class ImageHashBase(ABC):
     __or__ = relative_difference
 
 
-class HorizontalDifferenceHash(ImageHashBase):
+class HorizontalDifferenceHash(ImageHashBase, hash_x_offset=1):
     """
     Computes differences horizontally.  Based on ``dhash`` from ``imagehash``, which uses the following approach:
     http://www.hackerfactor.com/blog/index.php?/archives/529-Kind-of-Like-That.html
     """
 
     @classmethod
-    def from_image(cls, image: PILImage, hash_size: int = 8, convert: bool = True) -> HorizontalDifferenceHash:
-        if convert:  # Optimization for hashing multiple transforms of the same image, already converted to grayscale
-            image = image.convert('L')
-
-        # TODO: Apparently adding this thumbnail step provides a significant perf boost?
-        #  https://github.com/JohannesBuchner/imagehash/issues/128
-        # image = _pre_resize(image, ((hash_size + 1) * 4, hash_size * 4))
+    def from_image(cls, image: PILImage, hash_size: int = 8, skip_prep: bool = False) -> HorizontalDifferenceHash:
+        if not skip_prep:  # Optimization for hashing multiple transforms of an image, already converted to grayscale
+            image = cls._prepare_image(image, hash_size)
 
         pixels = asarray(image.resize((hash_size + 1, hash_size), ANTIALIAS))  # shape: (height, width, channels)
         # compute differences between columns
         return cls(packbits(pixels[:, 1:] > pixels[:, :-1]))  # noqa  # Note: Original did not call packbits here
 
 
-def _pre_resize(img, box):
-    factor = 1
-    while img.size[0] > box[0] * factor and img.size[1] > box[1] * factor:
-        factor *= 2
-
-    if factor > 1:
-        img.thumbnail((img.size[0] / factor, img.size[1] / factor), NEAREST)
-
-    return img
-
-
 DifferenceHash = HorizontalDifferenceHash
 
 
-class VerticalDifferenceHash(ImageHashBase):
+class VerticalDifferenceHash(ImageHashBase, hash_y_offset=1):
     """
     Computes differences vertically.  Based on ``dhash_vertical`` from ``imagehash``, which uses the following approach:
     http://www.hackerfactor.com/blog/index.php?/archives/529-Kind-of-Like-That.html
     """
 
     @classmethod
-    def from_image(cls, image: PILImage, hash_size: int = 8, convert: bool = True) -> VerticalDifferenceHash:
-        if convert:  # Optimization for hashing multiple transforms of the same image, already converted to grayscale
-            image = image.convert('L')
+    def from_image(cls, image: PILImage, hash_size: int = 8, skip_prep: bool = False) -> VerticalDifferenceHash:
+        if not skip_prep:  # Optimization for hashing multiple transforms of an image, already converted to grayscale
+            image = cls._prepare_image(image, hash_size)
+
         pixels = asarray(image.resize((hash_size, hash_size + 1), ANTIALIAS))  # shape: (height, width, channels)
         # compute differences between columns
         return cls(packbits(pixels[1:, :] > pixels[:-1, :]))  # noqa  # Note: Original did not call packbits here
@@ -187,7 +211,7 @@ class WaveletHash(ImageHashBase):
         cls,
         image: PILImage,
         hash_size: int = 8,
-        convert: bool = True,
+        skip_prep: bool = False,
         *,
         image_scale: int = None,
         mode: Literal['haar', 'db4'] = 'haar',
@@ -207,7 +231,7 @@ class WaveletHash(ImageHashBase):
             raise ValueError(f'Invalid {hash_size=} for {image_scale=}')
 
         # log.debug(f'Using {image.size=}, {image_scale=}, {hash_size=}, {ll_max_level=}, {level=}')
-        if convert:  # Optimization for hashing multiple transforms of the same image, already converted to grayscale
+        if not skip_prep:  # Optimization for hashing multiple transforms of an image, already converted to grayscale
             image = image.convert('L')
         pixels = asarray(image.resize((image_scale, image_scale), ANTIALIAS)) / 255  # shape: (height, width, channels)
         # Remove low level frequency LL(max_ll) if @remove_max_haar_ll using haar filter
@@ -227,6 +251,12 @@ class WaveletHash(ImageHashBase):
 # HASH_CLS = WaveletHash
 HASH_CLS = DifferenceHash
 
+HASH_MODES = {
+    'difference': DifferenceHash,
+    'horizontal': HorizontalDifferenceHash,
+    'vertical': VerticalDifferenceHash,
+}
+
 # region Multi-Hash
 
 
@@ -237,16 +267,16 @@ class MultiHash(ABC):
         self.hashes = hashes
 
     @classmethod
-    def from_any(cls, image: ImageType, *args, **kwargs) -> MultiHash:
-        return cls.from_image(as_image(image), *args, **kwargs)
+    def from_any(cls, image: ImageType, **kwargs) -> MultiHash:
+        return cls.from_image(as_image(image), **kwargs)
 
     @classmethod
-    def from_file(cls, file: Path | BinaryIO, *args, **kwargs) -> MultiHash:
-        return cls.from_image(open_image(file), *args, **kwargs)
+    def from_file(cls, file: Path | BinaryIO, **kwargs) -> MultiHash:
+        return cls.from_image(open_image(file), **kwargs)
 
     @classmethod
     @abstractmethod
-    def from_image(cls, image: PILImage, hash_cls: Type[ImageHashBase] = HASH_CLS) -> MultiHash:
+    def from_image(cls, image: PILImage, *, hash_cls: Type[ImageHashBase] | None = None) -> MultiHash:
         raise NotImplementedError
 
     @abstractmethod
@@ -273,13 +303,17 @@ class RotatedMultiHash(MultiHash):
     __slots__ = ()
 
     @classmethod
-    def from_image(cls, image: PILImage, hash_cls: Type[ImageHashBase] = HASH_CLS) -> MultiHash:
-        gray_img = image.convert('L')
+    def from_image(
+        cls, image: PILImage, *, hash_cls: Type[ImageHashBase] | None = None, hash_size: int = 8
+    ) -> MultiHash:
+        if hash_cls is None:
+            hash_cls = HASH_CLS
+        gray_img = hash_cls._prepare_image(image, hash_size)
         # Since the same approach is used for the DB entries and during lookup, only 3 hashes are necessary.
         hashes = [
-            hash_cls.from_image(gray_img, convert=False),
-            hash_cls.from_image(gray_img.transpose(Transpose.ROTATE_90), convert=False),
-            hash_cls.from_image(gray_img.transpose(Transpose.ROTATE_180), convert=False),
+            hash_cls.from_image(gray_img, skip_prep=True),
+            hash_cls.from_image(gray_img.transpose(Transpose.ROTATE_90), skip_prep=True),
+            hash_cls.from_image(gray_img.transpose(Transpose.ROTATE_180), skip_prep=True),
         ]
         # Omitted: Transpose.ROTATE_270
         return cls(hashes)
@@ -315,18 +349,23 @@ class CropResistantMultiHash(MultiHash):
     def from_image(
         cls,
         image: PILImage,
-        hash_cls: Type[ImageHashBase] = HASH_CLS,
+        *,
+        hash_cls: Type[ImageHashBase] | None = None,
         segment_limit: int = None,
         segment_threshold: int = 128,
         min_segment_size: int = 500,
         pre_segment_size: int = 300,
     ) -> CropResistantMultiHash:
         gray_img = image.convert('L')  # Note: original used the original image in most places where this is used
+        # Using the pre-resized image did not provide a significant perf boost for this
+        # gray_img = image.convert('L').resize((pre_segment_size, pre_segment_size), ANTIALIAS)
+
         segments = Segment.find_all(
             asarray(
                 gray_img.resize((pre_segment_size, pre_segment_size), ANTIALIAS) \
-                .filter(GaussianBlur()).filter(MedianFilter())
+                    .filter(GaussianBlur()).filter(MedianFilter())
             ),
+            # asarray(gray_img.filter(GaussianBlur()).filter(MedianFilter())),
             segment_threshold,
             min_segment_size,
         )
@@ -337,9 +376,13 @@ class CropResistantMultiHash(MultiHash):
         orig_w, orig_h = gray_img.size
         scale_w = orig_w / pre_segment_size
         scale_h = orig_h / pre_segment_size
+        # scale_w = scale_h = 1
+
         # boxes = '\n'.join(f'  - {seg.bbox(scale_w, scale_h)}' for seg in segments)
         # log.debug(f'Using {len(segments)} segments:\n{boxes}')
-        return cls([hash_cls.from_image(gray_img.crop(seg.bbox(scale_w, scale_h)), convert=False) for seg in segments])
+        if hash_cls is None:
+            hash_cls = HASH_CLS
+        return cls([hash_cls.from_image(gray_img.crop(seg.bbox(scale_w, scale_h)), skip_prep=True) for seg in segments])
 
     # region Comparison Methods
 
@@ -498,6 +541,26 @@ class Segment:
 MULTI_CLS = RotatedMultiHash
 # MULTI_CLS = CropResistantMultiHash
 
+MULTI_MODES = {'crop_resistant': CropResistantMultiHash, 'rotated': RotatedMultiHash}
+
+
+def set_hash_mode(multi_mode: str | None, hash_mode: str | None):
+    global HASH_CLS, MULTI_CLS
+    if multi_mode:
+        if multi_cls := MULTI_MODES.get(multi_mode.lower()):
+            MULTI_CLS = multi_cls
+        else:
+            raise ValueError(f'Invalid {multi_mode=} - expected one of: ' + ', '.join(MULTI_MODES))
+
+    if hash_mode:
+        if hash_cls := HASH_MODES.get(hash_mode.lower()):
+            HASH_CLS = hash_cls
+        else:
+            raise ValueError(f'Invalid {hash_mode=} - expected one of: ' + ', '.join(HASH_MODES))
+
+    log.debug(f'Using hash classes: {HASH_CLS=}, {MULTI_CLS=}')
+
+
 # region Tables
 
 
@@ -529,7 +592,7 @@ class ImageHash(Base):
     image: Mapped[ImageFile] = relationship('ImageFile', back_populates='hashes', lazy='joined')
 
     @cached_property
-    def img_hash(self) -> HASH_CLS:
+    def img_hash(self) -> ImageHashBase:
         return HASH_CLS(array([self.a, self.b, self.c, self.d, self.e, self.f, self.g, self.h], dtype=uint8))
 
 
@@ -558,7 +621,7 @@ class ImageFile(Base):
         return Path(self.dir.path, self.name)
 
     @cached_property
-    def multi_hash(self) -> MULTI_CLS:
+    def multi_hash(self) -> MultiHash:
         return MULTI_CLS([h.img_hash for h in self.hashes])
 
     def difference(self, *args, **kwargs):
@@ -604,7 +667,7 @@ class ImageDB:
         return dir_obj
 
     def add_image(self, path: Path) -> ImageFile:
-        return self._add_image(path, MULTI_CLS.from_any(path, HASH_CLS), sha256(path.read_bytes()).hexdigest())
+        return self._add_image(path, MULTI_CLS.from_any(path, hash_cls=HASH_CLS), sha256(path.read_bytes()).hexdigest())
 
     def add_images(self, paths: Iterable[Path], workers: int | None = None):
         if workers is None or workers > 1:
@@ -661,7 +724,7 @@ class ImageDB:
                 self.session.commit()
 
     def _add_image(
-        self, path: Path, multi_hash: MULTI_CLS, sha256sum: str, commit: bool = True, stat_info: stat_result = None
+        self, path: Path, multi_hash: MultiHash, sha256sum: str, commit: bool = True, stat_info: stat_result = None
     ) -> ImageFile:
         if not stat_info:
             stat_info = path.stat()
@@ -691,7 +754,7 @@ class ImageDB:
         max_rel_distance: float = 0.05,
         # bit_error_rate: float = 0.2
     ) -> list[tuple[ImageFile, float]]:
-        multi_hash = MULTI_CLS.from_any(image, HASH_CLS)
+        multi_hash = MULTI_CLS.from_any(image, hash_cls=HASH_CLS)
         query = self._find_similar(multi_hash)
         return [
             (img_row, distance)
@@ -700,7 +763,7 @@ class ImageDB:
             if (distance := img_row.relative_difference(multi_hash)) <= max_rel_distance
         ]
 
-    def _find_similar(self, multi_hash: MULTI_CLS) -> Query:
+    def _find_similar(self, multi_hash: MultiHash) -> Query:
         a, b, c, d, e, f, g, h = array([h.array for h in multi_hash.hashes]).transpose()
         return self.session.query(ImageFile).join(ImageHash).filter(
             or_(
@@ -760,7 +823,7 @@ class ImageDB:
         return query
 
 
-def _hash_image(path: Path) -> tuple[MULTI_CLS, str, stat_result]:
+def _hash_image(path: Path) -> tuple[MultiHash, str, stat_result]:
     data = path.read_bytes()
     log.debug(f'Processing file: {path.as_posix()}')
     return MULTI_CLS.from_file(BytesIO(data)), sha256(data).hexdigest(), path.stat()
