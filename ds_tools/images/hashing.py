@@ -10,14 +10,14 @@ from io import BytesIO
 from itertools import product
 from pathlib import Path
 from sqlite3 import register_adapter
-from typing import TYPE_CHECKING, Iterable, Iterator, Literal, Type, Collection, BinaryIO
+from typing import TYPE_CHECKING, Annotated, Iterable, Iterator, Literal, Type, Collection, BinaryIO
 
-from numpy import transpose, bitwise_and, full as np_full, invert as np_invert
+from numpy import full as np_full
 from numpy import array, asarray, frombuffer, packbits, unpackbits, nonzero, count_nonzero, log2, median
-from numpy import uint8, uint16, uint64, float32
+from numpy import uint8, uint16, uint64
 from numpy.typing import NDArray
 from PIL import UnidentifiedImageError
-from PIL.Image import Resampling, Transpose, Image as PILImage, open as open_image  # noqa
+from PIL.Image import Resampling, Transpose, Image as PILImage, open as open_image
 from PIL.ImageFilter import GaussianBlur, MedianFilter
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, or_, and_, text
 from sqlalchemy.sql.functions import count
@@ -44,6 +44,7 @@ log = logging.getLogger(__name__)
 
 Pixel = tuple[int, int]
 ANTIALIAS = Resampling.LANCZOS
+NEAREST = Resampling.NEAREST
 
 # region Image Hash
 
@@ -55,7 +56,7 @@ class ImageHashBase(ABC):
     this use case.  Most notably, the hash array is stored as / expected to be a 1x8 array of uint8 values
     instead of an 8x8 array of bools.
     """
-    array: NDArray[uint8]
+    array: Annotated[NDArray[uint8], Literal[8]]  # A 1D array with 8x uint8 values
 
     def __init__(self, hash_array: NDArray[uint8]):
         """
@@ -107,7 +108,7 @@ class ImageHashBase(ABC):
         return self.array.size * 8  # self.array contains uint8 values, so *8 to get bits
 
     def __eq__(self, other: ImageHashBase) -> bool:
-        return (self.array == other.array).all()
+        return (self.array == other.array).all()  # noqa
 
     def __hash__(self) -> int:
         return hash(self.__class__) ^ hash(self.hex)
@@ -136,9 +137,25 @@ class HorizontalDifferenceHash(ImageHashBase):
     def from_image(cls, image: PILImage, hash_size: int = 8, convert: bool = True) -> HorizontalDifferenceHash:
         if convert:  # Optimization for hashing multiple transforms of the same image, already converted to grayscale
             image = image.convert('L')
-        pixels = asarray(image.resize((hash_size + 1, hash_size), ANTIALIAS))  # noqa
+
+        # TODO: Apparently adding this thumbnail step provides a significant perf boost?
+        #  https://github.com/JohannesBuchner/imagehash/issues/128
+        # image = _pre_resize(image, ((hash_size + 1) * 4, hash_size * 4))
+
+        pixels = asarray(image.resize((hash_size + 1, hash_size), ANTIALIAS))  # shape: (height, width, channels)
         # compute differences between columns
         return cls(packbits(pixels[:, 1:] > pixels[:, :-1]))  # noqa  # Note: Original did not call packbits here
+
+
+def _pre_resize(img, box):
+    factor = 1
+    while img.size[0] > box[0] * factor and img.size[1] > box[1] * factor:
+        factor *= 2
+
+    if factor > 1:
+        img.thumbnail((img.size[0] / factor, img.size[1] / factor), NEAREST)
+
+    return img
 
 
 DifferenceHash = HorizontalDifferenceHash
@@ -154,7 +171,7 @@ class VerticalDifferenceHash(ImageHashBase):
     def from_image(cls, image: PILImage, hash_size: int = 8, convert: bool = True) -> VerticalDifferenceHash:
         if convert:  # Optimization for hashing multiple transforms of the same image, already converted to grayscale
             image = image.convert('L')
-        pixels = asarray(image.resize((hash_size, hash_size + 1), ANTIALIAS))  # noqa
+        pixels = asarray(image.resize((hash_size, hash_size + 1), ANTIALIAS))  # shape: (height, width, channels)
         # compute differences between columns
         return cls(packbits(pixels[1:, :] > pixels[:-1, :]))  # noqa  # Note: Original did not call packbits here
 
@@ -192,7 +209,7 @@ class WaveletHash(ImageHashBase):
         # log.debug(f'Using {image.size=}, {image_scale=}, {hash_size=}, {ll_max_level=}, {level=}')
         if convert:  # Optimization for hashing multiple transforms of the same image, already converted to grayscale
             image = image.convert('L')
-        pixels = asarray(image.resize((image_scale, image_scale), ANTIALIAS)) / 255  # noqa
+        pixels = asarray(image.resize((image_scale, image_scale), ANTIALIAS)) / 255  # shape: (height, width, channels)
         # Remove low level frequency LL(max_ll) if @remove_max_haar_ll using haar filter
         if remove_max_haar_ll:
             coefficients = wavedec2(pixels, 'haar', level=ll_max_level)
@@ -258,10 +275,13 @@ class RotatedMultiHash(MultiHash):
     @classmethod
     def from_image(cls, image: PILImage, hash_cls: Type[ImageHashBase] = HASH_CLS) -> MultiHash:
         gray_img = image.convert('L')
-        hashes = [hash_cls.from_image(gray_img, convert=False)]
         # Since the same approach is used for the DB entries and during lookup, only 3 hashes are necessary.
-        for angle in (Transpose.ROTATE_90, Transpose.ROTATE_180):  # Omitted: Transpose.ROTATE_270
-            hashes.append(hash_cls.from_image(gray_img.transpose(angle), convert=False))
+        hashes = [
+            hash_cls.from_image(gray_img, convert=False),
+            hash_cls.from_image(gray_img.transpose(Transpose.ROTATE_90), convert=False),
+            hash_cls.from_image(gray_img.transpose(Transpose.ROTATE_180), convert=False),
+        ]
+        # Omitted: Transpose.ROTATE_270
         return cls(hashes)
 
     def difference(self, other: MultiHash | ImageHashBase) -> int:
@@ -286,6 +306,8 @@ class CropResistantMultiHash(MultiHash):
     """
     Based heavily on the ``ImageMultiHash`` class and ``crop_resistant_hash`` function in ``imagehash``, with a few
     optimizations around segmentation.
+
+    Approximately 3x slower than :class:`RotatedMultiHash`.
     """
     __slots__ = ()
 
@@ -300,34 +322,26 @@ class CropResistantMultiHash(MultiHash):
         pre_segment_size: int = 300,
     ) -> CropResistantMultiHash:
         gray_img = image.convert('L')  # Note: original used the original image in most places where this is used
-        # noinspection PyTypeChecker
-        pixels = array(
-            gray_img.resize((pre_segment_size, pre_segment_size), ANTIALIAS).filter(GaussianBlur()).filter(MedianFilter())
-        ).astype(float32)
-        segments = _find_all_segments(pixels, segment_threshold, min_segment_size)
-        if not segments:                        # If there are no segments, have 1 segment including the whole image
-            segments.append({(0, 0), (pre_segment_size - 1, pre_segment_size - 1)})
+        segments = Segment.find_all(
+            asarray(
+                gray_img.resize((pre_segment_size, pre_segment_size), ANTIALIAS) \
+                .filter(GaussianBlur()).filter(MedianFilter())
+            ),
+            segment_threshold,
+            min_segment_size,
+        )
         if segment_limit:                       # If segment limit is set, discard the smaller segments
-            segments = sorted(segments, key=len, reverse=True)[:segment_limit]
+            segments = sorted(segments, reverse=True)[:segment_limit]
 
         # Create bounding box for each segment
         orig_w, orig_h = gray_img.size
         scale_w = orig_w / pre_segment_size
         scale_h = orig_h / pre_segment_size
+        # boxes = '\n'.join(f'  - {seg.bbox(scale_w, scale_h)}' for seg in segments)
+        # log.debug(f'Using {len(segments)} segments:\n{boxes}')
+        return cls([hash_cls.from_image(gray_img.crop(seg.bbox(scale_w, scale_h)), convert=False) for seg in segments])
 
-        hashes = []
-        for segment in segments:
-            x_vals = {coord[1] for coord in segment}
-            bbox = (
-                min(x_vals) * scale_w,              # min_x
-                min(segment)[0] * scale_h,          # min_y
-                (max(x_vals) + 1) * scale_w,        # max_x
-                (max(segment)[0] + 1) * scale_h,    # max_y
-            )
-            # Compute robust hash src_image each bounding box
-            hashes.append(hash_cls.from_image(gray_img.crop(bbox), convert=False))  # noqa
-
-        return cls(hashes)
+    # region Comparison Methods
 
     def difference(self, other: MultiHash, max_distance: float = None, bit_error_rate: float = None) -> float:
         if distances := self._distances(other, max_distance, bit_error_rate):
@@ -389,69 +403,92 @@ class CropResistantMultiHash(MultiHash):
     ) -> list[tuple[float, MultiHash]]:
         return sorted(((self.difference(other, max_distance, bit_error_rate), other) for other in others))
 
-
-def _find_all_segments(pixels, segment_threshold, min_segment_size) -> list[set[Pixel]]:
-    """
-    Finds all the regions within an image pixel array, and returns a list of the regions.
-
-    Note: Slightly different segmentations are produced when using pillow version 6 vs. >=7, due to a change in
-    rounding in the greyscale conversion.
-
-    :param pixels: A numpy array of the pixel brightnesses.
-    :param segment_threshold: The brightness threshold to use when differentiating between hills and valleys.
-    :param min_segment_size: The minimum number of pixels for a segment.
-    """
-    img_width, img_height = pixels.shape
-    threshold_pixels = pixels > segment_threshold
-    unassigned_pixels = np_full(pixels.shape, True, dtype=bool)
-
-    # Add all the pixels around the border outside the image:
-    already_segmented = {(x, z) for x in (-1, img_width) for z in range(img_height)}
-    already_segmented.update((z, y) for y in (-1, img_height) for z in range(img_width))
-
-    segments = []
-    # Find all the "hill" regions
-    while (remaining_pixels := bitwise_and(threshold_pixels, unassigned_pixels)).any():
-        segment = _find_region(remaining_pixels, already_segmented)
-        # Apply segment
-        if len(segment) > min_segment_size:
-            segments.append(segment)
-        for pix in segment:
-            unassigned_pixels[pix] = False
-
-    # Invert the threshold matrix, and find "valleys"
-    threshold_pixels_i = np_invert(threshold_pixels)
-    img_area = img_width * img_height
-    while len(already_segmented) < img_area:
-        segment = _find_region(bitwise_and(threshold_pixels_i, unassigned_pixels), already_segmented)
-        # Apply segment
-        if len(segment) > min_segment_size:
-            segments.append(segment)
-        for pix in segment:
-            unassigned_pixels[pix] = False
-
-    return segments
+    # endregion
 
 
-def _find_region(remaining_pixels, segmented: set[Pixel]) -> set[Pixel]:
-    """
-    Finds a region and returns a set of pixel coordinates for it.
+class Segment:
+    __slots__ = ('x_coords', 'y_coords', 'size')
 
-    :param remaining_pixels: A numpy bool array, with True meaning the pixels are remaining to segment
-    :param segmented: A set of pixel coordinates which have already been assigned to segment. This will be
-      updated with the new pixels added to the returned segment.
-    """
-    not_in_region = set()
-    start = tuple(transpose(nonzero(remaining_pixels))[0])  # The first pixel in remaining_pixels with a value of True
-    in_region = {start}
-    new = {start}
-    while try_next := {p for x, y in new for p in ((x-1, y), (x+1, y), (x, y-1), (x, y+1))} - segmented - not_in_region:
-        # Empty new pixels set, so we know whose neighbour's to check next time
-        new = {pixel for pixel in try_next if remaining_pixels[pixel]}
-        in_region.update(new)
-        segmented.update(new)
-        not_in_region.update(try_next - new)
-    return in_region
+    def __init__(self, pixels: NDArray):
+        self.x_coords = pixels[:, 0]
+        self.y_coords = pixels[:, 1]
+        self.size = len(pixels)
+
+    @classmethod
+    def find_region(cls, remaining_pixels, segmented: set[Pixel]) -> Segment:
+        """
+        Finds a region and returns a set of pixel coordinates for it.
+
+        :param remaining_pixels: A numpy bool array, with True meaning the pixels are remaining to segment
+        :param segmented: A set of pixel coordinates which have already been assigned to segment. This will be
+          updated with the new pixels added to the returned segment.
+        """
+        # Note: The following is slightly faster than `tuple(transpose(nonzero(remaining_pixels))[0])`
+        y_coords, x_coords = nonzero(remaining_pixels)  # noqa
+        start: Pixel = (y_coords[0], x_coords[0])  # noqa
+        not_in_region = set()
+        in_region = [start]
+        new = {start}
+        # y, x here is more accurate than x, y since the first dimension is height
+        while try_next := (
+            {p for y, x in new for p in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1))} - segmented - not_in_region
+        ):
+            # Empty new pixels set, so we know whose neighbors to check next time
+            new = {pixel for pixel in try_next if remaining_pixels[pixel]}
+            in_region.extend(new)
+            segmented.update(new)
+            not_in_region.update(try_next - new)
+
+        return cls(array(in_region))
+
+    @classmethod
+    def find_all(cls, pixels: NDArray, segment_threshold: int = 128, min_segment_size: int = 500) -> list[Segment]:
+        if segments := list(cls._find_all(pixels, segment_threshold, min_segment_size)):
+            return segments
+        else:  # [this is unlikely] If there are no segments, have 1 segment including the whole image
+            return [Segment(array([0, 0], (pixels.shape[0] - 1, pixels.shape[1] - 1)))]
+
+    @classmethod
+    def _find_all(cls, pixels: NDArray, segment_threshold: int = 128, min_segment_size: int = 500) -> Iterator[Segment]:
+        # Note: numpy image arrays have shape (height, width), which differs from the (width, height) order used for
+        # most image-related `size` attributes.
+        img_height, img_width = pixels.shape
+        threshold_pixels = pixels > segment_threshold
+        unassigned_pixels = np_full(pixels.shape, True, dtype=bool)
+
+        # Add all the pixels around the border outside the image:
+        already_segmented = {(x, z) for x in (-1, img_width) for z in range(img_height)}
+        already_segmented.update((z, y) for y in (-1, img_height) for z in range(img_width))
+
+        # Find all the "hill" regions
+        while (remaining_pixels := threshold_pixels & unassigned_pixels).any():
+            segment = cls.find_region(remaining_pixels, already_segmented)
+            unassigned_pixels[segment.x_coords, segment.y_coords] = False
+            if segment.size > min_segment_size:
+                yield segment
+
+        # Invert the threshold matrix, and find "valleys"
+        threshold_pixels_i = ~threshold_pixels
+        img_area = img_width * img_height
+        while len(already_segmented) < img_area:
+            segment = cls.find_region(threshold_pixels_i & unassigned_pixels, already_segmented)
+            unassigned_pixels[segment.x_coords, segment.y_coords] = False
+            if segment.size > min_segment_size:
+                yield segment
+
+    def bbox(self, scale_w: float, scale_h: float) -> tuple[float, float, float, float]:
+        return (
+            self.x_coords.min() * scale_w,  # min_x
+            self.y_coords.min() * scale_h,  # min_y
+            (self.x_coords.max() + 1) * scale_w,  # max_x
+            (self.y_coords.max() + 1) * scale_h,  # max_y
+        )
+
+    def __eq__(self, other: Segment) -> bool:
+        return self.size == other.size and self.x_coords == other.x_coords and self.y_coords == other.y_coords
+
+    def __lt__(self, other: Segment) -> bool:
+        return self.size < other.size
 
 
 # endregion
@@ -459,6 +496,7 @@ def _find_region(remaining_pixels, segmented: set[Pixel]) -> set[Pixel]:
 # endregion
 
 MULTI_CLS = RotatedMultiHash
+# MULTI_CLS = CropResistantMultiHash
 
 # region Tables
 
@@ -543,8 +581,7 @@ class ImageDB:
         register_adapter(uint16, int)   # Necessary to ensure all hash chunks are stored as integers instead of bytes
         if path != ':memory:':
             path = Path(path).expanduser()
-            if not path.parent.exists():
-                path.parent.mkdir(parents=True, exist_ok=True)
+            path.parent.mkdir(parents=True, exist_ok=True)
             path = path.as_posix()
 
         engine = create_engine(f'sqlite:///{path}')
@@ -559,6 +596,7 @@ class ImageDB:
         elif dir_obj := self.session.query(Directory).filter_by(path=dir_str).first():
             self._dir_cache[dir_str] = dir_obj
             return dir_obj  # noqa
+
         dir_obj = Directory(path=dir_str)
         self.session.add(dir_obj)
         self.session.commit()
@@ -568,7 +606,13 @@ class ImageDB:
     def add_image(self, path: Path) -> ImageFile:
         return self._add_image(path, MULTI_CLS.from_any(path, HASH_CLS), sha256(path.read_bytes()).hexdigest())
 
-    def add_images(self, paths: Iterable[Path], workers: int = None):
+    def add_images(self, paths: Iterable[Path], workers: int | None = None):
+        if workers is None or workers > 1:
+            self._add_images_mt(paths, workers)
+        else:
+            self._add_images_st(paths)
+
+    def _add_images_mt(self, paths: Iterable[Path], workers: int | None):
         with ProcessPoolExecutor(max_workers=workers) as executor:
             futures = {executor.submit(_hash_image, path): path for path in paths}  # noqa
             with tqdm(total=len(futures), unit='img', smoothing=0.1, maxinterval=1) as prog_bar:
@@ -592,25 +636,48 @@ class ImageDB:
                 finally:
                     self.session.commit()
 
+    def _add_images_st(self, paths: Iterable[Path]):
+        try:
+            total = len(paths)  # noqa
+        except Exception:  # noqa
+            paths = list(paths)
+            total = len(paths)
+
+        with tqdm(total=total, unit='img', smoothing=0.1, maxinterval=1) as prog_bar:
+            try:
+                for i, path in enumerate(paths):
+                    prog_bar.update(1)
+                    try:
+                        multi_hash, sha256sum, stat_info = _hash_image(path)
+                    except Exception as e:
+                        exc_info = not isinstance(e, UnidentifiedImageError)
+                        log.error(f'Error hashing {path}: {e}', exc_info=exc_info, extra={'color': 'red'})
+                    else:
+                        image = self._add_image(path, multi_hash, sha256sum, commit=False, stat_info=stat_info)
+                        if i % 100 == 0:
+                            self.session.commit()
+                        log.debug(f'Added {image=}')
+            finally:
+                self.session.commit()
+
     def _add_image(
         self, path: Path, multi_hash: MULTI_CLS, sha256sum: str, commit: bool = True, stat_info: stat_result = None
     ) -> ImageFile:
         if not stat_info:
             stat_info = path.stat()
+
         image = ImageFile(
             dir=self.get_dir(path),
             name=path.name,
             size=stat_info.st_size,
             mod_time=stat_info.st_mtime,
             sha256sum=sha256sum,
+            hashes=[ImageHash(**dict(zip('abcdefgh', seg_hash.array))) for seg_hash in multi_hash.hashes],
         )
-        for seg_hash in multi_hash.hashes:
-            a, b, c, d, e, f, g, h = seg_hash.array
-            image.hashes.append(ImageHash(a=a, b=b, c=c, d=d, e=e, f=f, g=g, h=h))
-
         self.session.add(image)
         if commit:
             self.session.commit()
+
         return image
 
     def get_image(self, path: Path) -> ImageFile | None:
@@ -661,6 +728,7 @@ class ImageDB:
         sub_query = self.session.query(ImageFile.sha256sum, count(ImageFile.id.distinct()))\
             .group_by(ImageFile.sha256sum).subquery()
 
+        # noinspection PyTypeChecker
         query = self.session.query(ImageFile.sha256sum, sub_query.c.count, ImageFile)\
             .join(sub_query, sub_query.c.sha256sum == ImageFile.sha256sum)\
             .where(sub_query.c.count > 1) \
@@ -694,4 +762,5 @@ class ImageDB:
 
 def _hash_image(path: Path) -> tuple[MULTI_CLS, str, stat_result]:
     data = path.read_bytes()
+    log.debug(f'Processing file: {path.as_posix()}')
     return MULTI_CLS.from_file(BytesIO(data)), sha256(data).hexdigest(), path.stat()
