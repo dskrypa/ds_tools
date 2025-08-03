@@ -47,41 +47,64 @@ _NotSet = object()
 # region Walk / Path Iterators
 
 
-def iter_paths(path_or_paths: Paths) -> Iterator[Path]:
+class _PathIter:
     """
     Convenience function to iterate over Path objects that may be provided as one or more str or Path objects.
 
     :param path_or_paths: A path or iterable that yields paths
     :return: Generator that yields :class:`Path<pathlib.Path>` objects.
     """
-    try:
-        win_bash_path_match = iter_paths._win_bash_path_match
-    except AttributeError:
-        win_bash_path_match = iter_paths._win_bash_path_match = re.compile(r'^/([a-z])/(.*)', re.IGNORECASE).match
+    __slots__ = ('win_bash_path_match',)
 
-    if isinstance(path_or_paths, (str, Path)):
-        path_or_paths = (path_or_paths,)
-
-    for p in path_or_paths:
-        if isinstance(p, str):
-            p = Path(p)
-        elif not isinstance(p, Path):
-            raise TypeError(f'Unexpected type={p.__class__.__name__} for path={p!r}')
-
-        try:
-            if ON_WINDOWS and not p.exists() and (m := win_bash_path_match(p.as_posix())):
-                p = Path(f'{m.group(1).upper()}:/{m.group(2)}')
-        except OSError:
-            if any(c in p.name for c in '*?['):
-                matcher = FnMatcher(p.name)
-                for root, dirs, files in os.walk(os.getcwd()):
-                    root_join = Path(root).joinpath
-                    for f in matcher.matching_values(chain(dirs, files)):
-                        yield root_join(f)
-            else:
-                raise
+    def __init__(self):
+        if ON_WINDOWS:
+            self.win_bash_path_match = re.compile(r'^/([a-z])/(.*)', re.IGNORECASE).match
         else:
-            yield p.expanduser().resolve()
+            self.win_bash_path_match = None
+
+    if ON_WINDOWS:
+        def __call__(self, path_or_paths: Paths) -> Iterator[Path]:
+            if isinstance(path_or_paths, (str, Path)):
+                path_or_paths = (path_or_paths,)
+
+            for p in path_or_paths:
+                match p:
+                    case str():
+                        p = Path(p)
+                    case Path():
+                        pass
+                    case _:
+                        raise TypeError(f'Unexpected type={p.__class__.__name__} for path={p!r}')
+
+                try:
+                    if not p.exists() and (m := self.win_bash_path_match(p.as_posix())):
+                        p = Path(f'{m.group(1).upper()}:/{m.group(2)}')
+                except OSError:
+                    if any(c in p.name for c in '*?['):
+                        matcher = FnMatcher(p.name)
+                        for root, dirs, files in os.walk(os.getcwd()):
+                            for f in matcher.matching_values(chain(dirs, files)):
+                                yield Path(root, f)
+                    else:
+                        raise
+                else:
+                    yield p.expanduser().resolve()
+    else:
+        def __call__(self, path_or_paths: Paths) -> Iterator[Path]:
+            if isinstance(path_or_paths, (str, Path)):
+                path_or_paths = (path_or_paths,)
+
+            for p in path_or_paths:
+                match p:
+                    case str():
+                        yield Path(p).expanduser().resolve()
+                    case Path():
+                        yield p.expanduser().resolve()
+                    case _:
+                        raise TypeError(f'Unexpected type={p.__class__.__name__} for path={p!r}')
+
+
+iter_paths: _PathIter = _PathIter()
 
 
 def iter_files(path_or_paths: Paths, recursive: bool = True) -> Iterator[Path]:
@@ -100,16 +123,18 @@ def iter_files(path_or_paths: Paths, recursive: bool = True) -> Iterator[Path]:
             yield path
         elif S_ISDIR(mode):
             if recursive:
+                # Note: `os.walk` uses a similar approach to the `os.scandir` one below to avoid excess `stat` calls
                 for root, dirs, files in os.walk(path):
-                    if not files:
-                        continue
-                    root_join = Path(root).joinpath
                     for f in files:
-                        yield root_join(f)
+                        yield Path(root, f)
             else:
                 with os.scandir(path) as scanner:
-                    # DirEntry.is_file() generally won't result in a system call, while iterating over Path.iterdir()
-                    # and calling Path.is_file() on each result will call stat for each path.
+                    # os.scandir uses `dirent.h` directory entries yielded by repeatedly calling `readdir` on a `DIR`
+                    # struct initialized by calling `opendir` with the provided path.  Each entry contains the name of
+                    # that entry (`entry->d_name`) and its type (`entry->d_type`).  These are yielded by the Python
+                    # `scanner` as `DirEntry` objects, where calling `.is_file()` generally will not result in a `stat`
+                    # system call because it is able to use the `d_type` from the underlying C struct.  Conversely,
+                    # using `Path.iterdir()` and calling `Path.is_file()` on each result will call stat for each path.
                     for entry in scanner:
                         if entry.is_file():
                             yield Path(entry)
