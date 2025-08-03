@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-from cli_command_parser import Command, SubCommand, Positional, Option, Flag, Counter, main
+from cli_command_parser import Command, SubCommand, Positional, Option, Flag, Counter, ParamGroup, main
 from cli_command_parser.inputs import Path as IPath, NumRange
 
 from ds_tools.caching.decorators import cached_property
@@ -59,18 +59,36 @@ class Reset(ImageDBCLI, help='Reset the DB'):
 
 class Scan(ImageDBCLI, help='Scan images to populate the DB'):
     paths = Positional(nargs='+', help='One or more image files to hash and store in the DB')
-    no_ext_filter = Flag(help='Do not filter files by extension')
+
+    with ParamGroup('Filter', mutually_exclusive=True):
+        no_ext_filter = Flag(help='Do not filter files by extension')
+        ext_filter = Option('-f', nargs='+', help='Only process files with the specified extensions')
+
     max_workers: int = Option('-w', help='Maximum number of worker processes to use (default: based on core count)')
 
     def main(self):
         from ds_tools.fs.paths import iter_files
 
-        path_iter = iter_files(self.paths)
-        if not self.no_ext_filter:
-            ext_allow_list = {'.jpg', '.jpeg', '.png'}
-            path_iter = (p for p in path_iter if p.suffix.lower() in ext_allow_list)
+        if self.no_ext_filter:
+            path_iter = iter_files(self.paths)
+        else:
+            path_iter = self._iter_paths()
 
         self.image_db.add_images(path_iter, self.max_workers)
+
+    def _iter_paths(self):
+        from ds_tools.fs.paths import iter_files
+
+        if self.ext_filter:
+            ext_allow_list = {ext if ext.startswith('.') else f'.{ext}' for ext in map(str.lower, self.ext_filter)}  # noqa
+        else:
+            ext_allow_list = {'.jpg', '.jpeg', '.png'}
+
+        itx = ext_allow_list.intersection
+        for path in iter_files(self.paths):
+            suffixes = set(map(str.lower, path.suffixes))  # noqa
+            if itx(suffixes) and '.errors' not in suffixes:
+                yield path
 
 
 class Find(ImageDBCLI, help='Find images in the DB similar to the given image'):

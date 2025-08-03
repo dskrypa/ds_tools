@@ -8,16 +8,21 @@ from functools import cached_property
 from hashlib import sha256
 from io import BytesIO
 from itertools import product
-from math import log2
+from math import log2, log10
+from multiprocessing import Process, Queue, Event
+from os import stat, cpu_count, getpid
 from pathlib import Path
+from queue import Empty as QueueEmpty
 from sqlite3 import register_adapter
+from struct import Struct
+from traceback import format_exception
 from typing import TYPE_CHECKING, Annotated, Iterable, Iterator, Literal, Type, Collection, BinaryIO
 
 from numpy import full as np_full
 from numpy import array, asarray, frombuffer, packbits, unpackbits, nonzero, count_nonzero, median
 from numpy import uint8, uint16, uint64
 from numpy.typing import NDArray
-from PIL import UnidentifiedImageError
+from PIL import UnidentifiedImageError, ImageFile
 from PIL.Image import Resampling, Transpose, Image as PILImage, open as open_image
 from PIL.ImageFilter import GaussianBlur, MedianFilter
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, or_, and_, text
@@ -33,7 +38,6 @@ except ImportError:
 from .utils import as_image
 
 if TYPE_CHECKING:
-    from os import stat_result
     from .typing import ImageType
 
 __all__ = [
@@ -47,6 +51,8 @@ log = logging.getLogger(__name__)
 Pixel = tuple[int, int]
 ANTIALIAS = Resampling.LANCZOS
 NEAREST = Resampling.NEAREST
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True  # Allow truncated images to be processed without error
 
 # region Image Hash
 
@@ -81,7 +87,8 @@ class ImageHashBase(ABC):
 
     def __setstate__(self, state):
         # Note: This does not currently handle any hashes with a size != 8 / a length != 64 bits
-        self.array = frombuffer(state, dtype=uint64).view(uint8)
+        # self.array = frombuffer(state, dtype=uint64).view(uint8)
+        self.array = frombuffer(state, dtype=uint8)
 
     @classmethod
     @abstractmethod
@@ -137,9 +144,9 @@ class ImageHashBase(ABC):
         """
         return unpackbits(self.array)
 
-    @cached_property
-    def uint16(self) -> NDArray[uint16]:  # No longer used
-        return self.array.view(uint16)
+    # @cached_property
+    # def uint16(self) -> NDArray[uint16]:  # No longer used
+    #     return self.array.view(uint16)
 
     def __len__(self) -> int:
         """The number of bits in this hash"""
@@ -641,7 +648,7 @@ class ImageDB:
 
     def __init__(self, path: str | Path, expire_on_commit: bool = False):
         register_adapter(uint8, int)    # Necessary to ensure all hash chunks are stored as integers instead of bytes
-        register_adapter(uint16, int)   # Necessary to ensure all hash chunks are stored as integers instead of bytes
+        # register_adapter(uint16, int)   # Necessary to ensure all hash chunks are stored as integers instead of bytes
         if path != ':memory:':
             path = Path(path).expanduser()
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -651,6 +658,7 @@ class ImageDB:
         Base.metadata.create_all(engine)
         self.session = scoped_session(sessionmaker(bind=engine, expire_on_commit=expire_on_commit))
         self._dir_cache = {}
+        self._unpack_hash = Struct('8B').unpack
 
     def get_dir(self, path: Path) -> Directory:
         dir_str = path.parent.as_posix()
@@ -660,93 +668,181 @@ class ImageDB:
             self._dir_cache[dir_str] = dir_obj
             return dir_obj  # noqa
 
-        dir_obj = Directory(path=dir_str)
+        self._dir_cache[dir_str] = dir_obj = Directory(path=dir_str)
         self.session.add(dir_obj)
         self.session.commit()
-        self._dir_cache[dir_str] = dir_obj
         return dir_obj
 
     def add_image(self, path: Path) -> ImageFile:
-        return self._add_image(path, MULTI_CLS.from_any(path, hash_cls=HASH_CLS), sha256(path.read_bytes()).hexdigest())
+        stat_info = path.stat()
+        multi_hash = MULTI_CLS.from_any(path, hash_cls=HASH_CLS)
+        image = ImageFile(
+            dir=self.get_dir(path),
+            name=path.name,
+            size=stat_info.st_size,
+            mod_time=stat_info.st_mtime,
+            sha256sum=sha256(path.read_bytes()).hexdigest(),
+            hashes=[ImageHash(**dict(zip('abcdefgh', seg_hash.array))) for seg_hash in multi_hash.hashes],
+        )
+        self.session.add(image)
+        self.session.commit()
+        return image
 
-    def add_images(self, paths: Iterable[Path], workers: int | None = None):
+    def add_images(
+        self,
+        paths: Iterable[Path],
+        *,
+        workers: int | None = None,
+        skip_hashed: bool = True,
+        use_executor: bool = False,
+    ):
+        if skip_hashed:
+            hashed = self._get_all_paths()
+            log.debug(f'Filtering the provided paths to ignore {len(hashed):,d} paths that were already hashed')
+            paths = (path for path in paths if path not in hashed)
+
+        total, paths = _paths_and_count(paths)
+        self._prep_dir_cache(paths)
         if workers is None or workers > 1:
-            self._add_images_mt(paths, workers)
+            # Even after optimizing away some of the serialization/deserialization overhead, after a certain point, a
+            # CPU usage pattern emerges where there are periods of high/efficient CPU use followed by long periods of
+            # relative inactivity.
+            # The root cause is that it takes significantly longer to deserialize all results / insert them in the DB
+            # than it takes to process all of them.  This can be observed by having worker processes print when they
+            # finish, yet observing via the progress bar that thousands of results are still pending processing.
+            if use_executor:
+                self._add_images_mp_executor(paths, workers)
+            else:
+                self._add_images_mp(paths, workers)
         else:
             self._add_images_st(paths)
 
-    def _add_images_mt(self, paths: Iterable[Path], workers: int | None):
+    def _prep_dir_cache(self, paths: Collection[Path]):
+        """
+        Pre-populating Directory entries prevents potentially frequent extra commits while processing image results.
+        """
+        self._dir_cache = {d.path: d for d in self.session.query(Directory).all()}
+        added = False
+        for dir_str in {path.parent.as_posix() for path in paths}:
+            if dir_str not in self._dir_cache:
+                self._dir_cache[dir_str] = dir_obj = Directory(path=dir_str)  # noqa
+                self.session.add(dir_obj)
+                added = True
+
+        if added:
+            self.session.commit()
+
+    def _add_images_mp(self, paths: Collection[Path], workers: int | None):
+        commit_freq = max(100, 10 ** (int(log10(len(paths))) - 1) // 2)
+        log.debug(f'Using {commit_freq=}')
+
+        in_queue, out_queue, shutdown, done_feeding = args = Queue(), Queue(), Event(), Event()
+        processes = [Process(target=_image_processor, args=args) for _ in range(workers or cpu_count() or 1)]
+        for proc in processes:
+            proc.start()
+
+        with tqdm(range(1, len(paths) + 1), unit='img', smoothing=0.1, maxinterval=1) as prog_bar:
+            for path in paths:
+                # Note: `Path(loads(dumps(path.as_posix())))` is >2x faster than `loads(dumps(path))` with pickle
+                in_queue.put(path.as_posix())
+            done_feeding.set()
+            try:
+                for finished in prog_bar:
+                    path, result = out_queue.get()
+                    if isinstance(result, BaseException):
+                        try:
+                            raise result  # This sets exc_info
+                        except Exception as e:
+                            exc_info = not isinstance(e, UnidentifiedImageError)
+                            log.error(f'Error hashing {path}: {e}', exc_info=exc_info, extra={'color': 'red'})
+                    else:
+                        self._add_processed_image(Path(path), *result)
+                        if finished % commit_freq == 0:
+                            self.session.commit()
+            except BaseException:
+                shutdown.set()
+                raise
+
+        self.session.commit()
+        for proc in processes:
+            proc.join()
+
+    def _add_images_mp_executor(self, paths: Collection[Path], workers: int | None):
+        commit_freq = max(100, 10 ** (int(log10(len(paths))) - 1) // 2)
+        log.debug(f'Using {commit_freq=}')
+
         with ProcessPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(_hash_image, path): path for path in paths}  # noqa
-            with tqdm(total=len(futures), unit='img', smoothing=0.1, maxinterval=1) as prog_bar:
+            with tqdm(total=len(paths), unit='img', smoothing=0.1, maxinterval=1) as prog_bar:
+                # Note: `Path(loads(dumps(path.as_posix())))` is >2x faster than `loads(dumps(path))` with pickle
+                futures = {executor.submit(_process_image, path.as_posix()): path for path in paths}
+                # When accepting `Iterable[Path]` instead of `Collection[Path]`, because workers immediately start
+                # processing the futures, if the number of paths is high, it is very likely that the total count (of
+                # futures) will not be identified / the progress bar will not be displayed before a potentially
+                # significant number of files have already been processed.
                 try:
-                    for i, future in enumerate(as_completed(futures)):
-                        path = futures[future]
+                    for i, future in enumerate(as_completed(futures), 1):
+                        path = Path(futures[future])
                         prog_bar.update(1)
                         try:
-                            multi_hash, sha256sum, stat_info = future.result()
+                            hashes, sha256sum, size, mod_time = future.result()
                         except Exception as e:
                             exc_info = not isinstance(e, UnidentifiedImageError)
                             log.error(f'Error hashing {path}: {e}', exc_info=exc_info, extra={'color': 'red'})
                         else:
-                            image = self._add_image(path, multi_hash, sha256sum, commit=False, stat_info=stat_info)
-                            if i % 100 == 0:
+                            self._add_processed_image(path, hashes, sha256sum, size, mod_time)
+                            if i % commit_freq == 0:
                                 self.session.commit()
-                            log.debug(f'Added {image=}')
                 except BaseException:
                     executor.shutdown(cancel_futures=True)
                     raise
                 finally:
                     self.session.commit()
 
-    def _add_images_st(self, paths: Iterable[Path]):
-        try:
-            total = len(paths)  # noqa
-        except Exception:  # noqa
-            paths = list(paths)
-            total = len(paths)
-
-        with tqdm(total=total, unit='img', smoothing=0.1, maxinterval=1) as prog_bar:
+    def _add_images_st(self, paths: Collection[Path]):
+        with tqdm(total=len(paths), unit='img', smoothing=0.1, maxinterval=1) as prog_bar:
             try:
-                for i, path in enumerate(paths):
+                for i, path in enumerate(paths, 1):
                     prog_bar.update(1)
                     try:
-                        multi_hash, sha256sum, stat_info = _hash_image(path)
+                        hashes, sha256sum, size, mod_time = _process_image(path)
                     except Exception as e:
                         exc_info = not isinstance(e, UnidentifiedImageError)
                         log.error(f'Error hashing {path}: {e}', exc_info=exc_info, extra={'color': 'red'})
                     else:
-                        image = self._add_image(path, multi_hash, sha256sum, commit=False, stat_info=stat_info)
+                        self._add_processed_image(path, hashes, sha256sum, size, mod_time)
                         if i % 100 == 0:
                             self.session.commit()
-                        log.debug(f'Added {image=}')
             finally:
                 self.session.commit()
 
-    def _add_image(
-        self, path: Path, multi_hash: MultiHash, sha256sum: str, commit: bool = True, stat_info: stat_result = None
-    ) -> ImageFile:
-        if not stat_info:
-            stat_info = path.stat()
-
+    def _add_processed_image(self, path: Path, hashes: tuple[bytes, ...], sha256sum: str, size: int, mod_time: float):
         image = ImageFile(
-            dir=self.get_dir(path),
+            dir=self._dir_cache[path.parent.as_posix()],
             name=path.name,
-            size=stat_info.st_size,
-            mod_time=stat_info.st_mtime,
+            size=size,
+            mod_time=mod_time,
             sha256sum=sha256sum,
-            hashes=[ImageHash(**dict(zip('abcdefgh', seg_hash.array))) for seg_hash in multi_hash.hashes],
+            # Struct.unpack is ~2x faster than `numpy.frombuffer` for this, and providing the kwarg values this way
+            # is ~2x faster than ** expansion of `dict(zip('abcdefgh', arr))`.
+            hashes=[
+                ImageHash(a=a[0], b=a[1], c=a[2], d=a[3], e=a[4], f=a[5], g=a[6], h=a[7])
+                for a in map(self._unpack_hash, hashes)
+            ],
         )
         self.session.add(image)
-        if commit:
-            self.session.commit()
-
-        return image
+        # log.debug(f'Added {image=}')
 
     def get_image(self, path: Path) -> ImageFile | None:
         return self.session.query(ImageFile).filter_by(name=path.name)\
             .join(Directory).filter_by(path=path.parent.as_posix())\
             .first()
+
+    def _get_all_paths(self) -> set[Path]:
+        # This is faster than querying all ImageFiles, which seems to more eagerly load entities
+        dirs = {d.id: d.path for d in self.session.query(Directory).all()}
+        return {
+            Path(dirs[f.dir_id], f.name) for f in self.session.query(ImageFile.name, ImageFile.dir_id).all()  # noqa
+        }
 
     def find_similar(
         self,
@@ -823,7 +919,67 @@ class ImageDB:
         return query
 
 
-def _hash_image(path: Path) -> tuple[MultiHash, str, stat_result]:
-    data = path.read_bytes()
-    log.debug(f'Processing file: {path.as_posix()}')
-    return MULTI_CLS.from_file(BytesIO(data)), sha256(data).hexdigest(), path.stat()
+def _paths_and_count(paths: Iterable[Path]) -> tuple[int, Collection[Path]]:
+    try:
+        total = len(paths)  # noqa
+    except Exception:  # noqa
+        paths = list(paths)
+        return len(paths), paths
+    else:
+        return total, paths  # noqa
+
+
+def _process_image(path: str | Path) -> tuple[tuple[bytes, ...], str, int, float]:
+    stat_info = stat(path, follow_symlinks=True)
+    with open(path, 'rb') as f:
+        data = f.read()
+
+    sha256sum = sha256(data).hexdigest()
+    hashes = MULTI_CLS.from_file(BytesIO(data)).hashes
+    arrays = tuple(h.array.tobytes() for h in hashes)
+    # This approach results in the least overhead for deserializing this data in the main process
+    return arrays, sha256sum, stat_info.st_size, stat_info.st_mtime
+
+
+def _image_processor(in_queue: Queue, out_queue: Queue, shutdown: Event, done_feeding: Event):
+    while not shutdown.is_set():
+        try:
+            path = in_queue.get(timeout=0.1)
+        except QueueEmpty:  # Prevent blocking shutdown if the queue is still being filled
+            if done_feeding.is_set():
+                break
+            else:
+                continue
+
+        try:
+            out_queue.put((path, _process_image(path)))
+        except BaseException as e:  # noqa
+            out_queue.put((path, _ExceptionWrapper(e, e.__traceback__)))
+
+    print(f'Worker process finished: {getpid()}')
+
+
+class _ExceptionWrapper:
+    """Based on `concurrent.futures.process._ExceptionWithTraceback`"""
+
+    def __init__(self, exc: BaseException, tb):
+        tb = ''.join(format_exception(type(exc), exc, tb))
+        self.exc = exc
+        self.exc.__traceback__ = None
+        self.tb = f'\n"""\n{tb}"""'
+
+    def __reduce__(self):
+        return _rebuild_exc, (self.exc, self.tb)
+
+
+def _rebuild_exc(exc: BaseException, tb):
+    exc.__cause__ = _RemoteException(tb)
+    return exc
+
+
+class _RemoteException(Exception):
+    def __init__(self, tb: str):
+        self.tb = tb
+
+    def __str__(self) -> str:
+        return self.tb
