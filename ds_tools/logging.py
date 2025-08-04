@@ -71,7 +71,7 @@ def init_logging(
     lvl_names_add: Mapping[int, str] = None,
     set_levels: Mapping[str, int] = None,
     streams: bool = True,
-    reopen_streams: bool = True,
+    reopen_streams: bool = False,
     color_threads: bool = None,
     capture_warnings: bool = True,
     suppress_warnings: OptStrs = _NotSet,
