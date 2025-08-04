@@ -165,11 +165,11 @@ class Column:
         format_value = self._test_fmt.format
         try:  # Assume a mapping where the values are row dicts
             return max(self._len(format_value(e[self.key])) for e in width.values())
-        except (KeyError, TypeError, AttributeError):
+        except (KeyError, IndexError, TypeError, AttributeError):
             pass
         try:  # Assume a collection where items are row dicts
             return max(self._len(format_value(e[self.key])) for e in width)
-        except (KeyError, TypeError, AttributeError):
+        except (KeyError, IndexError, TypeError, AttributeError):
             pass
         try:  # Assume a collection where items are column values
             return max(self._len(format_value(obj)) for obj in width)
