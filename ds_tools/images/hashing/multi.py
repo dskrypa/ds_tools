@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, BinaryIO, Generic, Sequence, Type, TypeVar
 from PIL.Image import Transpose, Image as PILImage, open as open_image
 
 from ..utils import as_image
+from .single import ImageHashBase
 
 if TYPE_CHECKING:
     from ..typing import ImageType
-    from .single import ImageHashBase
 
 __all__ = ['MULTI_MODES', 'MultiHash', 'RotatedMultiHash', 'get_multi_class']
 log = logging.getLogger(__name__)

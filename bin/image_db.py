@@ -10,6 +10,7 @@ from cli_command_parser.inputs import Path as IPath, NumRange
 from ds_tools.caching.decorators import cached_property
 from ds_tools.images.hashing import HASH_MODES, MULTI_MODES, get_hash_class, get_multi_class
 from ds_tools.images.hashing.db import ImageDB, Directory, ImageHash, ImageFile, DEFAULT_HASH_MODE, DEFAULT_MULTI_MODE
+from ds_tools.images.hashing.dfs import ImageHashes
 
 log = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ class ImageDBCLI(Command, description='Image Hash DB CLI', option_name_mode='*-'
     hash_mode = Option('-m', default=DEFAULT_HASH_MODE, choices=HASH_MODES, help='Use a specific hash mode')
     multi_mode = Option('-M', default=DEFAULT_MULTI_MODE, choices=MULTI_MODES, help='Use a specific multi-hash mode')
     db_path: Path = Option('-db', type=IPath(type='file'), help='Path to the DB that should be used')
+    use_pandas = Flag('-p', help='Use Pandas instead of an sqlite DB')
 
     def _init_command_(self):
         from ds_tools.logging import init_logging
@@ -40,23 +42,46 @@ class ImageDBCLI(Command, description='Image Hash DB CLI', option_name_mode='*-'
     def image_db(self) -> ImageDB:
         return ImageDB(self.db_path, hash_mode=self.hash_mode, multi_mode=self.multi_mode)
 
+    @cached_property
+    def image_hashes(self) -> ImageHashes:
+        return ImageHashes(hash_mode=self.hash_mode, multi_mode=self.multi_mode)
+
 
 class Status(ImageDBCLI, help='Show info about the DB'):
     def main(self):
+        if self.use_pandas:
+            self._show_pd_status()
+        else:
+            self._show_db_status()
+
+    def _show_db_status(self):
         print(f'DB location: {self.db_path.as_posix()}')
         tables = {'directories': Directory, 'images': ImageFile, 'hashes': ImageHash}
         for name, table_cls in tables.items():
             row_count = self.image_db.session.query(table_cls).count()
             print(f'Saved {name}: {row_count:,d}')
 
+    def _show_pd_status(self):
+        from ds_tools.output.formatting import readable_bytes
+
+        ih = self.image_hashes
+        print(f'Metadata location: {ih.meta_path.as_posix()} ({readable_bytes(ih.meta_path.stat().st_size)})')
+        print(f'Hashes location: {ih.hash_path.as_posix()} ({readable_bytes(ih.hash_path.stat().st_size)})')
+
 
 class Reset(ImageDBCLI, help='Reset the DB'):
     def main(self):
-        log.info(f'Deleting {self.db_path.as_posix()}')
-        try:
-            self.db_path.unlink()
-        except OSError as e:
-            log.error(f'Error deleting DB: {e}')
+        if self.use_pandas:
+            paths = (self.image_hashes.meta_path, self.image_hashes.hash_path)
+        else:
+            paths = (self.db_path,)
+
+        for path in paths:
+            log.info(f'Deleting {path.as_posix()}')
+            try:
+                path.unlink()
+            except OSError as e:
+                log.error(f'Error deleting {path.as_posix()}: {e}')
 
 
 class Scan(ImageDBCLI, help='Scan images to populate the DB'):
@@ -76,7 +101,11 @@ class Scan(ImageDBCLI, help='Scan images to populate the DB'):
         else:
             path_iter = self._iter_paths()
 
-        self.image_db.add_images(path_iter, workers=self.max_workers)
+        if self.use_pandas:
+            self.image_hashes.add_images(path_iter, workers=self.max_workers)
+            self.image_hashes.save()
+        else:
+            self.image_db.add_images(path_iter, workers=self.max_workers)
 
     def _iter_paths(self):
         from ds_tools.fs.paths import iter_files
@@ -98,7 +127,8 @@ class Find(ImageDBCLI, help='Find images in the DB similar to the given image'):
     max_distance = Option('-D', default=0.05, type=PCT_FLOAT, help='Max distance as a % of hash bits that differ')
 
     def main(self):
-        if rows := self.image_db.find_similar(self.path, max_rel_distance=self.max_distance):
+        src = self.image_hashes if self.use_pandas else self.image_db
+        if rows := src.find_similar(self.path, max_rel_distance=self.max_distance):
             print(f'Found {len(rows)} matches:')
             self.print_table(rows)
         else:
@@ -139,12 +169,14 @@ class Dupes(ImageDBCLI, help='Find exact duplicate images in the DB'):
             self.print_all_exact_dupes()
 
     def print_all_exact_dupes(self):
-        for sha, num, images in self.image_db.find_exact_dupes():
+        src = self.image_hashes if self.use_pandas else self.image_db
+        for sha, num, images in src.find_exact_dupes():
             print(f'{sha}: {len(images)}:\n' + '\n'.join(sorted(f' - {img.path.as_posix()}' for img in images)))
 
     def print_filtered_dupes(self):
+        src = self.image_hashes if self.use_pandas else self.image_db
         dirs = tuple({Path(path).expanduser().as_posix() for path in self.dir_filter})
-        for sha, num, images in self.image_db.find_exact_dupes():
+        for sha, num, images in src.find_exact_dupes():
             if not any(img.path.as_posix().startswith(dirs) for img in images):
                 continue
             print(f'{sha}: {len(images)}:\n' + '\n'.join(sorted(f' - {img.path.as_posix()}' for img in images)))
