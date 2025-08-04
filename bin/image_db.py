@@ -1,13 +1,15 @@
 #!/usr/bin/env python
 
 import logging
+from multiprocessing import set_start_method
 from pathlib import Path
 
 from cli_command_parser import Command, SubCommand, Positional, Option, Flag, Counter, ParamGroup, main
 from cli_command_parser.inputs import Path as IPath, NumRange
 
 from ds_tools.caching.decorators import cached_property
-from ds_tools.images.hashing import ImageDB, Directory, ImageHash, ImageFile, set_hash_mode, HASH_MODES, MULTI_MODES
+from ds_tools.images.hashing import HASH_MODES, MULTI_MODES, get_hash_class, get_multi_class
+from ds_tools.images.hashing.db import ImageDB, Directory, ImageHash, ImageFile, DEFAULT_HASH_MODE, DEFAULT_MULTI_MODE
 
 log = logging.getLogger(__name__)
 
@@ -17,26 +19,26 @@ PCT_FLOAT = NumRange(float, min=0, max=1, include_max=True)
 class ImageDBCLI(Command, description='Image Hash DB CLI', option_name_mode='*-'):
     action = SubCommand()
     verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
-    hash_mode = Option('-m', choices=HASH_MODES, help='Use a specific hash mode')
-    multi_mode = Option('-M', choices=MULTI_MODES, help='Use a specific multi-hash mode')
+    hash_mode = Option('-m', default=DEFAULT_HASH_MODE, choices=HASH_MODES, help='Use a specific hash mode')
+    multi_mode = Option('-M', default=DEFAULT_MULTI_MODE, choices=MULTI_MODES, help='Use a specific multi-hash mode')
     db_path: Path = Option('-db', type=IPath(type='file'), help='Path to the DB that should be used')
 
     def _init_command_(self):
         from ds_tools.logging import init_logging
 
         init_logging(self.verbose, log_path=None)
-        set_hash_mode(hash_mode=self.hash_mode, multi_mode=self.multi_mode)
+        set_start_method('spawn')
 
     @db_path.register_default_cb  # noqa
     def _db_path(self) -> Path:
-        from ds_tools.images.hashing import HASH_CLS, MULTI_CLS
-
+        hash_cls = get_hash_class(self.hash_mode)
+        multi_cls = get_multi_class(self.multi_mode)
         cache_dir = Path('~/.cache/img_hash_db').expanduser()
-        return cache_dir.joinpath(f'{MULTI_CLS.__name__}_{HASH_CLS.__name__}_hashes.db')
+        return cache_dir.joinpath(f'{multi_cls.__name__}_{hash_cls.__name__}_hashes.db')
 
     @cached_property
     def image_db(self) -> ImageDB:
-        return ImageDB(self.db_path)
+        return ImageDB(self.db_path, hash_mode=self.hash_mode, multi_mode=self.multi_mode)
 
 
 class Status(ImageDBCLI, help='Show info about the DB'):
@@ -74,7 +76,7 @@ class Scan(ImageDBCLI, help='Scan images to populate the DB'):
         else:
             path_iter = self._iter_paths()
 
-        self.image_db.add_images(path_iter, self.max_workers)
+        self.image_db.add_images(path_iter, workers=self.max_workers)
 
     def _iter_paths(self):
         from ds_tools.fs.paths import iter_files
