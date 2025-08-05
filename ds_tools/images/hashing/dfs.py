@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
@@ -71,6 +70,16 @@ class ImageHashes:
     def _hash_df(self) -> DataFrame | None:
         return _maybe_read_df(self.hash_path)
 
+    @property
+    def meta_df(self) -> DataFrame:
+        self._ensure_initialized('access metadata')
+        return self._meta_df
+
+    @property
+    def hash_df(self) -> DataFrame:
+        self._ensure_initialized('access hashes')
+        return self._hash_df
+
     def save(self):
         if self._meta_df is None:
             log.warning('Attempted save, but there is no data to save')
@@ -84,20 +93,22 @@ class ImageHashes:
         with self.hash_path.open('wb') as f:
             self._hash_df.to_feather(f)
 
-    def _add_meta(self, meta_data: DataFrame | dict[str, str | int | float]):
-        if self._meta_df is not None:
-            if isinstance(meta_data, dict):
-                self._meta_df[len(self._meta_df)] = meta_data  # TODO: Test this
-            else:
-                meta_data.set_index('path', inplace=True)
-                self._meta_df = concat([self._meta_df, meta_data])
-        else:
-            if isinstance(meta_data, dict):
-                self._meta_df = DataFrame([meta_data])
-            else:
-                self._meta_df = meta_data
+    def _ensure_initialized(self, purpose: str):
+        if self._hash_df is None:
+            raise ImageHashError(f'Unable to {purpose} - hash DataFrame not initialized (no images were scanned yet)')
 
-            self._meta_df.set_index('path', inplace=True)
+    def _add_meta(self, meta_df: DataFrame):
+        try:
+            # Unless separate synced lists are used to store paths / data, there doesn't seem to be any way to
+            # initialize the df with this as the index.
+            meta_df.set_index('path', inplace=True)
+        except KeyError:
+            pass  # The correct / expected index is already set
+
+        if self._meta_df is not None:
+            self._meta_df = concat([self._meta_df, meta_df])
+        else:
+            self._meta_df = meta_df
 
     def _add_hashes(self, hash_df: DataFrame):
         if self._hash_df is not None:
@@ -105,21 +116,12 @@ class ImageHashes:
         else:
             self._hash_df = hash_df
 
-    def _ensure_initialized(self, purpose: str):
-        if self._hash_df is None:
-            raise ImageHashError(f'Unable to {purpose} - hash DataFrame not initialized (no images were scanned yet)')
-
     def add_image(self, path: Path):
-        stat_info = path.stat()
+        stat = path.stat()
         multi_hash = self.multi_cls.from_any(path, hash_cls=self.hash_cls)
         path_str = path.as_posix()
-        meta_row = {
-            'path': path_str,
-            'size': stat_info.st_size,
-            'mod_time': stat_info.st_mtime,
-            'sha256sum': sha256(path.read_bytes()).hexdigest(),
-        }
-        self._add_meta(meta_row)
+        meta_row = {'size': stat.st_size, 'mod_time': stat.st_mtime, 'sha256sum': sha256(path.read_bytes()).hexdigest()}
+        self._add_meta(DataFrame(meta_row, index=[path_str]))
         self._add_hashes(DataFrame({'path': path_str, 'hash': [h.array for h in multi_hash.hashes]}))
 
     def add_images(
@@ -177,20 +179,26 @@ class ImageHashes:
 
     def find_similar(self, image: ImageType, max_rel_distance: float = 0.05) -> list[tuple[ImageFile, float]]:
         multi_hash = self.multi_cls.from_any(image, hash_cls=self.hash_cls)
-        path_arr_map = defaultdict(list)
-        for path, hash_array in self._find_similar(multi_hash).itertuples(False, None):
-            path_arr_map[path].append(hash_array)
-
-        images = (self._get_image(path, hash_arrays) for path, hash_arrays in path_arr_map.items())
+        images = (
+            self._get_image(path, list(group['hash']))  # noqa
+            for path, group in self._find_similar(multi_hash).groupby('path')
+        )
         return [(img, dist) for img in images if (dist := img.relative_difference(multi_hash)) <= max_rel_distance]
 
     def _find_similar(self, multi_hash: MultiHash, min_matches: int = 2) -> DataFrame:
         self._ensure_initialized('find similar images')
-        df_hashes = stack(self._hash_df['hash'].to_numpy())
+        df_hashes = stack(self._hash_df['hash'])
         hash_arrays = (h.array for h in multi_hash.hashes)
+        # Given 1D arrays a = [1, 2, 3], b = [1, 4, 5], c = [2, 1, 4]; (a == b).any() is True, but (a == c).any() is
+        # False.  The same positional behavior applies to `.sum()`, which lets us count the number of matching parts.
+        # Given the 2D df_hashes array and 1D `arr` arrays representing the 8 hash parts,
+        # `(df_hashes == arr).sum(axis=1)` provides a mask for the 2D array based on the sum of matching positional
+        # values in each row.  That is then filtered with `>= min_matches` to only the rows where at least that number
+        # of positional hash parts match.  Masks for each hash in the given multi hash are combined so that rows that
+        # match any of those hashes are returned.
         mask = (df_hashes == next(hash_arrays)).sum(axis=1) >= min_matches  # noqa
         for arr in hash_arrays:
-            mask |= (df_hashes == arr).sum(axis=1) >= min_matches  # noqa
+            mask |= (df_hashes == arr).sum(axis=1) >= min_matches  # noqa  # PyCharm assumes non-numpy == behavior
 
         return self._hash_df[mask]
 
@@ -210,20 +218,12 @@ class ImageHashes:
 
     def find_exact_dupes(self) -> Iterator[tuple[str, int, list[ImageFile]]]:
         self._ensure_initialized('find exact dupes')
-        df = self._meta_df.groupby('sha256sum').filter(lambda x: len(x) > 1).sort_values(['sha256sum', 'path'])
-        last_sha, images = None, []
-        for path, size, mod_time, sha256sum in df.itertuples(name=None):
-            if sha256sum != last_sha:
-                if images:
-                    yield last_sha, len(images), images
-
-                images = [ImageFile(Path(path), size, mod_time, sha256sum, self._get_hashes(path))]
-                last_sha = sha256sum
-            else:
-                images.append(ImageFile(Path(path), size, mod_time, sha256sum, self._get_hashes(path)))
-
-        if images:
-            yield last_sha, len(images), images
+        for sha256sum, group in self._meta_df[self._meta_df.duplicated('sha256sum', keep=False)].groupby('sha256sum'):
+            images = [
+                ImageFile(Path(path), size, mod_time, img_sha, self._get_hashes(path))
+                for path, size, mod_time, img_sha in group.itertuples(name=None)
+            ]
+            yield sha256sum, len(images), images
 
 
 @dataclass

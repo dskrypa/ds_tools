@@ -67,6 +67,8 @@ class Status(ImageDBCLI, help='Show info about the DB'):
         ih = self.image_hashes
         print(f'Metadata location: {ih.meta_path.as_posix()} ({readable_bytes(ih.meta_path.stat().st_size)})')
         print(f'Hashes location: {ih.hash_path.as_posix()} ({readable_bytes(ih.hash_path.stat().st_size)})')
+        print(f'Saved images: {ih.meta_df.shape[0]:,d}')
+        print(f'Saved hashes: {ih.hash_df.shape[0]:,d}')
 
 
 class Reset(ImageDBCLI, help='Reset the DB'):
