@@ -103,6 +103,12 @@ class ImageHashBase(ABC):
         if factor > 1:
             image.thumbnail((width / factor, height / factor), NEAREST)  # This doesn't return anything
 
+        if image.mode == 'P':
+            # This is to avoid: `Palette images with Transparency expressed in bytes should be converted to RGBA images`
+            # That being said, comparing `a = img.convert('L')` to `b = img.convert('RGBA').convert('L')` via numpy
+            # indicates that `(asarray(a) == asarray(b)).all()` was True, so the point of this warning is unclear...
+            return image.convert('RGBA').convert('L')
+
         return image.convert('L')
 
     # endregion
