@@ -9,7 +9,7 @@ from os import stat, cpu_count, getpid
 from pathlib import Path
 from queue import Empty as QueueEmpty
 from traceback import format_exception
-from typing import Collection, Iterator, Type
+from typing import Any, Collection, Iterator, Type
 
 from PIL import UnidentifiedImageError
 from tqdm import tqdm
@@ -18,10 +18,71 @@ from ds_tools.logging import init_logging as _init_logging, ENTRY_FMT_DETAILED_P
 from .multi import MultiHash, MULTI_MODES, get_multi_class
 from .single import ImageHashBase, HASH_MODES, get_hash_class
 
-__all__ = ['process_image', 'process_images', 'process_images_mp', 'process_images_via_executor']
+__all__ = [
+    'ImageProcessor', 'process_image', 'process_images',
+    'process_images_mp', 'process_images_via_executor', 'process_images_st',
+]
 log = logging.getLogger(__name__)
 
 ProcessedResults = tuple[tuple[bytes, ...], str, int, float]
+
+
+class ImageProcessor:
+    __slots__ = ('workers', 'hash_mode', 'multi_mode', 'use_executor', 'init_logging', 'verbosity')
+
+    def __init__(
+        self,
+        workers: int | None = None,
+        hash_mode: str = 'difference',
+        multi_mode: str = 'rotated',
+        *,
+        use_executor: bool = False,
+        init_logging: bool = True,
+        verbosity: int | None = 1,
+    ):
+        self.workers = workers
+        self.hash_mode = hash_mode
+        self.multi_mode = multi_mode
+        self.use_executor = use_executor
+        self.init_logging = init_logging
+        self.verbosity = verbosity
+
+    def process_images(self, paths: Collection[Path]) -> Iterator[tuple[int, Path, ProcessedResults]]:
+        kwargs: dict[str, Any] = {'hash_mode': self.hash_mode, 'multi_mode': self.multi_mode}
+        if self.workers is None or self.workers > 1:
+            # Even after optimizing away some of the serialization/deserialization overhead, after a certain point, a
+            # CPU usage pattern emerges where there are periods of high/efficient CPU use followed by long periods of
+            # relative inactivity.
+            # The root cause is that it takes significantly longer to deserialize all results / insert them in the DB
+            # than it takes to process all of them.  This can be observed by having worker processes print when they
+            # finish, yet observing via the progress bar that thousands of results are still pending processing.
+            kwargs['workers'] = self.workers
+            if self.use_executor:
+                process_images_func = process_images_via_executor
+            else:
+                process_images_func = process_images_mp
+                kwargs['init_logging'] = self.init_logging
+                kwargs['verbosity'] = self.verbosity
+        else:
+            process_images_func = process_images
+
+        return process_images_func(paths, **kwargs)
+
+
+def process_images(
+    paths: Collection[Path],
+    workers: int | None = None,
+    hash_mode: str = 'difference',
+    multi_mode: str = 'rotated',
+    *,
+    use_executor: bool = False,
+    init_logging: bool = True,
+    verbosity: int | None = 1,
+) -> Iterator[tuple[int, Path, ProcessedResults]]:
+    processor = ImageProcessor(
+        workers, hash_mode, multi_mode, use_executor=use_executor, init_logging=init_logging, verbosity=verbosity
+    )
+    return processor.process_images(paths)
 
 
 def process_images_mp(
@@ -31,14 +92,14 @@ def process_images_mp(
     hash_mode: str = 'difference',
     multi_mode: str = 'rotated',
     init_logging: bool = True,
-    log_verbosity: int | None = 1,
+    verbosity: int | None = 1,
 ) -> Iterator[tuple[int, Path, ProcessedResults]]:
     get_hash_class(hash_mode)  # These are called here just to validate the input before spawning processes
     get_multi_class(multi_mode)
 
     in_queue, out_queue, shutdown, done_feeding = args = Queue(), Queue(), Event(), Event()
     kwargs = {
-        'hash_mode': hash_mode, 'multi_mode': multi_mode, 'init_logging': init_logging, 'log_verbosity': log_verbosity
+        'hash_mode': hash_mode, 'multi_mode': multi_mode, 'init_logging': init_logging, 'verbosity': verbosity
     }
     processes = [Process(target=_image_processor, args=args, kwargs=kwargs) for _ in range(workers or cpu_count() or 1)]
     for proc in processes:
@@ -97,7 +158,7 @@ def process_images_via_executor(
                 raise
 
 
-def process_images(
+def process_images_st(
     paths: Collection[Path], *, hash_mode: str = 'difference', multi_mode: str = 'rotated'
 ) -> Iterator[tuple[int, Path, ProcessedResults]]:
     hash_cls = HASH_MODES[hash_mode]  # Since this occurs in the main process for this approach,
@@ -136,10 +197,10 @@ def _image_processor(
     hash_mode: str = 'difference',
     multi_mode: str = 'rotated',
     init_logging: bool = True,
-    log_verbosity: int | None = 1,
+    verbosity: int | None = 1,
 ):
     if init_logging:
-        _init_logging(log_verbosity, log_path=None, entry_fmt=ENTRY_FMT_DETAILED_PID)
+        _init_logging(verbosity, log_path=None, entry_fmt=ENTRY_FMT_DETAILED_PID)
 
     hash_cls = HASH_MODES[hash_mode]  # Note: Key membership is verified in process_images before this is called
     multi_cls = MULTI_MODES[multi_mode]

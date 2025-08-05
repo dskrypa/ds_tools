@@ -8,7 +8,7 @@ from math import log10
 from pathlib import Path
 from sqlite3 import register_adapter
 from struct import Struct
-from typing import TYPE_CHECKING, Any, Collection, Iterable, Iterator, Type
+from typing import TYPE_CHECKING, Collection, Iterable, Iterator, Type
 
 from numpy import array, uint8
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, or_
@@ -16,7 +16,7 @@ from sqlalchemy.sql.functions import count
 from sqlalchemy.orm import Query, relationship, scoped_session, sessionmaker, DeclarativeBase, Mapped
 
 from .multi import RotatedMultiHash, get_multi_class
-from .processing import process_images, process_images_mp, process_images_via_executor
+from .processing import ImageProcessor
 from .single import DifferenceHash, get_hash_class
 
 if TYPE_CHECKING:
@@ -103,21 +103,9 @@ class ImageDB:
         commit_freq = max(100, 10 ** (int(log10(len(paths))) - 1) // 2)
         log.debug(f'Using {commit_freq=}')
 
-        kwargs: dict[str, Any] = {'hash_mode': self.hash_cls.mode, 'multi_mode': self.multi_cls.mode}
-        if workers is None or workers > 1:
-            # Even after optimizing away some of the serialization/deserialization overhead, after a certain point, a
-            # CPU usage pattern emerges where there are periods of high/efficient CPU use followed by long periods of
-            # relative inactivity.
-            # The root cause is that it takes significantly longer to deserialize all results / insert them in the DB
-            # than it takes to process all of them.  This can be observed by having worker processes print when they
-            # finish, yet observing via the progress bar that thousands of results are still pending processing.
-            process_images_func = process_images_via_executor if use_executor else process_images_mp
-            kwargs['workers'] = workers
-        else:
-            process_images_func = process_images
-
+        processor = ImageProcessor(workers, self.hash_cls.mode, self.multi_cls.mode, use_executor=use_executor)
         unpack = Struct('8B').unpack
-        for i, path, (hashes, sha256sum, size, mod_time) in process_images_func(paths, **kwargs):
+        for i, path, (hashes, sha256sum, size, mod_time) in processor.process_images(paths):
             image = ImageFile(
                 dir=self._dir_cache[path.parent.as_posix()],
                 name=path.name,

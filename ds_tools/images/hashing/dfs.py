@@ -6,13 +6,13 @@ from datetime import datetime
 from functools import cached_property
 from hashlib import sha256
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Collection, Iterable, Iterator, Type
+from typing import TYPE_CHECKING, Collection, Iterable, Iterator, Type
 
 from numpy import uint8, frombuffer, stack
 from pandas import DataFrame, concat, read_feather
 
 from .multi import RotatedMultiHash, get_multi_class
-from .processing import process_images, process_images_mp, process_images_via_executor
+from .processing import ImageProcessor
 from .single import DifferenceHash, get_hash_class
 
 if TYPE_CHECKING:
@@ -133,17 +133,11 @@ class ImageHashes:
         use_executor: bool = False,
     ):
         paths = self._prep_paths(paths, skip_hashed)
-
-        kwargs: dict[str, Any] = {'hash_mode': self.hash_cls.mode, 'multi_mode': self.multi_cls.mode}
-        if workers is None or workers > 1:
-            process_images_func = process_images_via_executor if use_executor else process_images_mp
-            kwargs['workers'] = workers
-        else:
-            process_images_func = process_images
+        processor = ImageProcessor(workers, self.hash_cls.mode, self.multi_cls.mode, use_executor=use_executor)
 
         meta_rows = []
         hash_rows = []
-        for i, path, (hashes, sha256sum, size, mod_time) in process_images_func(paths, **kwargs):
+        for i, path, (hashes, sha256sum, size, mod_time) in processor.process_images(paths):
             path_str = path.as_posix()
             meta_rows.append({'path': path_str, 'size': size, 'mod_time': mod_time, 'sha256sum': sha256sum})
             hash_rows.extend({'path': path_str, 'hash': frombuffer(h, dtype=uint8)} for h in hashes)
