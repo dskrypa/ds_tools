@@ -15,6 +15,7 @@ from ds_tools.images.hashing.dfs import ImageHashes
 log = logging.getLogger(__name__)
 
 PCT_FLOAT = NumRange(float, min=0, max=1, include_max=True)
+CACHE_DIR = '~/.cache/img_hash_db'
 
 
 class ImageDBCLI(Command, description='Image Hash DB CLI', option_name_mode='*-'):
@@ -22,21 +23,28 @@ class ImageDBCLI(Command, description='Image Hash DB CLI', option_name_mode='*-'
     verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
     hash_mode = Option('-m', default=DEFAULT_HASH_MODE, choices=HASH_MODES, help='Use a specific hash mode')
     multi_mode = Option('-M', default=DEFAULT_MULTI_MODE, choices=MULTI_MODES, help='Use a specific multi-hash mode')
-    db_path: Path = Option('-db', type=IPath(type='file'), help='Path to the DB that should be used')
-    use_pandas = Flag('-p', help='Use Pandas instead of an sqlite DB')
+    backend = Option(choices=('sqlite3', 'pandas'), default='pandas', help='Which storage/query backend should be used')
+    cache_dir: Path = Option(default=CACHE_DIR, type=IPath(type='dir'), help='Base DB/DF storage directory')
+    db_path: Path = Option(
+        '-db', type=IPath(type='file'), help='Path to the DB that should be used (ignored for --backend=pandas)'
+    )
 
     def _init_command_(self):
         from ds_tools.logging import init_logging
 
         init_logging(self.verbose, log_path=None)
         set_start_method('spawn')
+        log.debug(f'Using storage backend={self.backend}')
 
     @db_path.register_default_cb  # noqa
     def _db_path(self) -> Path:
         hash_cls = get_hash_class(self.hash_mode)
         multi_cls = get_multi_class(self.multi_mode)
-        cache_dir = Path('~/.cache/img_hash_db').expanduser()
-        return cache_dir.joinpath(f'{multi_cls.__name__}_{hash_cls.__name__}_hashes.db')
+        return self.cache_dir.joinpath(f'{multi_cls.__name__}_{hash_cls.__name__}_hashes.db')
+
+    @cached_property
+    def use_pandas(self) -> bool:
+        return self.backend == 'pandas'
 
     @cached_property
     def image_db(self) -> ImageDB:
@@ -44,7 +52,7 @@ class ImageDBCLI(Command, description='Image Hash DB CLI', option_name_mode='*-'
 
     @cached_property
     def image_hashes(self) -> ImageHashes:
-        return ImageHashes(hash_mode=self.hash_mode, multi_mode=self.multi_mode)
+        return ImageHashes(hash_mode=self.hash_mode, multi_mode=self.multi_mode, cache_dir=self.cache_dir)
 
 
 class Status(ImageDBCLI, help='Show info about the DB'):
@@ -184,14 +192,14 @@ class Dupes(ImageDBCLI, help='Find exact duplicate images in the DB'):
             print(f'{sha}: {len(images)}:\n' + '\n'.join(sorted(f' - {img.path.as_posix()}' for img in images)))
 
 
-class Similar(ImageDBCLI, help='Find similar images in the DB'):
-    def main(self):
-        pass
-        # query = self.image_db._find_similar_dupes()
-        # print(query)
-        # results = query.all()
-        # print(f'Found {len(results)} results')
-        # print(results[0])
+# class Similar(ImageDBCLI, help='Find similar images in the DB'):
+#     def main(self):
+#         pass
+#         # query = self.image_db._find_similar_dupes()
+#         # print(query)
+#         # results = query.all()
+#         # print(f'Found {len(results)} results')
+#         # print(results[0])
 
 
 if __name__ == '__main__':

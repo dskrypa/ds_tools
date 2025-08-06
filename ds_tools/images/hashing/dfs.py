@@ -1,3 +1,10 @@
+"""
+Storage/query implementation for finding images that are perceptually similar to other known images that uses Pandas
+DataFrames.
+
+Significantly faster than the alternative implementation that uses a Sqlite3 DB.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -43,12 +50,13 @@ class ImageHashes:
         *,
         hash_mode: str = DEFAULT_HASH_MODE,
         multi_mode: str = DEFAULT_MULTI_MODE,
+        cache_dir: Path | str = '~/.cache/img_hash_db',
     ):
         global HASH_CLS, MULTI_CLS
         self.hash_cls = HASH_CLS = get_hash_class(hash_mode)
         self.multi_cls = MULTI_CLS = get_multi_class(multi_mode)
 
-        cache_dir = Path('~/.cache/img_hash_db').expanduser()
+        cache_dir = Path(cache_dir).expanduser()
         if meta_path is None:
             self.meta_path = cache_dir.joinpath('image_metadata.feather')
         else:

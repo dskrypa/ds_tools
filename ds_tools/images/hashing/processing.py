@@ -26,6 +26,9 @@ log = logging.getLogger(__name__)
 
 ProcessedResults = tuple[tuple[bytes, ...], str, int, float]
 
+DEFAULT_HASH_MODE = 'difference'
+DEFAULT_MULTI_MODE = 'rotated'
+
 
 class ImageProcessor:
     __slots__ = ('workers', 'hash_mode', 'multi_mode', 'use_executor', 'init_logging', 'verbosity')
@@ -33,11 +36,11 @@ class ImageProcessor:
     def __init__(
         self,
         workers: int | None = None,
-        hash_mode: str = 'difference',
-        multi_mode: str = 'rotated',
+        hash_mode: str = DEFAULT_HASH_MODE,
+        multi_mode: str = DEFAULT_MULTI_MODE,
         *,
         use_executor: bool = False,
-        init_logging: bool = True,
+        init_logging: bool = False,
         verbosity: int | None = 1,
     ):
         self.workers = workers
@@ -50,12 +53,6 @@ class ImageProcessor:
     def process_images(self, paths: Collection[Path]) -> Iterator[tuple[int, Path, ProcessedResults]]:
         kwargs: dict[str, Any] = {'hash_mode': self.hash_mode, 'multi_mode': self.multi_mode}
         if self.workers is None or self.workers > 1:
-            # Even after optimizing away some of the serialization/deserialization overhead, after a certain point, a
-            # CPU usage pattern emerges where there are periods of high/efficient CPU use followed by long periods of
-            # relative inactivity.
-            # The root cause is that it takes significantly longer to deserialize all results / insert them in the DB
-            # than it takes to process all of them.  This can be observed by having worker processes print when they
-            # finish, yet observing via the progress bar that thousands of results are still pending processing.
             kwargs['workers'] = self.workers
             if self.use_executor:
                 process_images_func = process_images_via_executor
@@ -72,11 +69,11 @@ class ImageProcessor:
 def process_images(
     paths: Collection[Path],
     workers: int | None = None,
-    hash_mode: str = 'difference',
-    multi_mode: str = 'rotated',
+    hash_mode: str = DEFAULT_HASH_MODE,
+    multi_mode: str = DEFAULT_MULTI_MODE,
     *,
     use_executor: bool = False,
-    init_logging: bool = True,
+    init_logging: bool = False,
     verbosity: int | None = 1,
 ) -> Iterator[tuple[int, Path, ProcessedResults]]:
     processor = ImageProcessor(
@@ -89,9 +86,9 @@ def process_images_mp(
     paths: Collection[Path],
     workers: int | None = None,
     *,
-    hash_mode: str = 'difference',
-    multi_mode: str = 'rotated',
-    init_logging: bool = True,
+    hash_mode: str = DEFAULT_HASH_MODE,
+    multi_mode: str = DEFAULT_MULTI_MODE,
+    init_logging: bool = False,
     verbosity: int | None = 1,
 ) -> Iterator[tuple[int, Path, ProcessedResults]]:
     get_hash_class(hash_mode)  # These are called here just to validate the input before spawning processes
@@ -130,7 +127,11 @@ def process_images_mp(
 
 
 def process_images_via_executor(
-    paths: Collection[Path], workers: int | None = None, *, hash_mode: str = 'difference', multi_mode: str = 'rotated'
+    paths: Collection[Path],
+    workers: int | None = None,
+    *,
+    hash_mode: str = DEFAULT_HASH_MODE,
+    multi_mode: str = DEFAULT_MULTI_MODE,
 ) -> Iterator[tuple[int, Path, ProcessedResults]]:
     hash_cls = HASH_MODES[hash_mode]  # Since this occurs in the main process for this approach,
     multi_cls = MULTI_MODES[multi_mode]
@@ -159,7 +160,7 @@ def process_images_via_executor(
 
 
 def process_images_st(
-    paths: Collection[Path], *, hash_mode: str = 'difference', multi_mode: str = 'rotated'
+    paths: Collection[Path], *, hash_mode: str = DEFAULT_HASH_MODE, multi_mode: str = DEFAULT_MULTI_MODE
 ) -> Iterator[tuple[int, Path, ProcessedResults]]:
     hash_cls = HASH_MODES[hash_mode]  # Since this occurs in the main process for this approach,
     multi_cls = MULTI_MODES[multi_mode]
@@ -194,10 +195,10 @@ def _image_processor(
     shutdown: Event,
     done_feeding: Event,
     *,
-    hash_mode: str = 'difference',
-    multi_mode: str = 'rotated',
-    init_logging: bool = True,
-    verbosity: int | None = 1,
+    hash_mode: str = DEFAULT_HASH_MODE,
+    multi_mode: str = DEFAULT_MULTI_MODE,
+    init_logging: bool = False,
+    verbosity: int | None = 0,
 ):
     if init_logging:
         _init_logging(verbosity, log_path=None, entry_fmt=ENTRY_FMT_DETAILED_PID)
@@ -220,7 +221,7 @@ def _image_processor(
         except BaseException as e:  # noqa
             out_queue.put((path, _ExceptionWrapper(e, e.__traceback__)))
 
-    log.log(19, f'Worker process finished: {getpid()}')
+    log.debug(f'Worker process finished: {getpid()}')
 
 
 class _ExceptionWrapper:

@@ -1,3 +1,17 @@
+"""
+Sqlite3-based storage/query implementation for finding images that are perceptually similar to other known images.
+
+Significantly slower than the alternative implementation that uses Pandas DataFrames.
+
+When using this implementation, even after optimizing away some of the serialization/deserialization overhead, after a
+certain point, a CPU usage pattern emerges where there are periods of high/efficient CPU use followed by long periods
+of relative inactivity.
+
+The root cause is that it takes significantly longer to insert the results in the DB than it takes to process and
+deserialize all of them.  This can be observed by having worker processes print when they finish, yet observing via
+the progress bar that thousands of results are still pending processing.
+"""
+
 from __future__ import annotations
 
 import logging
