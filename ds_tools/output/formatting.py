@@ -323,7 +323,8 @@ def format_duration(seconds: float) -> str:
     m, s = divmod(abs(seconds), 60)
     h, m = divmod(int(m), 60)
     d, h = divmod(h, 24)
-    x = f'{x}{d}d' if d > 0 else x
+    if d > 0:
+        x = f'{x}{d}d'
 
     if isinstance(s, int):
         return f'{x}{h:02d}:{m:02d}:{s:02d}'
@@ -333,10 +334,9 @@ def format_duration(seconds: float) -> str:
 def timedelta_to_str(delta: timedelta) -> str:
     m, s = divmod(delta.seconds, 60)
     h, m = divmod(m, 60)
-    td_str = f'{h:d}:{m:02d}:{s:02d}'
     if delta.days != 0:
-        td_str = f'{delta.days:d}d, {td_str}'
-    return td_str
+        return f'{delta.days:d}d, {h:d}:{m:02d}:{s:02d}'
+    return f'{h:d}:{m:02d}:{s:02d}'
 
 
 def ordinal_suffix(num: int) -> str:

@@ -46,9 +46,20 @@ class Endian(Enum):
 
 FORMATS = {
     '?': ('bool', 1),
-    'b': ('int8', 1),   'h': ('int16', 2),      'i': ('int32', 4),      'q': ('int64', 8),
-    'B': ('uint8', 1),  'H': ('uint16', 2),     'I': ('uint32', 4),     'Q': ('uint64', 8),
-                        'e': ('float16', 2),    'f': ('float32', 4),    'd': ('float64', 8),
+
+    'b': ('int8', 1),       # ± 127
+    'h': ('int16', 2),      # ± 32,767
+    'i': ('int32', 4),      # ± 2,147,483,647
+    'q': ('int64', 8),      # ± (2^63) - 1
+
+    'B': ('uint8', 1),      # 0 ~ 255
+    'H': ('uint16', 2),     # 0 ~ 65,535
+    'I': ('uint32', 4),     # 0 ~ 4,294,967,295
+    'Q': ('uint64', 8),     # 0 ~ (2^64) - 1
+
+    'e': ('float16', 2),    # ± 65,504
+    'f': ('float32', 4),    # ± ~3.4028235 * 10^38 (6~9 significant decimal digits)
+    'd': ('float64', 8),    # 15~17 significant decimal digits
     # 'x': ('pad byte', 1), 'c': ('char', 1), 'l': ('int32', 4), 'L': ('uint32', 4), 's': ('string', 1),
     # 'n': ('ssize_t', calcsize('n')), 'N': ('size_t', calcsize('N')), 'P': ('pointer', calcsize('P')),  # @ only
     # 'p': ('pascal string', 1),  # 1st byte = min(len,255). struct only supports 255 char read, 254 char write.
