@@ -7,7 +7,7 @@ from functools import cached_property
 
 from bitarray import bitarray
 
-from ...utils.cron import CronSchedule, TimePart
+from ...utils.cron import CronSchedule, CronPart, TimePart
 
 try:
     from ..com.utils import com_repr
@@ -29,6 +29,10 @@ def _unpack(packed: int, n: int, offset: int = 0) -> CronDict:
 
 
 class WinCronSchedule(CronSchedule):
+    @property
+    def week(self) -> CronPart:
+        return self._week
+
     @classmethod
     def from_trigger(cls, trigger) -> WinCronSchedule:
         # log.debug(f'Converting trigger={com_repr(trigger)} to cron')

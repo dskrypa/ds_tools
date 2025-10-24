@@ -84,7 +84,7 @@ class WinCronTest(TestCaseBase):
 
     def test_min_max_values(self):
         cron = CronSchedule()
-        attrs = ('day', 'day', 'day', 'week', 'week', 'week')
+        attrs = ('day', 'day', 'day', '_week', '_week', '_week')
         for attr, val in zip(attrs, (0, 32, -1, 0, 7, -1)):
             with self.subTest(f'{attr}[{val}]'):
                 with self.assertRaises(IndexError):
@@ -92,8 +92,8 @@ class WinCronTest(TestCaseBase):
 
         cron.day[1] = True
         cron.day[31] = True
-        cron.week[1] = True
-        cron.week[5] = True
+        cron._week[1] = True
+        cron._week[5] = True
         self.assertTrue(cron.day[31])
 
 

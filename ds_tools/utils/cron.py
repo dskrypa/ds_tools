@@ -9,7 +9,7 @@ from __future__ import annotations
 # import logging
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Type, Iterator, Iterable, Mapping
+from typing import Any, Type, Iterator, Iterable, Mapping, Set
 
 from bitarray import bitarray
 
@@ -89,9 +89,9 @@ class TimePart:
             # raise ValueError('Unexpected state')
             return 'X'
 
-        if self.name == 'dow' and not self.cron.week.arr.all():
-            week = self.cron.week
-            weeks = list(week)
+        if self.name == 'dow' and not self.cron._week.arr.all():
+            week = self.cron._week
+            weeks: list[str | int] = list(week)
             if week['L']:
                 weeks.append('L')
             return ','.join(f'{v}#{w}' for v in self for w in weeks)
@@ -150,7 +150,7 @@ class TimePart:
 
             self._set_intervals_from_parts(value, parts)
 
-    def _normalize_dow_parts(self, value: str, parts: set[str]) -> set[str]:
+    def _normalize_dow_parts(self, value: str, parts: Set[str]) -> Set[str]:  # Using Set due to set method above
         dow_parts = set()
         weeks = set()
         for p in parts:
@@ -158,7 +158,7 @@ class TimePart:
                 val, week = p.split('#')
                 dow_parts.add(val)
                 if week == 'L':
-                    self.cron.week['L'] = True
+                    self.cron._week['L'] = True
                 else:
                     try:
                         week = int(week)
@@ -173,11 +173,11 @@ class TimePart:
                 dow_parts.add(p)
 
         if weeks:
-            self.cron.week.set_intervals(weeks)
+            self.cron._week.set_intervals(weeks)
 
         return dow_parts
 
-    def _set_intervals_from_parts(self, value: str, parts: set[str]):
+    def _set_intervals_from_parts(self, value: str, parts: Set[str]):
         vals = set()
         for p in parts:
             if '-' in p:
@@ -247,13 +247,13 @@ class CronPart:
 
 
 class CronSchedule:
-    second = CronPart(60)                   # Second
-    minute = CronPart(60)                   # Minute
-    hour = CronPart(24)                     # Hour
-    day = CronPart(31, min=1, special='L')  # Day of month; L = last
-    month = CronPart(12, min=1)             # Month
-    dow = CronPart(7)                       # Day of week: 0 = Sunday, 1 = Monday, ... 6 = Saturday, 7 = Sunday
-    week = CronPart(6, min=1, special='L')  # Week of month; L = last
+    second = CronPart(60)                       # Second
+    minute = CronPart(60)                       # Minute
+    hour = CronPart(24)                         # Hour
+    day = CronPart(31, min=1, special='L')      # Day of month; L = last
+    month = CronPart(12, min=1)                 # Month
+    dow = CronPart(7)                           # Day of week: 0 = Sunday, 1 = Monday, ... 6 = Saturday, 7 = Sunday
+    _week = CronPart(6, min=1, special='L')     # Week of month; L = last (used for DOW & directly by WinCronSchedule)
 
     def __init__(self, start: datetime = None):
         self._start = start
