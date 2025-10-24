@@ -120,3 +120,4 @@ docstring-code-line-length = 'dynamic'
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
+known-first-party = ['ds_tools']

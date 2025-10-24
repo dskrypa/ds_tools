@@ -9,14 +9,14 @@ from __future__ import annotations
 # import logging
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Union, Optional, Type, Iterator, Iterable, Mapping
+from typing import Any, Type, Iterator, Iterable, Mapping
 
 from bitarray import bitarray
 
 __all__ = ['CronSchedule']
 # log = logging.getLogger(__name__)
 
-CronDict = dict[Union[int, str], bool]
+CronDict = dict[int | str, bool]
 
 
 class TimePart:
@@ -46,7 +46,7 @@ class TimePart:
             raise IndexError(f'Invalid time={key} for part={self.name!r}')
         return offset_key
 
-    def __getitem__(self, key: Union[str, int]) -> bool:
+    def __getitem__(self, key: str | int) -> bool:
         if isinstance(key, str):
             if keys := self.special_keys:
                 try:
@@ -60,7 +60,7 @@ class TimePart:
             return self.arr[self._offset(key)]  # noqa
         raise TypeError(f'Unexpected type={key.__class__.__name__} for {key=}')
 
-    def __setitem__(self, key: Union[str, int], value: bool):
+    def __setitem__(self, key: str | int, value: bool):
         if isinstance(key, str):
             if keys := self.special_keys:
                 try:
@@ -82,13 +82,11 @@ class TimePart:
                 yield i
 
     def __str__(self) -> str:
-        arr = self.arr
-        if arr.all():
+        if self.arr.all():
             return '*'
 
-        last = self['L']
-        if not arr.any():
-            if last:
+        if not self.arr.any():
+            if self['L']:
                 return 'L'
             # raise ValueError('Unexpected state')
             return 'X'
@@ -99,18 +97,21 @@ class TimePart:
             if week['L']:
                 weeks.append('L')
             return ','.join(f'{v}#{w}' for v in self for w in weeks)
-        elif not last:
-            for divisor in range(2, len(arr) // 2 + 1):
-                divisible = bitarray(len(arr))
+        elif not self['L']:
+            size = len(self.arr)
+            for divisor in range(2, size // 2 + 1):
+                divisible = bitarray(size)
                 divisible.setall(False)
                 divisible[::divisor] = True
-                if divisible == arr:
+                if divisible == self.arr:
                     return f'*/{divisor}'
 
-        collapsed = self._collapse_ranges()
-        return f'{collapsed},L' if last else collapsed
+        if self['L']:
+            return f'{self._collapse_ranges()},L'
+        else:
+            return self._collapse_ranges()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self.name}: {self}]>'
 
     def all(self) -> bool:
@@ -189,7 +190,7 @@ class TimePart:
 
             self.set_intervals(vals)
 
-    def set_intervals(self, intervals: Union[Mapping[int, bool], Iterable[int]]):
+    def set_intervals(self, intervals: Mapping[int, bool] | Iterable[int]):
         # log.debug(f'{self!r}: Setting {intervals=}')
         arr = self.arr
         arr.setall(False)
@@ -207,7 +208,7 @@ class TimePart:
             for key in intervals:
                 arr[key] = True
 
-    def replace(self, key: Union[str, int], value: bool):
+    def replace(self, key: str | int, value: bool):
         self.reset(not value)
         self[key] = value
 
@@ -230,7 +231,7 @@ class CronPart:
             instance.__dict__[self.name] = tp = TimePart(instance, self.name, self.intervals, self.min, self.special)
             return tp
 
-    def __get__(self, instance: Optional[CronSchedule], owner: Type[CronSchedule]) -> Union[CronPart, TimePart]:
+    def __get__(self, instance: CronSchedule | None, owner: Type[CronSchedule]) -> CronPart | TimePart:
         if instance is None:
             return self
         return self._get(instance)
@@ -240,21 +241,21 @@ class CronPart:
 
 
 class CronSchedule:
-    second = CronPart(60)
-    minute = CronPart(60)
-    hour = CronPart(24)
-    day = CronPart(31, min=1, special='L')
-    month = CronPart(12, min=1)
-    dow = CronPart(7)
-    week = CronPart(6, min=1, special='L')
+    second = CronPart(60)                   # Second
+    minute = CronPart(60)                   # Minute
+    hour = CronPart(24)                     # Hour
+    day = CronPart(31, min=1, special='L')  # Day of month; L = last
+    month = CronPart(12, min=1)             # Month
+    dow = CronPart(7)                       # Day of week: 0 = Sunday, 1 = Monday, ... 6 = Saturday, 7 = Sunday
+    week = CronPart(6, min=1, special='L')  # Week of month; L = last
 
     def __init__(self, start: datetime = None):
         self._start = start
 
-    def __str__(self):
+    def __str__(self) -> str:
         return ' '.join(map(str, (self.second, self.minute, self.hour, self.day, self.month, self.dow)))
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self}]>'
 
     def _set_time(self, dt_obj: datetime):

@@ -1,24 +1,25 @@
+from __future__ import annotations
 
 import logging
-from typing import Optional, Iterator
-
-# noinspection PyUnresolvedReferences
-from pywintypes import com_error
-from win32com.client import DispatchBaseClass
+from typing import TYPE_CHECKING, Optional, Iterator
 
 from ..com.enums import ComClassEnum
 from ..com.exceptions import IterationNotSupported
-from ..com.utils import com_repr, com_iter
-from ..libs.taskschd import taskschd
 from .constants import XML_ATTRS, CLSID_ENUM_MAP, RUN_RESULT_CODE_MAP, DAY_LIST, MONTH_LIST
 from .exceptions import UnsupportedTriggerInterval
 from .win_cron import WinCronSchedule
+
+if TYPE_CHECKING:
+    from ..libs.taskschd import taskschd
 
 __all__ = ['walk_folders', 'scheduler_obj_as_dict', 'task_as_dict', 'norm_path', 'path_and_name']
 log = logging.getLogger(__name__)
 
 
 def scheduler_obj_as_dict(obj, i=None, parent=None):
+    from win32com.client import DispatchBaseClass
+    from ..com.utils import com_repr, com_iter
+
     as_dict = {}
     clsid = str(obj.CLSID)
     parent_clsid = str(parent.CLSID) if parent is not None else None

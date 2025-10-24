@@ -1,4 +1,3 @@
-
 import calendar
 
 DAY_LIST = calendar.day_name[-1:] + calendar.day_name[:-1]

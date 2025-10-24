@@ -8,7 +8,12 @@ from typing import Dict, Tuple, Union
 from bitarray import bitarray
 
 from ...utils.cron import CronSchedule, TimePart
-from ..com.utils import com_repr
+
+try:
+    from ..com.utils import com_repr
+except ImportError:  # Missing optional dependency or not on Windows
+    com_repr = repr
+
 from .exceptions import UnsupportedTriggerInterval
 
 __all__ = ['WinCronSchedule']
