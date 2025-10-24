@@ -47,34 +47,32 @@ class TimePart:
         return offset_key
 
     def __getitem__(self, key: str | int) -> bool:
-        if isinstance(key, str):
-            if keys := self.special_keys:
+        match key:
+            case str():
                 try:
-                    index = keys.index(key)
-                except ValueError:
+                    index = self.special_keys.index(key)
+                except (ValueError, AttributeError):  # ValueError on key not present; attr error on no special keys
                     return False
                 else:
                     return self.special_vals[index]
-            return False
-        elif isinstance(key, int):
-            return self.arr[self._offset(key)]  # noqa
-        raise TypeError(f'Unexpected type={key.__class__.__name__} for {key=}')
+            case int():
+                return self.arr[self._offset(key)]  # noqa
+            case _:
+                raise TypeError(f'Unexpected type={key.__class__.__name__} for {key=}')  # noqa
 
     def __setitem__(self, key: str | int, value: bool):
-        if isinstance(key, str):
-            if keys := self.special_keys:
+        match key:
+            case str():
                 try:
-                    index = keys.index(key)
-                except ValueError as e:
-                    raise KeyError(f'Invalid cron schedule {key=!r} in part={self.name!r}') from e
+                    index = self.special_keys.index(key)
+                except (ValueError, AttributeError) as e:  # Value err on key not present; attr err on no special keys
+                    raise KeyError(f'Invalid cron schedule {key=} in part={self.name!r}') from e
                 else:
                     self.special_vals[index] = value
-            else:
-                raise KeyError(f'Invalid cron schedule {key=!r} in part={self.name!r}')
-        elif isinstance(key, int):
-            self.arr[self._offset(key)] = value
-        else:
-            raise TypeError(f'Unexpected type={key.__class__.__name__} for {key=}')
+            case int():
+                self.arr[self._offset(key)] = value
+            case _:
+                raise TypeError(f'Unexpected type={key.__class__.__name__} for {key=}')  # noqa
 
     def __iter__(self) -> Iterator[int]:
         for i, val in enumerate(self.arr, self.min):
@@ -138,7 +136,7 @@ class TimePart:
         elif '/' in value:
             a, divisor = value.split('/', 1)
             if a != '*' or not divisor.isnumeric():
-                raise ValueError(f'Invalid cron schedule {value=!r} in part={self.name!r}')
+                raise ValueError(f'Invalid cron schedule {value=} in part={self.name!r}')
             self.arr.setall(False)
             self.arr[::int(divisor)] = True
         else:
@@ -146,49 +144,57 @@ class TimePart:
             if 'L' in parts:
                 self['L'] = True
                 parts.remove('L')
+
             if self.name == 'dow':
-                _parts = set()
-                weeks = set()
-                for p in parts:
-                    if '#' in p:
-                        val, week = p.split('#')
-                        _parts.add(val)
-                        if week == 'L':
-                            self.cron.week['L'] = True
-                        else:
-                            try:
-                                week = int(week)
-                            except (TypeError, ValueError):
-                                raise ValueError(f'Invalid cron schedule {value=!r} in {self.name=}')
-                            else:
-                                if 1 <= week <= 4:
-                                    weeks.add(week)
-                                else:
-                                    raise ValueError(f'Invalid cron schedule {value=!r} in {self.name=}')
-                    else:
-                        _parts.add(p)
+                parts = self._normalize_dow_parts(value, parts)
 
-                if weeks:
-                    self.cron.week.set_intervals(weeks)
-                parts = _parts
+            self._set_intervals_from_parts(value, parts)
 
-            vals = set()
-            for p in parts:
-                if '-' in p:
-                    try:
-                        a, b = map(int, p.split('-'))
-                    except (TypeError, ValueError):
-                        raise ValueError(f'Invalid cron schedule {value=!r} in {self.name=}')
-                    if a >= b:
-                        raise ValueError(f'Invalid cron schedule {value=!r} in {self.name=}')
-                    vals.update(range(a, b + 1))
+    def _normalize_dow_parts(self, value: str, parts: set[str]) -> set[str]:
+        dow_parts = set()
+        weeks = set()
+        for p in parts:
+            if '#' in p:
+                val, week = p.split('#')
+                dow_parts.add(val)
+                if week == 'L':
+                    self.cron.week['L'] = True
                 else:
                     try:
-                        vals.add(int(p))
+                        week = int(week)
                     except (TypeError, ValueError):
-                        raise ValueError(f'Invalid cron schedule {value=!r} in {self.name=}')
+                        raise ValueError(f'Invalid cron schedule {value=} in {self.name=}')
+                    else:
+                        if 1 <= week <= 4:
+                            weeks.add(week)
+                        else:
+                            raise ValueError(f'Invalid cron schedule {value=} in {self.name=}')
+            else:
+                dow_parts.add(p)
 
-            self.set_intervals(vals)
+        if weeks:
+            self.cron.week.set_intervals(weeks)
+
+        return dow_parts
+
+    def _set_intervals_from_parts(self, value: str, parts: set[str]):
+        vals = set()
+        for p in parts:
+            if '-' in p:
+                try:
+                    a, b = map(int, p.split('-'))
+                except (TypeError, ValueError):
+                    raise ValueError(f'Invalid cron schedule {value=} in {self.name=}')
+                if a >= b:
+                    raise ValueError(f'Invalid cron schedule {value=} in {self.name=}')
+                vals.update(range(a, b + 1))
+            else:
+                try:
+                    vals.add(int(p))
+                except (TypeError, ValueError):
+                    raise ValueError(f'Invalid cron schedule {value=} in {self.name=}')
+
+        self.set_intervals(vals)
 
     def set_intervals(self, intervals: Mapping[int, bool] | Iterable[int]):
         # log.debug(f'{self!r}: Setting {intervals=}')

@@ -1,9 +1,9 @@
+from __future__ import annotations
 
 import logging
 import re
 from datetime import datetime
 from functools import cached_property
-from typing import Dict, Tuple, Union
 
 from bitarray import bitarray
 
@@ -18,7 +18,7 @@ from .exceptions import UnsupportedTriggerInterval
 
 __all__ = ['WinCronSchedule']
 log = logging.getLogger(__name__)
-CronDict = Dict[Union[int, str], bool]
+CronDict = dict[int | str, bool]
 
 INTERVAL_PAT = re.compile(r'PT?(?:(?P<day>\d+)D)?(?:(?P<hour>\d+)H)?(?:(?P<minute>\d+)M)?(?:(?P<second>\d+)S)?')
 # TODO: Expand the types of Windows triggers that can be created from a given WinCronSchedule [only supports Time now]
@@ -30,7 +30,7 @@ def _unpack(packed: int, n: int, offset: int = 0) -> CronDict:
 
 class WinCronSchedule(CronSchedule):
     @classmethod
-    def from_trigger(cls, trigger) -> 'WinCronSchedule':
+    def from_trigger(cls, trigger) -> WinCronSchedule:
         # log.debug(f'Converting trigger={com_repr(trigger)} to cron')
         if start := getattr(trigger, 'StartBoundary', None) or None:  # May be an empty string
             try:
@@ -82,13 +82,13 @@ class WinCronSchedule(CronSchedule):
             self.reset()
             return
         elif not (m := INTERVAL_PAT.match(interval)):
-            raise UnsupportedTriggerInterval(f'Unexpected {interval=!r}')
+            raise UnsupportedTriggerInterval(f'Unexpected {interval=}')
 
         parts = {k: v for k, v in m.groupdict().items() if v}
         if not parts:
-            raise UnsupportedTriggerInterval(f'Unsupported {interval=!r} - no time divisions found')
+            raise UnsupportedTriggerInterval(f'Unsupported {interval=} - no time divisions found')
         elif len(parts) > 1:
-            raise UnsupportedTriggerInterval(f'Unsupported {interval=!r} - contains multiple time divisions')
+            raise UnsupportedTriggerInterval(f'Unsupported {interval=} - contains multiple time divisions')
 
         # keys = ('day', 'hour', 'minute', 'second')
         key, value = parts.popitem()
@@ -99,9 +99,8 @@ class WinCronSchedule(CronSchedule):
         for i in freq:
             freq[i] = (i - start_val) % value == 0
 
-    def _interval_repr(self, freq: TimePart, attr: str, bigger: Tuple[str, ...]):
-        arr = freq.arr
-        if arr.all():
+    def _interval_repr(self, freq: TimePart, attr: str, bigger: tuple[str, ...]):
+        if freq.arr.all():
             return ''
 
         suffix = attr.upper()[0]
@@ -112,11 +111,12 @@ class WinCronSchedule(CronSchedule):
                 return f'1{bigger[0].upper()[0]}'
             return ''
 
-        for divisor in range(2, len(arr) // 2 + 1):
-            divisible = bitarray(len(arr))
+        size = len(freq.arr)
+        for divisor in range(2, size // 2 + 1):
+            divisible = bitarray(size)
             divisible.setall(False)
             divisible[::divisor] = True
-            if divisible == arr:
+            if divisible == freq.arr:
                 return f'{divisor}{suffix}'
 
         diffs = set()
