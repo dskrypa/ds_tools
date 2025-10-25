@@ -4,7 +4,7 @@ from datetime import datetime
 from unittest import TestCase, main
 from unittest.mock import Mock
 
-from ds_tools.utils.cron import CronSchedule, ExtCronSchedule, InvalidCronSchedule
+from ds_tools.utils.cron import CronSchedule, ExtCronSchedule, InvalidCronSchedule, InvalidCronPart
 from ds_tools.windows.scheduler.win_cron import WinCronSchedule
 
 
@@ -52,7 +52,7 @@ class CronTest(TestCase):
         cron = ExtCronSchedule('0 0 1-3,5,7-12,20 * * *')
         self.assertEqual('0 0 1-3,5,7-12,20 * * *', str(cron))
 
-        with self.assertRaises(InvalidCronSchedule):
+        with self.assertRaisesRegex(InvalidCronPart, 'Invalid hour='):
             ExtCronSchedule('0 0 3-1,5,7-12,20 * * *')
 
         # with self.assertRaises(ValueError):
@@ -61,22 +61,22 @@ class CronTest(TestCase):
     def test_daily_dows(self):
         self.assertEqual('0 15 6 * * 0,5-6', str(ExtCronSchedule('0 15 6 * * 0,5,6')))
 
-    def test_min_max_values(self):
-        cron = ExtCronSchedule('* * * * * *')
-        attrs = ('day', 'day', 'day', '_week', '_week', '_week')
-        for attr, val in zip(attrs, (0, 32, -1, 0, 7, -1)):
-            with self.subTest(f'{attr}[{val}]'):
-                with self.assertRaises(IndexError):
-                    getattr(cron, attr)[val] = True
-
-        cron.day[1] = True
-        cron.day[31] = True
-        cron._week[1] = True
-        cron._week[5] = True
-        self.assertTrue(cron.day[31])
+    def test_irregular_dow_with_week(self):
+        self.assertEqual('0 23 * * 1#3,2#1,3#L', str(CronSchedule('0 23 * * 2#1,1#3,3#L')))
 
 
 class WinCronTest(TestCase):
+    def test_min_max_values(self):
+        cron = WinCronSchedule('* * * * * *')
+        for val in (0, 32, -1):
+            with self.subTest(f'day[{val}]'):
+                with self.assertRaises(IndexError):
+                    cron.day[val] = True
+
+        cron.day[1] = True
+        cron.day[31] = True
+        self.assertTrue(cron.day[31])
+
     def test_start(self):
         cron = WinCronSchedule('0 0 23 * * *')
         expected = datetime.now().replace(second=0, minute=0, hour=23, microsecond=0)
