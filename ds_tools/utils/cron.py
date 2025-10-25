@@ -9,14 +9,20 @@ from __future__ import annotations
 # import logging
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Type, Iterator, Iterable, Mapping, Set
+from typing import Any, Iterator, Iterable, Literal, Mapping, Set, Type, TypeVar
 
 from bitarray import bitarray
 
-__all__ = ['CronSchedule']
+__all__ = ['CronSchedule', 'ExtCronSchedule', 'CronError', 'InvalidCronSchedule']
 # log = logging.getLogger(__name__)
 
 CronDict = dict[int | str, bool]
+PartIndex = TypeVar('PartIndex', int, slice)
+L = Literal['L']
+PartKey = PartIndex | L
+
+
+# region Time Parts
 
 
 class TimePart:
@@ -25,7 +31,7 @@ class TimePart:
     def __init__(self, cron: CronSchedule, name: str, intervals: int, min: int = 0, special: str = None):  # noqa
         self.cron = cron
         self.name = name
-        self.arr = bitarray(intervals)
+        self.arr = bitarray(intervals)  # initializes all values to False
         self.min = min
         if special:
             self.special_keys = special
@@ -33,21 +39,30 @@ class TimePart:
         else:
             self.special_keys = None
             self.special_vals = None
-        self.reset()
+
+    def set(self, value: str):
+        if value == '*':
+            self.arr.setall(True)
+            return
+
+        self.arr.setall(False)
+        for part in _parse_slices(value, self.min, len(self.arr)):
+            self[part] = True
 
     def reset(self, default: bool = True):
         self.arr.setall(default)
         if self.special_keys:
             self.special_vals.setall(False)
 
-    def _offset(self, key: int) -> int:
-        offset_key = key - self.min
-        if offset_key < 0:
-            raise IndexError(f'Invalid time={key} for part={self.name!r}')
-        return offset_key
+    def all(self) -> bool:
+        return all(val for i, val in enumerate(self.arr, self.min))
 
-    def __getitem__(self, key: str | int) -> bool:
+    # region Get / Set Specific Times
+
+    def __getitem__(self, key: PartKey) -> bool:
         match key:
+            case int() | slice():
+                return self.arr[self._offset(key)]  # noqa
             case str():
                 try:
                     index = self.special_keys.index(key)
@@ -55,13 +70,13 @@ class TimePart:
                     return False
                 else:
                     return self.special_vals[index]
-            case int():
-                return self.arr[self._offset(key)]  # noqa
             case _:
                 raise TypeError(f'Unexpected type={key.__class__.__name__} for {key=}')  # noqa
 
-    def __setitem__(self, key: str | int, value: bool):
+    def __setitem__(self, key: PartKey, value: bool):
         match key:
+            case int() | slice():
+                self.arr[self._offset(key)] = value
             case str():
                 try:
                     index = self.special_keys.index(key)
@@ -69,74 +84,142 @@ class TimePart:
                     raise KeyError(f'Invalid cron schedule {key=} in part={self.name!r}') from e
                 else:
                     self.special_vals[index] = value
-            case int():
-                self.arr[self._offset(key)] = value
             case _:
                 raise TypeError(f'Unexpected type={key.__class__.__name__} for {key=}')  # noqa
 
+    def _offset(self, key: PartIndex) -> PartIndex:
+        match key:
+            case int():
+                offset_key = key - self.min
+                if offset_key < 0:
+                    raise IndexError(f'Invalid time={key} for part={self.name!r}')
+                return offset_key
+            case slice():
+                if self.min:
+                    return slice(
+                        (key.start - self.min) if key.start is not None else None,
+                        (key.stop - self.min) if key.stop is not None else None,
+                        key.step,
+                    )
+                else:
+                    return key
+            case _:
+                raise TypeError(f'Unexpected type={key.__class__.__name__} for {key=}')
+
     def __iter__(self) -> Iterator[int]:
-        for i, val in enumerate(self.arr, self.min):
-            if val:
-                yield i
-
-    def __str__(self) -> str:
-        if self.arr.all():
-            return '*'
-
-        if not self.arr.any():
-            if self['L']:
-                return 'L'
-            # raise ValueError('Unexpected state')
-            return 'X'
-
-        if self.name == 'dow' and not self.cron._week.arr.all():
-            week = self.cron._week
-            weeks: list[str | int] = list(week)
-            if week['L']:
-                weeks.append('L')
-            return ','.join(f'{v}#{w}' for v in self for w in weeks)
-        elif not self['L']:
-            size = len(self.arr)
-            for divisor in range(2, size // 2 + 1):
-                divisible = bitarray(size)
-                divisible.setall(False)
-                divisible[::divisor] = True
-                if divisible == self.arr:
-                    return f'*/{divisor}'
-
-        if self['L']:
-            return f'{self._collapse_ranges()},L'
+        """Yields times when this part is enabled."""
+        if offset := self.min:
+            for index in self.arr.search(1):
+                yield index + offset
         else:
-            return self._collapse_ranges()
+            yield from self.arr.search(1)  # Yields indexes where the value is True (1)
+
+    def _iter_all(self) -> Iterator[int | L]:
+        """Yields times (and special keys, if present) when this part is enabled."""
+        yield from self
+        if self['L']:
+            yield 'L'  # noqa
+
+    # endregion
+
+    # region str / repr
 
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self.name}: {self}]>'
 
-    def all(self) -> bool:
-        return all(val for i, val in enumerate(self.arr, self.min))
+    def __str__(self) -> str:
+        if self.arr.all():
+            return '*'
+        elif step_str := self._get_step_str():
+            return step_str
+        else:
+            return self._collapse_ranges()
+
+    def _get_step_str(self) -> str | None:
+        if not self.arr.any():
+            return None
+
+        size = len(self.arr)
+        divisible = bitarray(size)
+        for step in range(2, size // 2 + 1):
+            divisible.setall(False)
+            divisible[::step] = True
+            if divisible == self.arr:
+                return f'*/{step}'
+
+        return None
 
     def _collapse_ranges(self) -> str:
-        ranges = []
-        last = None
+        return ','.join(str(a) if a == b else f'{a}-{b}' for a, b in self._iter_ranges())
+
+    def _iter_ranges(self) -> Iterator[tuple[int, int] | tuple[L, L]]:
+        start = last = None
         for value in self:
-            if last is None:
-                ranges.append((value, value))
+            if start is None:
+                start = last = value
             elif value - last == 1:
-                ranges[-1] = (ranges[-1][0], value)
+                last = value
             else:
-                ranges.append((value, value))
+                yield start, last
+                start = last = value
 
-            last = value
+        if start is not None:
+            yield start, last
 
-        return ','.join(str(a) if a == b else f'{a}-{b}' for a, b in ranges)
+        if self['L']:  # Only possible for day (of month) and week, but this will never be called for week
+            yield 'L', 'L'  # noqa
+
+    # endregion
+
+    def set_intervals(self, intervals: Mapping[int, bool] | Iterable[int]):
+        # log.debug(f'{self!r}: Setting {intervals=}')
+        arr = self.arr
+        arr.setall(False)
+        if isinstance(intervals, Mapping):
+            if _min := self.min:
+                intervals = {k - _min: v for k, v in intervals.items()}
+
+            # log.debug(f'{self!r}: Setting offset {intervals=}')
+            for key, val in intervals.items():
+                arr[key] = val
+        else:
+            if _min := self.min:
+                intervals = [v - _min for v in intervals]
+            # log.debug(f'{self!r}: Setting offset {intervals=}')
+            for key in intervals:
+                arr[key] = True
+
+    def replace(self, key: str | int, value: bool):
+        self.reset(not value)
+        self[key] = value
+
+
+class DayOfWeekPart(TimePart):
+    __slots__ = ()
+
+    def __str__(self) -> str:
+        if self.arr.all():
+            return '*'
+        elif not self.arr.any():
+            # raise ValueError('Unexpected state')
+            return 'X'
+        elif not self.cron._week.arr.all():
+            return ','.join(f'{v}#{w}' for v in self for w in self.cron._week._iter_all())
+        elif step_str := self._get_step_str():
+            return step_str
+        else:
+            return self._collapse_ranges()
 
     def set(self, value: str):
         if value == '*':
             self.arr.setall(True)
-        elif '/' in value:
+            return
+
+        if '/' in value:
             a, divisor = value.split('/', 1)
             if a != '*' or not divisor.isnumeric():
                 raise ValueError(f'Invalid cron schedule {value=} in part={self.name!r}')
+
             self.arr.setall(False)
             self.arr[::int(divisor)] = True
         else:
@@ -145,9 +228,7 @@ class TimePart:
                 self['L'] = True
                 parts.remove('L')
 
-            if self.name == 'dow':
-                parts = self._normalize_dow_parts(value, parts)
-
+            parts = self._normalize_dow_parts(value, parts)
             self._set_intervals_from_parts(value, parts)
 
     def _normalize_dow_parts(self, value: str, parts: Set[str]) -> Set[str]:  # Using Set due to set method above
@@ -196,30 +277,14 @@ class TimePart:
 
         self.set_intervals(vals)
 
-    def set_intervals(self, intervals: Mapping[int, bool] | Iterable[int]):
-        # log.debug(f'{self!r}: Setting {intervals=}')
-        arr = self.arr
-        arr.setall(False)
-        if isinstance(intervals, Mapping):
-            if _min := self.min:
-                intervals = {k - _min: v for k, v in intervals.items()}
 
-            # log.debug(f'{self!r}: Setting offset {intervals=}')
-            for key, val in intervals.items():
-                arr[key] = val
-        else:
-            if _min := self.min:
-                intervals = [v - _min for v in intervals]
-            # log.debug(f'{self!r}: Setting offset {intervals=}')
-            for key in intervals:
-                arr[key] = True
-
-    def replace(self, key: str | int, value: bool):
-        self.reset(not value)
-        self[key] = value
+# endregion
 
 
 class CronPart:
+    """
+    Descriptor that enables unique :class:`TimePart` objects to be initialized for each parent :class:`CronSchedule`.
+    """
     __slots__ = ('intervals', 'min', 'special', 'name')
 
     def __init__(self, intervals: int, min: int = 0, special: str = None):  # noqa
@@ -234,7 +299,8 @@ class CronPart:
         try:
             return instance.__dict__[self.name]
         except KeyError:
-            instance.__dict__[self.name] = tp = TimePart(instance, self.name, self.intervals, self.min, self.special)
+            part_cls = DayOfWeekPart if self.name == 'dow' else TimePart
+            instance.__dict__[self.name] = tp = part_cls(instance, self.name, self.intervals, self.min, self.special)
             return tp
 
     def __get__(self, instance: CronSchedule | None, owner: Type[CronSchedule]) -> CronPart | TimePart:
@@ -247,46 +313,104 @@ class CronPart:
 
 
 class CronSchedule:
-    second = CronPart(60)                       # Second
     minute = CronPart(60)                       # Minute
     hour = CronPart(24)                         # Hour
     day = CronPart(31, min=1, special='L')      # Day of month; L = last
     month = CronPart(12, min=1)                 # Month
-    dow = CronPart(7)                           # Day of week: 0 = Sunday, 1 = Monday, ... 6 = Saturday, 7 = Sunday
+    dow = CronPart(7)  # Day of week: 0 = Sunday, 1 = Monday, ... 6 = Saturday, 7 = Sunday; L = last (stored in _week)
     _week = CronPart(6, min=1, special='L')     # Week of month; L = last (used for DOW & directly by WinCronSchedule)
 
-    def __init__(self, start: datetime = None):
-        self._start = start
+    def __init__(self, cron_str: str):
+        self._week.reset()  # Must be set to all True before processing DOW
+        try:
+            for part, value in zip(self._parts(), cron_str.split(), strict=True):
+                part.set(value)
+        except ValueError as e:
+            raise InvalidCronSchedule(cron_str) from e
+
+    def _parts(self) -> tuple[TimePart, ...]:
+        return self.minute, self.hour, self.day, self.month, self.dow  # noqa
 
     def __str__(self) -> str:
-        return ' '.join(map(str, (self.second, self.minute, self.hour, self.day, self.month, self.dow)))
+        return ' '.join(map(str, self._parts()))
 
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self}]>'
 
-    def _set_time(self, dt_obj: datetime):
-        if dt_obj is not None:
-            self.second.replace(dt_obj.second, True)
-            self.minute.replace(dt_obj.minute, True)
-            self.hour.replace(dt_obj.hour, True)
-
-    @classmethod
-    def from_cron(cls, cron_str: str) -> CronSchedule:
-        self = cls()
-        attrs = (self.second, self.minute, self.hour, self.day, self.month, self.dow)
-        for attr, value in zip(attrs, cron_str.split()):
-            attr.set(value)
-        return self
-
-    @cached_property
-    def start(self) -> datetime:
-        if self._start:
-            return self._start
-        dt = datetime.now().replace(
-            second=min(self.second), minute=min(self.minute), hour=min(self.hour), microsecond=0
-        )
-        return dt
-
     def reset(self):
-        for attr in (self.second, self.minute, self.hour, self.day, self.month, self.dow):
-            attr.reset()
+        for part in self._parts():
+            part.reset()
+
+
+class ExtCronSchedule(CronSchedule):
+    second = CronPart(60)
+
+    def _parts(self) -> tuple[TimePart, ...]:
+        return self.second, self.minute, self.hour, self.day, self.month, self.dow  # noqa
+
+
+def _parse_slices(cron_expr: str, min_val: int, max_val: int) -> Iterator[slice | int | Literal['L']]:
+    for part in cron_expr.split(','):
+        if part == 'L':
+            yield part
+        else:
+            yield _parse_slice(part, min_val, max_val)
+
+
+def _parse_slice(expr_part: str, min_val: int, max_val: int) -> slice | int:
+    try:
+        value = int(expr_part)
+    except ValueError:
+        pass
+    else:
+        if min_val <= value < max_val:
+            return value
+        raise ValueError(f'Invalid {value=} - expected {min_val} <= value < {max_val}')
+
+    try:
+        range_expr, step = expr_part.split('/', 1)
+    except ValueError:
+        pass
+    else:
+        try:
+            step = int(step)
+        except ValueError as e:
+            raise ValueError(f'Invalid {step=} value - expected a positive int') from e
+        if step >= 1:
+            return slice(*_parse_range_expr(range_expr, min_val, max_val), step)
+        raise ValueError(f'Invalid {step=} value - expected a positive int')
+
+    return slice(*_parse_range_expr(expr_part, min_val, max_val))
+
+
+def _parse_range_expr(range_expr: str, min_val: int, max_val: int) -> tuple[int | None, int | None]:
+    if range_expr == '*':
+        return None, None
+
+    try:
+        value = int(range_expr)
+    except ValueError:
+        pass
+    else:
+        if min_val <= value < max_val:
+            return value, None
+        raise ValueError(f'Invalid {value=} - expected {min_val} <= value < {max_val}')
+
+    try:
+        start, stop = map(int, range_expr.split('-', 1))
+    except ValueError:
+        pass
+    else:
+        if min_val <= start <= stop:
+            return start, (None if stop >= max_val else stop + 1)
+        raise ValueError(f'Invalid range - expected {min_val} <= {start=} <= {stop=}')
+
+    raise ValueError(f"Invalid {range_expr=} - expected '*', an int, or int-int")
+
+
+class CronError(Exception):
+    pass
+
+
+class InvalidCronSchedule(CronError, ValueError):
+    """Raised when an invalid cron schedule is provided."""

@@ -91,7 +91,7 @@ class Scheduler:
         path, name = path_and_name(path)
 
         sched_path = self._scheduler.GetFolder(path)
-        cron = WinCronSchedule.from_cron(cron)
+        cron = WinCronSchedule(cron)
         task = self._scheduler.NewTask(0)
 
         trigger = create_entry(task.Triggers, taskschd.constants.TASK_TRIGGER_TIME)

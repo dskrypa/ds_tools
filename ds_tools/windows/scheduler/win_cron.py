@@ -7,7 +7,7 @@ from functools import cached_property
 
 from bitarray import bitarray
 
-from ...utils.cron import CronSchedule, CronPart, TimePart
+from ...utils.cron import ExtCronSchedule, TimePart
 
 try:
     from ..com.utils import com_repr
@@ -28,9 +28,17 @@ def _unpack(packed: int, n: int, offset: int = 0) -> CronDict:
     return {i + offset: bool(packed & (1 << i)) for i in range(n)}
 
 
-class WinCronSchedule(CronSchedule):
+class WinCronSchedule(ExtCronSchedule):
+    _start: datetime | None = None
+
+    def __init__(self, cron_str: str = None):
+        if cron_str:
+            super().__init__(cron_str)
+        else:
+            self.reset()
+
     @property
-    def week(self) -> CronPart:
+    def week(self) -> TimePart:
         return self._week
 
     @classmethod
@@ -45,8 +53,8 @@ class WinCronSchedule(CronSchedule):
                 except ValueError:
                     raise RuntimeError(f'Unexpected time format for {start=}')
 
-        self = cls(start)
-        self._set_time(start)
+        self = cls()
+        self._set_start(start)
         if trigger.Type == 0:  # IEventTrigger
             self._set_from_interval(trigger.Repetition.Interval)  # interval = at most this frequently on the event?
         elif trigger.Type == 1:  # ITimeTrigger
@@ -80,6 +88,21 @@ class WinCronSchedule(CronSchedule):
         else:
             raise ValueError(f'Unexpected trigger={com_repr(trigger)}')
         return self
+
+    @cached_property
+    def start(self) -> datetime:
+        if self._start:
+            return self._start
+        return datetime.now().replace(
+            second=min(self.second), minute=min(self.minute), hour=min(self.hour), microsecond=0
+        )
+
+    def _set_start(self, start: datetime | None):
+        if start is not None:
+            self._start = start
+            self.second.replace(start.second, True)
+            self.minute.replace(start.minute, True)
+            self.hour.replace(start.hour, True)
 
     def _set_from_interval(self, interval: str):
         if interval == 'PT0M':  # every second
