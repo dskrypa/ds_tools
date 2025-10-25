@@ -6,7 +6,8 @@ Utilities for parsing and interpreting crontab schedules
 
 from __future__ import annotations
 
-from typing import Any, Iterator, Iterable, Literal, Type, TypeVar
+from datetime import date, datetime, timedelta, time
+from typing import Any, Iterator, Iterable, Literal, Type, TypeVar, overload
 
 from bitarray import bitarray
 
@@ -62,14 +63,22 @@ class TimePart:
             self.special_vals.setall(False)
 
     def all(self) -> bool:
-        return all(val for i, val in enumerate(self.arr, self.min))
+        return self.arr.all()
 
     # region Get / Set Specific Times
 
-    def __getitem__(self, key: PartKey) -> bool:
+    @overload
+    def __getitem__(self, key: int | str) -> bool:
+        ...
+
+    @overload
+    def __getitem__(self, key: slice) -> bitarray:
+        ...
+
+    def __getitem__(self, key):
         match key:
             case int() | slice():
-                return self.arr[self._offset(key)]  # noqa
+                return self.arr[self._offset(key)]
             case str():
                 try:
                     index = self.special_keys.index(key)
@@ -107,6 +116,10 @@ class TimePart:
         for key in keys:
             self[key] = value
 
+    def replace(self, key: str | int, value: bool):
+        self.reset(not value)
+        self[key] = value
+
     def _offset(self, key: PartIndex) -> PartIndex:
         match key:
             case int():
@@ -126,19 +139,33 @@ class TimePart:
             case _:
                 raise TypeError(f'Unexpected type={key.__class__.__name__} for {key=}')
 
-    def __iter__(self) -> Iterator[int]:
+    def _iter(self, right: bool = False):
         """Yields times when this part is enabled."""
         if offset := self.min:
-            for index in self.arr.search(1):
+            for index in self.arr.search(1, right=right):
                 yield index + offset
         else:
-            yield from self.arr.search(1)  # Yields indexes where the value is True (1)
+            yield from self.arr.search(1, right=right)  # Yields indexes where the value is True (1)
+
+    def __iter__(self) -> Iterator[int]:
+        """Yields times when this part is enabled."""
+        return self._iter()
+
+    def __reversed__(self) -> Iterator[int]:
+        return self._iter(True)
 
     def _iter_all(self) -> Iterator[int | L]:
         """Yields times (and special keys, if present) when this part is enabled."""
         yield from self
         if self['L']:
             yield 'L'  # noqa
+
+    def _get_last(self) -> int | None:
+        if self['L']:
+            return len(self.arr) + self.min - 1
+
+        last = self.arr.find(1, right=True)
+        return None if last == -1 else last
 
     # endregion
 
@@ -188,14 +215,35 @@ class TimePart:
 
     # endregion
 
-    def replace(self, key: str | int, value: bool):
-        self.reset(not value)
-        self[key] = value
+    def matches(self, dt: datetime | date) -> bool:
+        if self.all() or self[getattr(dt, self.name)]:
+            return True
+        # Note: L is only possible for day
+        return self['L'] and (dt + timedelta(days=1)).month != dt.month
+
+
+class MonthPart(TimePart):
+    __slots__ = ()
+
+    def matches(self, dt: datetime | date) -> bool:
+        return self.all() or self[dt.month]
+
+    def matching_dates(self, year: int, month: int, reverse: bool = False) -> Iterator[date]:
+        if self.all() or self[month]:
+            day, dow = self.cron.day, self.cron.dow
+            if day.all() and dow.all():
+                yield from _dates(year, month, reverse=reverse)
+            else:
+                for dt in _dates(year, month, reverse=reverse):
+                    if day.matches(dt) and dow.matches(dt):
+                        yield dt
 
 
 class DayOfWeekPart(TimePart):
     """
     TimePart representing days of the week.
+
+    0 = Sunday, 1 = Monday, ... 6 = Saturday, 7 = Sunday
 
     Values may be specified like any other time part, or as ``dow#week`` where ``week`` is an integer or ``'L'`` to
     represent the last week of the month.
@@ -206,6 +254,28 @@ class DayOfWeekPart(TimePart):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.week_days_map = {}
+
+    def matches(self, dt: datetime | date) -> bool:
+        if self.all():
+            return True
+
+        dow = dt.isoweekday() % 7
+        if self[dow]:
+            return True
+
+        if self.week_days_map:
+            first_week = dt.replace(day=1).isocalendar().week
+            dt_week = dt.isocalendar().week
+            try:
+                if self.week_days_map[dt_week - first_week + 1][dow]:
+                    return True
+            except KeyError:
+                pass
+
+            if self.week_days_map['L'] and _last_day_of_month(dt).isocalendar().week == dt_week:
+                return True
+
+        return False
 
     def __str__(self) -> str:
         if self.arr.all():
@@ -258,7 +328,11 @@ class DayOfWeekPart(TimePart):
 # endregion
 
 
-class CronPart:
+_PART_NAME_CLS_MAP = {'dow': DayOfWeekPart, 'month': MonthPart}
+TP = TypeVar('TP', bound=TimePart)
+
+
+class CronPart[TP]:
     """
     Descriptor that enables unique :class:`TimePart` objects to be initialized for each parent :class:`CronSchedule`.
     """
@@ -272,15 +346,15 @@ class CronPart:
     def __set_name__(self, owner: Type[CronSchedule], name: str):
         self.name = name
 
-    def _get(self, instance: CronSchedule) -> TimePart:
+    def _get(self, instance: CronSchedule) -> TP:
         try:
             return instance.__dict__[self.name]
         except KeyError:
-            part_cls = DayOfWeekPart if self.name == 'dow' else TimePart
+            part_cls = _PART_NAME_CLS_MAP.get(self.name, TimePart)
             instance.__dict__[self.name] = tp = part_cls(instance, self.name, self.intervals, self.min, self.special)
             return tp
 
-    def __get__(self, instance: CronSchedule | None, owner: Type[CronSchedule]) -> CronPart | TimePart:
+    def __get__(self, instance: CronSchedule | None, owner: Type[CronSchedule]) -> CronPart | TP:
         if instance is None:
             return self
         return self._get(instance)
@@ -293,11 +367,11 @@ class CronPart:
 
 
 class CronSchedule:
-    minute = CronPart(60)                       # Minute
-    hour = CronPart(24)                         # Hour
-    day = CronPart(31, min=1, special='L')      # Day of month; L = last
-    month = CronPart(12, min=1)                 # Month
-    dow = CronPart(7)                           # Day of week: 0 = Sunday, 1 = Monday, ... 6 = Saturday, 7 = Sunday
+    minute = CronPart[TimePart](60)                     # Minute
+    hour = CronPart[TimePart](24)                       # Hour
+    day = CronPart[TimePart](31, min=1, special='L')    # Day of month; L = last
+    month = CronPart[MonthPart](12, min=1)              # Month
+    dow = CronPart[DayOfWeekPart](7)                    # Day of week: 0=Sunday, 1=Monday, ... 6=Saturday, 7=Sunday
 
     def __init__(self, cron_str: str):
         try:
@@ -322,12 +396,109 @@ class CronSchedule:
         for part in self._parts():
             part.reset()
 
+    # region Match Methods
+
+    def matches(self, dt: datetime) -> bool:
+        return all(part.matches(dt) for part in self._parts())
+
+    def first_match_of_year(self, year: int) -> datetime:
+        return datetime.combine(next(self._matching_days(year)), next(self._matching_times()))
+
+    def last_match_of_year(self, year: int) -> datetime:
+        return datetime.combine(next(self._matching_days(year, reverse=True)), next(self._matching_times(reverse=True)))
+
+    def matches_after(self, now: datetime | date | None = None) -> Iterator[datetime]:
+        yield from CronMatchIterator(self, now)
+
+    def matching_datetimes(self, year: int | None = None, reverse: bool = False) -> Iterator[datetime]:
+        if year is None:
+            year = date.today().year
+
+        times = list(self._matching_times(reverse=reverse))
+        combine = datetime.combine
+        for day in self._matching_days(year, reverse=reverse):
+            for t in times:
+                yield combine(day, t)
+
+    def _matching_days(self, year: int, *, start_month: int = None, reverse: bool = False) -> Iterator[date]:
+        months = self.month._iter(reverse)
+        if start_month is not None:
+            months = (m for m in months if m <= start_month) if reverse else (m for m in months if m >= start_month)
+
+        day, dow = self.day, self.dow
+        for month in months:
+            if day.all() and dow.all():
+                yield from _dates(year, month, reverse=reverse)
+            else:
+                for dt in _dates(year, month, reverse=reverse):
+                    if day.matches(dt) and dow.matches(dt):
+                        yield dt
+
+    def _matching_times(self, reverse: bool = False) -> Iterator[time]:
+        minute = self.minute
+        minute_range = range(59, -1, -1) if reverse else range(60)
+        for hour in self.hour._iter(reverse):
+            if minute.all():
+                for m in minute_range:
+                    yield time(hour, m)
+            else:
+                for m in minute_range:
+                    if minute[m]:
+                        yield time(hour, m)
+
+    # endregion
+
 
 class ExtCronSchedule(CronSchedule):
     second = CronPart(60)
 
     def _parts(self) -> tuple[TimePart, ...]:
         return self.second, self.minute, self.hour, self.day, self.month, self.dow  # noqa
+
+
+class CronMatchIterator:
+    __slots__ = ('cron', 'times', 'now')
+
+    def __init__(self, cron: CronSchedule, now: datetime | date | None = None):
+        self.cron = cron
+        self.times = list(cron._matching_times())
+        if not now:
+            self.now = datetime.now()
+        elif isinstance(now, date):
+            self.now = datetime.combine(now, datetime.now().time())
+        else:
+            self.now = now
+
+    def __iter__(self) -> Iterator[datetime]:
+        yield from self._iter_this_year()
+
+        combine = datetime.combine
+        year = self.now.year
+        while True:
+            year += 1
+            for day in self.cron._matching_days(year):
+                for t in self.times:
+                    yield combine(day, t)
+
+    def _iter_this_year(self) -> Iterator[datetime]:
+        combine = datetime.combine
+        today = self.now.date()
+
+        month_part: MonthPart = self.cron.month
+        for day in month_part.matching_dates(self.now.year, self.now.month):
+            if day == today:
+                current_time = self.now.time()
+                for t in self.times:
+                    if t > current_time:
+                        yield combine(day, t)
+            elif day > today:
+                for t in self.times:
+                    yield combine(day, t)
+
+        for month_num in range(self.now.month + 1, 13):
+            for day in month_part.matching_dates(self.now.year, month_num):
+                for t in self.times:
+                    yield combine(day, t)
 
 
 # endregion
@@ -400,6 +571,31 @@ def _parse_week(week: str) -> int | L:
         return week
     else:
         raise ValueError(f"Invalid {week=} - expected an int between 1 and 4 (inclusive) or 'L'")
+
+
+# endregion
+
+
+# region Date/Time Helpers
+
+
+def _dates(year: int, month: int, *, start: int = 1, reverse: bool = False) -> Iterator[date]:
+    days = range(31, start - 1, -1) if reverse else range(start, 32)
+    for day in days:
+        try:
+            yield date(year, month, day)
+        except ValueError:  # day out of range for month
+            if not reverse:
+                break  # skip remaining days which will also be out of range
+
+
+def _last_day_of_month(dt: date | datetime) -> date:
+    for day in range(31, 27, -1):
+        try:
+            return date(dt.year, dt.month, day)
+        except ValueError:  # day out of range for month
+            pass
+    raise CronError(f'Unexpected date={dt.isoformat()}')
 
 
 # endregion

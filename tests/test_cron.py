@@ -64,6 +64,55 @@ class CronTest(TestCase):
     def test_irregular_dow_with_week(self):
         self.assertEqual('0 23 * * 1#3,2#1,3#L', str(CronSchedule('0 23 * * 2#1,1#3,3#L')))
 
+    def test_parts_all(self):
+        cron = CronSchedule('15 9-17 */3 * *')
+        self.assertFalse(cron.minute.all())
+        self.assertFalse(cron.hour.all())
+        self.assertFalse(cron.day.all())
+        self.assertTrue(cron.month.all())
+        self.assertTrue(cron.dow.all())
+
+    def test_dow_not_all(self):
+        self.assertFalse(CronSchedule('0 23 * * 2#1,1#3,3#L').dow.all())
+
+    def test_month_iter(self):
+        self.assertEqual(list(range(1, 13)), list(CronSchedule('* * * * *').month))
+        self.assertEqual(list(range(12, 0, -1)), list(reversed(CronSchedule('* * * * *').month)))
+
+    def test_dt_matches(self):
+        true_cases = [
+            ('* * * * *', datetime.now()),
+            ('*/5 10 1-9 * *', datetime(2025, 10, 4, 10, 30, 28)),
+        ]
+        false_cases = [
+            ('*/5 10 1-9 * *', datetime(2025, 10, 4, 10, 31, 28)),
+        ]
+        for cron_str, dt in true_cases:
+            with self.subTest(cron_str=cron_str, dt=dt):
+                self.assertTrue(CronSchedule(cron_str).matches(dt))
+
+        for cron_str, dt in false_cases:
+            with self.subTest(cron_str=cron_str, dt=dt):
+                self.assertFalse(CronSchedule(cron_str).matches(dt))
+
+    def test_match_generation(self):
+        cron = CronSchedule('*/27 2 4 7,9 *')
+        self.assertEqual(datetime(2025, 7, 4, 2, 0, 0), cron.first_match_of_year(2025))
+        expected = [
+            datetime(2025, 7, 4, 2, 0, 0), datetime(2025, 7, 4, 2, 27, 0), datetime(2025, 7, 4, 2, 54, 0),
+            datetime(2025, 9, 4, 2, 0, 0), datetime(2025, 9, 4, 2, 27, 0), datetime(2025, 9, 4, 2, 54, 0),
+        ]
+        self.assertEqual(expected, list(cron.matching_datetimes(2025)))
+
+    def test_reverse_generation(self):
+        cron = CronSchedule('*/27 2 4 7,9 *')
+        self.assertEqual(datetime(2025, 9, 4, 2, 54, 0), cron.last_match_of_year(2025))
+        expected = [
+            datetime(2025, 9, 4, 2, 54, 0), datetime(2025, 9, 4, 2, 27, 0), datetime(2025, 9, 4, 2, 0, 0),
+            datetime(2025, 7, 4, 2, 54, 0), datetime(2025, 7, 4, 2, 27, 0), datetime(2025, 7, 4, 2, 0, 0),
+        ]
+        self.assertEqual(expected, list(cron.matching_datetimes(2025, reverse=True)))
+
 
 class WinCronTest(TestCase):
     def test_min_max_values(self):
