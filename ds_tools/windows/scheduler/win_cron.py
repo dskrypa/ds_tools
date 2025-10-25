@@ -128,8 +128,8 @@ class WinCronSchedule(ExtCronSchedule):
                 return f'1{bigger[0].upper()[0]}'
             return ''
 
-        if step_str := freq._get_step_str():
-            return f'{step_str.split("/", 1)[1]}{suffix}'
+        if step := freq._get_step_val():
+            return f'{step}{suffix}'
 
         diffs = set()
         last = None

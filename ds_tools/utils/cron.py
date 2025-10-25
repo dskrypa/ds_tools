@@ -7,6 +7,7 @@ Utilities for parsing and interpreting crontab schedules
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, time
+from itertools import pairwise
 from typing import Any, Iterator, Iterable, Literal, Type, TypeVar, overload
 
 from bitarray import bitarray
@@ -177,12 +178,12 @@ class TimePart:
     def __str__(self) -> str:
         if self.arr.all():
             return '*'
-        elif step_str := self._get_step_str():
-            return step_str
+        elif step := self._get_step_val():
+            return f'*/{step}'
         else:
             return ','.join(self._iter_ranges())
 
-    def _get_step_str(self) -> str | None:
+    def _get_step_val(self) -> int | None:
         if not self.arr.any():
             return None
 
@@ -192,7 +193,7 @@ class TimePart:
             divisible.setall(False)
             divisible[::step] = True
             if divisible == self.arr:
-                return f'*/{step}'
+                return step
 
         return None
 
@@ -280,15 +281,15 @@ class DayOfWeekPart(TimePart):
     def __str__(self) -> str:
         if self.arr.all():
             return '*'
-        elif step_str := self._get_step_str():
-            return step_str
+        elif step := self._get_step_val():
+            return f'*/{step}'
         else:
             return ','.join(self._iter_ranges())
 
-    def _get_step_str(self) -> str | None:
+    def _get_step_val(self) -> int | None:
         if self.week_days_map:
             return None
-        return super()._get_step_str()
+        return super()._get_step_val()
 
     def _iter_ranges(self) -> Iterator[str]:
         yield from super()._iter_ranges()
@@ -447,6 +448,27 @@ class CronSchedule:
                         yield time(hour, m)
 
     # endregion
+
+    def get_intervals(self, year: int | None = None) -> set[float]:
+        if self.day.all() and self.month.all() and self.dow.all():
+            if self.hour.all() and (step := self.minute._get_step_val()):
+                return {step}
+            return {(b - a).total_seconds() for a, b in pairwise(self._get_intervals_times())}
+
+        if not year:
+            year = date.today().year
+
+        intervals = {(b - a).total_seconds() for a, b in pairwise(self.matching_datetimes(year))}
+        intervals.add((self.first_match_of_year(year) - self.last_match_of_year(year - 1)).total_seconds())
+        return intervals
+
+    def _get_intervals_times(self) -> Iterator[datetime]:
+        combine = datetime.combine
+        today = date.today()
+        times = list(self._matching_times())
+        yield combine(today - timedelta(days=1), times[-1])
+        for t in times:
+            yield combine(today, t)
 
 
 class ExtCronSchedule(CronSchedule):

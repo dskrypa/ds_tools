@@ -113,6 +113,17 @@ class CronTest(TestCase):
         ]
         self.assertEqual(expected, list(cron.matching_datetimes(2025, reverse=True)))
 
+    def test_get_intervals(self):
+        cases = [
+            ('*/5 * * * *', {5}),
+            ('*/15 * * * *', {15}),
+            ('*/29 * * * *', {29}),
+            ('*/27 2 4 7,9 *', {5353560.0, 1620.0, 26175960.0}),
+        ]
+        for cron_str, expected in cases:
+            with self.subTest(cron_str=cron_str):
+                self.assertEqual(expected, CronSchedule(cron_str).get_intervals())
+
 
 class WinCronTest(TestCase):
     def test_min_max_values(self):
