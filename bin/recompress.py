@@ -57,12 +57,7 @@ class RecompressCLI(Command, option_name_mode='*-'):
             return self.out_file
 
         path = src_path.resolve()
-        if path.suffix == '.tgz':
-            stem = path.stem
-        else:
-            stem = path.stem.rsplit('.', 1)[0]
-
-        dst_path = path.parent.joinpath(f'{stem}.tar.zst')
+        dst_path = path.parent.joinpath(f'{path.stem}.tar.zst' if path.suffix == '.tgz' else f'{path.stem}.zst')
         if not dst_path.exists():
             return dst_path
 
