@@ -102,14 +102,14 @@ log = logging.getLogger(__name__)
 _regex_pattern_type = type(re.compile(''))
 
 
-def soupify(html, mode: str = 'html.parser', *args, **kwargs) -> BeautifulSoup:
+def soupify(html, features: str = 'html.parser', *args, **kwargs) -> BeautifulSoup:
     """Note: ``html5lib`` has significantly better handling of poorly written HTML than ``html.parser`` or ``lxml``."""
     if not isinstance(html, str):
         try:
             html = html.text
         except AttributeError as e:
             raise TypeError('Only strings or Requests library response objects are supported') from e
-    return BeautifulSoup(html, mode, *args, **kwargs)
+    return BeautifulSoup(html, features, *args, **kwargs)
 
 
 def fix_html_prettify():
