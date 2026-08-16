@@ -27,22 +27,24 @@ class Tense(Enum):
 
 
 class Verb:
-    __slots__ = ('base', '_present_participle', '_past_participle', 'double_last', 'drop_last')
+    __slots__ = ('base', '_present_participle', '_past_participle', 'double_last', 'drop_last', 'auto')
 
     def __init__(
         self,
-        base: str = None,
+        base: str | None = None,
         *,
-        present_participle: str = None,  # -ing
-        past_participle: str = None,  # -ed
+        present_participle: str | None = None,  # -ing
+        past_participle: str | None = None,  # -ed
         double_last: bool = False,
         drop_last: bool = False,
+        auto: bool = False,
     ):
         self.base = base
         self._present_participle = present_participle
         self._past_participle = past_participle
         self.double_last = double_last
         self.drop_last = drop_last
+        self.auto = auto
 
     def __set_name__(self, owner, name: str):
         if not self.base:
@@ -52,7 +54,11 @@ class Verb:
     def present_participle(self) -> str:
         if self._present_participle:
             return self._present_participle
-        base = self.base
+
+        base: str = self.base  # type: ignore
+        if self.auto:
+            return get_present_participle(base)
+
         if self.double_last:
             base += base[-1]
         elif self.drop_last:
@@ -63,7 +69,8 @@ class Verb:
     def past_participle(self) -> str:
         if self._past_participle:
             return self._past_participle
-        base = self.base
+
+        base: str = self.base  # type: ignore
         suffix = 'd' if base.endswith('e') else 'ed'
         return base + suffix
 
@@ -100,7 +107,16 @@ class LoggingPrefix:
         try:
             return getattr(self, verb)
         except AttributeError:
+            if self._tense == Tense.PRESENT:
+                return Verb(verb, auto=True).conjugate(self.dry_run)
+
             raise KeyError(verb) from None
+
+    def __getattr__(self, verb: str) -> str:
+        if self._tense == Tense.PRESENT:
+            return Verb(verb.replace('_', ' '), auto=True).conjugate(self.dry_run)
+
+        raise AttributeError(verb)
 
     @contextmanager
     def _temp_tense(self, tense: Tense) -> Iterator[LoggingPrefix]:
@@ -148,3 +164,67 @@ class DryRunMixin:
     @cached_property
     def lp(self) -> LoggingPrefix:
         return LoggingPrefix(self.dry_run)
+
+
+def get_present_participle(lemma: str) -> str:
+    """
+    Attempts to lemmatize the given base word to the present participle / gerund form.
+
+    Does not handle irregular verbs (e.g., "lie" -> "lying").
+
+    See also: https://en.wikipedia.org/wiki/Lemmatization
+
+    :param lemma: The base form of a given verb or verb phrase (e.g., "set up")
+    :returns: The present participle / gerund (the "-ing form") for the given lemma
+    """
+    try:
+        base, extra = lemma.split(' ', 1)
+    except ValueError:
+        base, extra = lemma, None
+
+    gerund = _get_present_participle_base(base) + 'ing'
+    return gerund if extra is None else f'{gerund} {extra}'
+
+
+def _get_present_participle_base(lemma: str) -> str:
+    if len(lemma) < 3:
+        return lemma
+
+    # Any further expansion of the below rules should likely adopt an exception dictionary.  If any special cases
+    # below end up having more exception entries than words that are handled by the special case, then the case and its
+    # exceptions should likely be inverted.
+
+    match tuple(lemma[-3:].lower()):
+        case ['n', 'g', 'e'] | [_, ('e' | 'o' | 'y'), 'e']:
+            # E.g., levee -> leveeing; canoe -> canoeing; dye -> dyeing; singe -> singeing
+            return lemma
+
+        case [_, _, 'e']:
+            # E.g., create -> creating; save -> saving; imbue -> imbuing
+            return lemma[:-1]
+
+        case [_, 'e', 'n'] | [_, 'i', 't']:
+            if len(lemma) == 3 or lemma.lower() == 'emit':
+                # E.g., sit -> sitting; pen -> penning; emit -> emitting
+                # Maybe there are other cases where the last letter should be doubled, but there seem to be more cases
+                # matching this pattern that shouldn't be doubled.
+                return lemma + lemma[-1]
+
+            # E.g., open -> opening; exit -> exiting; limit -> limiting
+            return lemma
+
+        case [x, ('a' | 'e' | 'i' | 'o' | 'u'), ('b' | 'd' | 'g' | 'l' | 'm' | 'n' | 'p' | 'r' | 't')]:
+            if x in 'aeiou':
+                # E.g., meet -> meeting; preen -> preening; moon -> mooning; bargain -> bargaining
+                return lemma
+
+            # E.g., begin -> beginning; reset -> resetting; run -> running
+            return lemma + lemma[-1]
+
+        case [_, 'i', 'c']:
+            # E.g., panic -> panicking; mimic -> mimicking
+            return lemma + 'k'
+
+        case _:
+            # E.g., add -> adding; copy -> copying; send -> sending
+            return lemma
