@@ -7,14 +7,14 @@ from __future__ import annotations
 import re
 import logging
 import os
-from datetime import date
+from datetime import datetime
 from getpass import getuser
 from itertools import chain
 from pathlib import Path
 from stat import S_ISDIR, S_ISREG
 from string import printable
 from tempfile import gettempdir
-from typing import TYPE_CHECKING, Iterator, Iterable, Collection, Mapping, Optional
+from typing import TYPE_CHECKING, Iterator, Iterable, Collection, Mapping
 from urllib.parse import quote
 
 from ..core.decorate import cached_classproperty
@@ -142,9 +142,9 @@ def iter_files(path_or_paths: Paths, recursive: bool = True) -> Iterator[Path]:
 
 def iter_sorted_files(
     path_or_paths: Paths,
-    ignore_dirs: Collection[str] = None,
-    ignore_files: Collection[str] = None,
-    ignore_suffixes: Collection[str] = None,
+    ignore_dirs: Collection[str] | None = None,
+    ignore_files: Collection[str] | None = None,
+    ignore_suffixes: Collection[str] | None = None,
     *,
     follow_links: bool = False,
 ) -> Iterator[Path]:
@@ -174,14 +174,14 @@ def iter_sorted_files(
                 yield path
         # Note: is_file calls stat with follow_symlinks=True, while is_symlink calls stat with follow_symlinks=False
         elif (not ignore_dirs or path.name not in ignore_dirs) and (follow_links or not path.is_symlink()):
-            yield from _iter_sorted_files(path, ignore_dirs, ignore_files, ignore_suffixes, follow_links)
+            yield from _iter_sorted_files(path, ignore_dirs, ignore_files, ignore_suffixes, follow_links)  # noqa
 
 
 def _iter_sorted_files(
     root: Path,
-    ignore_dirs: set[str] = None,
-    ignore_files: set[str] = None,
-    ignore_suffixes: tuple[str, ...] = None,
+    ignore_dirs: set[str] | None = None,
+    ignore_files: set[str] | None = None,
+    ignore_suffixes: tuple[str, ...] | None = None,
     follow_links: bool = False,
 ) -> Iterator[Path]:
     """
@@ -214,7 +214,7 @@ def _iter_sorted_files(
 
 
 def validate_or_make_dir(
-    dir_path: PathLike, permissions: int = None, suppress_perm_change_exc: bool = True
+    dir_path: PathLike, permissions: int | None = None, suppress_perm_change_exc: bool = True
 ) -> Path:
     """
     Validate that the given path exists and is a directory.  If it does not exist, then create it and any intermediate
@@ -231,17 +231,19 @@ def validate_or_make_dir(
     path = Path(dir_path).expanduser()
     if path.is_dir():
         return path
-    elif path.exists():
+
+    if path.exists():
         raise ValueError(f'Invalid path - not a directory: {dir_path}')
-    else:
-        path.mkdir(parents=True)
-        if permissions is not None:
-            try:
-                path.chmod(permissions)
-            except OSError as e:
-                log.error(f'Error changing permissions of path {dir_path!r} to 0o{permissions:o}: {e}')
-                if not suppress_perm_change_exc:
-                    raise
+
+    path.mkdir(parents=True)
+    if permissions is not None:
+        try:
+            path.chmod(permissions)
+        except OSError as e:
+            log.error(f'Error changing permissions of path {dir_path!r} to 0o{permissions:o}: {e}')
+            if not suppress_perm_change_exc:
+                raise
+
     return path
 
 
@@ -272,7 +274,7 @@ def get_user_temp_dir(*sub_dirs, mode: int = 0o777) -> Path:
 
 
 def relative_path(path: PathLike, to: PathLike = '.') -> str:
-    path = Path(path).resolve()
+    path: Path = Path(path).resolve()
     to = Path(to).resolve()
     try:
         return path.relative_to(to).as_posix()
@@ -292,6 +294,7 @@ class _UniquePathPicker:
         seps: tuple[str, str] = ('_', '-'),
         n: int = 1,
         add_date: bool = False,
+        add_time: bool = False,
         sanitize: bool = False,
     ) -> Path:
         """
@@ -300,20 +303,32 @@ class _UniquePathPicker:
         :param suffix: File extension, including `.`
         :param seps: Separators between stem and date/n, respectfully.
         :param n: First number to try; incremented by 1 until adding this value would cause the file name to be unique
-        :param add_date: Whether a date should be added before n. If True, a date will always be added.
+        :param add_date: Whether the current date should be added before n. If True, the date will always be added.
+        :param add_time: Whether the current time should be added before n. If True, the time will always be added.
         :param sanitize: Whether the stem should be sanitized
         :return: Path with a file name that does not currently exist in the target directory
         """
         if sanitize:
             stem = sanitize_file_name(stem)
+
         date_sep, n_sep = seps
-        if add_date:
-            stem = f'{stem}{date_sep}{date.today().isoformat()}'
+        if add_date or add_time:
+            stem = f'{stem}{date_sep}{self._get_time(add_date, add_time)}'
+
         name = stem + suffix
         while (path := parent.joinpath(name)).exists():
             name = f'{stem}{n_sep}{n}{suffix}'
             n += 1
+
         return path
+
+    @classmethod
+    def _get_time(cls, add_date: bool, add_time: bool) -> str:
+        if add_date:
+            return datetime.now().strftime('%Y-%m-%d_%H-%M-%S' if add_time else '%Y-%m-%d')
+        if add_time:
+            return datetime.now().strftime('%H-%M-%S')
+        return ''  # not expected
 
     def for_path(
         self,
@@ -322,11 +337,14 @@ class _UniquePathPicker:
         seps: tuple[str, str] = ('_', '-'),
         n: int = 1,
         add_date: bool = False,
+        add_time: bool = False,
         sanitize: bool = False,
     ) -> Path:
         if not isinstance(path, Path):
-            path = Path(path).expanduser()
-        return self(path.parent, path.stem, path.suffix, seps=seps, n=n, add_date=add_date, sanitize=sanitize)
+            path: Path = Path(path).expanduser()
+        return self(
+            path.parent, path.stem, path.suffix, seps=seps, n=n, add_date=add_date, add_time=add_time, sanitize=sanitize
+        )
 
 
 unique_path = _UniquePathPicker()
@@ -336,7 +354,7 @@ class PathValidator:
     _replacements = {'/': '_', ':': '-', '\\': '_', '|': '-'}
     _mac_reserved = {':'}
 
-    def __init__(self, replacements: Optional[Mapping[str, str]] = _NotSet):
+    def __init__(self, replacements: Mapping[str, str] | None = _NotSet):
         replacements = self._replacements if replacements is _NotSet else {} if replacements is None else replacements
         self.table = str.maketrans({i: replacements.get(i) or quote(i, safe='') for i in self._invalid_chars})  # noqa
 
@@ -354,7 +372,7 @@ class PathValidator:
         return file_name.translate(self.table)
 
     @classmethod
-    def _sanitize(cls, file_name: str, replacements: Optional[Mapping[str, str]] = _NotSet) -> str:
+    def _sanitize(cls, file_name: str, replacements: Mapping[str, str] | None = _NotSet) -> str:
         return cls(replacements).sanitize(file_name)
 
     @cached_classproperty
@@ -373,7 +391,7 @@ class PathValidator:
 sanitize_file_name = PathValidator._sanitize
 
 
-def prepare_path(path: PathLike, default_name: tuple[str, str] = None, exist_ok: bool = True, **kwargs) -> Path:
+def prepare_path(path: PathLike, default_name: tuple[str, str] | None = None, exist_ok: bool = True, **kwargs) -> Path:
     """
     Convenience function to prepare a file path, creating its parent directory if it does not already exist, and
     optionally generating a file name if a directory is provided and default_name is specified.
@@ -386,7 +404,7 @@ def prepare_path(path: PathLike, default_name: tuple[str, str] = None, exist_ok:
     :param kwargs: Additional keyword arguments to pass to :func:`unique_path`
     :return: The path for a file
     """
-    path = Path(path).expanduser()
+    path: Path = Path(path).expanduser()
     if default_name and (path.is_dir() or not path.suffix):
         stem, suffix = default_name
         path = unique_path(path, stem, suffix, **kwargs)
@@ -422,7 +440,18 @@ class PathSorter:
         return paths
 
 
-def path_repr(path: Path, is_dir: bool = None) -> str:
+def path_repr(path: Path, is_dir: bool | None = None) -> str:
+    """
+    Finds and returns the shortest representation of the given path, based on its location relative to the current
+    user's home directory or the current working directory.  If the path is a directory (if ``is_dir=True`` was
+    specified, or if ``is_dir`` was omitted and it was automatically detected), then a trailing slash will be appended
+    to the return value to help indicate that it is a directory.
+
+    :param path: The path to format.
+    :param is_dir: If it is already known that the path is a directory or not, then specifying so will prevent a stat
+      call to determine if the path is a directory.
+    :return: The formatted path.
+    """
     path_strs = [path.as_posix()]
     try:
         path_strs.append(f'~/{path.relative_to(Path.home()).as_posix()}')

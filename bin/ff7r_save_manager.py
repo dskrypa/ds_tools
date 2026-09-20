@@ -9,21 +9,15 @@ from functools import cached_property
 from pathlib import Path
 from tarfile import TarFile
 
-from cli_command_parser import Command, SubCommand, Flag, Counter, main
-from cli_command_parser.inputs import Path as IPath
+from cli_command_parser import Command, SubCommand, Flag, Counter, Option, main
 from send2trash import send2trash
 from zstandard import ZstdCompressor
 
 from ds_tools.fs.paths import unique_path, path_repr
+from ds_tools.fs.steam import GAME_INFO_MAP, SaveDir
 from ds_tools.output.prefix import LoggingPrefix
 
 log = logging.getLogger(__name__)
-
-DIR = IPath(type='dir', exists=True)
-
-DEFAULT_STEAM_DIR = '~/.local/share/Steam'
-FF7_REBIRTH_C_DRIVE = 'steamapps/compatdata/2909400/pfx/drive_c'
-FF7_REBIRTH_SAVE_DIR = 'users/steamuser/Documents/My Games/FINAL FANTASY VII REBIRTH/Steam'
 
 BACKUP_DIR = '~/Games/FF7_Rebirth'
 
@@ -33,6 +27,7 @@ BACKUP_DIR = '~/Games/FF7_Rebirth'
 
 class SaveManagerCLI(Command):
     sub_cmd = SubCommand()
+    steam_id = Option(type=int, help='Numeric Steam user ID (should match a directory in the save dir)')
     verbose = Counter('-v', help='Increase logging verbosity (can specify multiple times)')
     dry_run = Flag('-D', help='Print the actions that would be taken instead of taking them')
 
@@ -46,8 +41,8 @@ class SaveManagerCLI(Command):
         return LoggingPrefix(self.dry_run)
 
     @cached_property
-    def save_files_dir(self) -> SaveFilesDir:
-        return SaveFilesDir(dry_run=self.dry_run)
+    def save_files_dir(self) -> FF7RSaveDir:
+        return FF7RSaveDir(steam_id=self.steam_id, dry_run=self.dry_run)
 
 
 class Backup(SaveManagerCLI, help='Backup save files'):
@@ -63,26 +58,11 @@ class Backup(SaveManagerCLI, help='Backup save files'):
 # region Helpers
 
 
-class SaveFilesDir:
+class FF7RSaveDir(SaveDir):
     _name_pat = re.compile(r'^ff7rebirth0(\d\d)\.sav$')
-    steam_dir: Path
 
-    def __init__(
-        self,
-        *,
-        steam_dir: Path | None = None,
-        steam_id: int | str | None = None,
-        backup_dir: Path | None = None,
-        dry_run: bool = False,
-    ):
-        self.steam_dir = steam_dir or Path(DEFAULT_STEAM_DIR).expanduser()
-        self.wine_root = self.steam_dir.joinpath(FF7_REBIRTH_C_DRIVE)
-        if steam_id:
-            self.save_dir = self.wine_root.joinpath(FF7_REBIRTH_SAVE_DIR, steam_id)
-        else:
-            steam_save_dir: Path = self.wine_root.joinpath(FF7_REBIRTH_SAVE_DIR)
-            self.save_dir = next(p for p in steam_save_dir.iterdir() if p.is_dir())
-
+    def __init__(self, steam_id: int | str | None = None, backup_dir: Path | None = None, dry_run: bool = False):
+        super().__init__(GAME_INFO_MAP['FF7 Rebirth'], steam_id)
         self.backup_dir = backup_dir or Path(BACKUP_DIR).expanduser()
         self.dry_run = dry_run
         self.lp = LoggingPrefix(dry_run)
@@ -100,14 +80,14 @@ class SaveFilesDir:
 
         bkp_path.parent.mkdir(parents=True, exist_ok=True)
         with bkp_path.open('wb') as f, ZstdCompressor(9).stream_writer(f) as zf, TarFile(bkp_path.name, 'w', zf) as tf:
-            for path in self.save_dir.iterdir():
+            for path in self.path.iterdir():
                 log.log(19, f'Adding {path.name} to archive...')
                 tf.add(path, path.name)
 
     def delete_old_save_files(self, keep: int = 5):
         paths = sorted(
             (p.stat().st_mtime, p)
-            for p in self.save_dir.iterdir()
+            for p in self.path.iterdir()
             if (m := self._name_pat.match(p.name)) and m.group(1) != '00'
         )
         if (to_rm := len(paths) - keep) <= 0:

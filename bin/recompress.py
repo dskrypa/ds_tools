@@ -22,14 +22,14 @@ log = logging.getLogger(__name__)
 class RecompressCLI(Command, option_name_mode='*-'):
     """Recompress tar.gz files to tar.zst"""
 
-    in_files: list[Path] = Positional(
+    in_files = Positional(
         nargs='+', type=IPath(type='file', exists=True), help='The .tar.gz / .tgz file(s) to recompress'
     )
     out_file = Option(
         '-o', type=IPath(type='file', exists=False), help='The destination path (default: based on in_file)'
     )
-    level: int = Option('-L', type=NumRange(int, min=1, max=22, include_max=True), default=12, help='Compression level')
-    threads: int = Option(
+    level = Option('-L', type=NumRange(int, min=1, max=22, include_max=True), default=12, help='Compression level')
+    threads = Option(
         '-t', type=NumRange(int, min=-1), default=8,
         help='Threads to use for compression.  0 disables multi-threading; -1 uses all logical CPUs.'
     )
