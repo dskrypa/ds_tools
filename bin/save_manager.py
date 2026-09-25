@@ -16,11 +16,7 @@ BACKUP_DIR = '~/Games/'
 
 
 class SaveManagerCLI(Command, option_name_mode='*-'):
-    """
-    Save File Manager for Steam games
-
-    Backs up save files for games that only support a single file per playthrough.
-    """
+    """Save File Manager for Steam games"""
 
     sub_cmd = SubCommand()
     game = Option('-g', choices=sorted(GAME_INFO_MAP), required=True, help='The game for which saves should be backed up')
