@@ -42,10 +42,23 @@ class Watch(SaveManagerCLI, help='Copy single save file backups whenever changes
     Watch the save directory and store backups when changes occur.
 
     Intended for games that use a single save file per player / playthrough.
+
+    It will continue waiting indefinitely - use ctrl+c to interrupt and exit.
+
+    By default, if there are any files in the backup directory, they are cleaned up (see the `cleanup` subcommand for
+    more details) both before initializing the watcher and just before exiting (when ctrl+c is pressed).
     """
 
+    skip_cleanup = Flag('-C', help='Do not perform any backup directory cleanup')
+
     def main(self):
+        if not self.skip_cleanup:
+            self.game_file_manager.compress_loose_backups()
+
         SaveFileEventHandler(self.game_file_manager).run()
+
+        if not self.skip_cleanup:
+            self.game_file_manager.compress_loose_backups()
 
 
 class Backup(SaveManagerCLI, help='Copy multiple save files into a compressed backup and cleanup old save files'):
