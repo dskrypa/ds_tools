@@ -60,10 +60,10 @@ class Backup(SaveManagerCLI, help='Copy multiple save files into a compressed ba
         keep = Option(
             '-k', type=NumRange(int, min=1), default=5, help='The number of the most recently modified save files to retain'
         )
-        keep_all = Flag('-A', help='Keep all old save files (do not send any save files to the trash)')
+        keep_all = Flag('-K', help='Keep all old save files (do not send any save files to the trash)')
 
     def main(self):
-        self.game_file_manager.create_backup_archive()
+        self.game_file_manager.create_archive_from_source()
         if not self.keep_all:
             self.game_file_manager.delete_old_save_files(keep=self.keep)
 

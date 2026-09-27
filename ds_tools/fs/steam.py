@@ -13,13 +13,13 @@ from functools import cached_property
 from hashlib import sha256
 from pathlib import Path
 from tarfile import TarFile
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Iterator, Self
 
 from send2trash import send2trash
 from watchdog.observers import Observer
 from zstandard import ZstdCompressor
 
-from ds_tools.output.prefix import LoggingPrefix
+from ds_tools.output.prefix import DryRunMixin
 from .paths import unique_path, path_repr
 
 if TYPE_CHECKING:
@@ -90,7 +90,7 @@ GAME_INFO_MAP: dict[str, GameInfo] = {gi.short_name or gi.name: gi for gi in GAM
 # endregion
 
 
-class GameFileManager:
+class GameFileManager(DryRunMixin):
     def __init__(
         self,
         info: GameInfo,
@@ -101,7 +101,6 @@ class GameFileManager:
     ):
         self.info = info
         self.dry_run = dry_run
-        self.lp = LoggingPrefix(dry_run)
         self._last_hashes = {}
         self.save_dir = info.get_save_dir(steam_id)
         self.backup_dir = backup_dir or Path(DEFAULT_BACKUP_BASE_DIR).expanduser().joinpath(info.name_for_files)
@@ -110,22 +109,7 @@ class GameFileManager:
         if not self.dry_run:
             self.backup_dir.mkdir(parents=True, exist_ok=True)
 
-    # region Create tar.zst Archive Methods
-
-    def create_backup_archive(self, *, level: int = 9) -> Path:
-        """
-        Compress loose save files from the original save directory, and store the backup archive in the backup dir.
-
-        :param level: Compression level to use
-        :return: The path of the archive that was created
-        """
-        bkp_path = unique_path(
-            self.backup_dir, f'{self.info.name_for_files}_saves', '.tar.zst', add_date=True, add_time=True
-        )
-        self._create_archive(self.save_dir, bkp_path, level=level)
-        return bkp_path
-
-    def compress_loose_backups(self, cleanup: bool = True, *, level: int = 9) -> Path:
+    def compress_loose_backups(self, cleanup: bool = True, *, level: int = 9) -> Path | None:
         """
         Compress loose backup files that were copied via file watcher to the backup directory, then delete the loose
         backup files.
@@ -134,44 +118,14 @@ class GameFileManager:
         :param level: Compression level to use
         :return: The path of the archive that was created
         """
-        bkp_path = unique_path(
-            self.backup_dir.parent, f'{self.info.name_for_files}_saves', '.tar.zst', add_date=True, add_time=True
-        )
-        self._create_archive(self.backup_dir, bkp_path, level=level, cleanup=cleanup)
-        return bkp_path
+        if group := FileGroup.from_dir(self.backup_dir, dry_run=self.dry_run):
+            range_str = group.get_time_range_str(from_names=True)
+            bkp_path = unique_path(self.backup_dir.parent, f'{self.info.name_for_files}_saves_{range_str}', '.tar.zst')
+            group.create_tar_zst(bkp_path, level=level, rm_originals=cleanup)
+            return bkp_path
 
-    def _create_archive(self, src_dir: Path, arc_path: Path, *, level: int = 9, cleanup: bool = False):
-        src_files = list(src_dir.iterdir())
-        if not src_files:
-            log.info(f'Skipping archive creation - no files exist in {path_repr(src_dir)}')
-            return
-
-        self._save_archive(src_files, arc_path, level)
-        if cleanup:
-            self._delete_files(src_files)
-
-    def _save_archive(self, src_files: Iterable[Path], arc_path: Path, level: int = 9):
-        log.info(f'{self.lp.create} archive: {path_repr(arc_path)}')
-        if self.dry_run:
-            return
-
-        arc_path.parent.mkdir(parents=True, exist_ok=True)
-        with (
-            arc_path.open('wb') as f,
-            ZstdCompressor(level).stream_writer(f) as zf,
-            TarFile(arc_path.name, 'w', zf) as tf,
-        ):
-            for path in src_files:
-                log.log(19, f'Adding {path.name} to archive...')
-                tf.add(path, path.name)
-
-    def _delete_files(self, paths: Iterable[Path]):
-        for path in paths:
-            log.info(f'{self.lp.send} to trash: {path_repr(path)}')
-            if not self.dry_run:
-                send2trash(path)
-
-    # endregion
+        log.info(f'Skipping archive creation - no files exist in {group}')
+        return None
 
     # region Single Save File Methods
 
@@ -204,29 +158,171 @@ class GameFileManager:
 
     # region Multiple Save File Methods
 
+    def create_archive_from_source(self, *, level: int = 9) -> Path:
+        """
+        Compress loose save files from the original save directory, and store the backup archive in the backup dir.
+
+        :param level: Compression level to use
+        :return: The path of the archive that was created
+        """
+        group = FileGroup.from_dir(self.save_dir, dry_run=self.dry_run)
+        range_str = group.get_time_range_str(from_names=True)
+        bkp_path = unique_path(self.backup_dir, f'{self.info.name_for_files}_saves_{range_str}', '.tar.zst')
+        group.create_tar_zst(bkp_path, level=level)
+        return bkp_path
+
     def delete_old_save_files(self, keep: int = 5):
         if not self.info.file_name_pat:
             raise UnsupportedGameError(f'Deletion of old save files by age is not supported for {self.info.name}')
 
         name_match = re.compile(self.info.file_name_pat).match
 
-        paths = sorted(
-            (p.stat().st_mtime, p)
-            for p in self.save_dir.iterdir()
-            if (m := name_match(p.name)) and m.group(1) != '00'  # This group logic may need to change for other games
+        group = FileGroup(
+            # This regex group logic may need to change for other games
+            [p for p in self.save_dir.iterdir() if (m := name_match(p.name)) and m.group(1) != '00'],
+            dry_run=self.dry_run,
+            parent=self.save_dir,
         )
+        group.send_old_to_trash(keep=keep)
+
+    # endregion
+
+
+class FileGroup(DryRunMixin):
+    def __init__(self, paths: list[Path], dry_run: bool = False, parent: Path | None = None):
+        self.parent = parent
+        self.paths = paths
+        self.dry_run = dry_run
+
+    @classmethod
+    def from_dir(cls, path: Path, dry_run: bool = False) -> Self:
+        return cls(list(path.iterdir()), dry_run=dry_run, parent=path)
+
+    def create_tar_zst(self, path: Path, *, level: int = 9, rm_originals: bool = False):
+        """
+        :param path: The path of the archive to create
+        :param level: The zstandard compression level to use (1-22)
+        :param rm_originals: Whether the paths in this group should be removed (sent to the trash) after adding them to
+          the archive.
+        """
+        if not self.paths:
+            log.info(f'Skipping archive creation - no files exist in {self}')
+            return
+
+        log.info(f'{self.lp.create} archive: {path_repr(path)}')
+        if self.dry_run:
+            return
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('wb') as f, ZstdCompressor(level).stream_writer(f) as zf, TarFile(path.name, 'w', zf) as tf:
+            for src_path in self.paths:
+                log.log(19, f'Adding {src_path.name} to archive...')
+                tf.add(src_path, src_path.name)
+
+        if rm_originals:
+            self.send_all_to_trash()
+
+    def send_all_to_trash(self):
+        for path in self.paths:
+            log.info(f'{self.lp.send} to trash: {path_repr(path)}')
+            if not self.dry_run:
+                send2trash(path)
+
+    def send_old_to_trash(self, keep: int = 5):
+        """
+        :param keep: The number of latest recently modified files to keep
+        """
+        paths = sorted((p.stat().st_mtime, p) for p in self.paths)
         if (to_rm := len(paths) - keep) <= 0:
-            log.info('There are no old save files to delete')
+            log.info(f'There are no old save files to delete in {self}')
             return
 
         log.info(f'{self.lp.send} {to_rm}/{len(paths)} old save files to the trash...')
         for mod_time, path in paths[:to_rm]:
-            log.info(f'{self.lp.send} to trash: {path.name} [{datetime.fromtimestamp(mod_time).isoformat(" ")}]')
+            log.info(f'{self.lp.send} to trash: {path_repr(path)} [{datetime.fromtimestamp(mod_time).isoformat(" ")}]')
             if not self.dry_run:
                 send2trash(path)
 
         for mod_time, path in paths[to_rm:]:
-            log.info(f'Keeping {path.name} [{datetime.fromtimestamp(mod_time).isoformat(" ")}]')
+            log.info(f'Keeping {path_repr(path)} [{datetime.fromtimestamp(mod_time).isoformat(" ")}]')
+
+    # region Time Range
+
+    def get_time_range_str(self, from_names: bool = False, verbose: bool = False) -> str:
+        """
+        Uses :meth:`.get_time_range` to get the earliest and latest times from the files in this group, then formats
+        a concise representation of the date and/or time range.
+
+        :param from_names: Whether the dates should be parsed from file names (falls back to last modified time).  If
+          False, then last modified time is used for all files.
+        :param verbose: Whether the full date and time should be included for both earliest and latest times
+        :return: The formatted time range
+        """
+        earliest, latest = self.get_time_range(from_names)
+        if verbose:
+            return f'{earliest:%Y-%m-%d_%H-%M-%S}--{latest:%Y-%m-%d_%H-%M-%S}'
+        elif earliest.date() == latest.date():
+            return f'{earliest:%Y-%m-%d_%H-%M-%S}--{latest:%H-%M-%S}'
+        else:
+            return f'{earliest:%Y-%m-%d}--{latest:%Y-%m-%d}'
+
+    def get_time_range(self, from_names: bool = False) -> tuple[datetime, datetime]:
+        times = self._get_times(from_names)
+        return min(times), max(times)
+
+    def _get_times(self, from_names: bool = False) -> set[datetime]:
+        if not from_names:
+            return {datetime.fromtimestamp(path.stat().st_mtime) for path in self.paths}
+
+        date_pat = r'\d{4}-(?:1[01]|0\d)-[0-3]\d'
+        time_pat = r'(?:[01]\d|2[0-4])-[0-5]\d-[0-5]\d'
+
+        date_suffix = re.compile(rf'({date_pat})(?:-\d+)?$')
+        dt_maybe_suffix = re.compile(rf'({date_pat}_{time_pat})(?:-\d+)?$')
+        date_with_time_range = re.compile(rf'({date_pat})_({time_pat})--({time_pat})')
+        date_range = re.compile(rf'({date_pat})--({date_pat})')
+        full_dt_range = re.compile(rf'({date_pat}_{time_pat})--({date_pat}_{time_pat})')
+
+        dt_format = '%Y-%m-%d_%H-%M-%S'
+        times = set()
+        for path in self.paths:
+            if m := dt_maybe_suffix.match(path.stem):
+                times.add(datetime.strptime(m.group(1), dt_format))
+            elif m := date_with_time_range.search(path.stem):
+                date_part = m.group(1)
+                times.add(datetime.strptime(f'{date_part}_{m.group(2)}', dt_format))
+                times.add(datetime.strptime(f'{date_part}_{m.group(3)}', dt_format))
+            elif m := full_dt_range.search(path.stem):
+                times.update(datetime.strptime(g, dt_format) for g in m.groups())
+            elif m := date_range.search(path.stem):
+                times.update(datetime.strptime(g, '%Y-%m-%d') for g in m.groups())
+            elif m := date_suffix.match(path.stem):
+                times.add(datetime.strptime(m.group(1), '%Y-%m-%d'))
+            else:
+                log.debug(f'No date/time match found for {path_repr(path)} - using last modified time instead')
+                times.add(datetime.fromtimestamp(path.stat().st_mtime))
+
+        return times
+
+    # endregion
+
+    # region Dunder Methods
+
+    def __bool__(self) -> bool:
+        return bool(self.paths)
+
+    def __len__(self) -> int:
+        return len(self.paths)
+
+    def __iter__(self) -> Iterator[Path]:
+        yield from self.paths
+
+    def __str__(self) -> str:
+        return path_repr(self.parent) if self.parent else repr(self)
+
+    def __repr__(self) -> str:
+        parent = path_repr(self.parent) if self.parent else None
+        return f'<{self.__class__.__name__}[{len(self.paths)} paths, {parent=}, dry_run={self.dry_run}]>'
 
     # endregion
 
